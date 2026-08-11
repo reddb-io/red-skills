@@ -23,7 +23,9 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 const execFileAsync = promisify(execFile);
 
@@ -182,7 +184,7 @@ function assertKeepLast(keepLast: number): void {
 
 function encodeRows(rows: readonly ToonlRecord[]): string {
   if (rows.length === 0) return "";
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return rows.map((row) => writer.push(row)).join("");
 }
 

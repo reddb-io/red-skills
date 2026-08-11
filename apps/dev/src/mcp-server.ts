@@ -87,9 +87,7 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
 }
 
 function toon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
-    keyedMapCollapse: true,
-  });
+  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue);
 }
 
 export function createRedskilledMcpServer(root = process.cwd()): McpServer {

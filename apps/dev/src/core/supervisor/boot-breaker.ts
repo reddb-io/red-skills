@@ -120,7 +120,7 @@ export function createFileBootBreakerStore(paths: EnginePaths): BootBreakerStore
       const payload = ledger === null ? { version: 1, closed: true } : ledger;
       await writeFile(
         temporary,
-        encode(payload as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(payload as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

@@ -352,7 +352,7 @@ function belongsTo(claim: RedskilledMachineClaim, owner: RedskilledMachineOwner,
 }
 
 function serialize(claim: RedskilledMachineClaim): string {
-  return `${encode(claim as unknown as JsonValue, { keyedMapCollapse: true })}\n`;
+  return `${encode(claim as unknown as JsonValue)}\n`;
 }
 
 function parseSnapshot(raw: string): unknown {

@@ -5,17 +5,13 @@ import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { rspStateDir } from "./red-paths.js";
 
 /**
- * Encodes an rsp snapshot surface as TOON with keyed-map collapse enabled
- * (toon 0.3 line — the lossless tabular form for uniform object maps). Collapse
- * is opportunistic: the encoder only rewrites a keyed map whose values are two
- * or more uniform objects, so flat objects and array-wrapped surfaces come out
- * byte-identical to `encode(value)`. Every reader is `decode`, which parses the
- * collapsed and non-collapsed forms transparently, so enabling the flag never
- * breaks a consumer. Use this at every rsp snapshot TOON emit point so a
- * qualifying shape wins the extra tokens the moment it appears (Spec #1801).
+ * Encodes an rsp snapshot with the canonical TOON v4.1 encoder. Canonical v4.1
+ * automatically selects its counted keyed-tabular form for uniform object maps,
+ * so callers get the token win without a private option or legacy dialect. Use
+ * this at every rsp snapshot emit point to keep one compliant wire (Spec #1801).
  */
 export function encodeSnapshotToon(value: JsonValue): string {
-  return encode(value, { keyedMapCollapse: true });
+  return encode(value);
 }
 
 export type RegisteredToonSurfaceKind = "toon" | "toonl";
@@ -116,21 +112,21 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     id: "dev.rsp-resident-registry",
     plugin: "dev",
     legacyPath: ".red/state/rsp/rsp-resident.pid.json",
-    toonPath: ".red/state/rsp/rsp-resident.pid.json",
+    toonPath: ".red/state/rsp/rsp-resident.pid.toon",
     kind: "toon",
   },
   {
     id: "dev.rsp-status-summary",
     plugin: "dev",
     legacyPath: ".red/state/rsp/rsp-status-summary.json",
-    toonPath: ".red/state/rsp/rsp-status-summary.json",
+    toonPath: ".red/state/rsp/rsp-status-summary.toon",
     kind: "toon",
   },
   {
     id: "dev.rsp-wait-registry",
     plugin: "dev",
     legacyPath: ".red/tmp/waits/*.json",
-    toonPath: ".red/tmp/waits/*.json",
+    toonPath: ".red/tmp/waits/*.toon",
     kind: "toon",
   },
 ];
@@ -203,7 +199,7 @@ export async function convertRegisteredToonSurfaces(
       const value = await readLegacyFile(legacy, surface.kind);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, renderSurface(value, surface), "utf8");
-      if (surface.id === "dev.afk-history" && legacy !== target) {
+      if (legacy !== target) {
         await rm(legacy, { force: true });
       }
       convertedAny = true;
@@ -281,10 +277,12 @@ async function expandSurfaceTargets(rootDir: string, surface: RegisteredToonSurf
       return [];
     }
     return entries
-      .filter((entry) => entry.endsWith(".json"))
+      .filter((entry) => entry.endsWith(".json") || entry.endsWith(".toon"))
       .map((entry) => {
-        const path = join(waitsRoot, entry);
-        return { surface, legacyPath: path, toonPath: path };
+        const toonName = entry.endsWith(".json") ? `${entry.slice(0, -".json".length)}.toon` : entry;
+        const legacyPath = join(waitsRoot, entry);
+        const toonPath = join(waitsRoot, toonName);
+        return { surface, legacyPath, toonPath };
       });
   }
   if (surface.id !== "dev.attempt-state") {
@@ -339,7 +337,10 @@ async function quiescenceReasons(rootDir: string): Promise<string[]> {
     reasons.push("active fleet supervisor is running");
   }
 
-  const rspResidentPid = await readJsonPid(join(rspStateDir(rootDir), "rsp-resident.pid.json"));
+  const rspResidentPid = await readStructuredPid([
+    join(rspStateDir(rootDir), "rsp-resident.pid.toon"),
+    join(rspStateDir(rootDir), "rsp-resident.pid.json"),
+  ]);
   if (rspResidentPid !== null && isLivePid(rspResidentPid)) {
     reasons.push("active rsp resident is running");
   }
@@ -453,13 +454,15 @@ async function readPidFile(path: string): Promise<number | null> {
   }
 }
 
-async function readJsonPid(path: string): Promise<number | null> {
-  try {
-    const parsed = readSnapshotDocument(await readFile(path, "utf8")) as { pid?: unknown };
-    return typeof parsed.pid === "number" ? parsePid(String(parsed.pid)) : null;
-  } catch {
-    return null;
+async function readStructuredPid(paths: readonly string[]): Promise<number | null> {
+  for (const path of paths) {
+    try {
+      const parsed = readSnapshotDocument(await readFile(path, "utf8")) as { pid?: unknown };
+      const pid = typeof parsed.pid === "number" ? parsePid(String(parsed.pid)) : null;
+      if (pid !== null) return pid;
+    } catch {}
   }
+  return null;
 }
 
 function readSnapshotDocument(raw: string): unknown {

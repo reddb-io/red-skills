@@ -132,6 +132,41 @@ describe("resident-owned GitHub reads", () => {
     ]);
   });
 
+  it("makes repeated Actions job observations quota-free when the job is unchanged", async () => {
+    const root = await tempRoot();
+    const seenEtags: Array<string | null> = [];
+    const github = createRspResidentGithubClient({
+      rootDir: root,
+      token: "fixture-token",
+      baseUrl: "https://github.invalid/api/v3",
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (_input, init) => {
+        const etag = new Headers(init?.headers).get("if-none-match");
+        seenEtags.push(etag);
+        return etag === '"job-v1"'
+          ? new Response(null, { status: 304, headers: { etag } })
+          : new Response(JSON.stringify({ id: 93918599356, status: "in_progress", conclusion: null }), {
+              status: 200,
+              headers: { "content-type": "application/json", etag: '"job-v1"' },
+            });
+      },
+    });
+    const request = {
+      args: ["run", "view", "93918599356"],
+      path: "repos/reddb-io/red-dev/actions/jobs/93918599356",
+      actor: "session",
+    } as const;
+
+    const first = await github.read(request);
+    const unchanged = await github.read(request);
+
+    expect(first).toMatchObject({ status: 0, quotaFree: false, pool: "rest" });
+    expect(unchanged).toMatchObject({ status: 0, quotaFree: true, pool: "rest" });
+    expect(unchanged.stdout).toBe(first.stdout);
+    expect(seenEtags).toEqual([null, '"job-v1"']);
+  });
+
   it("never turns a classified read into a search fallback", async () => {
     const root = await tempRoot();
     const github = createRspResidentGithubClient({

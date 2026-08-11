@@ -78,7 +78,7 @@ describe("effort document", () => {
     const foreign = encodeRecords([
       { kind: "manager.effort.schema", schema: MANAGER_EFFORT_SCHEMA, version: 99 },
       { kind: "manager.effort", ...flatEffort },
-    ]);
+    ], {});
     expect(() => decodeEffortDocument(foreign)).toThrow(/schema version/);
   });
 

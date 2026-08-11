@@ -30,9 +30,11 @@
  */
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import { deathAttributionFileIn, deathLaneFileIn, deathPresenceDirIn } from "./red-paths.js";
 import { LANE_RETENTION_REGISTRY, replaceLaneAtomicallySync } from "./lane-retention.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import {
   compactProcessDeathLane,
   decodeProcessDeathRecords,
@@ -396,7 +398,7 @@ function attributionRow(attribution: DeathAttribution): ToonlRecord {
 
 /** Encode verdicts as TOONL lines. PURE. */
 export function encodeDeathAttributions(attributions: readonly DeathAttribution[]): string {
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return attributions.map((attribution) => writer.push(attributionRow(attribution))).join("");
 }
 

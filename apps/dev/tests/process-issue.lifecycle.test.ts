@@ -14,7 +14,7 @@ import {
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
 import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import { vi } from "vitest";
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
   describe("landing.wait slot release (#2427)", () => {
@@ -901,7 +901,7 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
   it("surfaces a sandbox setup failure from the structured Worker log when runner stdout is empty", async () => {
     const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
     deps.workerLogPath = "/worker/worker.log.toonl";
-    const lane = encodeLines();
+    const lane = encodeToonlLines();
     Object.assign(deps.fs, {
       readText: async (path: string) => {
         expect(path).toBe(deps.workerLogPath);

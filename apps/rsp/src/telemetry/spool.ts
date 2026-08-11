@@ -20,7 +20,7 @@ import {
   replaceLaneAtomicallySync,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
-import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import {
   RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_DECISIONS_COLLECTION,
@@ -312,7 +312,7 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
 }
 
 function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
-  const spoolEmitter: ToonlLineEmitter = encodeLines();
+  const spoolEmitter = encodeToonlLines();
   return spoolEmitter.push(spoolEntryToToonlRow(row));
 }
 
@@ -363,7 +363,7 @@ function appendRetentionCorrection(
 }
 
 function formatCorrectionRow(correction: RspTelemetryCorrectionRow): string {
-  const correctionEmitter: ToonlLineEmitter = encodeLines();
+  const correctionEmitter = encodeToonlLines();
   return correctionEmitter.push({
     correction_id: correction.correction_id,
     target_spool_id: correction.target_spool_id,
@@ -413,13 +413,17 @@ function trimLaneBeforeAppend<Row>(
 }
 
 async function renameActiveSpools(rootDir: string): Promise<string[]> {
-  const paths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const activePath = telemetrySpoolPath(rootDir);
+  const paths = [activePath, telemetryLegacySpoolPath(rootDir)];
   const renamed: string[] = [];
   for (const path of paths) {
     const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
     try {
       await rename(path, drainingPath);
-      await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+      // The JSONL path is a read-once migration input, never an active lane.
+      // Recreating it after ingestion made an obsolete internal format look
+      // canonical and left an empty `.jsonl` behind on every drain.
+      if (path === activePath) await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
       renamed.push(drainingPath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
@@ -429,10 +433,7 @@ async function renameActiveSpools(rootDir: string): Promise<string[]> {
 }
 
 async function ensureActiveSpoolFiles(rootDir: string): Promise<void> {
-  await Promise.all([
-    writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }),
-    writeFile(telemetryLegacySpoolPath(rootDir), "", { flag: "a" }),
-  ]).catch(() => undefined);
+  await writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }).catch(() => undefined);
 }
 
 async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetrySpoolEntry[]> {

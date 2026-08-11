@@ -46,9 +46,7 @@ export interface LaneSubscriptionHandle {
 const DEFAULT_BUFFER_LIMIT = 1_000;
 
 function toon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
-    keyedMapCollapse: true,
-  });
+  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue);
 }
 
 /**

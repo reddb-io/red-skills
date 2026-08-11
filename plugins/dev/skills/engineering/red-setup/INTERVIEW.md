@@ -146,12 +146,12 @@ If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the s
 
 **Section E2 — Required host binaries (mandatory).**
 
-> Explainer: TOON/TOONL files are first-class RedSkills state. `tq` is the jq-for-TOON CLI from `github:reddb-io/toon`; after ADR 0097 there is no jq fallback for RedSkills-owned TOON/TOONL logs. A host without the pinned `tq` cannot inspect its own TOONL state, so setup installs the binary and records the expected version for `/red-doctor`.
+> Explainer: TOON/TOONL files are first-class RedSkills state. `tq` is the jq-for-TOON CLI published as the official `reddb-io-tq` crate; after ADR 0097 there is no jq fallback for RedSkills-owned TOON/TOONL logs. A host without the pinned `tq` cannot inspect its own TOONL state, so setup installs the binary and records the expected version for `/red-doctor`.
 
-Install the pinned `tq` through the toon repo's checksum-verified installer:
+Install the pinned `tq` through the official Rust package manager:
 
 ```bash
-TQ_VERSION=v0.13.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.13.0/install.sh | sh
+cargo install reddb-io-tq --version 0.21.0 --locked --force
 ```
 
 Then verify:
@@ -160,7 +160,7 @@ Then verify:
 tq --version
 ```
 
-The installed version must be `0.13.0`. Record the same pin in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same canonical installer fix. Do not document or offer a jq fallback.
+The installed version must be at least `0.21.0`. Record the same floor in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same package-manager fix. Do not document or offer a jq fallback.
 
 **Section E3 — Execution daemon (`redskilled`) — mandatory when `dev` is enabled.**
 

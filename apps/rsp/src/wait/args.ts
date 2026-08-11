@@ -33,7 +33,7 @@ export async function parseWaitArgs(argv: readonly string[]): Promise<ParsedWait
   };
   const parsed: ParsedWait = { kind: kind as ParsedWait["kind"], options };
   if (!kind || kind === "--help" || kind === "-h") return { ...parsed, kind: "help" };
-  if (kind !== "ls" && kind !== "cmd" && kind !== "pr" && kind !== "run" && kind !== "release") {
+  if (kind !== "ls" && kind !== "cmd" && kind !== "pr" && kind !== "run" && kind !== "job" && kind !== "release") {
     return { ...parsed, kind: undefined };
   }
   if (kind !== "ls") options.timeoutMs = DEFAULT_TIMEOUT_MS[kind];
@@ -57,6 +57,7 @@ export async function parseWaitArgs(argv: readonly string[]): Promise<ParsedWait
     else if (kind === "run" && value === "--branch") parsed.branch = argv[++i] ?? "";
     else if (kind === "run" && value === "--latest") parsed.latest = true;
     else if (kind === "release" && value === "--tag") parsed.tagGlob = argv[++i] ?? "";
+    else if (kind === "release" && value === "--existing") parsed.existing = true;
     else if (!value.startsWith("--") && !parsed.target) parsed.target = value;
   }
   await validateCompletionOptions(options);

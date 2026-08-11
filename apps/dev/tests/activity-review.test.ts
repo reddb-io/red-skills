@@ -2,7 +2,7 @@ import { appendFile, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decode, encodeLines } from "@reddb-io/toon";
+import { decode, encodeToonlLines } from "@reddb-io/toon";
 import {
   activityReviewInterval,
   buildActivityReviewReport,
@@ -211,7 +211,7 @@ describe("activity review", () => {
     const workerDir = join(root, "wAAAA");
     await mkdir(workerDir, { recursive: true });
     const log = join(workerDir, "worker.log.toonl");
-    const lane = encodeLines({ trailer: false });
+    const lane = encodeToonlLines({ trailer: false });
     await writeFile(
       log,
       lane.push({ at: "2026-07-15T11:00:00.000Z", kind: "worker.stdout", msg: "{\"inputTokens\":3,\"outputTokens\":5}" })
@@ -232,7 +232,7 @@ describe("activity review", () => {
     const workerDir = join(root, "wAAAA");
     await mkdir(workerDir, { recursive: true });
     const log = join(workerDir, "worker.log.toonl");
-    const lane = encodeLines({ trailer: false });
+    const lane = encodeToonlLines({ trailer: false });
     await writeFile(log, lane.push({ at: "2026-07-15T12:00:00.000Z", kind: "worker.stdout", msg: "{\"inputTokens\":7,\"outputTokens\":11}" }));
     const start = new Date("2026-07-15T00:00:00.000Z");
     const end = new Date("2026-07-16T00:00:00.000Z");

@@ -191,7 +191,7 @@ function belongsTo(lease: RedskilledLease, owner: RedskilledLeaseOwner): boolean
 }
 
 function serialize(lease: RedskilledLease): string {
-  return `${encode(lease as unknown as JsonValue, { keyedMapCollapse: true })}\n`;
+  return `${encode(lease as unknown as JsonValue)}\n`;
 }
 
 function parseSnapshot(raw: string): unknown {

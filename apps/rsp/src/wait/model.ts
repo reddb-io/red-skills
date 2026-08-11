@@ -8,7 +8,7 @@
 import type { JsonObject } from "@reddb-io/toon";
 
 /** What a wait is waiting ON. */
-export type WaitKind = "cmd" | "pr" | "run" | "release";
+export type WaitKind = "cmd" | "pr" | "run" | "job" | "release";
 
 /**
  * Where a wait stands. `running` is the only non-terminal value; the other four
@@ -95,6 +95,7 @@ export interface ParsedWait {
   branch?: string;
   latest?: boolean;
   tagGlob?: string;
+  existing?: boolean;
   commandLine?: string;
   options: WaitOptions;
 }
@@ -108,6 +109,7 @@ export const DEFAULT_TIMEOUT_MS: Record<WaitKind, number> = {
   cmd: 30 * 60_000,
   pr: 45 * 60_000,
   run: 45 * 60_000,
+  job: 45 * 60_000,
   release: 2 * 60 * 60_000,
 };
 
@@ -126,6 +128,7 @@ export const POLL_TIERS: Record<WaitKind, string> = {
   cmd: "local-cmd:event-driven",
   pr: "github-pr:15-20s-backoff-jitter",
   run: "github-run:15-20s-backoff-jitter",
+  job: "github-job:15-20s-backoff-jitter",
   release: "release:60s",
 };
 
@@ -137,7 +140,7 @@ export function exitCodeFor(status: Exclude<WaitStatus, "running">): WaitExitCod
 }
 
 export function isWaitKind(kind: unknown): kind is WaitKind {
-  return kind === "cmd" || kind === "pr" || kind === "run" || kind === "release";
+  return kind === "cmd" || kind === "pr" || kind === "run" || kind === "job" || kind === "release";
 }
 
 export function verdictOf(status: "success" | "failure", summary: string, details?: JsonObject): Verdict {

@@ -41,7 +41,7 @@ describe("auditHostBinaries — required host binary contract", () => {
       reason:
         "required host binary tq 0.2.9 is older than the floor 0.3.0, so it cannot read what this workspace writes",
     });
-    expect(report.findings[0]?.remediation).toContain("TQ_VERSION=v0.3.0");
+    expect(report.findings[0]?.remediation).toContain("cargo install reddb-io-tq --version 0.3.0 --locked --force");
     expect(report.rows[0]).toEqual({
       binary: "tq",
       catalog: "0.3.0",
@@ -61,7 +61,7 @@ describe("auditHostBinaries — required host binary contract", () => {
         verdict: "error",
         reason: "required host binary tq is missing",
         remediation:
-          "install pinned tq with: TQ_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh | sh",
+          "install pinned tq from crates.io with: cargo install reddb-io-tq --version 0.3.0 --locked --force",
       },
     ]);
   });

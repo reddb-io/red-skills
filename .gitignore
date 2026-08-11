@@ -16,6 +16,7 @@
 
 # Brain plugin — per-project RedDB runtime store + caches + session pointer (local state)
 .red/brain/
+/apps/rsp/.red/
 
 # Node
 node_modules/
