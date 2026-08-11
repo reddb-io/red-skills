@@ -113,7 +113,7 @@ export const REDSKILLED_TAKEOVER_SOCKET_ENV = "REDSKILLED_TAKEOVER_SOCKET";
 export const REDSKILLED_TAKEOVER_TOKEN_ENV = "REDSKILLED_TAKEOVER_TOKEN";
 
 /** A boot that cannot reach the handshake inside this window is not viable. */
-export const DEFAULT_REDSKILLED_TAKEOVER_HANDSHAKE_MS = 10_000;
+export const DEFAULT_REDSKILLED_TAKEOVER_HANDSHAKE_MS = 30_000;
 
 /** True when a replacement started this process, so its boot check is not owed. */
 export function isRedskilledBornByReplacement(env: NodeJS.ProcessEnv = process.env): boolean {
