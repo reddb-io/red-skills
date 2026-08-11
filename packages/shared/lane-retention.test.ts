@@ -2,7 +2,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import { afterEach, describe, expect, it } from "vitest";
 import {
   LANE_RETENTION_REGISTRY,
@@ -21,7 +23,7 @@ afterEach(async () => {
 });
 
 function encodedLane(ids: readonly string[]): string {
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return ids.map((id, index) => writer.push({ id, ordinal: index } satisfies ToonlRecord)).join("");
 }
 
