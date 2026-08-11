@@ -120,6 +120,15 @@ describe("the memory floor", () => {
     expect(terminations[0]!.reason).toContain("TasksMax");
   });
 
+  it("never terminates a process-budgeted Worker from an absent count", () => {
+    const outcome = evaluateProcessBudgets({
+      workers: [worker({ isolated: false, unit: undefined, budget: { max_processes: 1 } })],
+      processes: {},
+    });
+
+    expect(outcome.terminations).toEqual([]);
+  });
+
   it("terminates a Worker over its budget against a synthetic sampler", async () => {
     const paths = await sessionPaths();
     const stopped: string[] = [];
