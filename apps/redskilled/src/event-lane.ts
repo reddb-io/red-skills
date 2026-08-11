@@ -96,7 +96,8 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
       | "demand-refusal"
       | "daemon-start"
       | "daemon-death"
-      | "daemon-stop",
+      | "daemon-stop"
+      | "daemon-takeover-failed",
   ): boolean;
 };
 
@@ -120,6 +121,7 @@ export const REDSKILLED_DAEMON_EVENT_KINDS = [
   "daemon-start",
   "daemon-death",
   "daemon-stop",
+  "daemon-takeover-failed",
 ] as const;
 
 export type RedskilledDaemonEventKind = typeof REDSKILLED_DAEMON_EVENT_KINDS[number];
@@ -265,6 +267,14 @@ export interface RecordDemandRefusalInput {
   readonly detail: string;
 }
 
+/** One successor that failed its boot handshake while the incumbent stayed live. */
+export interface RecordDaemonTakeoverFailedInput {
+  readonly ts: string;
+  readonly pid: number;
+  readonly socketPath: string;
+  readonly detail: string;
+}
+
 /** Build one event from a Worker view. PURE. */
 export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput): RedskilledHostEvent {
   const budget = input.worker.budget ?? {};
@@ -341,6 +351,43 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
   };
 }
 
+/** Build a failed takeover without forging a daemon departure. PURE. */
+export function buildDaemonTakeoverFailedEvent(
+  input: RecordDaemonTakeoverFailedInput,
+): RedskilledHostEvent {
+  return {
+    version: 1,
+    ts: input.ts,
+    kind: "daemon-takeover-failed",
+    event: "daemon-takeover-failed",
+    worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
+    project_label: "",
+    pid: input.pid,
+    workspace_path: input.socketPath,
+    fork_sha: null,
+    log_path: null,
+    isolated: false,
+    unit: null,
+    memory_high: null,
+    memory_max: null,
+    cpu_weight: null,
+    admission_verdict: null,
+    phase: null,
+    step: null,
+    tokens: null,
+    tools: null,
+    runner: null,
+    model: null,
+    base_head_sha: null,
+    base_commits_ahead: null,
+    heal_kind: null,
+    detail: input.detail,
+    exit_code: null,
+    signal: null,
+    reason: "successor-boot-failed",
+  };
+}
+
 /**
  * An open lane writer.
  *
@@ -362,6 +409,8 @@ export interface RedskilledEventLane {
   recordDaemonStart(input: RecordDaemonStartInput): Promise<RedskilledHostEvent>;
   /** Append a successor's retroactive account of an unrecorded predecessor death. */
   recordDaemonDeath(input: RecordDaemonDeathInput): Promise<RedskilledHostEvent>;
+  /** Append a failed takeover while the incumbent still owns the live session. */
+  recordDaemonTakeoverFailed(input: RecordDaemonTakeoverFailedInput): Promise<RedskilledHostEvent>;
   /**
    * Append the daemon's own stop; resolves once the bytes are on the lane.
    *
@@ -418,6 +467,7 @@ export function createRedskilledEventLane(
     recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
     recordDaemonStart: (input) => append(buildDaemonStartEvent(input)),
     recordDaemonDeath: (input) => append(buildDaemonDeathEvent(input)),
+    recordDaemonTakeoverFailed: (input) => append(buildDaemonTakeoverFailedEvent(input)),
     recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
     flush: async () => {
