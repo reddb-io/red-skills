@@ -239,6 +239,7 @@ describe("starting work registers the project", () => {
       owner: "acme",
       repo: "widgets",
       labels: ["ready-for-agent", "lane:go"],
+      counter_labels: { ready: "ready-for-agent", human: "ready-for-human" },
     });
     expect(started.warnings).toEqual([expect.stringContaining("issues")]);
     // The argv is what runs when a Worker is born for this project, so it carries

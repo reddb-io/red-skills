@@ -111,6 +111,11 @@ export interface RedskilledQueuePollPlan {
   readonly repo: string;
   readonly labels: readonly string[];
   readonly creator?: string;
+  readonly counter_labels?: RedskilledCounterLabels;
+}
+
+export interface RedskilledCounterLabels {
+  readonly ready: string; readonly human: string;
 }
 
 /** The remote branch whose fetched commit becomes every admitted Worker's fork. */
@@ -775,7 +780,10 @@ function isQueuePollPlanShape(value: unknown): value is RedskilledQueuePollPlan 
     Array.isArray(plan.labels) &&
     plan.labels.length > 0 &&
     plan.labels.every((label) => typeof label === "string" && label !== "") &&
-    (plan.creator === undefined || typeof plan.creator === "string");
+    (plan.creator === undefined || typeof plan.creator === "string") && (plan.counter_labels === undefined ||
+      (typeof plan.counter_labels === "object" && plan.counter_labels !== null &&
+        typeof (plan.counter_labels as Record<string, unknown>).ready === "string" && (plan.counter_labels as Record<string, unknown>).ready !== "" &&
+        typeof (plan.counter_labels as Record<string, unknown>).human === "string" && (plan.counter_labels as Record<string, unknown>).human !== ""));
 }
 
 /** True when `value` is a map of strings to strings — a launch env's whole shape. */
