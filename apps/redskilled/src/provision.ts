@@ -431,6 +431,7 @@ export function renderRedskilledUserUnit(input: RedskilledUserUnitInput): string
     "",
     "[Service]",
     "Type=simple",
+    "LimitCORE=0",
     `ExecStart=${input.command} serve${socketFlag}`,
     "Restart=always",
     "RestartSec=2",
