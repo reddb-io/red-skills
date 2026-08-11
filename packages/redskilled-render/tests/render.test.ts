@@ -261,7 +261,7 @@ describe("the statusline Worker table (#3151)", () => {
     expect(rendered.line).toBe(rendered.lines[0]);
     const raw = rendered.lines[1]!;
     expect(stripAnsi(raw)).toBe(
-      "w-1  run=claude opus-5 high  org=afk  iss=3096  ██▶░░  coding·edit  2m5s  eta=10m40s  hb=3s  loc=+120 -8  tks=42k  ctx=108k  tls=31  rsn=9  txt=4",
+      "w-1  run=claude opus-5 high  org=afk  iss=3096  ██▶░░  coding 3/5 · editing  age=2m5s phase=1m5s idle=35s  eta=10m40s  hb=3s  loc=+120 -8  tks=42k  ctx=108k  tls=31  rsn=9  txt=4",
     );
     expect(raw).toContain(`${BOLD}w-1`);
     expect(raw).toContain(`${KEY}run=${VAL}claude opus-5 high`);
@@ -590,23 +590,41 @@ describe("a withheld extra is not a measurement gap", () => {
   });
 });
 
-describe("the elapsed span, the context figure and the estimate (#3097)", () => {
-  it("derives elapsed from the record's start against the payload's own clock", () => {
-    // `uptime_ms` is the PROCESS's age, dated by a daemon that is not told what a
-    // work item is. A Worker that finished one issue and took another is one
-    // process and two spans, and the row must show the span it is showing.
+describe("the worker, phase and progress clocks", () => {
+  it("labels three independently anchored clocks against the payload's own clock", () => {
     const doc = payload({
       generated_at: "2026-08-03T00:30:00.000Z",
-      workers: [worker({ uptime_ms: 7_200_000, display: display({ started_at: "2026-08-03T00:20:00.000Z" }) })],
+      workers: [worker({
+        uptime_ms: 7_200_000,
+        display: display({
+          started_at: "2026-08-03T00:20:00.000Z",
+          phase_started_at: "2026-08-03T00:25:00.000Z",
+          progress_at: "2026-08-03T00:29:00.000Z",
+        }),
+      })],
     });
     const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
-    expect(table.rows[0]!.cells.elapsed).toBe("10m0s");
+    expect(table.rows[0]!.cells.elapsed).toBe("age=2h0m phase=5m0s idle=1m0s");
   });
 
-  it("falls back to the process uptime when the project states no start", () => {
-    const doc = payload({ workers: [worker({ uptime_ms: 125_000, display: display({ started_at: null }) })] });
+  it("keeps the worker age when a rolling-upgrade payload has no newer anchors", () => {
+    const doc = payload({ workers: [worker({
+      uptime_ms: 125_000,
+      display: display({ phase_started_at: null, progress_at: null }),
+    })] });
     const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
-    expect(table.rows[0]!.cells.elapsed).toBe("2m5s");
+    expect(table.rows[0]!.cells.elapsed).toBe("age=2m5s");
+  });
+
+  it("states the one-based phase position beside a verb activity", () => {
+    const doc = payload({ workers: [worker({ display: display({
+      phase: "coding",
+      step: "reading",
+      phase_index: 1,
+      phase_total: 5,
+    }) })] });
+    const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
+    expect(table.rows[0]!.cells.phase).toBe("coding 2/5 · reading");
   });
 
   it("prints the estimate and the context the project published", () => {
