@@ -26,6 +26,8 @@ const projectRegistrationState = vi.fn<() => Promise<ProjectRegistrationState>>(
   birthLatch: null,
 }));
 
+const collectPrecheckFacts = vi.fn(async () => ({}));
+
 vi.mock("../src/runtime/redskilled-birth.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/runtime/redskilled-birth.js")>()),
   createRedskilledBirthPort: () => ({ registrationState: projectRegistrationState }),
@@ -49,7 +51,7 @@ vi.mock("../src/runtime/gh.js", () => ({
 
 vi.mock("../src/runtime/wire.js", () => ({
   afkPaths: (root: string) => ({ tmpDir: join(root, ".red/tmp") }),
-  collectPrecheckFacts: vi.fn(async () => ({})),
+  collectPrecheckFacts,
   resolveRepoContext: vi.fn(async (root: string) => ({ root, repo: "acme/widgets" })),
 }));
 
@@ -170,6 +172,11 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
 
     await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    expect(collectPrecheckFacts).toHaveBeenCalledWith(
+      expect.objectContaining({ root }),
+      expect.objectContaining({ includeLaneCensus: true }),
+    );
 
     const output = writes.join("");
     expect(output).toContain("red-doctor Validation declaration vs engine");
