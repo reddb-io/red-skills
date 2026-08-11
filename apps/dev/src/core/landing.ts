@@ -322,6 +322,94 @@ export function landingMergeTitle(input: {
   return `${prefix}: #${input.issue} ${input.title}`;
 }
 
+/** Inputs whose canonical bytes are copied into the staged Pi packages. */
+export function requiresPiPackageRestage(changedFiles: readonly string[]): boolean {
+  return changedFiles.some((path) => {
+    const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+    return /^plugins\/[^/]+\/skills(?:\/|$)/.test(normalized) ||
+      /^plugins\/[^/]+\/\.claude-plugin\/plugin\.json$/.test(normalized) ||
+      normalized === ".claude-plugin/marketplace.json";
+  });
+}
+
+function commandEvidence(result: { readonly code: number; readonly stdout: string; readonly stderr: string }): string {
+  return [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n") || `exit code ${result.code}`;
+}
+
+async function restagePiPackages(
+  deps: LandingDeps,
+  input: LandingInput,
+  dir: string,
+  publishWorkerBranch: boolean,
+): Promise<LandingResult | undefined> {
+  if (!requiresPiPackageRestage(input.changedFiles ?? [])) return undefined;
+
+  await deps.landingPhase?.("gate", { step: "pi-restage", status: "start" });
+  const built = await deps.mergeExec(["pnpm", "-C", dir, "pi:packages:build"]);
+  if (built.code !== 0) {
+    return {
+      ok: false,
+      reason: "infra",
+      locked: input.locked,
+      infraReason: `Pi package restage failed: ${commandEvidence(built)}`,
+    };
+  }
+
+  const status = await deps.mergeExec(["git", "-C", dir, "status", "--porcelain", "--", "packaging/pi"]);
+  if (status.code !== 0) {
+    return {
+      ok: false,
+      reason: "infra",
+      locked: input.locked,
+      infraReason: `Pi package restage status failed: ${commandEvidence(status)}`,
+    };
+  }
+  if (status.stdout.trim() === "") {
+    await deps.landingPhase?.("gate", { step: "pi-restage", status: "done" });
+    return undefined;
+  }
+
+  const added = await deps.mergeExec(["git", "-C", dir, "add", "--", "packaging/pi"]);
+  if (added.code !== 0) {
+    return {
+      ok: false,
+      reason: "infra",
+      locked: input.locked,
+      infraReason: `Pi package restage add failed: ${commandEvidence(added)}`,
+    };
+  }
+  const committed = await deps.mergeExec([
+    "git", "-C", dir, "commit",
+    "-m", "chore: regenerate staged Pi packages",
+    "-m", `Refs #${input.issue}`,
+  ]);
+  if (committed.code !== 0) {
+    return {
+      ok: false,
+      reason: "infra",
+      locked: input.locked,
+      infraReason: `Pi package restage commit failed: ${commandEvidence(committed)}`,
+    };
+  }
+
+  if (publishWorkerBranch) {
+    const published = await deps.mergeExec([
+      "git", "-C", dir, "push", input.remote, `HEAD:refs/heads/${input.branch}`,
+    ]);
+    if (published.code !== 0) {
+      return {
+        ok: false,
+        reason: "infra",
+        locked: input.locked,
+        infraReason: `Pi package restage publish failed: ${commandEvidence(published)}`,
+      };
+    }
+  }
+
+  await deps.landingPhase?.("gate", { step: "pi-restage", status: "done" });
+  return undefined;
+}
+
 /** The pre_merge / post_merge hook context builders the caller owns (so the
  * exact JSON shape stays defined once, next to the other hook contexts). */
 export interface LandingHookContexts {
@@ -593,6 +681,8 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   const waitForReview = decorateReviewWait(deps, input);
   const ciAwait = decorateCiAwait(deps, input);
   try {
+    const restageFailure = await restagePiPackages(deps, input, prepared.dir, true);
+    if (restageFailure) return restageFailure;
     if (deps.intentGate && !(await deps.intentGate(prepared.dir)).ok) {
       return { ok: false, reason: "intent-finding", locked: input.locked };
     }
@@ -969,6 +1059,8 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // Capture the integrated tip from the worktree as the rollback anchor.
     const preMergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
     const validateIntegratedTree = async (): Promise<LandingResult | undefined> => {
+      const restageFailure = await restagePiPackages(deps, input, landDir, false);
+      if (restageFailure) return restageFailure;
       if (deps.intentGate && !(await deps.intentGate(landDir)).ok) {
         return { ok: false, reason: "intent-finding", locked: input.locked };
       }
