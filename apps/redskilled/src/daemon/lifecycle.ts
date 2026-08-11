@@ -52,6 +52,7 @@ import {
 } from "../host-state.js";
 import {
   evaluateMemoryBudgets,
+  evaluateProcessBudgets,
   sampleWorkerTrees,
   type RedskilledBudgetTermination,
   type RedskilledCpuReading,
@@ -1769,7 +1770,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lastReading = rss;
     lastSampledAt = clock();
     recordCpuReading(reading.cpu_seconds, lastSampledAt);
-    const { terminations } = evaluateMemoryBudgets({ workers: live, rss });
+    const memory = evaluateMemoryBudgets({ workers: live, rss });
+    const processes = evaluateProcessBudgets({ workers: live, processes: reading.processes ?? {} });
+    const terminations = [...memory.terminations, ...processes.terminations];
     const done: RedskilledBudgetTermination[] = [];
     for (const termination of terminations) {
       if (await killWorkerOverBudget(termination.worker_id, termination.reason)) done.push(termination);
