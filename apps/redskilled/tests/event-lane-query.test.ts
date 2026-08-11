@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   REDSKILLED_WORKER_EVENT_KINDS,
   createRedskilledEventLane,
@@ -63,6 +63,24 @@ function workerEvent(kind: RecordWorkerEventInput["kind"]): RecordWorkerEventInp
 }
 
 describe("queryable daemon worker-event log", () => {
+  it("skips and reports a historical mixed-arity row between schema segments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-mixed-arity-"));
+    roots.push(root);
+    const path = join(root, "redskilled.log.toonl");
+    await createRedskilledEventLane(path).recordWorker(workerEvent("worker-birth"));
+    await createRedskilledEventLane(path).recordWorker({ ...workerEvent("worker-activity"), ts: "2026-08-05T09:01:00.000Z" });
+    const lines = (await readFile(path, "utf8")).trimEnd().split("\n");
+    lines.splice(1, 0, "1,bad,mixed-arity,row");
+    await writeFile(path, `${lines.join("\n")}\n`);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const events = await createRedskilledEventLane(path).read();
+
+    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-activity"]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("1 malformed row(s)"));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("line 2"));
+    warning.mockRestore();
+  });
   it("pins every worker record to the stable kind vocabulary", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-query-log-"));
     roots.push(root);
