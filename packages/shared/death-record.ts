@@ -34,10 +34,7 @@ import {
   openSync,
   readFileSync,
   readSync,
-  renameSync,
-  rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
@@ -49,6 +46,11 @@ import {
   type ProcessPresence,
 } from "./death-presence.js";
 import { DEATH_PRESENCE_DIR } from "./red-paths.js";
+import {
+  LANE_RETENTION_REGISTRY,
+  laneSizeOverCeiling,
+  replaceLaneAtomicallySync,
+} from "./lane-retention.js";
 
 export { DEATH_LANE_DIR, DEATH_LANE_FILE, deathLaneDirIn, deathLaneFile, deathLaneFileIn, deathsStateDir } from "./red-paths.js";
 // The placement vocabulary travels with the record that carries it, so a reader
@@ -64,13 +66,16 @@ export const PROCESS_DEATH_RECORD_VERSION = 1;
  * the processes and anchors present today, so each size-triggered or boot
  * compaction advances the lane to this explicit age window.
  */
-export const PROCESS_DEATH_LANE_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
+export const PROCESS_DEATH_LANE_RETENTION_MS =
+  LANE_RETENTION_REGISTRY["process-deaths"].maxAgeMs;
 
 /** The largest death-lane generation an exit handler asks a reader to decode. */
-export const PROCESS_DEATH_LANE_MAX_BYTES = 4 * 1024 * 1024;
+export const PROCESS_DEATH_LANE_MAX_BYTES =
+  LANE_RETENTION_REGISTRY["process-deaths"].maxBytes;
 
 /** A rewrite leaves half the generation free, amortizing the next full decode. */
-const PROCESS_DEATH_LANE_COMPACTION_TARGET_RATIO = 0.5;
+const PROCESS_DEATH_LANE_COMPACTION_TARGET_RATIO =
+  LANE_RETENTION_REGISTRY["process-deaths"].targetRatio;
 
 /**
  * Which of the engine's three process classes died.
@@ -277,14 +282,7 @@ export const nodeDeathLaneIo: DeathLaneIo = {
     appendFileSync(path, text, { encoding: "utf8", mode: 0o600 });
   },
   replace(path, text) {
-    const temporary = `${path}.retaining-${process.pid}`;
-    try {
-      writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600 });
-      renameSync(temporary, path);
-    } catch (error) {
-      rmSync(temporary, { force: true });
-      throw error;
-    }
+    replaceLaneAtomicallySync(path, text);
   },
   read(path) {
     return readFileSync(path, "utf8");
@@ -319,7 +317,11 @@ export function appendProcessDeathRecord(
   const recordedAt = Date.parse(record.ts);
   const compactedAt = Number.isFinite(recordedAt) ? recordedAt : Date.now();
   let compacted = false;
-  if (inspection.size + separatorBytes + lineBytes > PROCESS_DEATH_LANE_MAX_BYTES) {
+  if (laneSizeOverCeiling(
+    inspection.size,
+    separatorBytes + lineBytes,
+    LANE_RETENTION_REGISTRY["process-deaths"],
+  )) {
     const targetBytes = Math.max(
       0,
       Math.floor(PROCESS_DEATH_LANE_MAX_BYTES * PROCESS_DEATH_LANE_COMPACTION_TARGET_RATIO) -

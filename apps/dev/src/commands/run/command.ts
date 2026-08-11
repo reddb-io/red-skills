@@ -64,6 +64,8 @@ import {
   safetyLogPath,
 } from "../../core/process-safety.js";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
+import { sweepLaneTemps } from "@reddb-io/shared/lane-retention.js";
+import { stateDir } from "@reddb-io/shared/red-paths.js";
 import { dirname, join } from "node:path";
 import { workerIdentity } from "../../core/host-identity.js";
 import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIdentitySync } from "../../core/state.js";
@@ -127,6 +129,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // canonical state or supervisor tmp lanes before this worker reads/writes supervisor/circuit state
   // (issue #1685). Idempotent + best-effort — a second boot is a no-op.
   await migrateLegacyDevPaths(cwd).catch(() => undefined);
+  await sweepLaneTemps(stateDir(ctx.root)).catch(() => undefined);
   const hostProfile = await readHostCapabilityProfile(
     createEnginePaths(join(ctx.root, ".red")),
   );
