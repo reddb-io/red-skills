@@ -47,7 +47,10 @@ import {
   readRedskilledUnitStatus,
   type RedskilledUnitStatus,
 } from "@reddb-io/redskilled/supervision";
-import type { RedskilledDashboard } from "@reddb-io/redskilled-render";
+import type {
+  RedskilledDashboard,
+  RedskilledRenderPayload,
+} from "@reddb-io/redskilled-render";
 import type {
   RedskilledProjectRegistration,
   RedskilledProjectRegistrationRequest,
@@ -153,6 +156,8 @@ export interface RedskilledBirthPort {
   hostState(): Promise<RedskilledHostState>;
   /** Read the daemon's structured global dashboard, never this project's slice. */
   hostDashboard(): Promise<RedskilledDashboard>;
+  /** Read the daemon's dated statusline payload without fetching any tracker state. */
+  statuslinePayload(): Promise<RedskilledRenderPayload>;
   /** Audit host provisioning without creating a home, bundle, daemon, or unit. */
   provisionCheck(): Promise<RedskilledProvisionReport>;
   /** Read whether the optional host supervisor unit is installed and running. */
@@ -303,6 +308,14 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
 
     async hostDashboard() {
       return await readRedskilledDashboardRender(paths, { mode: "global" }, config);
+    },
+
+    async statuslinePayload() {
+      return await readRedskilledStatuslinePayload(paths, config, {
+        logs: false,
+        vitals: false,
+        display: false,
+      });
     },
 
     async provisionCheck() {

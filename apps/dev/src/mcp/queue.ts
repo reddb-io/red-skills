@@ -7,6 +7,7 @@ import type {
   WorktreeRemoveInput,
 } from "@reddb-io/red-castle/mcp-server";
 import { readBuildInfo } from "@reddb-io/build-info";
+import type { RedskilledRenderPayload } from "@reddb-io/redskilled-render";
 import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueCandidate } from "../core/session.js";
 import {
@@ -25,6 +26,10 @@ import {
   type TrustProvenance,
 } from "../core/trust-gate.js";
 import * as gitx from "../runtime/git.js";
+import {
+  createRedskilledBirthPort,
+  resolveProjectLabel,
+} from "../runtime/redskilled-birth.js";
 
 import { projectStatus } from "./project.js";
 import { workerVitals } from "./vitals.js";
@@ -128,14 +133,38 @@ export async function removeDisposableWorktree(root: string, input: WorktreeRemo
  * from the Claude Code statusline stdin payload and are deliberately absent —
  * the tool must not fake them.
  */
-export async function collectStatuslineAggregate(root: string) {
+export interface StatuslineAggregateReaders {
+  statuslinePayload(): Promise<
+    Pick<RedskilledRenderPayload, "remote_counters" | "repository_activity">
+  >;
+  projectLabel(): string;
+}
+
+export async function collectStatuslineAggregate(
+  root: string,
+  readers: StatuslineAggregateReaders = {
+    statuslinePayload: () =>
+      createRedskilledBirthPort({ root }).statuslinePayload(),
+    projectLabel: () => resolveProjectLabel(root),
+  },
+) {
   const repoCtx = {
     root,
     repo: inferGitHubRepoSlug(root),
     remote: "origin",
   };
 
-  const [project, localGit, docs, afkBlock, fleetChip, fleet, workers, validationGate] =
+  const [
+    project,
+    localGit,
+    docs,
+    afkBlock,
+    fleetChip,
+    fleet,
+    workers,
+    validationGate,
+    daemonPayload,
+  ] =
     await Promise.all([
       resolveProject(root),
       collectStatuslineLocalGit(root),
@@ -145,7 +174,28 @@ export async function collectStatuslineAggregate(root: string) {
       projectStatus(root).catch(() => null),
       workerVitals(root),
       collectStatuslineValidationGate(root),
+      readers.statuslinePayload().catch(() => undefined),
     ]);
+
+  const projectLabel = readers.projectLabel();
+  const counterProject = daemonPayload?.remote_counters?.projects.find(
+    (candidate) => candidate.project_label === projectLabel,
+  );
+  const activityProject = daemonPayload?.repository_activity?.projects.find(
+    (candidate) => candidate.project_label === projectLabel,
+  );
+  const remoteCounters = daemonPayload?.remote_counters == null
+    ? null
+    : {
+        ...daemonPayload.remote_counters,
+        projects: counterProject == null ? [] : [counterProject],
+      };
+  const repositoryActivity = daemonPayload?.repository_activity == null
+    ? null
+    : {
+        ...daemonPayload.repository_activity,
+        projects: activityProject == null ? [] : [activityProject],
+      };
 
   return {
     project: {
@@ -157,23 +207,21 @@ export async function collectStatuslineAggregate(root: string) {
       pointer_version: project.pointerVersion ?? null,
       docs_unlanded: docs?.count ?? 0,
     },
-    /**
-     * The LOCAL repository facts, and honest nulls where the remote ones were.
-     *
-     * The open-PR/open-issue counts came from this app's own `gh` cache, which is
-     * gone (ADR 0141 decision 2): every remote counter is the daemon's, served
-     * dated on its statusline payload, and this tool reads that payload in #3568.
-     * Until it does the numbers are `null` — an absence a consumer can see —
-     * rather than a zero that reads as an empty repository. The diffstat stays
-     * here because it never needed a network.
-     */
+    /** Flattened compatibility values, all sourced from the daemon payload. */
     repo: {
-      open_prs: null,
-      today_prs: null,
-      open_issues: null,
+      open_prs: counterProject?.counters.open_pull_requests.value
+        ?? activityProject?.counts?.open_pull_requests
+        ?? null,
+      today_prs: activityProject?.counts?.recently_closed ?? null,
+      open_issues: counterProject?.counters.open_issues.value
+        ?? activityProject?.counts?.open_issues
+        ?? null,
       local_added: localGit.localAdded,
       local_removed: localGit.localRemoved,
     },
+    /** The daemon's own dated blocks, scoped to this MCP's project. */
+    remote_counters: remoteCounters,
+    repository_activity: repositoryActivity,
     docs: { unlanded: docs?.count ?? 0 },
     validation_gate: validationGate,
     fleet,
@@ -205,10 +253,10 @@ export async function collectStatuslineAggregate(root: string) {
      * it — summed across live workers, including the fleet runner/model/effort
      * label the per-worker rows carry individually. Null when no live worker. */
     afk: afkBlock,
-    /** The queue depths, on the same terms as the counts above: daemon-owned. */
+    /** Flattened compatibility values from the same dated counter block above. */
     queue: {
-      ready_for_agent: null,
-      ready_for_human: null,
+      ready_for_agent: counterProject?.counters.ready_queue.value ?? null,
+      ready_for_human: counterProject?.counters.human_queue.value ?? null,
     },
   };
 }
@@ -218,4 +266,3 @@ export async function collectStatuslineAggregate(root: string) {
 export type StatuslineAggregate = Awaited<
   ReturnType<typeof collectStatuslineAggregate>
 >;
-

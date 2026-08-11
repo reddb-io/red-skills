@@ -25,6 +25,7 @@ import { matchesSelector } from "../core/session.js";
 import * as ghx from "../runtime/gh.js";
 import {
   createRedskilledBirthPort,
+  resolveProjectLabel,
 } from "../runtime/redskilled-birth.js";
 import {
   afkPaths,
@@ -63,8 +64,16 @@ import {
   listDisposableWorktrees,
   partitionReadyForAgentByTrust,
   removeDisposableWorktree,
+  type StatuslineAggregateReaders,
 } from "./queue.js";
 import { eventsSinceImpl } from "./events.js";
+
+export interface CastleMcpReadPorts {
+  statuslinePayload?: StatuslineAggregateReaders["statuslinePayload"];
+  projectLabel?: StatuslineAggregateReaders["projectLabel"];
+  listCandidates?: typeof listCandidates;
+  listHitlCandidates?: typeof listHitlCandidates;
+}
 
 export function withCachedDeps(
   deps: CastleMcpDependencies,
@@ -139,6 +148,7 @@ export function withCachedDeps(
 export function createCastleMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
+  readers: CastleMcpReadPorts = {},
 ): CastleMcpDependencies {
   const baseDeps: CastleMcpDependencies = {
     projectStatus: () => projectStatus(root),
@@ -189,8 +199,8 @@ export function createCastleMcpDependencies(
       const context = await resolveRepoContext(root);
       const gh = { cwd: root, repo: context.repo };
       let [readyForAgent, readyForHuman] = await Promise.all([
-        listCandidates(gh),
-        listHitlCandidates(gh),
+        (readers.listCandidates ?? listCandidates)(gh),
+        (readers.listHitlCandidates ?? listHitlCandidates)(gh),
       ]);
       // Scoped preview: apply a fleet selector (tags/user/spec/lane/…) over the
       // ready pool, mirroring exactly what a fleet with that selector would see.
@@ -346,7 +356,13 @@ export function createCastleMcpDependencies(
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
     deadendAudit: () => operations.deadendAudit(),
-    statuslineAggregate: () => collectStatuslineAggregate(root),
+    statuslineAggregate: () =>
+      collectStatuslineAggregate(root, {
+        statuslinePayload:
+          readers.statuslinePayload
+          ?? (() => createRedskilledBirthPort({ root }).statuslinePayload()),
+        projectLabel: readers.projectLabel ?? (() => resolveProjectLabel(root)),
+      }),
     eventsSince: (input) => eventsSinceImpl(root, input),
   };
   return withCachedDeps(baseDeps, new ResidentReadCache());

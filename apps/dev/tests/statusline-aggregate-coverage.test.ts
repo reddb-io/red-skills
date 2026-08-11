@@ -61,13 +61,70 @@ const PAYLOAD: StatuslineAggregate = {
     docs_unlanded: 2,
   },
   repo: {
-    // The remote counters are the daemon's since ADR 0141 decision 2; the tool
-    // states their absence until #3568 reads them off the payload.
-    open_prs: null,
-    today_prs: null,
-    open_issues: null,
+    open_prs: 3,
+    today_prs: 5,
+    open_issues: 24,
     local_added: 40,
     local_removed: 7,
+  },
+  remote_counters: {
+    version: 1,
+    threshold_ms: 60_000,
+    projects: [{
+      project_label: "red-skills",
+      repository: "reddb-io/red-skills",
+      outcome: "counted",
+      counters: {
+        open_pull_requests: {
+          name: "open_pull_requests",
+          value: 3,
+          fetched_at: "2026-08-11T12:00:00.000Z",
+          age_ms: 5_000,
+          threshold_ms: 60_000,
+          stale: false,
+          reason: "counted by daemon",
+        },
+        open_issues: {
+          name: "open_issues",
+          value: 24,
+          fetched_at: "2026-08-11T12:00:00.000Z",
+          age_ms: 5_000,
+          threshold_ms: 60_000,
+          stale: false,
+          reason: "counted by daemon",
+        },
+        ready_queue: {
+          name: "ready_queue",
+          value: 6,
+          fetched_at: "2026-08-11T12:00:00.000Z",
+          age_ms: 5_000,
+          threshold_ms: 60_000,
+          stale: false,
+          reason: "counted by daemon",
+        },
+        human_queue: {
+          name: "human_queue",
+          value: 1,
+          fetched_at: "2026-08-11T12:00:00.000Z",
+          age_ms: 5_000,
+          threshold_ms: 60_000,
+          stale: false,
+          reason: "counted by daemon",
+        },
+      },
+    }],
+    reason: "daemon fixture",
+  },
+  repository_activity: {
+    fetched_at: "2026-08-11T12:00:00.000Z",
+    age_ms: 5_000,
+    stale: false,
+    projects: [{
+      project_label: "red-skills",
+      repository: "reddb-io/red-skills",
+      counts: { open_pull_requests: 3, open_issues: 24, recently_closed: 5 },
+    }],
+    reason: "daemon fixture",
   },
   docs: { unlanded: 2 },
   validation_gate: { occupied: 2, total: 3 },
@@ -139,7 +196,7 @@ const PAYLOAD: StatuslineAggregate = {
     effort: "high",
     sourceCounts: [{ origin: "afk", count: 2 }],
   },
-  queue: { ready_for_agent: null, ready_for_human: null },
+  queue: { ready_for_agent: 6, ready_for_human: 1 },
 };
 
 /**
