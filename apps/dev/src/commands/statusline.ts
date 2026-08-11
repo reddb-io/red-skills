@@ -15,10 +15,6 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-// From the COMMAND module, never the CLI: cli.ts ends in a self-invocation
-// guard that is always true inside a single-file bundle, so importing it ships
-// a second argv-reading CLI inside every dev binary (#3546, canary catch).
-import { runStatusline as runRedskilledStatusline } from "@reddb-io/redskilled/statusline-command";
 import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
@@ -44,6 +40,7 @@ import {
   type StatuslineLocalGit,
   type StatuslineLocalGitDeps,
 } from "../runtime/wire.js";
+import { collectStatuslineTail } from "../runtime/wire/statusline-lifecycle.js";
 import * as gitx from "../runtime/git.js";
 
 /** Read the entire stdin stream as a UTF-8 string (empty when there is none). */
@@ -316,8 +313,8 @@ export async function resolveStatuslineBedrock(
 
 /**
  * `statusline "<project-root>"` — resolve the root and opt-out, render the
- * bedrock, then append the shared redskilled render as the tail. Emits nothing
- * (and exits 0) only when the project opted out.
+ * bedrock, then append the lifecycle-governed Shared redskilled tail. Emits
+ * nothing (and exits 0) only when the project opted out.
  *
  * The bedrock renders FIRST and unconditionally (ADR 0141 §1): an unreachable
  * daemon costs the operator the tail, never the model, context, subscription
@@ -344,10 +341,11 @@ export async function statuslineCommand(
 
   if (!statuslineEnabled(root)) return 0;
 
-  // One local socket read, one shared renderer. The daemon document already
-  // carries the Worker rows, repository activity, quota posture, liveness and
-  // staleness; asking project collectors for any of those facts here would put
-  // tracker and CI clients back in the terminal-prompt path (#3546).
+  // One bounded local socket probe, one Shared renderer. The daemon document
+  // already carries the Worker rows, repository activity, quota posture,
+  // liveness and staleness; asking project collectors for any of those facts
+  // here would put tracker and CI clients back in the terminal-prompt path
+  // (#3546). The probe-only wire never auto-spawns redskilled.
   //
   // `--no-workers` belonged to the retired two-producer adapter. Once the daemon
   // line reached Worker-row parity (#3151), suppressing its rows would discard
@@ -357,15 +355,9 @@ export async function statuslineCommand(
   const bedrock = renderStatuslineBedrock(await resolveStatuslineBedrock(root, payload));
   // The tail is buffered rather than streamed so the bedrock can LEAD the header
   // line the daemon opens with — one line, two segments, in that order.
-  const tail: string[] = [];
-  const code = await runRedskilledStatusline(daemonArgs, {
-    cwd: root,
-    write: (line) => {
-      tail.push(line);
-    },
-  });
-  for (const line of composeStatuslineLines(bedrock, tail.join("").split("\n"))) {
+  const tail = await collectStatuslineTail(root, daemonArgs);
+  for (const line of composeStatuslineLines(bedrock, tail.lines)) {
     stdout.write(`${line}\n`);
   }
-  return code;
+  return 0;
 }
