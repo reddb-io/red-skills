@@ -5,7 +5,7 @@ import {
 } from "./mcp-server.js";
 
 /**
- * Frozen snapshot of the aggregated castle MCP tool surface.
+ * Frozen snapshot of the aggregated redskilled MCP tool surface.
  *
  * Domain modules may be split, merged, or reordered internally; this table is
  * the contract that the composed surface — order, names, titles, descriptions,
@@ -20,14 +20,14 @@ const SURFACE: ReadonlyArray<{
 }> = [
   {
     name: "help",
-    title: "Find the next castle action",
+    title: "Find the next redskilled action",
     description:
       "Read live daemon, registration, queue, Worker, and refusal state; return the pasteable next call and a generated intent map. Makes no GitHub request.",
     schema: [],
   },
   {
     name: "status",
-    title: "Read Castle status",
+    title: "Read redskilled status",
     description:
       "Answer the current worker, project, or host status through one intent-scoped read.",
     schema: ["scope", "worker", "live_only", "fields"],
@@ -77,7 +77,7 @@ const SURFACE: ReadonlyArray<{
   },
   {
     name: "logs",
-    title: "Read Castle logs",
+    title: "Read redskilled logs",
     description:
       "Return the newest CastleLaneRecord entries from one structured lane; bounded by `limit` (default 200, max 10 000). Pass `kind` to filter before the limit.",
     schema: ["lane", "id", "limit", "kind"],
@@ -91,9 +91,9 @@ const SURFACE: ReadonlyArray<{
   },
   {
     name: "history",
-    title: "Read Castle history",
+    title: "Read redskilled history",
     description:
-      "Return structured Castle history records, newest records last.",
+      "Return structured AFK history records, newest records last.",
     schema: ["limit"],
   },
   {
@@ -107,7 +107,7 @@ const SURFACE: ReadonlyArray<{
     name: "events_since",
     title: "Poll events since cursor",
     description:
-      "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+      "Return AFK history events and Worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
     schema: ["cursor"],
   },
   {
@@ -240,7 +240,7 @@ const SURFACE: ReadonlyArray<{
     name: "merge_arm",
     title: "Arm PR for the merge driver",
     description:
-      "MUTATING: hand one open PR to the castle merge driver — it owns the PR to a terminal state " +
+      "MUTATING: hand one open PR to the project merge driver — it owns the PR to a terminal state " +
       "(update-branch when BEHIND, merge-commit once green at head, bounded retries, " +
       "needs-medic/needs-human classification) without GitHub native auto-merge.",
     schema: ["pr"],
@@ -336,12 +336,12 @@ const SURFACE: ReadonlyArray<{
     name: "statusline_aggregate",
     title: "Read statusline aggregate",
     description:
-      "Return the castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
+      "Return the project-side statusline aggregate (project, repo counters, docs drift, drain, Worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
     schema: [],
   },
 ];
 
-describe("aggregated castle MCP tool surface", () => {
+describe("aggregated redskilled MCP tool surface", () => {
   const tools = createCastleMcpTools({} as CastleMcpDependencies);
 
   it("composes the frozen tool surface in order", () => {

@@ -157,7 +157,7 @@ export function createStatusTools(deps: StatusDependencies): CastleMcpTool[] {
   return [
     {
       name: "status",
-      title: "Read Castle status",
+      title: "Read redskilled status",
       description:
         "Answer the current worker, project, or host status through one intent-scoped read.",
       inputSchema: {

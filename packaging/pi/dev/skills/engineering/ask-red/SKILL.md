@@ -21,7 +21,7 @@ operandi. `/afk` boot owns the Docs Sweep, so stranded `.red/` glossary/ADR docs
 auto-land or halt before worker dispatch rather than becoming a separate route.
 
 **Ad-hoc work goes to `/go`.** Use `/go` only for a concrete one-off demand that
-does not already belong on the tracker. It still runs on the castle engine under
+does not already belong on the tracker. It still runs on the `red-castle` engine under
 the shared worker root, with `current.kind=go`; read-only investigations use
 `/go --scout` with `current.kind=scout`. If the work is already tracked, keep it
 in `/afk`; if it is parked, use `/retake` or `/hitl`.
@@ -39,7 +39,7 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   only reporting a bug for later, use `/report-bug`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
   Ticket only needs queue promotion, use `/retake`. A `quarantine` Ticket is
-  still owned by the castle curator; route it to `/hitl` only after the bounded
+  still owned by the Issue curator; route it to `/hitl` only after the bounded
   curator re-checks have changed it to `ready-for-human`.
 - **A manual implementation slice** -> `/implement`, using `/tdd` for the build
   loop and `/code-review` before handing the branch to `/retake`.
@@ -62,7 +62,7 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **"What is the Worker on issue N doing, or why did it never start?"** ->
   `/redskilled <n>` (or `/redskilled #<n>`). The numeric argument selects the
   same skill's read-only debug entry: it resolves the issue to its Worker(s)
-  through the castle MCP and the documented lane fallback, then writes a
+  through the redskilled MCP and the documented lane fallback, then writes a
   self-serve dossier — fiche, event sequence, log excerpts with full paths, and
   a diagnosis naming the operator's next commands — to
   `.red/tmp/diagnostics/redskilled-debug-<n>-<timestamp>.md`. A Worker the
@@ -74,9 +74,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   command warms that published dev bundle and re-points a standing registration
   in one operation; no separate plugin name, version lookup, or re-registration
   is required.
-- **Operating the castle itself** -> the `castle` MCP, not a shell command.
+- **Operating project execution** -> the `redskilled` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
-  from live host state; it is the sole runtime source of castle choreography
+  from live host state; it is the sole runtime source of execution choreography
   (ADR 0134). `/afk` and `/go` are clients of that canonical interface. The
   tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
@@ -146,7 +146,7 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 Capability references registered by owner:
-`castle` MCP (the canonical project interface; start with its situational
+`redskilled` MCP (the canonical project interface; start with its situational
 `help` tool, while `status {scope: worker | project | host}` provides scoped
 read-only diagnostics, and a visible project `birth_latch` routes through its
 structured `project_reset` repair) ->
@@ -227,8 +227,8 @@ through `/memory:view`, `memory docs reference-graph`, and
    the Release standard interview and the confirmed top-level `release.*` block;
    runtime release behavior belongs to the release engine, not the router.
 - Execution-daemon operation is a host route, not a feature-work one:
-  diagnose through the castle MCP's read-only `status {scope: host}` first; no
-  castle tool provisions or reclaims the host.
+  diagnose through the redskilled MCP's read-only `status {scope: host}` first; no
+  redskilled tool provisions or reclaims the host.
   `/redskilled` owns provisioning, host policy, status, and lifecycle;
   `/red-doctor` (check 24) reports whether the host is provisioned. The daemon's
   home `~/.red/redskilled/` and host policy file `~/.red/config.yaml` belong to
@@ -251,7 +251,7 @@ through `/memory:view`, `memory docs reference-graph`, and
   Accepted proposals accumulate behind one full-text/diff preview and one
   destructive-batch confirmation; all eleven ADR operations remain available.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
-  `runner_detect` on the `castle` MCP answer which backend a host resolves to.
+  `runner_detect` on the `redskilled` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
 - `/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`, and

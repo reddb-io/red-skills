@@ -12,7 +12,7 @@ import type {
 } from "@reddb-io/red-castle/engine";
 
 /** The single subscribable resource that streams castle lane events. */
-export const LANE_EVENTS_RESOURCE_URI = "castle://lanes/events";
+export const LANE_EVENTS_RESOURCE_URI = "redskilled://lanes/events";
 
 /**
  * The subset of the low-level MCP `Server` this wiring drives. Passing the real
@@ -52,7 +52,7 @@ function toon(value: unknown): string {
 }
 
 /**
- * Expose castle lane events as an MCP subscription surface. A client subscribes
+ * Expose AFK lane events as an MCP subscription surface. A client subscribes
  * to {@link LANE_EVENTS_RESOURCE_URI}; each lane append the follower observes
  * buffers the record, notifies the client with `resources/updated`, and the
  * client re-reads the resource to drain the byte-compatible records. No new
@@ -83,9 +83,9 @@ export function registerLaneEventSubscription(
     resources: [
       {
         uri: LANE_EVENTS_RESOURCE_URI,
-        name: "Castle lane events",
+        name: "Redskilled lane events",
         description:
-          "Subscribe to receive castle lane records (worker landings, deaths, " +
+          "Subscribe to receive AFK lane records (Worker landings, deaths, " +
           "lost claims, supervisor halts) appended after subscription. Payloads " +
           "are byte-compatible with the `logs` tool's CastleLaneRecord shape.",
         mimeType: "application/toon",

@@ -123,14 +123,14 @@ describe("auditCastleStateLane", () => {
         path: ".red/state/afk",
         kind: "legacy-afk-residue",
         verdict: "warn",
-        reason: "legacy .red/state/afk contains state alongside the live castle state lane",
+        reason: "legacy .red/state/afk contains state alongside the live red-castle state lane",
         canonicalFix: "run the dev durable path migration entrypoint during boot (`red-path-migration`)",
         fixGate: "delegate",
       },
     ]);
   });
 
-  it("rejects live supervisor artifacts in the durable castle state lane", async () => {
+  it("rejects live supervisor artifacts in the durable red-castle state lane", async () => {
     const root = await repo();
     const castle = join(root, ".red", "state", "castle");
     await mkdir(castle, { recursive: true });

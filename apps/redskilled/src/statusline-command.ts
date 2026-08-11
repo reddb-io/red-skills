@@ -6,7 +6,7 @@
  * module shares the bundle's own `import.meta.url`, which is exactly
  * `process.argv[1]`. A consumer that imported `runStatusline` from the CLI
  * therefore shipped a second, argv-reading CLI inside its own binary — the
- * castle-mcp canary caught it as a host-state document splashed across a stdout
+ * redskilled-mcp canary caught it as a host-state document splashed across a stdout
  * that must carry one TOON report (#3546). A command another package may import
  * lives in a module that runs nothing on import.
  *

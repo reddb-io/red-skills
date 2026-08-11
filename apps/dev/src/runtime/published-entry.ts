@@ -81,17 +81,17 @@ const DEV_BUNDLE = "dev.bundle.min.mjs";
 
 /**
  * Resolve the dev CLI bundle path from argv[1]. In MCP context argv[1] is the
- * castle-mcp bundle, which routes no worker subcommand; the sibling dev bundle
+ * redskilled-mcp bundle, which routes no worker subcommand; the sibling dev bundle
  * does. Falls back to argv1 unchanged so the CLI path (argv[1] already
  * is the dev bundle or a shim) is unaffected.
  */
 export function resolveDevScriptPath(argv1: string): string {
   const file = basename(argv1);
-  if (file === "castle-mcp.bundle.min.mjs") {
+  if (file === "redskilled-mcp.bundle.min.mjs") {
     return join(dirname(argv1), DEV_BUNDLE);
   }
-  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(argv1), file.replace(/^castle-mcp-/, "dev-"));
+  if (file.startsWith("redskilled-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(argv1), file.replace(/^redskilled-mcp-/, "dev-"));
   }
   return argv1;
 }

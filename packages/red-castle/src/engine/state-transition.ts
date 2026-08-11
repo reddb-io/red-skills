@@ -11,7 +11,7 @@
 // apply step performs the whole mutation as ONE tracker call.
 //
 // The engine owns no label spellings. Every caller injects its
-// {@link StateTransitionLabels} vocabulary — the castle resident wires
+// {@link StateTransitionLabels} vocabulary — the redskilled MCP resident wires
 // `readEngineLabelVocabulary()`, the red-skills host wires its own
 // `triage-labels.ts` constants through the `core/state-transition.ts` shim.
 

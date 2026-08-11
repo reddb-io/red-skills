@@ -164,7 +164,7 @@ Script content for each signal type (all open with `#!/usr/bin/env bash` + `set 
 
 **Run this before the recap, every pass: enabling a plugin is not loading it.** A host CLI registers MCP servers **at plugin load**, so a plugin installed or updated in THIS session has its `.mcp.json` written and its server processes never started — every file valid on disk, zero tools in the session (#3062).
 
-1. **Ask the session, not the disk.** For each plugin just enabled, look for the MCP tools it declares in `plugins/<name>/.mcp.json` (`dev` declares `navigator`, `castle`, `rsp`). Hosts prefix them, so the identifiers to look for are `mcp__<slug>__<tool>` (for example `mcp__plugin_dev_castle__project_status`). Resolve them with a tool search; do not infer presence from the manifest you just read.
+1. **Ask the session, not the disk.** For each plugin just enabled, look for the MCP tools it declares in `plugins/<name>/.mcp.json` (`dev` declares `navigator`, `redskilled`, `rsp`). Hosts prefix them, so the identifiers to look for are `mcp__<slug>__<tool>` (for example `mcp__plugin_dev_redskilled__project_status`). Resolve them with a tool search; do not infer presence from the manifest you just read.
 2. **Report one of two verdicts, never a bare success.**
     - **`installed and loaded`** — the session sees at least one tool from every enabled plugin's declared servers. Say so and continue to the recap.
     - **`installed, reload needed`** — the session sees none of a plugin's declared MCP tools. Say that verbatim and name the cure: **run `/reload-plugins`, or start a new session**. Name which plugin, and which servers are missing.

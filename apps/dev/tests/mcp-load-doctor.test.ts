@@ -9,7 +9,7 @@ import {
   type McpLoadFacts,
 } from "../src/core/mcp-load-doctor.js";
 
-const DEV_SERVERS = ["navigator", "castle", "rsp"] as const;
+const DEV_SERVERS = ["navigator", "redskilled", "rsp"] as const;
 
 function facts(overrides: Partial<McpLoadFacts> = {}): McpLoadFacts {
   return {
@@ -23,18 +23,18 @@ function facts(overrides: Partial<McpLoadFacts> = {}): McpLoadFacts {
 
 describe("sessionServerSlug", () => {
   it("reads the server out of a host-prefixed tool name", () => {
-    expect(sessionServerSlug("mcp__plugin_dev_castle__project_status")).toBe("plugin_dev_castle");
+    expect(sessionServerSlug("mcp__plugin_dev_redskilled__project_status")).toBe("plugin_dev_redskilled");
     expect(sessionServerSlug("mcp__plugin_dev_navigator")).toBe("plugin_dev_navigator");
   });
 
   it("leaves a bare server name alone", () => {
-    expect(sessionServerSlug("  castle ")).toBe("castle");
+    expect(sessionServerSlug("  redskilled ")).toBe("redskilled");
   });
 });
 
 describe("parseSessionMcpServers", () => {
   it("reads a comma- or space-separated list", () => {
-    expect(parseSessionMcpServers("castle, navigator rsp")).toEqual(["castle", "navigator", "rsp"]);
+    expect(parseSessionMcpServers("redskilled, navigator rsp")).toEqual(["redskilled", "navigator", "rsp"]);
   });
 
   // The whole point of the check is an operator who can say "I see NONE", and
@@ -57,7 +57,7 @@ describe("auditMcpLoad", () => {
     const report = auditMcpLoad([
       facts({
         sessionServers: [
-          "mcp__plugin_dev_castle__project_status",
+          "mcp__plugin_dev_redskilled__project_status",
           "mcp__plugin_dev_navigator__hover",
           "mcp__plugin_dev_rsp__rsp_status",
         ],
@@ -65,7 +65,7 @@ describe("auditMcpLoad", () => {
     ]);
 
     expect(report.findings).toEqual([]);
-    expect(report.rows[0]?.loaded).toEqual(["navigator", "castle", "rsp"]);
+    expect(report.rows[0]?.loaded).toEqual(["navigator", "redskilled", "rsp"]);
   });
 
   // The observed incident: the plugin was installed mid-session, so the
@@ -78,7 +78,7 @@ describe("auditMcpLoad", () => {
     const [finding] = report.findings;
     expect(finding?.kind).toBe("declared-unloaded");
     expect(finding?.verdict).toBe("error");
-    expect(finding?.missing).toEqual(["navigator", "castle", "rsp"]);
+    expect(finding?.missing).toEqual(["navigator", "redskilled", "rsp"]);
     expect(finding?.remediation).toBe(MCP_RELOAD_CURE);
     expect(finding?.remediation).toContain("/reload-plugins");
     expect(finding?.remediation).toContain("restart the session");
@@ -86,7 +86,7 @@ describe("auditMcpLoad", () => {
   });
 
   it("warns rather than reds when only some declared servers loaded", () => {
-    const report = auditMcpLoad([facts({ sessionServers: ["castle"] })]);
+    const report = auditMcpLoad([facts({ sessionServers: ["redskilled"] })]);
 
     expect(report.findings).toHaveLength(1);
     expect(report.findings[0]).toMatchObject({

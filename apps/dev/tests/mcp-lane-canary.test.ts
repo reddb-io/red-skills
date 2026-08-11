@@ -444,7 +444,7 @@ describe("MCP lane canary — the daemon drives (#2907, #2908)", () => {
 });
 
 describe("MCP lane canary — the other inert steps", () => {
-  it("fails at connect when the server is not the castle tool surface", async () => {
+  it("fails at connect when the server is not the redskilled tool surface", async () => {
     const { deps } = harness({ tools: ["queue_status"] });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
@@ -547,21 +547,21 @@ describe("MCP lane canary — the other inert steps", () => {
 describe("MCP lane canary target resolution", () => {
   // The canary is worthless against a source tree — it must launch the SHIPPED
   // bundle, which is the artifact #2677 lived in.
-  it("canaries the running castle-mcp bundle itself", () => {
-    expect(resolveShippedMcpEntry("/opt/red/dist/castle-mcp.bundle.min.mjs")).toBe(
-      "/opt/red/dist/castle-mcp.bundle.min.mjs",
+  it("canaries the running redskilled-mcp bundle itself", () => {
+    expect(resolveShippedMcpEntry("/opt/red/dist/redskilled-mcp.bundle.min.mjs")).toBe(
+      "/opt/red/dist/redskilled-mcp.bundle.min.mjs",
     );
-    expect(resolveShippedMcpEntry("/opt/red/dist/castle-mcp-2.90.0.bundle.min.mjs")).toBe(
-      "/opt/red/dist/castle-mcp-2.90.0.bundle.min.mjs",
+    expect(resolveShippedMcpEntry("/opt/red/dist/redskilled-mcp-2.90.0.bundle.min.mjs")).toBe(
+      "/opt/red/dist/redskilled-mcp-2.90.0.bundle.min.mjs",
     );
   });
 
-  it("resolves the castle-mcp sibling when invoked from a dev bundle", () => {
+  it("resolves the redskilled-mcp sibling when invoked from a dev bundle", () => {
     expect(resolveShippedMcpEntry("/opt/red/dist/dev.bundle.min.mjs")).toBe(
-      "/opt/red/dist/castle-mcp.bundle.min.mjs",
+      "/opt/red/dist/redskilled-mcp.bundle.min.mjs",
     );
     expect(resolveShippedMcpEntry("/opt/red/dist/dev-2.90.0.bundle.min.mjs")).toBe(
-      "/opt/red/dist/castle-mcp-2.90.0.bundle.min.mjs",
+      "/opt/red/dist/redskilled-mcp-2.90.0.bundle.min.mjs",
     );
   });
 

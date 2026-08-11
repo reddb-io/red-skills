@@ -17,7 +17,7 @@ export function createMergeTools(deps: MergeDependencies): CastleMcpTool[] {
       name: "merge_arm",
       title: "Arm PR for the merge driver",
       description:
-        "MUTATING: hand one open PR to the castle merge driver — it owns the PR to a terminal state " +
+        "MUTATING: hand one open PR to the project merge driver — it owns the PR to a terminal state " +
         "(update-branch when BEHIND, merge-commit once green at head, bounded retries, " +
         "needs-medic/needs-human classification) without GitHub native auto-merge.",
       inputSchema: { pr: z.number().int().positive() },

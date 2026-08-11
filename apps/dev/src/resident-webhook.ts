@@ -67,7 +67,7 @@ export function createResidentWebhook(
   const notice =
     options.notice ??
     ((message: string) =>
-      process.stderr.write(`castle resident: ${message}\n`));
+      process.stderr.write(`redskilled MCP resident: ${message}\n`));
   const abort = new AbortController();
   let forwarder: ResidentWebhookForwarder | undefined;
   let ownsLease = false;

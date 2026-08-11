@@ -4,7 +4,7 @@ This file serves the `afk monitor` branch: the readonly aggregated dashboard
 across all live workers, the native-task mirror and its self-cancel teardown, and
 the Codex monitor agent. Reached from *When To Use* (`/afk monitor`).
 
-## Observability reads come from the `castle` MCP
+## Observability reads come from the `redskilled` MCP
 
 **Every observability verb is a read tool — free to call, and never a reason to
 touch a mutating one.** The tools return structured TOON; the bundle's `monitor`
@@ -33,7 +33,7 @@ non-empty `held_for_summon` bucket is still zero drainable work; release it with
 
 ## Dashboard
 
-`/afk monitor` is the readonly aggregated view across all live workers. **Call the castle `status` tool with `scope: worker` for the data — do not reinvent the rendering in inline bash.** The bundle's `monitor` command renders the same truth for a human terminal and is the no-MCP fallback. Either way it:
+`/afk monitor` is the readonly aggregated view across all live workers. **Call the redskilled `status` tool with `scope: worker` for the data — do not reinvent the rendering in inline bash.** The bundle's `monitor` command renders the same truth for a human terminal and is the no-MCP fallback. Either way it:
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
 2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field), paired with `pid_start_time` when the platform exposes a stable process-start token. Attempts whose PID identity is dead or mismatched are flagged `stale`/`gone`; PID-live but agent-lane-quiet workers render `[quiet]` and are still counted as running.
@@ -41,7 +41,7 @@ non-empty `held_for_summon` bucket is still zero drainable work; release it with
 4. Renders WorkerVitals activity counters (`tools:<n> reason:<n> text:<n> wait:<n>`) so a quiet but pid-live worker can show useful progress signals.
 5. Renders the 48h sparkline header (next subsection) on every refresh.
 
-The **no-MCP fallback** renders the same dashboard from the project root — for a headless cron or a host that never loaded the `castle` server:
+The **no-MCP fallback** renders the same dashboard from the project root — for a headless cron or a host that never loaded the `redskilled` server:
 
 ```bash
 RED_AFK_RUNNER=<runner> npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor
@@ -126,7 +126,7 @@ The mirror is a pure diff: it reconciles the live worker state files against the
 
 1. Fetch `TaskCreate`, `TaskUpdate`, and `TaskList` via `ToolSearch` if not already loaded (deferred tools).
 2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `w<id> [<…>] #<n> <slug>`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>","phase":"<last phase>"}`, reading the key (`worker_id` from the leading token, `issue` from the `#<n>`) and the **phase** (the word inside the title's `[…]` bracket, after any `n/5 `) from the title, and the **stage** from the description (`stage: <x>`). Keep a key→task_id map for step 4.
-3. **Compute the plan.** The mirror reconciler is host-plumbing, not castle truth, so it has **no castle tool** — this is a standing no-MCP fallback, not a lapse. Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
+3. **Compute the plan.** The mirror reconciler is host plumbing rather than execution truth, so it has **no redskilled tool** — this is a standing no-MCP fallback, not a lapse. Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
    ```bash
    printf '%s\n' "$tracked" | red-skills-dev monitor --mirror-plan
    ```
@@ -168,7 +168,7 @@ supervisor under Codex:
 1. Fetch a sub-agent spawn primitive via `ToolSearch` (query:
    `spawn agent background monitor`).
 2. If unavailable, continue the worker launch and print:
-   `monitor loop unavailable in this runner; call castle status with scope: worker; no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/worker.log.toonl manually.`
+   `monitor loop unavailable in this runner; call redskilled status with scope: worker; no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/worker.log.toonl manually.`
 3. If available, emit the canonical prompt from the bundle (use `--mode run` for a
    single worker, `--mode fleet` for a supervisor, so the read-only rules stay
    identical across launches):
@@ -176,12 +176,12 @@ supervisor under Codex:
    RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
-   presentation consumer only: it periodically reads castle `status` with
+   presentation consumer only: it periodically reads redskilled `status` with
    `scope: worker`, reports concise progress in the Codex
    UI, and exits once no supervisor or live workers remain. Its prompt carries
    the `/dev:afk monitor --once` CLI form as the no-MCP fallback.
 4. Tell the user one line:
-   `Codex monitor agent spawned — auto-closes when AFK exits; manual monitor: castle status with scope: worker, or /dev:afk monitor without the MCP.`
+   `Codex monitor agent spawned — auto-closes when AFK exits; manual monitor: redskilled status with scope: worker, or /dev:afk monitor without the MCP.`
 
 Hard boundaries for the monitor agent are non-negotiable: it must never edit
 files, claim issues, change labels, comment, stop workers, run validation, push,

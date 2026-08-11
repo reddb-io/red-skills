@@ -83,7 +83,7 @@ exist, and on such a repo every one of them missed:
    *agent* closes the blocker. A human closing it in the GitHub UI runs no local
    code; the webhook delivery lands in the singleton lane, where only `rsp wait`
    reads it;
-2. **the boot-time Unblock Sweep** *is* awake — the castle resident's janitor
+2. **the boot-time Unblock Sweep** *is* awake — the project MCP resident's janitor
    runs the whole suite every five minutes — but it is **step 7** of a suite that
    routinely aborts before reaching it: a failing precheck returns after step 1,
    a red operational probe throws `BootHaltError` at step 1a, and the *Docs

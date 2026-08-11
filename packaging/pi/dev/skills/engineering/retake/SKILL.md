@@ -17,7 +17,7 @@ the label claims `ready-for-human`, but the truth is in the worktree.
 
 ## 1. Diagnose — Reconstruct The State
 
-**Drive the `castle` MCP; the CLI is the fallback transport.** The diagnosis is
+**Drive the `redskilled` MCP; the CLI is the fallback transport.** The diagnosis is
 the `retake` tool — `{issue, repo?, prLimit?}` — which returns the full
 reconstruction (tracker state, PRs, branches, worktrees, recommendation) as a
 structured value. The tool surface, host tool-name prefix rule, and mutation

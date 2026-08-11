@@ -51,7 +51,7 @@ const HOST_MANIFESTS = [
  * below — the npx/node stubs in the sandbox PATH make them return immediately —
  * but their exit code carries no signal, only the absence of a syntax error.
  */
-const SERVER_LAUNCHERS = new Set(["plugins/dev/hooks/castle-mcp.sh", "plugins/dev/hooks/code-nav-mcp.sh"]);
+const SERVER_LAUNCHERS = new Set(["plugins/dev/hooks/redskilled-mcp.sh", "plugins/dev/hooks/code-nav-mcp.sh"]);
 
 /** `scripts/lib/*` files are `source`d by a bash parent, never executed on their own. */
 function isSourcedLibrary(rel: string): boolean {
@@ -189,6 +189,19 @@ describe("shipped hooks run under bash, wrappers stay POSIX", () => {
   it("parses every shipped hook under bash", () => {
     const offenders = HOOKS.filter((rel) => spawnSync("bash", ["-n", join(ROOT, rel)]).status !== 0);
     expect(offenders).toEqual([]);
+  });
+
+  it("launches the redskilled MCP through the same version-pinned npx lane on every host", () => {
+    const launcher = readFileSync(
+      join(ROOT, "plugins/dev/hooks/redskilled-mcp.sh"),
+      "utf8",
+    );
+
+    expect(launcher).toContain(
+      'npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp',
+    );
+    expect(launcher).not.toMatch(/\b(?:curl|wget)\b|api\.github\.com|gh\s+release/);
+    expect(launcher).toContain("Source-checkout fallback only");
   });
 
   it("never hands a shipped hook to `sh` at an invocation site", () => {

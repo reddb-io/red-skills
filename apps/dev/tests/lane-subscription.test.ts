@@ -70,6 +70,7 @@ describe("lane event MCP subscription", () => {
     expect(list.resources.map((r) => r.uri)).toContain(
       LANE_EVENTS_RESOURCE_URI,
     );
+    expect(LANE_EVENTS_RESOURCE_URI).toBe("redskilled://lanes/events");
     handle.stop();
   });
 

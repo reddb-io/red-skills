@@ -1,4 +1,4 @@
-// `castle-mcp __mcp-canary` — run the MCP lane canary against a bundle.
+// `red-skills-redskilled-mcp __mcp-canary` — run the MCP lane canary against a bundle.
 //
 // Internal by design (the `__` prefix): this is a probe CI and operators fire
 // deliberately, not a queue surface. It really REGISTERS this project through
@@ -6,7 +6,7 @@
 // that round trip against a live daemon is the only thing that proves the lane
 // is not inert (#2677, #2902, ADR 0128 §7).
 //
-// It is routed from the castle-mcp entry rather than the dev CLI: the canary
+// It is routed from the redskilled-mcp entry rather than the dev CLI: the canary
 // needs the MCP CLIENT SDK, whose bundled ajv leaves bare `require()` calls
 // that the dev bundle contract forbids.
 
@@ -38,14 +38,14 @@ export interface ParsedMcpLaneCanaryArgs {
   demandDeadlineMs: number;
 }
 
-const USAGE = `Usage: castle-mcp __mcp-canary [options]
+const USAGE = `Usage: red-skills-redskilled-mcp __mcp-canary [options]
 
 Drives the shipped MCP lane end to end — project_start -> a registration the
 daemon holds -> no process of the project's own -> one poll covering it -> a
 Worker the daemon birthed -> status {scope: project} -> project_stop — and fails loudly
 naming the step that went inert.
 
-  --entry <path>              MCP bundle entry (default: the castle-mcp bundle
+  --entry <path>              MCP bundle entry (default: the redskilled-mcp bundle
                               beside this process's own entry)
   --root <dir>                repo the canary starts its worker in (default: cwd)
   --runner <runner>           runner for the canary worker (default: claude)

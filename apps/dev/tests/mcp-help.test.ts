@@ -87,7 +87,7 @@ function heldRegistration(root: string) {
   };
 }
 
-describe("castle MCP help", () => {
+describe("redskilled MCP help", () => {
   it("narrates declared and skipped Validation moments in help and project status", async () => {
     const root = await scratch();
     await mkdir(join(root, ".red"), { recursive: true });

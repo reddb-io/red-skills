@@ -27,19 +27,22 @@ if [ -n "$plugin_json" ]; then
 fi
 
 if [ -n "$ver" ]; then
-  npx -y -p "@reddb-io/red-skills@$ver" red-skills-castle-mcp
+  npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp
   status=$?
   if [ "$status" -eq 0 ]; then
     exit 0
   fi
-  printf 'castle: npm package launcher failed for %s (exit %s); trying local dist fallback\n' "$ver" "$status" >&2
+  printf 'redskilled: npm package launcher failed for %s (exit %s); trying local dist fallback\n' "$ver" "$status" >&2
 fi
 
-for repo in "$root/../.." "$PWD"; do
-  if [ -f "$repo/dist/castle-mcp.bundle.min.mjs" ]; then
-    exec node "$repo/dist/castle-mcp.bundle.min.mjs"
-  fi
-done
+# Source-checkout fallback only. Installed Codex and Claude plugins both take
+# the version-pinned npx path above; neither host owns a binary download lane.
+repo="$PWD"
+if [ -f "$repo/pnpm-workspace.yaml" ] && \
+   [ -f "$repo/apps/dev/package.json" ] && \
+   [ -f "$repo/dist/redskilled-mcp.bundle.min.mjs" ]; then
+  exec node "$repo/dist/redskilled-mcp.bundle.min.mjs"
+fi
 
-printf 'castle: could not locate castle-mcp.bundle.min.mjs\n' >&2
+printf 'redskilled: could not locate redskilled-mcp.bundle.min.mjs\n' >&2
 exit 1

@@ -168,7 +168,7 @@ Three properties follow, and they are the ones worth trusting:
 
 ### The MCP is the interface
 
-The `castle` MCP server is the canonical **complete** interface to every
+The `redskilled` MCP server is the canonical **complete** interface to every
 execution capability — project registration and status, worker dispatch, runner
 steering, the gate, landing and cascade, claims, the worktree pool, hygiene,
 observability, and the queue ([ADR 0120](./.red/adr/0120-red-castle-is-the-afk-mcp.md),
@@ -280,7 +280,7 @@ Maintainer-only plugin:
 
 `dev` owns the engineering workflow: issue pipeline, autonomous execution,
 interactive landing, process visibility, setup/adoption checks, codebase
-orientation, and three MCP servers — [`castle`](./plugins/dev/skills/engineering/afk/MCP.md),
+orientation, and three MCP servers — [`redskilled`](./plugins/dev/skills/engineering/afk/MCP.md),
 [`navigator`](./apps/code-nav/README.md), and [`rsp`](./apps/rsp/README.md).
 
 Core responsibilities:
@@ -893,11 +893,12 @@ House rules:
 Installed plugin trees are definitions and launchers. Runtime bundles are built
 from `apps/*` and shipped inside the [`@reddb-io/red-skills`](./packaging/npm)
 npm package (ADR 0091) — one tarball carrying the `dev`, `memory`, `brain`,
-`redskilled`, `code-nav`, `castle-mcp`, and `rsp` bundles plus their bin shims
+`redskilled`, `code-nav`, `redskilled-mcp`, and `rsp` bundles plus their bin shims
 (`red-skills-dev`, `red-skills-memory`, `red-skills-brain`,
-`red-skills-redskilled`, `red-skills-castle-mcp`, `red-skills-code-nav`, `rsp`).
-Session-start launchers resolve the version-pinned package via npm, cache-first,
-and integrity is npm's own tarball shasum — no GitHub-release download and no
+`red-skills-redskilled`, `red-skills-redskilled-mcp`, `red-skills-code-nav`, `rsp`).
+Session-start launchers resolve the version-pinned package through the same
+`npx` command on Codex and Claude; neither host owns a binary-download path.
+Integrity is npm's own tarball shasum — no GitHub-release download and no
 client-side signature step. The canonical dispatch form is
 `npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>`; a bare
 shim invocation resolves against whatever else is installed. The Memory/Brain
@@ -917,7 +918,7 @@ This is a map, not a replacement for the skill files. Open the linked
 | Dev knowledge, productivity, and utilities | [`research`](./plugins/dev/skills/knowledge/research/SKILL.md), [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md), [`wait-what`](./plugins/dev/skills/productivity/wait-what/SKILL.md), [`to-questionnaire`](./plugins/dev/skills/productivity/to-questionnaire/SKILL.md), [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md), [`writing-for-agents`](./plugins/dev/skills/productivity/writing-for-agents/SKILL.md), [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md), [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md), [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md), [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) |
 | Memory | [`init`](./plugins/memory/skills/core/init/SKILL.md), [`store`](./plugins/memory/skills/core/store/SKILL.md), [`recall`](./plugins/memory/skills/core/recall/SKILL.md), [`ingest`](./plugins/memory/skills/core/ingest/SKILL.md), [`extract`](./plugins/memory/skills/core/extract/SKILL.md), [`context-status`](./plugins/memory/skills/core/context-status/SKILL.md), [`skills-status`](./plugins/memory/skills/core/skills-status/SKILL.md), [`health`](./plugins/memory/skills/core/health/SKILL.md), [`improve-skills`](./plugins/memory/skills/core/improve-skills/SKILL.md), [`doctor`](./plugins/memory/skills/core/doctor/SKILL.md), [`export`](./plugins/memory/skills/core/export/SKILL.md), [`view`](./plugins/memory/skills/core/view/SKILL.md), [`wiki-init`](./plugins/memory/skills/core/wiki-init/SKILL.md), [`wiki`](./plugins/memory/skills/core/wiki/SKILL.md) |
 | Brain | [`capture`](./plugins/brain/skills/core/capture/SKILL.md), [`search`](./plugins/brain/skills/core/search/SKILL.md), [`think`](./plugins/brain/skills/core/think/SKILL.md), [`status`](./plugins/brain/skills/core/status/SKILL.md), [`view`](./plugins/brain/skills/core/view/SKILL.md) |
-| MCP servers | [`castle`](./plugins/dev/skills/engineering/afk/MCP.md), [`navigator`](./apps/code-nav/README.md), [`rsp`](./apps/rsp/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
+| MCP servers | [`redskilled`](./plugins/dev/skills/engineering/afk/MCP.md), [`navigator`](./apps/code-nav/README.md), [`rsp`](./apps/rsp/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
 
 ## Development In This Repo
 

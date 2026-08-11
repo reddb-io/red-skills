@@ -129,7 +129,7 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
     );
 
     expect(answers.get("red-skills-dev")).toEqual(["apps/dev/src/cli.ts"]);
-    expect(answers.get("red-skills-castle-mcp")).toEqual(["apps/dev/src/mcp-server.ts"]);
+    expect(answers.get("red-skills-redskilled-mcp")).toEqual(["apps/dev/src/mcp-server.ts"]);
     expect(answers.get("memory-mcp")).toEqual(["apps/memory/src/mcp-server/runtime.ts"]);
   });
 });
@@ -345,7 +345,7 @@ describe("a binary whose --help needs a working machine fails (#2918)", () => {
   });
 
   it("does not accept usage that only a lazily-loaded subcommand module holds", () => {
-    // castle-mcp's shape: a `__canary` module answered `--help` for itself while
+    // redskilled-mcp's shape: a `__canary` module answered `--help` for itself while
     // the entry answered the operator with "unroutable subcommand".
     const files = tree({
       "apps/demo/src/cli.ts": `

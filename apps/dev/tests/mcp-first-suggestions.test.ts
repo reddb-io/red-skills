@@ -6,7 +6,7 @@ import { renderCodexMonitorAgentPrompt } from "../src/core/codex-monitor-agent.j
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
 /**
- * ADR 0120/0123: the castle MCP is the canonical interface, so every
+ * ADR 0120/0123: the redskilled MCP is the canonical interface, so every
  * agent-facing suggestion names the MCP tool first. A `red-skills-dev` CLI
  * invocation survives only when the surrounding text labels it, verbatim, as
  * the `no-MCP fallback` — an exact phrase so the label has to be deliberate.
@@ -53,7 +53,7 @@ describe("MCP-first suggestion compliance", () => {
     }
   });
 
-  it("names castle MCP tools verbatim wherever the monitor CLI still appears", async () => {
+  it("names redskilled MCP tools verbatim wherever the monitor CLI still appears", async () => {
     const mcpDoc = await readRepoFile("plugins/dev/skills/engineering/afk/MCP.md");
     const toolNames = Array.from(
       mcpDoc.matchAll(/^\| `([a-z][a-z_]*)` \| (?:read|mutating) \|/gm),
@@ -65,16 +65,16 @@ describe("MCP-first suggestion compliance", () => {
       const text = await readRepoFile(path);
       if (!text.includes("red-skills-dev monitor")) continue;
       const named = toolNames.filter((tool) => text.includes(`\`${tool}\``));
-      expect(named, `${path} should name a castle tool from MCP.md verbatim`).not.toEqual([]);
+      expect(named, `${path} should name a redskilled tool from MCP.md verbatim`).not.toEqual([]);
     }
   });
 
   it("makes the Codex monitor agent poll scoped castle status first", () => {
     const prompt = renderCodexMonitorAgentPrompt({ projectRoot: "/repo", mode: "fleet" });
 
-    expect(prompt).toContain("castle `status` tool");
+    expect(prompt).toContain("redskilled `status` tool");
     expect(prompt).toContain("scope: worker");
-    expect(prompt.indexOf("castle `status` tool")).toBeLessThan(
+    expect(prompt.indexOf("redskilled `status` tool")).toBeLessThan(
       prompt.indexOf("red-skills-dev monitor --once"),
     );
     expect(prompt).toContain(NO_MCP_LABEL);

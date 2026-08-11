@@ -3,12 +3,12 @@ import { resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { createCastleMcpServer } from "../src/mcp-server.js";
+import { createRedskilledMcpServer } from "../src/mcp-server.js";
 
 const THIN_PROMPT_MAX_CHARS = 160;
 const PROMPT_NAMES = ["drain", "diagnose", "configure", "stop"];
 
-describe("castle MCP intent prompts", () => {
+describe("redskilled MCP intent prompts", () => {
   const close: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
@@ -16,8 +16,8 @@ describe("castle MCP intent prompts", () => {
   });
 
   it("lists four thin doors that delegate only to help", async () => {
-    const server = createCastleMcpServer();
-    const client = new Client({ name: "castle-prompt-test", version: "1" });
+    const server = createRedskilledMcpServer();
+    const client = new Client({ name: "redskilled-prompt-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -49,7 +49,7 @@ describe("castle MCP intent prompts", () => {
   });
 
   it.each([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"])(
-    "projects the castle prompts through the %s host manifest",
+    "projects the redskilled prompts through the %s host manifest",
     async (manifestPath) => {
       const pluginRoot = resolve(import.meta.dirname, "../../../plugins/dev");
       const manifest = JSON.parse(
@@ -60,12 +60,13 @@ describe("castle MCP intent prompts", () => {
       ) as { mcpServers?: Record<string, unknown> };
 
       expect(manifest.mcpServers).toBe("./.mcp.json");
-      expect(mcp.mcpServers).toHaveProperty("castle");
-      expect(PROMPT_NAMES.map((name) => `castle:${name}`)).toEqual([
-        "castle:drain",
-        "castle:diagnose",
-        "castle:configure",
-        "castle:stop",
+      expect(mcp.mcpServers).toHaveProperty("redskilled");
+      expect(mcp.mcpServers).not.toHaveProperty("castle");
+      expect(PROMPT_NAMES.map((name) => `redskilled:${name}`)).toEqual([
+        "redskilled:drain",
+        "redskilled:diagnose",
+        "redskilled:configure",
+        "redskilled:stop",
       ]);
     },
   );

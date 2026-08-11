@@ -345,7 +345,7 @@ export async function runMcpLaneCanary(
     }
     const missing = MCP_LANE_CANARY_REQUIRED_TOOLS.filter((tool) => !tools.includes(tool));
     if (missing.length > 0) {
-      inert("connect", `the MCP server exposes no ${missing.join(", ")} tool — the lane is not the castle surface`);
+      inert("connect", `the MCP server exposes no ${missing.join(", ")} tool — the lane is not the redskilled surface`);
     }
     record("connect", "ok", `tools/list served ${tools.length} tools including ${MCP_LANE_CANARY_REQUIRED_TOOLS.join(", ")}`);
 

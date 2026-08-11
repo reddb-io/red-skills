@@ -63,7 +63,7 @@ export const publishedVersionObservationSchema = z.object({
 
 export type PublishedVersionObservationOutput = z.infer<typeof publishedVersionObservationSchema>;
 
-/** A callable castle cure rendered from the same source as refusal prose. */
+/** A callable redskilled cure rendered from the same source as refusal prose. */
 export const repairActionSchema = z.object({
   tool: z.string().min(1),
   args: z.record(z.string(), z.unknown()),

@@ -102,10 +102,10 @@ validate_plugin() {
         || fail "$plugin: navigator MCP launcher must exist and be executable"
       jq -e '.mcpServers["navigator"].args[]? | contains("code-nav-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
         || fail "$plugin: navigator MCP manifest must use the on-demand launcher"
-      [[ -x "$dir/hooks/castle-mcp.sh" ]] \
-        || fail "$plugin: castle MCP launcher must exist and be executable"
-      jq -e '.mcpServers["castle"].args[]? | contains("castle-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
-        || fail "$plugin: castle MCP manifest must use the on-demand launcher"
+      [[ -x "$dir/hooks/redskilled-mcp.sh" ]] \
+        || fail "$plugin: redskilled MCP launcher must exist and be executable"
+      jq -e '.mcpServers["redskilled"].args[]? | contains("redskilled-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
+        || fail "$plugin: redskilled MCP manifest must use the on-demand launcher"
     fi
   fi
 

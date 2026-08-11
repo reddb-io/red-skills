@@ -1,6 +1,6 @@
 // Builds the canary harness's sandboxes: a scratch repo whose `dist/` holds
 // REAL esbuild bundles with the SHIPPED file names, so `fleet_create` launches
-// a supervisor from `castle-mcp.bundle.min.mjs` and that supervisor resolves
+// a supervisor from `redskilled-mcp.bundle.min.mjs` and that supervisor resolves
 // its slot entry to the `dev.bundle.min.mjs` sitting beside it — the exact
 // resolution #2677 got wrong.
 //
@@ -153,7 +153,7 @@ export function buildCanaryBundles(): Promise<BuiltBundles> {
   bundles ??= (async () => {
     const dir = await mkdtemp(join(tmpdir(), "mcp-canary-bundles-"));
     sandboxes.push(dir);
-    const mcp = join(dir, "castle-mcp.bundle.min.mjs");
+    const mcp = join(dir, "redskilled-mcp.bundle.min.mjs");
     const redskilled = join(dir, "redskilled.bundle.mjs");
     const healthy = join(dir, "dev-healthy.bundle.min.mjs");
     const unroutable = join(dir, "dev-unroutable.bundle.min.mjs");
@@ -207,7 +207,7 @@ export async function createCanarySandbox(
     cwd: root,
     stdio: "ignore",
   });
-  const mcpEntry = join(dist, "castle-mcp.bundle.min.mjs");
+  const mcpEntry = join(dist, "redskilled-mcp.bundle.min.mjs");
   await copyFile(built.mcp, mcpEntry);
   await copyFile(built.dev[variant], join(dist, "dev.bundle.min.mjs"));
 

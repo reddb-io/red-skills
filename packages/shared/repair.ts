@@ -1,5 +1,5 @@
 /**
- * One callable cure carried by a castle refusal or empty state (ADR 0134).
+ * One callable cure carried by a redskilled refusal or empty state (ADR 0134/0142).
  *
  * The same value is published as structured data and rendered into prose by
  * {@link composeRepair}; callers cannot provide an independent human sentence

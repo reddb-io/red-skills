@@ -270,7 +270,7 @@ export const EXTINCT_NAMES: readonly ExtinctName[] = [
     noun: "supervisor",
     what: "the per-project tick that birthed Workers and repeated project-side maintenance",
     replacement:
-      "the `redskilled` daemon for Worker birth and the castle resident's independent belts for recurring maintenance",
+      "the `redskilled` daemon for Worker birth and the redskilled MCP resident's independent belts for recurring maintenance",
     pattern: /\bsuperviseTick\b/,
   },
   {

@@ -1,4 +1,4 @@
-// help.ts — the castle's one live source of operating choreography (ADR 0134).
+// help.ts — redskilled's one live source of operating choreography (ADR 0134/0142).
 //
 // The answer is deliberately assembled from the same two socket-local reads an
 // operator reaches through status {scope: project | host}. It never asks the issue
@@ -122,7 +122,7 @@ export function createHelpTools(
 ): CastleMcpTool[] {
   return [{
     name: "help",
-    title: "Find the next castle action",
+    title: "Find the next redskilled action",
     description:
       "Read live daemon, registration, queue, Worker, and refusal state; return the pasteable next call and a generated intent map. Makes no GitHub request.",
     inputSchema: {},

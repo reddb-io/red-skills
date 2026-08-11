@@ -30,7 +30,7 @@ export type ImplementerSpawnConstraint =
           boolean
         >;
         mcpServers: Record<
-          "navigator" | "castle" | "red-memory" | "brain" | "red-ui" | "rsp",
+          "navigator" | "redskilled" | "red-memory" | "brain" | "red-ui" | "rsp",
           boolean
         >;
         hooks: false;
@@ -42,7 +42,7 @@ export type ImplementerSpawnConstraint =
       config: {
         plugins: ImplementerEnabledSurfaces["plugins"];
         mcp: Record<
-          "navigator" | "castle" | "red-memory" | "brain" | "red-ui" | "rsp",
+          "navigator" | "redskilled" | "red-memory" | "brain" | "red-ui" | "rsp",
           { enabled: boolean }
         >;
         pluginEvents: readonly [];
@@ -130,7 +130,7 @@ const codexImplementerEnvironment: ImplementerProjector = (enabled) => ({
     },
     mcpServers: {
       navigator: true,
-      castle: false,
+      redskilled: false,
       "red-memory": enabled.mcp.includes("red-memory"),
       brain: enabled.mcp.includes("brain"),
       "red-ui": enabled.mcp.includes("red-ui"),
@@ -147,7 +147,7 @@ const openCodeImplementerEnvironment: ImplementerProjector = (enabled) => ({
     plugins: [...enabled.plugins],
     mcp: {
       navigator: { enabled: true },
-      castle: { enabled: false },
+      redskilled: { enabled: false },
       "red-memory": { enabled: enabled.mcp.includes("red-memory") },
       brain: { enabled: enabled.mcp.includes("brain") },
       "red-ui": { enabled: enabled.mcp.includes("red-ui") },

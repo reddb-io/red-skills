@@ -31,7 +31,7 @@ At approval time, read the repo's declared `plugins.dev.afk.validation` schedule
 
 Scout mode is read-only and report-producing, so this Task+DoD gate does not apply to `/go --scout`.
 
-## Dispatch through the `castle` MCP
+## Dispatch through the `redskilled` MCP
 
 **`/go` and `/afk` are two clients of one interface.** After approval, dispatch
 the demand with the `worker_dispatch` tool — `{demand, runner?, mode?}`, where
@@ -113,8 +113,8 @@ Follow it from those handles, never from the launcher's stdout: `status {scope: 
 **What standard `/go` does, in order (all reused from the AFK engine — not a parallel path):**
 
 1. **Mints a disposable tracking issue** in the isolated `lane:go` lane — labelled `lane:go` and **never** `ready-for-agent`, so a running fleet's candidate listing can never surface it. With `--tags`, the mint also stamps the requested `tag:<value>` territory labels (auto-created when missing). The issue is minted only after Task+DoD approval; its body carries the approved Task, the approved semantic Definition of Done, and the machine gate reference.
-2. **Spins a castle worker** under the shared `.red/tmp/workers/` root. It does not create a separate worker namespace; the worker state carries `origin=go` and `current.kind=go`, and observability surfaces use those stamps to keep `/go` distinct from the `/afk` fleet.
-3. **Processes the issue in an isolated worktree** created by the castle engine, using the stamped kind as provenance for monitor/statusline display.
+2. **Spins a Worker** under the shared `.red/tmp/workers/` root. It does not create a separate worker namespace; the worker state carries `origin=go` and `current.kind=go`, and observability surfaces use those stamps to keep `/go` distinct from the `/afk` drain.
+3. **Processes the issue in an isolated worktree** created by the `red-castle` engine, using the stamped kind as provenance for monitor/statusline display.
 4. **Runs the shared review stage** with the **interactive** (pause/ask) escalation sink: mechanical findings auto-apply + commit; an intent finding pauses and asks you to approve / fix / skip.
 5. **Runs the declared `post_done` Validation moment at the branch's fork point.** If a command fails after the inner agent emits DONE, the engine re-seeds it with only the failing subset under the bounded `/go` Re-seed budget, then folds back to the full declaration after that subset passes. Exhaustion parks the Ticket at `ready-for-human` / `blocked:validation`. An undeclared or empty moment skips loudly; `--verify` is the one-dispatch addition described above.
 6. **Runs the declared `landing` Validation moment before push/PR/queue, then brings back a PR.** Freshness against the merged result belongs to the merge queue, the CI-side final Validation moment. The disposable issue **auto-closes on merge** (the engine's PR body carries `Closes #N`).
@@ -122,7 +122,7 @@ Follow it from those handles, never from the launcher's stdout: `status {scope: 
 **What `--scout` does differently:**
 
 1. **Mints a disposable issue** in the isolated `lane:scout` lane (never `ready-for-agent` or `lane:go`).
-2. **Spins a castle worker** under the shared `.red/tmp/workers/` root with `origin=scout`, `current.kind=scout`, and `run_mode=scout`.
+2. **Spins a Worker** under the shared `.red/tmp/workers/` root with `origin=scout`, `current.kind=scout`, and `run_mode=scout`.
 3. **Runs the agent in read-only mode** — the SCOUT_EXIT_PROTOCOL explicitly forbids commits. `continuousPush` is disabled so no branch is pushed during the run.
 4. **Skips local Validation moments, push, PR, and Landing entirely** — the engine enforces this at the `run_mode=scout` check in `process-issue.ts`.
 5. **Posts the agent's markdown report** as a comment on the disposable issue, then closes it. Nothing lands on main.
@@ -132,7 +132,7 @@ Follow it from those handles, never from the launcher's stdout: `status {scope: 
 - ✅ **Do** pass the demand/question as ONE quoted argument.
 - ✅ **Do** get Task+DoD approval before standard `/go`, then pass the approved DoD with `--dod`.
 - ✅ **Do** use `--scout` when you want an audit, investigation, or read-only analysis — not a code change.
-- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same castle worker / monitor / heartbeat / envelope path, driven through the same `castle` MCP tools, distinguished by worker kind and mode gates.
+- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same Worker / monitor / heartbeat / envelope path, driven through the same `redskilled` MCP tools, distinguished by Worker kind and mode gates.
 - ✅ **Do** run it whether or not a fleet is up — `/go` is a self-sufficient front door.
 - ❌ Do **not** add `ready-for-agent` to the minted issue — lane isolation breaks.
 - ❌ Do **not** hand-mint the issue or hand-spawn a worker — call `go`, which does the lane + namespace + origin wiring as one unit.
@@ -150,21 +150,21 @@ For failure-state playbooks, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
 | Tier | Input | Artifact | Worker | Gate sink | When to use |
 | --- | --- | --- | --- | --- | --- |
 | `/goal` | unstructured directive | none | none | n/a | Conversational steering; no artifact |
-| **`/go`** | **one concrete, untracked demand** | **disposable `lane:go` issue + PR** | **castle worker, `current.kind=go`** | **interactive (pause/ask)** | **Ad-hoc only — never for tracked issues** |
-| **`/go --scout`** | **read-only question** | **report comment** | **castle worker, `current.kind=scout`** | **none (read-only path)** | Investigation without code changes |
-| **`/afk` (default)** | **triaged backlog (tracked issues)** | **Spec → issues** | **castle fleet, `current.kind=afk`** | **headless (park to `ready-for-human`)** | **Modus operandi — all tracked work** |
+| **`/go`** | **one concrete, untracked demand** | **disposable `lane:go` issue + PR** | **Worker, `current.kind=go`** | **interactive (pause/ask)** | **Ad-hoc only — never for tracked issues** |
+| **`/go --scout`** | **read-only question** | **report comment** | **Worker, `current.kind=scout`** | **none (read-only path)** | Investigation without code changes |
+| **`/afk` (default)** | **triaged backlog (tracked issues)** | **Spec → issues** | **project drain, `current.kind=afk`** | **headless (park to `ready-for-human`)** | **Modus operandi — all tracked work** |
 
 ## Scout isolation, concretely
 
 - **Lane:** the issue carries `lane:scout`, not `ready-for-agent` or `lane:go`. Only a scout-kind worker lists it; the fleet and `/go` workers never see it.
-- **Worker root:** the castle engine writes the worker under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/scout-workers/…` entries may still appear in observability until they age out, but new scout runs do not use that root.
+- **Worker root:** the `red-castle` engine writes the Worker under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/scout-workers/…` entries may still appear in observability until they age out, but new scout runs do not use that root.
 - **Provenance:** `--origin scout --run-mode scout` stamp the worker state with `origin=scout` and `current.kind=scout`. The `run_mode=scout` is the enforcement point — `process-issue.ts` short-circuits to the report path as soon as the agent emits DONE, before any push/PR/merge code is reached.
 - **No-mutation guarantee:** `continuousPush: false` + skip `pushAttempt` + skip `doLanding` + skip `openReviewPr`. Enforced at the code level, not by convention.
 
 ## Standard /go isolation
 
 - **Lane:** the issue carries `lane:go`, not `ready-for-agent`. The fleet lists `ready-for-agent`; the `/go` worker lists `lane:go` (`--lane lane:go`). The two pools never overlap.
-- **Worker root:** the castle engine writes the worker and worktree under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/go-workers/…` entries may still appear in observability until they age out, but new `/go` runs do not use that root.
+- **Worker root:** the `red-castle` engine writes the Worker and Worktree under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/go-workers/…` entries may still appear in observability until they age out, but new `/go` runs do not use that root.
 - **Provenance:** `--origin go` is stamped once on the worker state as `origin=go` and `current.kind=go`, then never mutated.
 
 ## Review behaviour (standard /go — shared with `/afk`, ADR 0081)

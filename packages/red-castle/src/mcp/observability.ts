@@ -48,7 +48,7 @@ export function createObservabilityTools(
   return [
     {
       name: "logs",
-      title: "Read Castle logs",
+      title: "Read redskilled logs",
       description:
         "Return the newest CastleLaneRecord entries from one structured lane; bounded by `limit` (default 200, max 10 000). Pass `kind` to filter before the limit.",
       inputSchema: {
@@ -72,9 +72,9 @@ export function createObservabilityTools(
     },
     {
       name: "history",
-      title: "Read Castle history",
+      title: "Read redskilled history",
       description:
-        "Return structured Castle history records, newest records last.",
+        "Return structured AFK history records, newest records last.",
       inputSchema: {
         limit: z.number().int().positive().max(10_000).optional(),
       },
@@ -99,7 +99,7 @@ export function createObservabilityTools(
       name: "events_since",
       title: "Poll events since cursor",
       description:
-        "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+        "Return AFK history events and Worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
       inputSchema: {
         cursor: z.string().min(1).optional(),
       },

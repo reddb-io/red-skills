@@ -160,7 +160,7 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () =
   );
 });
 
-describe("the shipped castle-mcp bundle carries the canary", () => {
+describe("the shipped redskilled-mcp bundle carries the canary", () => {
   // Source-level greens are exactly what #2677 had. The probe must also work
   // from the built artifact operators and CI actually run, whose bundled
   // dependency graph differs from the source tree's.
@@ -178,7 +178,7 @@ describe("the shipped castle-mcp bundle carries the canary", () => {
           RED_BUILD_TIME: "2026-01-01T00:00:00.000Z",
         },
       });
-      const bundle = join(appRoot, "..", "..", "dist", "castle-mcp.bundle.min.mjs");
+      const bundle = join(appRoot, "..", "..", "dist", "redskilled-mcp.bundle.min.mjs");
       const sandbox = await createCanarySandbox("healthy");
 
       const { stdout } = await run(

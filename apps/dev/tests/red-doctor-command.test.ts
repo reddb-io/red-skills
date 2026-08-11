@@ -592,7 +592,7 @@ describe("redDoctorCommand — declared-but-unloaded MCP servers", () => {
     await mkdir(join(root, "plugins", "dev"), { recursive: true });
     await writeFile(
       join(root, "plugins", "dev", ".mcp.json"),
-      JSON.stringify({ mcpServers: { navigator: {}, castle: {}, rsp: {} } }),
+      JSON.stringify({ mcpServers: { navigator: {}, redskilled: {}, rsp: {} } }),
       "utf8",
     );
     return root;
@@ -618,7 +618,7 @@ describe("redDoctorCommand — declared-but-unloaded MCP servers", () => {
     const human = await runDoctor(root, ["--session-mcp", "none"]);
 
     expect(human).toContain("red-doctor declared MCP servers loaded in this session");
-    expect(human).toContain("❌ dev declared=navigator,castle,rsp");
+    expect(human).toContain("❌ dev declared=navigator,redskilled,rsp");
     expect(human).toContain("error declared-unloaded");
     expect(human).toContain("installed or updated mid-session");
     expect(human).toContain("fix: restart the session, or run /reload-plugins");
@@ -629,10 +629,10 @@ describe("redDoctorCommand — declared-but-unloaded MCP servers", () => {
 
     const human = await runDoctor(root, [
       "--session-mcp",
-      "mcp__plugin_dev_navigator__hover,mcp__plugin_dev_castle__project_status,mcp__plugin_dev_rsp__rsp_status",
+      "mcp__plugin_dev_navigator__hover,mcp__plugin_dev_redskilled__project_status,mcp__plugin_dev_rsp__rsp_status",
     ]);
 
-    expect(human).toContain("✅ dev declared=navigator,castle,rsp");
+    expect(human).toContain("✅ dev declared=navigator,redskilled,rsp");
     expect(human).toContain("mcp load findings: 0");
   });
 

@@ -74,7 +74,7 @@ export const SHIPPED_BINARIES: readonly ShippedBinaryName[] = [
   { name: "red-skills-brain" },
   { name: "red-skills-redskilled" },
   { name: "red-skills-code-nav" },
-  { name: "red-skills-castle-mcp" },
+  { name: "red-skills-redskilled-mcp" },
   { name: "red-skills-herdr" },
   { name: "redskilled" },
   { name: "memory", fencedOnly: true },
