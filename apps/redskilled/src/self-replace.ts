@@ -38,7 +38,9 @@
  * PURE apart from the injected spawn, exit and existence lookups.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { createConnection, createServer, type Socket } from "node:net";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 import {
@@ -105,6 +107,13 @@ export const REDSKILLED_NO_REGISTRY_PROBE_ENV = "REDSKILLED_NO_REGISTRY_PROBE";
  * tight loop. A successor born this way waits for the ordinary interval instead.
  */
 export const REDSKILLED_BORN_BY_REPLACEMENT_ENV = "REDSKILLED_BORN_BY_REPLACEMENT";
+
+/** Private rendezvous carried only between an incumbent and its staged successor. */
+export const REDSKILLED_TAKEOVER_SOCKET_ENV = "REDSKILLED_TAKEOVER_SOCKET";
+export const REDSKILLED_TAKEOVER_TOKEN_ENV = "REDSKILLED_TAKEOVER_TOKEN";
+
+/** A boot that cannot reach the handshake inside this window is not viable. */
+export const DEFAULT_REDSKILLED_TAKEOVER_HANDSHAKE_MS = 10_000;
 
 /** True when a replacement started this process, so its boot check is not owed. */
 export function isRedskilledBornByReplacement(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -406,7 +415,10 @@ export interface RedskilledReplacementIO {
   /** Resolves what runs the new version; the version-pinned resolver by default. */
   readonly resolveEntry?: (version: string) => ResolvedRedskilledReplacementEntry;
   /** Starts the successor, detached; a real spawn by default. */
-  readonly spawnSuccessor?: (entry: ResolvedRedskilledReplacementEntry, argv: readonly string[]) => void;
+  readonly spawnSuccessor?: (
+    entry: ResolvedRedskilledReplacementEntry,
+    argv: readonly string[],
+  ) => void | RedskilledSuccessorControl | Promise<void | RedskilledSuccessorControl>;
   /** Repoints a supervising unit before the old daemon releases its socket. */
   readonly repointSupervisor?: (
     entry: ResolvedRedskilledReplacementEntry,
@@ -428,6 +440,14 @@ export interface PreparedRedskilledReplacement {
 
 export interface RedskilledReplacementOutcome extends PreparedRedskilledReplacement {
   readonly exitCode?: number;
+}
+
+/** A successor that reached its boot boundary and is waiting for ownership. */
+export interface RedskilledSuccessorControl {
+  /** Tell the viable successor that the incumbent has released the session. */
+  commit(): void;
+  /** Take back a staged successor when the incumbent cannot complete its stop. */
+  abort(): void;
 }
 
 /**
@@ -460,6 +480,28 @@ export function prepareRedskilledReplacement(
 }
 
 /**
+ * Start the successor while the incumbent still owns the live session.
+ *
+ * A production successor reaches the CLI boot boundary, proves that by answering
+ * a private handshake, then waits. Injected spawns may return no control handle;
+ * that preserves the public test seam while still making a rejected async boot a
+ * takeover failure rather than a daemon stop.
+ */
+export async function stageRedskilledReplacementSuccessor(
+  prepared: PreparedRedskilledReplacement,
+  target: RedskilledServeTarget,
+  options: { readonly idleMs?: number; readonly io?: RedskilledReplacementIO } = {},
+): Promise<RedskilledSuccessorControl | undefined> {
+  if (prepared.via === "supervisor-exit") return undefined;
+  const io = options.io ?? {};
+  const argv = [
+    ...prepared.entry.args,
+    ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
+  ];
+  return await (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
+}
+
+/**
  * Complete one replacement, on a daemon that has ALREADY let go of the session.
  *
  * The order is not negotiable: the old process releases the socket and the lease
@@ -470,23 +512,44 @@ export function prepareRedskilledReplacement(
 export function completeRedskilledReplacement(
   prepared: PreparedRedskilledReplacement,
   target: RedskilledServeTarget,
-  options: { readonly idleMs?: number; readonly io?: RedskilledReplacementIO } = {},
+  options: {
+    readonly idleMs?: number;
+    readonly io?: RedskilledReplacementIO;
+    readonly successor?: RedskilledSuccessorControl;
+  } = {},
 ): RedskilledReplacementOutcome {
   const io = options.io ?? {};
   if (prepared.via === "supervisor-exit") {
     (io.exit ?? defaultExit)(REDSKILLED_REPLACE_EXIT_CODE);
     return { ...prepared, exitCode: REDSKILLED_REPLACE_EXIT_CODE };
   }
+  if (options.successor != null) {
+    options.successor.commit();
+    return prepared;
+  }
   const argv = [
     ...prepared.entry.args,
     ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
   ];
-  (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env))(prepared.entry, argv);
+  (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
   return prepared;
 }
 
-function defaultSpawnSuccessor(env: NodeJS.ProcessEnv | undefined) {
-  return (entry: ResolvedRedskilledReplacementEntry, argv: readonly string[]): void => {
+function defaultSpawnSuccessor(env: NodeJS.ProcessEnv | undefined, target: RedskilledServeTarget) {
+  return async (
+    entry: ResolvedRedskilledReplacementEntry,
+    argv: readonly string[],
+  ): Promise<RedskilledSuccessorControl> => {
+    const handshakePath = join(dirname(target.socketPath), `.takeover-${process.pid}-${randomUUID().slice(0, 8)}.sock`);
+    const token = randomUUID();
+    const server = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once("error", rejectListen);
+      server.listen(handshakePath, () => {
+        server.off("error", rejectListen);
+        resolveListen();
+      });
+    });
     const child = spawn(entry.command, [...argv], {
       detached: true,
       stdio: "ignore",
@@ -494,11 +557,112 @@ function defaultSpawnSuccessor(env: NodeJS.ProcessEnv | undefined) {
         ...(env ?? process.env),
         REDSKILLED_DAEMON: "1",
         [REDSKILLED_BORN_BY_REPLACEMENT_ENV]: "1",
+        [REDSKILLED_TAKEOVER_SOCKET_ENV]: handshakePath,
+        [REDSKILLED_TAKEOVER_TOKEN_ENV]: token,
       },
     });
-    child.on("error", () => undefined);
     child.unref();
+    return await new Promise<RedskilledSuccessorControl>((resolveReady, rejectReady) => {
+      let settled = false;
+      let peer: Socket | undefined;
+      const deadline = setTimeout(() => fail(new Error("successor did not answer the takeover handshake")),
+        DEFAULT_REDSKILLED_TAKEOVER_HANDSHAKE_MS);
+      deadline.unref();
+
+      const cleanupListener = (): void => {
+        clearTimeout(deadline);
+        child.off("error", onError);
+        child.off("exit", onExit);
+      };
+      const closeServer = (): void => {
+        server.close(() => rmSync(handshakePath, { force: true }));
+      };
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanupListener();
+        peer?.destroy();
+        closeServer();
+        child.kill("SIGTERM");
+        rejectReady(error);
+      };
+      const onError = (): void => fail(new Error("successor failed before its takeover handshake"));
+      const onExit = (code: number | null): void =>
+        fail(new Error(`successor exited before its takeover handshake (code ${code ?? "unknown"})`));
+      child.once("error", onError);
+      child.once("exit", onExit);
+      server.on("connection", (socket) => {
+        if (peer != null) {
+          socket.destroy();
+          return;
+        }
+        peer = socket;
+        let line = "";
+        socket.setEncoding("utf8");
+        socket.on("data", (chunk: string) => {
+          line += chunk;
+          if (!line.includes("\n")) return;
+          if (line.slice(0, line.indexOf("\n")) !== token) {
+            fail(new Error("successor answered the takeover handshake with the wrong token"));
+            return;
+          }
+          if (settled) return;
+          settled = true;
+          cleanupListener();
+          resolveReady({
+            commit() {
+              socket.end("commit\n");
+              closeServer();
+            },
+            abort() {
+              socket.end("abort\n");
+              closeServer();
+              child.kill("SIGTERM");
+            },
+          });
+        });
+        socket.once("error", () => fail(new Error("successor takeover handshake disconnected")));
+        socket.once("close", () => fail(new Error("successor takeover handshake closed before readiness")));
+      });
+    });
   };
+}
+
+/** Wait at the successor's boot boundary until the incumbent grants ownership. */
+export async function awaitRedskilledTakeoverCommit(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const socketPath = env[REDSKILLED_TAKEOVER_SOCKET_ENV]?.trim();
+  const token = env[REDSKILLED_TAKEOVER_TOKEN_ENV]?.trim();
+  if (!socketPath && !token) return;
+  if (!socketPath || !token) throw new Error("incomplete redskilled takeover handshake");
+  await new Promise<void>((resolveCommit, rejectCommit) => {
+    const socket = createConnection(socketPath);
+    let line = "";
+    const deadline = setTimeout(() => {
+      socket.destroy();
+      rejectCommit(new Error("redskilled takeover commit timed out"));
+    }, DEFAULT_REDSKILLED_TAKEOVER_HANDSHAKE_MS);
+    deadline.unref();
+    const finish = (error?: Error): void => {
+      clearTimeout(deadline);
+      socket.destroy();
+      if (error == null) resolveCommit();
+      else rejectCommit(error);
+    };
+    socket.setEncoding("utf8");
+    socket.once("connect", () => socket.write(`${token}\n`));
+    socket.on("data", (chunk: string) => {
+      line += chunk;
+      if (!line.includes("\n")) return;
+      const verdict = line.slice(0, line.indexOf("\n"));
+      finish(verdict === "commit" ? undefined : new Error("redskilled takeover was aborted"));
+    });
+    socket.once("error", () => finish(new Error("redskilled takeover handshake failed")));
+    socket.once("close", () => {
+      if (!line.includes("\n")) finish(new Error("redskilled takeover handshake closed before commit"));
+    });
+  });
 }
 
 function defaultExit(code: number): void {
