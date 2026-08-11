@@ -665,7 +665,27 @@ export function parseEventLane(raw: string): RedskilledHostEvent[] {
   // that slot is the half-written line a crash left behind.
   lines.pop();
   if (lines.length === 0) return [];
-  const records = parseRecords(`${lines.join("\n")}\n`);
+  const records: ToonlRecord[] = [];
+  const malformed: number[] = [];
+  let header: string | null = null;
+  for (const [index, line] of lines.entries()) {
+    if (/^\[\d*\]\{.*\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (header == null) {
+      malformed.push(index + 1);
+      continue;
+    }
+    try {
+      records.push(...parseRecords(`${header}\n${line}\n`));
+    } catch {
+      malformed.push(index + 1);
+    }
+  }
+  if (malformed.length > 0) {
+    console.warn(`redskilled event lane skipped ${malformed.length} malformed row(s) at line ${malformed.join(", ")}`);
+  }
   return records.filter(isHostEventRecord).map(fromRow);
 }
 
