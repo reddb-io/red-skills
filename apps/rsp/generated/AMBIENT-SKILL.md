@@ -127,7 +127,7 @@ Examples:
 
 - `rsp wait pr 123 --reason "before merge"` waits for a GitHub PR's checks and reports pass/fail plus mergeable state.
 - `rsp wait run 987654321` waits for a GitHub Actions run conclusion.
-- `rsp wait job 93919316178` waits for one GitHub Actions job through the resident conditional client.
+- `rsp wait job 93919316178` waits for one GitHub Actions job through the conditional packages/github client.
 - `rsp wait run --branch feature/wait --latest` waits for the latest run on a branch.
 - `rsp wait release --tag "v2.*"` waits for the next matching release; `--existing --tag v2.3.4` uses the single-release endpoint for an already-published exact tag.
 - `rsp wait cmd -- "pnpm -C apps/rsp build"` runs a local async command and waits for its exit.
@@ -140,7 +140,8 @@ The envelope separates `target_exit_code` from delivery failure. `--signal-pid` 
 Command stdout/stderr capture holds at most `--capture-bytes` in memory and spools the rest; elided streams carry reversible `el:<id>` handles, binary heads are labeled base64, and an unavailable store keeps the spooled bytes instead of truncating.
 Timeout or interruption sends TERM to the whole process group, waits a grace period, then sends KILL, and VERIFIES the pids are gone; a wait that cannot prove cleanup exits 2 rather than reporting success.
 `--probe-timeout` (default 60s) bounds one GitHub probe, so a hung `gh` call cannot outlive `--timeout`.
-Never poll `gh api` or `gh run watch` in a sleep loop: the interception hook collapses recognized run, job, and release loops into `rsp wait`, whose resident GitHub client shares ETags, quota accounting, backoff, and TOON results.
+Never poll `gh api` or `gh run watch` in a sleep loop: the interception hook collapses recognized run, job, and release loops into `rsp wait`, whose packages/github client shares ETags, quota accounting, backoff, and TOON results.
+When rsp is disabled or its resident is unavailable, a long-lived wait owns one in-process packages/github client for its whole lifetime; it never falls back to raw gh polling and does not retry a resident known to be unavailable.
 Every wait writes an atomic v1 live registry entry under `.red/tmp/waits/` with kind, target, reason, PID/start time, deadline, attempts, last observation, last poll, poll tier, and status, then removes it on every exit path.
 Linked git worktrees share the main checkout's registry, so a wait started in a worktree is visible to `rsp wait ls` anywhere in the repo.
 GitHub waits retain their last observation; conflicting PRs fail, and `run --branch <branch> --latest` pins the resolved run ID before polling.

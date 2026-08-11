@@ -313,13 +313,16 @@ rather than an ambiguous success. Notify hooks receive the stable result through
 ### GitHub bounds
 
 Each GitHub probe is bounded by `--probe-timeout` (default 60s) in addition to
-the wait's own cancellation signal, and the `gh` process is killed when either
-fires. Without that second bound a hung `gh` call would outlive `--timeout`
-entirely, because the deadline is only checked between probes. A bounded-out
-probe is indeterminate, so the loop simply retries until the real deadline.
+the wait's own cancellation signal. Supported PR, run, job, and release reads
+use `@reddb-io/github` conditional requests, not a spawned `gh` polling loop.
+The resident owns that client when available. When rsp is disabled or the
+resident cannot start, the already-long-lived wait owns one in-process client
+for its lifetime, preserving ETags, adaptive rate-limit balance snapshots, and
+attribution without repeatedly retrying the unavailable resident.
 
-GitHub polling preserves its last observation on timeout or interruption. A
-conflicting PR is a failure even when checks pass. `run --branch <branch>
+GitHub polling preserves its last observation on timeout or interruption. REST
+`mergeable_state: dirty` is normalized to the GraphQL `CONFLICTING` vocabulary,
+so a conflicting PR is a failure even when checks pass. `run --branch <branch>
 --latest` resolves once and pins that run ID before polling, so a newer run
 cannot silently change the target. Registry entries are removed on every exit
 path after the result has been persisted.
