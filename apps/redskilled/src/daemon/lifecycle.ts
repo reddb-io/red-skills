@@ -210,6 +210,8 @@ import {
   bootRefusalFromLog,
   observedWorkerDeath,
 } from "./tunables.js";
+import { createRemotePollDeadline } from "./remote-poll.js";
+import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
 export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
 
@@ -344,6 +346,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
   const publishedProbeTimeoutMs = options.publishedProbeTimeoutMs ?? DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS;
+  const remotePoll = createRemotePollDeadline(options.remotePollTimeoutMs);
   const localEvidence = options.localPublishedEvidence ??
     ((running: string) => localRedskilledPublishedEvidence(running, options.replacementIO?.env ?? process.env));
   const bornByReplacement = options.bornByReplacement ?? isRedskilledBornByReplacement();
@@ -501,7 +504,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     attendedMs: activityMs,
     armed: queueRegistration != null || (activityRegistration != null && activityRegistration.projects.length > 0),
     stopping: () => stopping,
+    rateLimit: () => lastActivity?.rate_limit ?? null,
   });
+  const selfPingMonitor = createConfiguredRedskilledSelfPingMonitor(paths.socketPath, options);
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
@@ -666,6 +671,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       ceiling,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
+      requestHealth: selfPingMonitor.health(),
       workers: [...workers.values()],
       registrations: [...registrations.values()],
       demand: lastDemand,
@@ -755,15 +761,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * to pass for current, because the failure is itself the fact a consumer needs.
    */
   async function pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null> {
-    return lastActivity = await pollRegistrationActivity({
-      ...(activityRegistration == null ? {} : { explicit: activityRegistration }),
-      registrations: registrations.values(),
-      resolveHostTransport: () => {
-        armQueueTransport();
-        return queueTransport;
-      },
-      now: clock(), previous: lastActivity,
-    });
+    return lastActivity = await remotePoll("repository activity poll", () => pollRegistrationActivity({
+        ...(activityRegistration == null ? {} : { explicit: activityRegistration }),
+        registrations: registrations.values(),
+        resolveHostTransport: () => {
+          armQueueTransport();
+          return queueTransport;
+        },
+        now: clock(), previous: lastActivity,
+      }));
   }
 
   /** Ask the token once host-wide; every answer replaces the stored observation. */
@@ -777,7 +783,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       }).finally(() => { balanceHydration = null; });
       if ((await balanceHydration) !== null) return lastBalance;
     }
-    lastBalance = await fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() });
+    lastBalance = await remotePoll("GitHub balance poll", () =>
+      fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() }));
     await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
     return lastBalance;
   }
@@ -804,17 +811,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         .then(() => {
           if (stopping) return;
           const nextMs = balanceRegistration.intervalMsOverride ??
-            githubBalanceCadenceMs(lastBalance ?? unaskedBalance(), { now: clock() });
+            githubBalanceCadenceMs(lastBalance ?? unaskedGithubBalance(clock()), { now: clock() });
           balanceTimer = setTimeout(tick, nextMs);
           balanceTimer.unref();
         });
     };
     tick();
-  }
-
-  /** The balance a daemon that has asked nothing holds — never a full budget. */
-  function unaskedBalance(): GithubBalance {
-    return unaskedGithubBalance(clock());
   }
 
   /**
@@ -890,12 +892,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       lastQueue = unconfiguredQueueDiscovery(projects, now, queueUnconfiguredReason);
       return lastQueue;
     }
-    lastQueue = await fetchQueueDiscovery({
-      projects,
-      transport: queueTransport,
-      now,
-      ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
-    });
+    lastQueue = await remotePoll("queue poll", () => fetchQueueDiscovery({
+        projects,
+        transport: queueTransport!,
+        now,
+        ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
+      }));
     // The depth this poll just counted is the renewal a project with open work
     // gets (Amendment 7), applied here rather than at the next read so a deadline
     // is never judged against a poll the daemon had already superseded.
@@ -2176,6 +2178,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     activityPoller.stop();
+    selfPingMonitor.stop();
     if (balanceTimer) clearTimeout(balanceTimer);
     if (queueTimer) clearTimeout(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
@@ -2289,9 +2292,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   server.on("connection", (socket) => {
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
-    armIdleTimer();
     handleSocket(socket, async (request, reply) => {
-      armIdleTimer();
+      if (request.op !== "ping" || request.self !== true) armIdleTimer();
       const response = await respond(request);
       reply(response);
       // The report is written to the caller BEFORE the daemon leaves: a stop that
@@ -2432,6 +2434,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armBalanceTimer();
   armQueueTimer();
   armDemandTimer();
+  selfPingMonitor.arm();
 
   return {
     socketPath: paths.socketPath,
