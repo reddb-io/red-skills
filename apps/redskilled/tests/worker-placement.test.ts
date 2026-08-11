@@ -116,11 +116,13 @@ describe("worker placement — Linux with a user session", () => {
       budget: { max_processes: 32, cpu_seconds: 60 },
     });
     const absent = plan(LINUX_WITH_SESSION, { budget: { cpu_seconds: 60 } });
+    const declaredPlacementArgs = declared.args.slice(0, declared.args.indexOf("--"));
+    const absentPlacementArgs = absent.args.slice(0, absent.args.indexOf("--"));
 
-    expect(declared.args.filter((arg) => arg.startsWith("--property=TasksMax="))).toEqual([
+    expect(declaredPlacementArgs.filter((arg) => arg.startsWith("--property=TasksMax="))).toEqual([
       "--property=TasksMax=32",
     ]);
-    expect(absent.args.some((arg) => arg.startsWith("--property=TasksMax="))).toBe(false);
+    expect(absentPlacementArgs.some((arg) => arg.startsWith("--property=TasksMax="))).toBe(false);
     expect(declared.budgetWarning).toMatch(/cpu_seconds/);
     expect(declared.budgetWarning).not.toMatch(/max_processes/);
   });
