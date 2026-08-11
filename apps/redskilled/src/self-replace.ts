@@ -498,7 +498,8 @@ export async function stageRedskilledReplacementSuccessor(
     ...prepared.entry.args,
     ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
   ];
-  return await (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
+  const successor = await (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
+  return successor ?? { commit() {}, abort() {} };
 }
 
 /**
