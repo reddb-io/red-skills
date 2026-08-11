@@ -19,6 +19,7 @@ import { workerStatePath } from "../../core/state.js";
 import {
   collectFleetTruthProbeInput,
   collectLaneCensusProbeInput,
+  collectProcessCensusProbeInput,
   HOST_PREREQUISITE_COMMANDS,
   type ClaimHygieneCommentInput,
   type ClaimHygieneIssueInput,
@@ -128,6 +129,8 @@ export interface CollectPrecheckFactsOptions {
   readonly includeNpmBundleCoherence?: boolean;
   /** Detection-only doctor surface; AFK boot deliberately leaves it disabled. */
   readonly includeLaneCensus?: boolean;
+  /** Detection-only doctor surface; AFK boot deliberately leaves it disabled. */
+  readonly includeProcessCensus?: boolean;
   readonly laneCensusHostRoot?: string;
   readonly hostPrerequisiteExec?: ExecFn;
 }
@@ -368,6 +371,9 @@ export async function collectPrecheckFacts(
           projectRoot: ctx.root,
           hostRoot: options.laneCensusHostRoot ?? redskilledHomeDir(homedir()),
         })
+      : undefined,
+    processCensus: options.includeProcessCensus
+      ? await collectProcessCensusProbeInput({ projectRoot: ctx.root })
       : undefined,
     // CI lanes (the GHA Actions lane) check out an https remote token-authed by
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.

@@ -75,6 +75,7 @@ import {
 } from "./daemon-stop.js";
 import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledLaunchTemplate } from "./launch-template.js";
+import type { RedskilledReapExecution } from "./orphan-reaper.js";
 import {
   isRedskilledProjectRegistration,
   type RedskilledProjectRegistration,
@@ -196,6 +197,7 @@ export interface RedskilledDashboardRenderRequest {
 export type RedskilledRequest =
   | { id: string; op: "ping" }
   | { id: string; op: "host-state" }
+  | { id: string; op: "reap"; report?: boolean }
   | { id: string; op: "statusline-payload"; session_project?: string; extras?: RedskilledStatuslineExtrasRequest }
   | { id: string; op: "statusline-string"; session_project?: string; render?: RedskilledStatuslineRenderRequest }
   | { id: string; op: "statusline-dashboard"; session_project?: string; dashboard?: RedskilledDashboardRenderRequest }
@@ -235,6 +237,9 @@ export interface RedskilledPong {
   readonly daemon_version: string;
   readonly pid: number;
 }
+
+/** Result of one operator-requested orphan census or immediate reap pass. */
+export type RedskilledReapResult = RedskilledReapExecution;
 
 /**
  * The answer to `worker-start`.
@@ -438,6 +443,30 @@ export function isRedskilledPong(value: unknown): value is RedskilledPong {
     typeof pong.protocol_version === "number" &&
     typeof pong.daemon_version === "string" &&
     Number.isInteger(pong.pid);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+
+/** Validate the public census before a client presents it as host truth. */
+export function isRedskilledReapResult(value: unknown): value is RedskilledReapResult {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  if (result.version !== 1 || (result.mode !== "report" && result.mode !== "reap")) return false;
+  if (result.census === null || typeof result.census !== "object" || Array.isArray(result.census)) return false;
+  if (result.actions === null || typeof result.actions !== "object" || Array.isArray(result.actions)) return false;
+  const census = result.census as Record<string, unknown>;
+  const actions = result.actions as Record<string, unknown>;
+  return census.version === 1 &&
+    isNonNegativeInteger(census.active_worker_units) &&
+    isNonNegativeInteger(census.daemon_held_workers) &&
+    isNonNegativeInteger(census.stamped_orphans) &&
+    isNonNegativeInteger(census.unstamped_suspects) &&
+    isNonNegativeInteger(census.dump_files) &&
+    isNonNegativeInteger(actions.adopted) &&
+    isNonNegativeInteger(actions.reaped) &&
+    isNonNegativeInteger(actions.suspects);
 }
 
 function isRepairArgument(value: unknown, seen: Set<object>): boolean {

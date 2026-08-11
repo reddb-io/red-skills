@@ -428,6 +428,17 @@ $RS reclaim                          # remove the runtime dirs whose owner is go
 $RS reclaim --grace-ms 60000         # how old a lease-less dir must be to count
 ```
 
+```bash
+$RS reap --report                     # process/dump census; no host mutation
+$RS reap                              # run the stamped-orphan sweep immediately
+```
+
+`reap --report` returns counts for active Worker units, daemon-held Workers,
+stamped orphans, unstamped suspects, and crash dump files over the daemon
+protocol. Report mode adopts nothing, signals nothing, and deletes nothing.
+Without `--report`, only stamped orphans can be reaped; unstamped suspects and
+dump files remain detection-only evidence.
+
 ## Reclaiming dead sessions
 
 A daemon that crashes leaves its runtime directory behind: a socket nothing

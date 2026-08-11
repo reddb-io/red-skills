@@ -28,6 +28,14 @@ export interface SelectOrphanReaperCandidatesInput {
   readonly live_birth_ids: ReadonlySet<string>;
 }
 
+/** Every host fact the shared process-census predicate classifies. */
+export interface SelectRedskilledProcessCensusInput extends SelectOrphanReaperCandidatesInput {
+  /** Active init-system Worker units observed independently of daemon memory. */
+  readonly active_worker_units: readonly string[];
+  /** Core/crash dump files observed under project Worker lanes. */
+  readonly dump_files: readonly string[];
+}
+
 export type RedskilledOrphanReaperCandidate =
   | {
       readonly kind: "reap";
@@ -44,6 +52,21 @@ export type RedskilledOrphanReaperCandidate =
       readonly process: RedskilledProcessCensusRow;
       readonly detail: string;
     };
+
+/** Detection-only host process census, safe to carry over the public protocol. */
+export interface RedskilledProcessCensus {
+  readonly version: 1;
+  readonly active_worker_units: number;
+  readonly daemon_held_workers: number;
+  readonly stamped_orphans: number;
+  readonly unstamped_suspects: number;
+  readonly dump_files: number;
+}
+
+export interface SelectedRedskilledProcessCensus {
+  readonly census: RedskilledProcessCensus;
+  readonly candidates: readonly RedskilledOrphanReaperCandidate[];
+}
 
 /** A stamped orphan is given this long to reconnect before the host reaps it. */
 export const REDSKILLED_STAMPED_ORPHAN_GRACE_MS = 10 * 60_000;
@@ -204,8 +227,26 @@ function isWorkersLanePath(path: string): boolean {
   return false;
 }
 
-/** Select the process-table rows on which the daemon may act. PURE. */
-export function selectOrphanReaperCandidates(
+/** Classify one host snapshot for both the daemon reaper and doctor. PURE. */
+export function selectRedskilledProcessCensus(
+  input: SelectRedskilledProcessCensusInput,
+): SelectedRedskilledProcessCensus {
+  const candidates = selectOrphanReaperCandidatesOnly(input);
+  return {
+    census: {
+      version: 1,
+      active_worker_units: new Set(input.active_worker_units).size,
+      daemon_held_workers: new Set(input.held_worker_ids).size,
+      stamped_orphans: candidates.filter((candidate) => candidate.kind === "reap").length,
+      unstamped_suspects: candidates.filter((candidate) => candidate.kind === "suspect").length,
+      dump_files: new Set(input.dump_files).size,
+    },
+    candidates,
+  };
+}
+
+/** Select only the process-table rows on which the daemon may act. PURE. */
+function selectOrphanReaperCandidatesOnly(
   input: SelectOrphanReaperCandidatesInput,
 ): RedskilledOrphanReaperCandidate[] {
   const selected: RedskilledOrphanReaperCandidate[] = [];
@@ -247,10 +288,28 @@ export function selectOrphanReaperCandidates(
   return selected;
 }
 
+/** Compatibility projection for callers that need only the action candidates. */
+export function selectOrphanReaperCandidates(
+  input: SelectOrphanReaperCandidatesInput,
+): RedskilledOrphanReaperCandidate[] {
+  return selectRedskilledProcessCensus({
+    ...input,
+    active_worker_units: [],
+    dump_files: [],
+  }).candidates.slice();
+}
+
 export interface RedskilledOrphanSweepOutcome {
   readonly adopted: number;
   readonly reaped: number;
   readonly suspects: number;
+}
+
+export interface RedskilledReapExecution {
+  readonly version: 1;
+  readonly mode: "report" | "reap";
+  readonly census: RedskilledProcessCensus;
+  readonly actions: RedskilledOrphanSweepOutcome;
 }
 
 export interface RedskilledOrphanReaperRuntimeOptions {
@@ -258,6 +317,8 @@ export interface RedskilledOrphanReaperRuntimeOptions {
   readonly interval_ms?: number;
   readonly mode?: RedskilledOrphanReaperMode;
   readonly census?: () => readonly RedskilledProcessCensusRow[] | Promise<readonly RedskilledProcessCensusRow[]>;
+  readonly active_worker_units?: () => readonly string[] | Promise<readonly string[]>;
+  readonly dump_files?: () => readonly string[] | Promise<readonly string[]>;
   readonly read_starttime?: (pid: number) => string | null | Promise<string | null>;
   readonly kill_group?: (pgid: number) => boolean | Promise<boolean>;
   readonly report?: (detail: string) => void;
@@ -272,6 +333,8 @@ export interface RedskilledOrphanReaperRuntimeOptions {
 
 export interface RedskilledOrphanReaperRuntime {
   readonly sweep: () => Promise<RedskilledOrphanSweepOutcome>;
+  readonly census: () => Promise<RedskilledProcessCensus>;
+  readonly reap: (reportOnly: boolean) => Promise<RedskilledReapExecution>;
   readonly arm: () => void;
   readonly stop: () => void;
 }
@@ -291,34 +354,75 @@ export function createRedskilledOrphanReaperRuntime(
   let timer: NodeJS.Timeout | undefined;
   let sweeping = false;
 
+  async function inspect(): Promise<{
+    readonly selected: SelectedRedskilledProcessCensus;
+    readonly liveBirths: ReadonlyMap<string, RedskilledWorkerView>;
+    readonly safeToAct: boolean;
+  }> {
+    let processes: readonly RedskilledProcessCensusRow[];
+    try {
+      processes = await census();
+    } catch {
+      processes = [];
+    }
+
+    let births: readonly RedskilledWorkerView[] = [];
+    let safeToAct = true;
+    if (processes.length > 0) {
+      try {
+        births = await options.live_births();
+      } catch {
+        safeToAct = false;
+        report("orphan census withheld: the event lane could not prove which stamped Workers still have live births");
+      }
+    }
+    const liveBirths = new Map(births.map((worker) => [worker.worker_id, worker]));
+    const [activeWorkerUnits, dumpFiles] = await Promise.all([
+      Promise.resolve(options.active_worker_units?.() ?? []).catch(() => []),
+      Promise.resolve(options.dump_files?.() ?? []).catch(() => []),
+    ]);
+    return {
+      selected: selectRedskilledProcessCensus({
+        processes,
+        active_worker_units: activeWorkerUnits,
+        held_worker_ids: new Set(options.held_worker_ids()),
+        live_birth_ids: new Set(liveBirths.keys()),
+        dump_files: dumpFiles,
+      }),
+      liveBirths,
+      safeToAct,
+    };
+  }
+
+  async function processCensus(): Promise<RedskilledProcessCensus> {
+    if (!options.authorized) {
+      return {
+        version: 1,
+        active_worker_units: 0,
+        daemon_held_workers: 0,
+        stamped_orphans: 0,
+        unstamped_suspects: 0,
+        dump_files: 0,
+      };
+    }
+    return (await inspect()).selected.census;
+  }
+
   async function sweep(): Promise<RedskilledOrphanSweepOutcome> {
     if (!options.authorized || mode === "off" || sweeping) return { ...EMPTY_ORPHAN_SWEEP };
     sweeping = true;
     try {
-      let processes: readonly RedskilledProcessCensusRow[];
-      try {
-        processes = await census();
-      } catch {
-        processes = [];
-      }
-      if (processes.length === 0) return { ...EMPTY_ORPHAN_SWEEP };
-
-      let births: readonly RedskilledWorkerView[];
-      try {
-        births = await options.live_births();
-      } catch {
-        report("orphan census withheld: the event lane could not prove which stamped Workers still have live births");
-        return { ...EMPTY_ORPHAN_SWEEP };
-      }
-      const liveBirths = new Map(births.map((worker) => [worker.worker_id, worker]));
-      const candidates = selectOrphanReaperCandidates({
-        processes,
-        held_worker_ids: new Set(options.held_worker_ids()),
-        live_birth_ids: new Set(liveBirths.keys()),
-      });
+      const { selected, liveBirths, safeToAct } = await inspect();
+      if (!safeToAct) return { ...EMPTY_ORPHAN_SWEEP };
+      const candidates = selected.candidates;
       const counts = { adopted: 0, reaped: 0, suspects: 0 };
 
       for (const candidate of candidates) {
+        if (mode === "report") {
+          if (candidate.kind === "suspect") counts.suspects += 1;
+          report(`${candidate.detail}; report mode withheld adoption and signalling`);
+          continue;
+        }
         if (candidate.kind === "suspect") {
           counts.suspects += 1;
           report(candidate.detail);
@@ -334,11 +438,6 @@ export function createRedskilledOrphanReaperRuntime(
           report(candidate.detail);
           continue;
         }
-        if (mode === "report") {
-          report(`${candidate.detail}; report mode withheld adoption and signalling`);
-          continue;
-        }
-
         const adopted = workerFromOrphanProcess(candidate.process, options.clock);
         let verified = false;
         const outcome = await reapStampedOrphan(candidate.process, {
@@ -363,6 +462,18 @@ export function createRedskilledOrphanReaperRuntime(
     }
   }
 
+  async function reap(reportOnly: boolean): Promise<RedskilledReapExecution> {
+    const census = await processCensus();
+    return {
+      version: 1,
+      mode: reportOnly ? "report" : "reap",
+      census,
+      actions: reportOnly
+        ? { adopted: 0, reaped: 0, suspects: census.unstamped_suspects }
+        : await sweep(),
+    };
+  }
+
   function arm(): void {
     if (timer != null || intervalMs <= 0 || mode === "off" || !options.authorized) return;
     timer = setInterval(() => void sweep().catch(() => undefined), intervalMs);
@@ -371,6 +482,8 @@ export function createRedskilledOrphanReaperRuntime(
 
   return {
     sweep,
+    census: processCensus,
+    reap,
     arm,
     stop: () => {
       if (timer != null) clearInterval(timer);

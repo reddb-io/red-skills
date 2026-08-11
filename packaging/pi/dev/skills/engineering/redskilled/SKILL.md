@@ -29,6 +29,18 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    `home-config`, or `derived-default`. If `host-state` cannot contact a daemon,
    continue to provisioning rather than treating an empty machine as healthy.
 
+   For a process-growth or crash-dump incident, read the detection-only census:
+
+   ```bash
+   npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled reap --report
+   ```
+
+   It counts active Worker units, daemon-held Workers, stamped orphans,
+   unstamped suspects, and dump files while performing no adoption, signalling,
+   or deletion. Run `reap` without `--report` only after the operator approves
+   an immediate stamped-orphan sweep; unstamped suspects and dump files remain
+   report-only in either mode.
+
 2. **Provision through the one owner** — on a fresh machine, run:
 
    ```bash

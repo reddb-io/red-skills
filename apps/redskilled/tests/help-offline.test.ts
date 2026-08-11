@@ -70,6 +70,7 @@ describe("--help answers with the socket unreachable", () => {
       expect(printed).toBe(REDSKILLED_USAGE);
       expect(printed).toContain("serve");
       expect(printed).toContain("provision");
+      expect(printed).toContain("reap --report");
     });
   }
 
@@ -82,7 +83,7 @@ describe("--help answers with the socket unreachable", () => {
   });
 
   it("answers every subcommand's own help without dispatching it", async () => {
-    for (const command of ["serve", "host-state", "statusline", "unit", "provision", "reclaim"]) {
+    for (const command of ["serve", "host-state", "statusline", "unit", "provision", "reclaim", "reap"]) {
       printed = "";
 
       const code = await runRedskilledCli([command, "--help"]);

@@ -9,6 +9,7 @@ import { hostPrerequisiteProbe } from "./host-prerequisites.js";
 import { httpsRemoteProbe } from "./https-remote.js";
 import { labelBodyCoherenceProbe } from "./label-body-coherence.js";
 import { laneCensusProbe } from "./lane-census.js";
+import { processCensusProbe } from "./process-census.js";
 import { queueVisibilityProbe } from "./queue-visibility.js";
 import type {
   OperationalProbe,
@@ -29,6 +30,7 @@ export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
   claimHygieneProbe,
   labelBodyCoherenceProbe,
   configCoherenceProbe,
+  processCensusProbe,
   laneCensusProbe,
 ];
 
