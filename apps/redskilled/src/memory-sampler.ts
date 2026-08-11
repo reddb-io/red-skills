@@ -296,6 +296,21 @@ export function evaluateProcessBudgets(input: {
   return { terminations, unenforceable: [] };
 }
 
+/** Evaluate every software-enforced tree budget from one shared reading. PURE. */
+export function evaluateWorkerBudgets(input: {
+  readonly workers: readonly RedskilledWorkerView[];
+  readonly rss: RedskilledRssReading;
+  readonly processes: RedskilledProcessReading;
+  readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
+}): RedskilledMemoryTickOutcome {
+  const memory = evaluateMemoryBudgets(input);
+  const processes = evaluateProcessBudgets(input);
+  return {
+    terminations: [...memory.terminations, ...processes.terminations],
+    unenforceable: [...memory.unenforceable, ...processes.unenforceable],
+  };
+}
+
 /** The terminal outcome document for one budgeted termination. PURE. */
 export function buildBudgetTermination(
   worker: RedskilledWorkerView,
