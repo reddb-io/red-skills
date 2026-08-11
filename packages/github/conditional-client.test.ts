@@ -157,6 +157,43 @@ describe("the conditional GitHub client", () => {
     expect(String(error)).toContain("2026-08-05T12:00:00.000Z");
   });
 
+  it("falls back to the last-known REST answer with its age before parking", async () => {
+    let current = balance(4_883, 0);
+    const instants = ["2026-08-05T11:00:00.000Z", "2026-08-05T11:00:30.000Z"];
+    const client = createGithubClient({
+      token: "test-token",
+      balance: () => current,
+      now: () => instants.shift() ?? "2026-08-05T11:00:30.000Z",
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async () => new Response(JSON.stringify({ check_runs: [{ name: "gate", status: "completed" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: '"checks-v1"' },
+      }),
+    });
+    const request = {
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" as const },
+    };
+
+    await client.conditionalRest(request);
+    current = balance(0, 0);
+    const cached = await client.conditionalRest(request);
+
+    expect(cached).toMatchObject({
+      data: { check_runs: [{ name: "gate", status: "completed" }] },
+      quotaFree: true,
+      degraded: {
+        source: "cache",
+        ageMs: 30_000,
+        pool: "rest",
+        resetAt: "2026-08-05T12:00:00.000Z",
+      },
+    });
+  });
+
   it("publishes a threshold that rises with REST headroom relative to GraphQL", () => {
     expect(githubSingleObjectCoalescingThreshold(balance(4_000, 1_000))).toBe(4);
     expect(githubSingleObjectCoalescingThreshold(balance(500, 4_000))).toBe(1);
