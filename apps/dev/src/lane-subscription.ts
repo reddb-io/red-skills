@@ -4,12 +4,12 @@ import {
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { encode, type JsonValue } from "@reddb-io/toon";
 import type {
   CastleLaneRecord,
   LaneEvent,
   LaneFollower,
 } from "@reddb-io/red-castle/engine";
+import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 
 /** The single subscribable resource that streams castle lane events. */
 export const LANE_EVENTS_RESOURCE_URI = "redskilled://lanes/events";
@@ -44,10 +44,6 @@ export interface LaneSubscriptionHandle {
 }
 
 const DEFAULT_BUFFER_LIMIT = 1_000;
-
-function toon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue);
-}
 
 /**
  * Expose AFK lane events as an MCP subscription surface. A client subscribes
@@ -102,7 +98,7 @@ export function registerLaneEventSubscription(
         {
           uri: LANE_EVENTS_RESOURCE_URI,
           mimeType: "application/toon",
-          text: toon({ events: drained }),
+          text: encodeRedskilledMcpToon({ events: drained }),
         },
       ],
     };
