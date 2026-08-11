@@ -798,12 +798,12 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
 }
 
 /**
- * Run `git worktree prune` to drop stale entries from git's internal worktree
- * registry after orphaned worktree dirs have been removed from disk. Best-effort:
- * never throws so a prune failure does not abort the janitor sweep.
+ * Drop stale registrations after orphaned dirs disappear. The one-hour expiry
+ * guards a sibling Worker whose `worktree add` is still materialising; failures
+ * remain best-effort so janitor sweeps never abort.
  */
 export async function worktreePrune(ctx: GitContext): Promise<void> {
-  await runGit(ctx, ["worktree", "prune"]);
+  await runGit(ctx, ["worktree", "prune", "--expire=1.hour.ago"]);
 }
 
 /** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */

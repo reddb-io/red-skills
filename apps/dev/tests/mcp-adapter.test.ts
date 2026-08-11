@@ -682,7 +682,7 @@ describe("statusline_aggregate MCP tool", () => {
     const cwd = await root();
     const projectLabel = cwd.split("/").at(-1)!;
     const counter = (
-      name: "open_pull_requests" | "open_issues" | "ready_queue" | "human_queue",
+      name: "open_pull_requests" | "open_issues" | "merged_today" | "ready_queue" | "human_queue",
       value: number,
       ageMs: number,
     ) => ({
@@ -704,6 +704,7 @@ describe("statusline_aggregate MCP tool", () => {
         counters: {
           open_pull_requests: counter("open_pull_requests", 3, 5_000),
           open_issues: counter("open_issues", 24, 65_000),
+          merged_today: counter("merged_today", 6, 25_000),
           ready_queue: counter("ready_queue", 7, 15_000),
           human_queue: counter("human_queue", 2, 75_000),
         },
@@ -721,7 +722,7 @@ describe("statusline_aggregate MCP tool", () => {
           projects: [{
             project_label: projectLabel,
             repository: "acme/widgets",
-            counts: { open_pull_requests: 3, open_issues: 24, recently_closed: 5 },
+            counts: { open_pull_requests: 3, open_issues: 24, merged_today: 6, recently_closed: 5 },
           }],
           reason: "daemon fixture",
         },
@@ -740,7 +741,7 @@ describe("statusline_aggregate MCP tool", () => {
 
     await expect(aggregate.invoke({})).resolves.toMatchObject({
       remote_counters: remoteCounters,
-      repo: { open_prs: 3, today_prs: 5, open_issues: 24 },
+      repo: { open_prs: 3, today_prs: 6, open_issues: 24 },
       queue: { ready_for_agent: 7, ready_for_human: 2 },
     });
     expect(remoteCounters.projects[0]!.counters.open_issues).toMatchObject({

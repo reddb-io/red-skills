@@ -63,7 +63,6 @@ import {
   currentMachineOwner,
   describeMachineScope,
   RedskilledMachineHeldError,
-  resolveMachineClaimPath,
 } from "../machine-scope.js";
 import { createRedskilledOrphanReaperRuntime } from "../orphan-reaper.js";
 import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-template.js";
@@ -332,7 +331,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const stopProbe = options.stopWorker ?? stopWorker;
   const unitInventory = options.unitInventory ??
     (() =>
-      maySweepMachine(paths.machineClaimPath, resolveMachineClaimPath({ machineIdHash: paths.machineIdHash }))
+      maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost)
         ? listActiveWorkerUnits()
         : []);
   const unitMainPid = options.unitMainPid ?? detectUnitMainPid;
@@ -770,7 +769,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         armQueueTransport();
         return queueTransport;
       },
-      now: clock(),
+      now: clock(), previous: lastActivity,
     });
   }
 
@@ -1711,8 +1710,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return dead;
   }
   const orphanReaper = createRedskilledOrphanReaperRuntime({
-    authorized: options.orphanCensus != null ||
-      paths.machineClaimPath === resolveMachineClaimPath({ machineIdHash: paths.machineIdHash }),
+    authorized: maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost),
     interval_ms: options.orphanReaperMs, mode: options.orphanReaperMode, census: options.orphanCensus, active_worker_units: unitInventory, dump_files: options.orphanDumpFiles,
     read_starttime: options.orphanStarttime, kill_group: options.orphanKillGroup, report: options.orphanReport,
     clock, held_worker_ids: () => workers.keys(), live_births: async () => rehydrateWorkers(await eventLane.read()),

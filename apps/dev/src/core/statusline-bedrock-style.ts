@@ -46,8 +46,9 @@ import {
   type StatuslineBedrockInput,
 } from "./statusline-bedrock.js";
 
-/** ` · ` drawn in the transparent zone — the same separator the plain render
- * uses, so stripping the paint recovers the plain line byte for byte. */
+/** A plain inter-block space in the transparent zone. */
+const SOFT_SPACE = `${SOFT} `;
+/** The lifecycle's cached-tail suffix still owns its explicit boundaries. */
 const SOFT_SEPARATOR = `${SOFT} · `;
 
 /** Paint every `k=v` in a transparent-zone block: paper KEY, default-fg VALUE,
@@ -79,16 +80,16 @@ function paintProjectBlock(input: StatuslineBedrockInput): string {
 export function renderStatuslineBedrockThemed(input: StatuslineBedrockInput): string {
   let line = paintProjectBlock(input);
   const model = renderModelBlock(input.claude);
-  if (model !== null) line += `${SOFT_SEPARATOR}${MODEL_BG}${PAPER}${model}${NOBG}`;
+  if (model !== null) line += `${SOFT_SPACE}${MODEL_BG}${PAPER}${model}${NOBG}`;
   const context = renderContextBlock(input.claude);
-  if (context !== null) line += `${SOFT_SEPARATOR}${VAL}${context}`;
+  if (context !== null) line += `${SOFT_SPACE}${KEY}ctx=${VAL}${context}`;
   const usage = renderUsageBlock(input.claude);
-  if (usage !== null) line += `${SOFT_SEPARATOR}${paintKeyValues(usage)}`;
+  if (usage !== null) line += `${SOFT_SPACE}${paintKeyValues(usage)}`;
   const localDiff = renderLocalDiffBlock(input.localDiff);
   // `loc=`'s value is the whole signed pair — `+A -R` with its space — so the
   // generic \S+ matcher would leave the removed half outside the VALUE tone.
   if (localDiff !== null) {
-    line += `${SOFT_SEPARATOR}${KEY}loc=${VAL}${localDiff.slice("loc=".length)}`;
+    line += `${SOFT_SPACE}${KEY}loc=${VAL}${localDiff.slice("loc=".length)}`;
   }
   return `${line}${RESET}`;
 }

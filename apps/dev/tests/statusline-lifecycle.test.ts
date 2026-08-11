@@ -45,7 +45,7 @@ describe("Statusline Lifecycle render", () => {
 
 function probe(overrides: Partial<StatuslineTailProbe> = {}): StatuslineTailProbe {
   return {
-    lines: ["acme/widgets 1w 128M", "w123 working"],
+    lines: ["1w rdy=5 iss=24 pr=3 mrg=7 128M", "w123 working"],
     generatedAt: "2026-08-11T12:00:00.000Z",
     payloadAgeMs: 5_000,
     stalenessWindowMs: 30_000,
@@ -111,7 +111,7 @@ describe("Statusline Lifecycle wire", () => {
     expect(elapsed).toBeLessThan(100);
     expect(served.state).toBe("degraded");
     expect(served.lines).toEqual([
-      "acme/widgets 1w 128M · age=17s · rsk=degraded",
+      "1w rdy=5 iss=24 pr=3 mrg=7 128M · age=17s · rsk=degraded",
       "w123 working",
     ]);
   });

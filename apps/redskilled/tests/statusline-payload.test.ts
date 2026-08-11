@@ -373,6 +373,7 @@ function counts(overrides: Partial<RedskilledActivityCounts> = {}): RedskilledAc
   return {
     open_pull_requests: 3,
     open_issues: 24,
+    merged_today: 7,
     recently_closed: 5,
     ready_queue: 1,
     human_queue: 11,
@@ -423,6 +424,7 @@ describe("the remote-counter block", () => {
     expect(Object.keys(project.counters).sort()).toEqual([...REDSKILLED_REMOTE_COUNTER_NAMES].sort());
     expect(project.counters.open_pull_requests).toMatchObject({ value: 3, fetched_at: POLLED_AT, age_ms: 5_000, stale: false });
     expect(project.counters.open_issues).toMatchObject({ value: 24, age_ms: 5_000 });
+    expect(project.counters.merged_today).toMatchObject({ value: 7, fetched_at: POLLED_AT, age_ms: 5_000 });
     expect(project.counters.ready_queue).toMatchObject({ value: 1, fetched_at: POLLED_AT, age_ms: 5_000, stale: false });
     expect(project.counters.human_queue).toMatchObject({ value: 11, age_ms: 5_000 });
     expect(isRedskilledStatuslinePayload(payload)).toBe(true);
@@ -471,9 +473,9 @@ describe("the remote-counter block", () => {
     }
   });
 
-  it("reaches the statusline tail as the four counters a reader sees", () => {
+  it("reaches the statusline tail as the compact panorama a reader sees", () => {
     // The seam between the block this daemon composes and the line a reader
-    // gets: one poll in, four dated numbers out, drawn by the shared renderer
+    // gets: one poll in, the dated panorama out, drawn by the shared renderer
     // rather than by an assertion's own idea of the layout.
     const payload = payloadWith(activityOf(counts()), "2026-08-11T12:00:05.000Z");
 
@@ -482,7 +484,8 @@ describe("the remote-counter block", () => {
       { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" },
     ).line);
 
-    expect(line).toContain("prs=3 cpr=5 iss=24 rdy=1 hmn=11");
+    expect(line).toContain("rdy=1 iss=24 pr=3 mrg=7");
+    expect(line).not.toContain("cpr=");
   });
 
   it("is honestly empty when the daemon polled nothing, and validates without the block", () => {

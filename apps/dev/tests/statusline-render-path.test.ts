@@ -26,7 +26,7 @@ const { directCollector, localGit, probeStatusline, spawned } = vi.hoisted(() =>
     },
     render: {
       lines: [
-        "acme/widgets 1w 128M v3.12.10",
+        "1w rdy=5 iss=24 pr=3 mrg=7 128M v3.12.10",
         "w123  ███▶░░  run=codex gpt-5.6 xhigh  iss=3546  implementing·tests  00:02:03  loc=+12 -3  tks=45k  tls=9 rsn=2 txt=1",
       ],
       mode: "local",
@@ -155,7 +155,7 @@ describe("dev statusline render path", () => {
     expect(directCollector).not.toHaveBeenCalled();
     // The bedrock LEADS the daemon's header line; the Worker lines follow it
     // untouched.
-    expect(out.text().split("\n")[0]).toContain(" · acme/widgets 1w 128M v3.12.10");
+    expect(out.text().split("\n")[0]).toContain(" · 1w rdy=5 iss=24 pr=3 mrg=7 128M v3.12.10");
     expect(out.text()).toContain("run=codex gpt-5.6 xhigh");
     expect(out.text()).toContain("iss=3546");
     expect(out.text()).toContain("loc=+12 -3  tks=45k  tls=9 rsn=2 txt=1");
@@ -195,8 +195,8 @@ describe("dev statusline render path", () => {
 
     expect(code).toBe(0);
     expect(out.text()).toBe(
-      `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
-        "5h=23% 7d=41% · loc=+142 -36 · rsk=bedrock-only\n",
+      `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} Opus·high ctx=47k 24% ` +
+        "5h=23% 7d=41% loc=+142 -36 · rsk=bedrock-only\n",
     );
     expect(localGit).toHaveBeenCalledOnce();
     expect(directCollector).not.toHaveBeenCalled();
@@ -212,8 +212,8 @@ describe("dev statusline render path", () => {
 
     expect(code).toBe(0);
     expect(out.text()).toBe(
-      `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
-        "5h=23% 7d=41% · loc=+142 -36 · rsk=bedrock-only\n",
+      `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} Opus·high ctx=47k 24% ` +
+        "5h=23% 7d=41% loc=+142 -36 · rsk=bedrock-only\n",
     );
   });
 
@@ -273,7 +273,7 @@ describe("dev statusline render path — colour", () => {
     expect(header).toContain(`${IDENTITY_BG}${IDENTITY_INK}» ${BOLD}red-skills`);
     // The plain content survives under the paint — the seam and the daemon head
     // are byte-identical to the NO_COLOR render.
-    expect(stripAnsi(header)).toContain(" · acme/widgets 1w 128M v3.12.10");
+    expect(stripAnsi(header)).toContain(" · 1w rdy=5 iss=24 pr=3 mrg=7 128M v3.12.10");
     expect(adapterMs).toBeLessThan(100);
   });
 
@@ -289,8 +289,8 @@ describe("dev statusline render path — colour", () => {
     expect(code).toBe(0);
     expect(out.text()).toContain(`${KEY}rsk=${DIM}bedrock-only`);
     expect(stripAnsi(out.text())).toBe(
-      `» red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
-        "5h=23% 7d=41% · loc=+142 -36 · rsk=bedrock-only\n",
+      `» red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} Opus·high ctx=47k 24% ` +
+        "5h=23% 7d=41% loc=+142 -36 · rsk=bedrock-only\n",
     );
   });
 
@@ -304,7 +304,7 @@ describe("dev statusline render path — colour", () => {
         staleness: { age_ms: 5_000, threshold_ms: 30_000, stale: false },
       },
       render: {
-        lines: [`[1macme/widgets[0m 1w`, `[39mw123 iss=42[0m`],
+        lines: [`[1m1w rdy=5 iss=24 pr=3 mrg=7[0m`, `[39mw123 iss=42[0m`],
         mode: "local",
         project_match: "matched",
       },
@@ -317,6 +317,6 @@ describe("dev statusline render path — colour", () => {
 
     expect(code).toBe(0);
     expect(out.text()).not.toContain("[");
-    expect(out.text()).toContain(" · acme/widgets 1w\nw123 iss=42\n");
+    expect(out.text()).toContain(" · 1w rdy=5 iss=24 pr=3 mrg=7\nw123 iss=42\n");
   });
 });

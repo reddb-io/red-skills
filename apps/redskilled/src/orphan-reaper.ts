@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readdir, readFile, readlink } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { killTreeAndWait } from "@reddb-io/shared/kill-tree.js";
@@ -74,11 +75,24 @@ export const REDSKILLED_STAMPED_ORPHAN_GRACE_MS = 10 * 60_000;
 /** An unstamped process needs a longer window because it cannot prove its origin. */
 export const REDSKILLED_UNSTAMPED_SUSPECT_GRACE_MS = 30 * 60_000;
 
-/** Linux `/proc` exposes process clocks at this stable USER_HZ. */
-const REDSKILLED_PROC_CLOCK_TICKS_PER_SECOND = 100;
-
 export interface RedskilledProcessCensusOptions {
   readonly proc_root?: string;
+  /** Host USER_HZ; injected only when the proc tree belongs to another kernel. */
+  readonly clock_ticks_per_second?: number;
+}
+
+let cachedProcClockTicksPerSecond: number | null | undefined;
+
+/** Read this kernel's USER_HZ once; an unreadable rate makes process ages unknowable. */
+function hostProcClockTicksPerSecond(): number | null {
+  if (cachedProcClockTicksPerSecond !== undefined) return cachedProcClockTicksPerSecond;
+  const probe = spawnSync("getconf", ["CLK_TCK"], { encoding: "utf8" });
+  const ticks = Number((probe.stdout ?? "").trim());
+  cachedProcClockTicksPerSecond =
+    probe.error == null && probe.status === 0 && Number.isFinite(ticks) && ticks > 0
+      ? ticks
+      : null;
+  return cachedProcClockTicksPerSecond;
 }
 
 export interface ReapStampedOrphanIO {
@@ -150,6 +164,8 @@ export async function censusRedskilledProcesses(
 ): Promise<RedskilledProcessCensusRow[]> {
   const root = options.proc_root ?? "/proc";
   try {
+    const clockTicksPerSecond = options.clock_ticks_per_second ?? hostProcClockTicksPerSecond();
+    if (clockTicksPerSecond == null || !Number.isFinite(clockTicksPerSecond) || clockTicksPerSecond <= 0) return [];
     const uptimeSeconds = Number((await readFile(join(root, "uptime"), "utf8")).trim().split(/\s+/)[0]);
     if (!Number.isFinite(uptimeSeconds) || uptimeSeconds < 0) return [];
     const entries = await readdir(root);
@@ -187,7 +203,7 @@ export async function censusRedskilledProcesses(
         starttime: parsed.starttime,
         age_ms: Math.max(
           0,
-          (uptimeSeconds - Number(parsed.starttime) / REDSKILLED_PROC_CLOCK_TICKS_PER_SECOND) * 1_000,
+          (uptimeSeconds - Number(parsed.starttime) / clockTicksPerSecond) * 1_000,
         ),
         ...(workerId == null ? {} : { worker_id: workerId }),
         ...(bornAt == null ? {} : { born_at: bornAt }),
