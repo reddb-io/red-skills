@@ -30,6 +30,23 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeToonlLines } from "@reddb-io/toon";
+import {
+  buildDaemonDeathEvent,
+  buildDaemonStartEvent,
+  buildDaemonStopEvent,
+  type RecordDaemonDeathInput,
+  type RecordDaemonStartInput,
+  type RecordDaemonStopInput,
+} from "./daemon-events.js";
+export {
+  buildDaemonDeathEvent,
+  buildDaemonStartEvent,
+  buildDaemonStopEvent,
+  REDSKILLED_DAEMON_EVENT_PREFIX,
+  type RecordDaemonDeathInput,
+  type RecordDaemonStartInput,
+  type RecordDaemonStopInput,
+} from "./daemon-events.js";
 import { decodeLaneRows } from "./event-lane-decode.js";
 import {
   readPositionedEventLane,
@@ -241,40 +258,6 @@ export interface RecordWorkerEventInput {
   readonly healKind?: string | null;
 }
 
-/**
- * One daemon leaving the session, and what it was holding when it did.
- *
- * The identity fields the flat shape insists on are answered about the daemon
- * itself — its pid, the socket it was serving — rather than left blank. Only the
- * project is empty, and truthfully so: a daemon's own life belongs to no project.
- */
-export interface RecordDaemonStopInput {
-  readonly ts: string;
-  readonly pid: number;
-  readonly socketPath: string;
-  readonly reason: string;
-  readonly detail: string;
-  /** The signal that asked for the stop, when one did. */
-  readonly signal?: string | null;
-}
-
-/** One daemon beginning to serve after reconciling durable host intent. */
-export interface RecordDaemonStartInput {
-  readonly ts: string;
-  readonly pid: number;
-  readonly socketPath: string;
-  readonly detail: string;
-}
-
-/** A successor's retroactive record for a predecessor that never said goodbye. */
-export interface RecordDaemonDeathInput {
-  readonly ts: string;
-  readonly pid: number;
-  readonly socketPath: string;
-  readonly detail: string;
-  readonly reason?: "silent-death";
-}
-
 /** One positive-depth project the demand loop deliberately did not birth for. */
 export interface RecordDemandRefusalInput {
   readonly ts: string;
@@ -320,63 +303,6 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     exit_code: input.exitCode ?? null,
     signal: input.signal ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
-  };
-}
-
-/** The prefix a `daemon-stop` names itself with, so no reader mistakes it for a Worker. */
-export const REDSKILLED_DAEMON_EVENT_PREFIX = "daemon:";
-
-/** Build the daemon's own stop event. PURE. */
-export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHostEvent {
-  return buildDaemonLifecycleEvent("daemon-stop", input, input.reason, input.signal);
-}
-
-/** Build the daemon's boot record after registration recovery has resolved. PURE. */
-export function buildDaemonStartEvent(input: RecordDaemonStartInput): RedskilledHostEvent {
-  return buildDaemonLifecycleEvent("daemon-start", input, "started", null);
-}
-
-/** Build a successor-authored death for a predecessor that left no stop. PURE. */
-export function buildDaemonDeathEvent(input: RecordDaemonDeathInput): RedskilledHostEvent {
-  return buildDaemonLifecycleEvent("daemon-death", input, input.reason ?? "silent-death", null);
-}
-
-function buildDaemonLifecycleEvent(
-  kind: "daemon-start" | "daemon-death" | "daemon-stop",
-  input: RecordDaemonStartInput | RecordDaemonDeathInput | RecordDaemonStopInput,
-  reason: string,
-  signal: string | null | undefined,
-): RedskilledHostEvent {
-  return {
-    version: 1,
-    ts: input.ts,
-    kind,
-    event: kind,
-    worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
-    project_label: "",
-    pid: input.pid,
-    workspace_path: input.socketPath,
-    fork_sha: null,
-    log_path: null,
-    isolated: false,
-    unit: null,
-    memory_high: null,
-    memory_max: null,
-    cpu_weight: null,
-    admission_verdict: null,
-    phase: null,
-    step: null,
-    tokens: null,
-    tools: null,
-    runner: null,
-    model: null,
-    base_head_sha: null,
-    base_commits_ahead: null,
-    heal_kind: null,
-    detail: input.detail,
-    exit_code: null,
-    signal: signal ?? null,
-    reason,
   };
 }
 
