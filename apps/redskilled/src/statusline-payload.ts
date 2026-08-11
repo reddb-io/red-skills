@@ -32,6 +32,11 @@ import type { RedskilledHostState, RedskilledRssSource, RedskilledWorkerView } f
 import { isRedskilledStatuslineMetrics, type RedskilledStatuslineMetrics } from "./live-metrics.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
 import {
+  buildRemoteCounterReport,
+  isRedskilledRemoteCounterReport,
+  type RedskilledRemoteCounterReport,
+} from "./remote-counters.js";
+import {
   buildActivityReport,
   isRedskilledActivityReport,
   type RedskilledActivityReport,
@@ -70,6 +75,21 @@ export {
   type RedskilledStatuslineDeath,
   type RedskilledStatuslineDeaths,
 } from "./statusline-deaths.js";
+
+// The remote-counter block's own judgements — which counters exist, when an age
+// makes one stale, what an absence reads as — live in `./remote-counters.js`.
+// They are re-exported for the same reason the death block's are: this module's
+// payload interface NAMES them, so a consumer typing a payload reaches them from
+// the module it already imports.
+export {
+  isRedskilledRemoteCounterReport,
+  REDSKILLED_REMOTE_COUNTER_NAMES,
+  REDSKILLED_REMOTE_COUNTERS_UNPOLLED_REASON,
+  type RedskilledProjectRemoteCounters,
+  type RedskilledRemoteCounter,
+  type RedskilledRemoteCounterName,
+  type RedskilledRemoteCounterReport,
+} from "./remote-counters.js";
 
 /** What a Worker is doing, as the daemon knows it. */
 export type RedskilledWorkerState = "running" | "reattached";
@@ -306,6 +326,25 @@ export interface RedskilledStatuslinePayload {
    * interval, and one number ageing does not make the other one old.
    */
   readonly repository_activity: RedskilledActivityReport;
+  /**
+   * The same poll's counters, one by one, each carrying its own age.
+   *
+   * Beside `repository_activity` rather than inside it, because the two answer
+   * different questions: the report dates the POLL — the fact an operator needs
+   * to know whether this daemon is still talking to GitHub — and this block
+   * dates each COUNTER, which is what a line rendering four numbers side by side
+   * needs (ADR 0141 decision 2). One poll-wide age describes an unasked counter
+   * and a second-old one equally badly.
+   *
+   * A counter with no value carries `null` and its own reason, never a zero: "the
+   * queue has drained", "the quota was spent" and "no label was ever named" are
+   * three different facts and only the first is a number.
+   *
+   * OPTIONAL on the wire (ADR 0130 rule 3): a daemon that predates this block
+   * answers completely without it, and a consumer that finds it absent must
+   * render nothing rather than an empty queue.
+   */
+  readonly remote_counters?: RedskilledRemoteCounterReport;
   /**
    * What the TOKEN has left, asked rather than counted, with its own age.
    *
@@ -590,6 +629,14 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       now: input.now,
       stalenessMs: input.activityStalenessMs,
     }),
+    // The same document, projected per counter rather than per poll. Both blocks
+    // are derived from ONE stored activity, so no surface can render two ages
+    // for one fetch — the projection is the point, a second source would not be.
+    remote_counters: buildRemoteCounterReport({
+      activity: input.repositoryActivity ?? null,
+      now: input.now,
+      ...(input.activityStalenessMs === undefined ? {} : { stalenessMs: input.activityStalenessMs }),
+    }),
     ...(input.deaths === undefined
       ? {}
       : { deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT) }),
@@ -828,6 +875,10 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // a field this consumer did not ask for would lose the Worker set — the very
     // version skew one host-scoped daemon exists to stop managing (ADR 0130).
     (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity)) &&
+    // Absent is accepted for the same reason, and for one more: this block is
+    // newer than the report beside it, so a daemon one release behind serves
+    // every counter's value without their per-counter ages.
+    (payload.remote_counters === undefined || isRedskilledRemoteCounterReport(payload.remote_counters)) &&
     // Absent is accepted for the same reason: a daemon older than the balance
     // poller answers completely without it, and a consumer that rejected the
     // whole payload would lose the Worker set over a badge.
