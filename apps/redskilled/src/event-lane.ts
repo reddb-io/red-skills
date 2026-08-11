@@ -29,7 +29,9 @@
  */
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeLines, type ToonlRecord } from "@reddb-io/toon";
+
+import { decodeLaneRows } from "./event-lane-decode.js";
 import {
   readPositionedEventLane,
   type EventLanePosition,
@@ -653,11 +655,8 @@ function isPublicHostEvent(event: RedskilledHostEvent): event is RedskilledPubli
 }
 
 /**
- * Decode a lane's text into events, dropping a crash-truncated tail. PURE.
- *
- * Only a line the writer never terminated is dropped, and only from the end: a
- * reader that skipped every line it could not decode would silently swallow a
- * genuine format bug in the middle of the lane as if it were a crash.
+ * Decode a lane's text into events: the crash-truncated tail is dropped, and
+ * historical rows no header can hold are skipped by `decodeLaneRows`. PURE.
  */
 export function parseEventLane(raw: string): RedskilledHostEvent[] {
   const lines = raw.split("\n");
@@ -665,24 +664,7 @@ export function parseEventLane(raw: string): RedskilledHostEvent[] {
   // that slot is the half-written line a crash left behind.
   lines.pop();
   if (lines.length === 0) return [];
-  const records: ToonlRecord[] = [];
-  const malformed: number[] = [];
-  let header: string | null = null;
-  for (const [index, line] of lines.entries()) {
-    if (/^\[\d*\]\{.*\}:$/.test(line)) {
-      header = line;
-      continue;
-    }
-    if (header == null) {
-      malformed.push(index + 1);
-      continue;
-    }
-    try {
-      records.push(...parseRecords(`${header}\n${line}\n`));
-    } catch {
-      malformed.push(index + 1);
-    }
-  }
+  const { records, malformed } = decodeLaneRows(lines);
   if (malformed.length > 0) {
     console.warn(`redskilled event lane skipped ${malformed.length} malformed row(s) at line ${malformed.join(", ")}`);
   }
