@@ -487,14 +487,18 @@ describe("the published display record is stored and never interpreted", () => {
     expect(clamped.step).toHaveLength(REDSKILLED_DISPLAY_FIELD_MAX);
   });
 
-  it("stores the start, the context and the estimate as opaquely as it stores a count (#3097)", () => {
+  it("stores every clock anchor opaquely rather than deriving an elapsed value", () => {
     const coerced = coerceWorkerDisplay({
       started_at: "2026-08-03T01:00:00.000Z",
+      phase_started_at: "2026-08-03T01:10:00.000Z",
+      progress_at: "2026-08-03T01:20:00.000Z",
       context: 108_000,
       eta: 640,
     });
 
     expect(coerced!.started_at).toBe("2026-08-03T01:00:00.000Z");
+    expect(coerced!.phase_started_at).toBe("2026-08-03T01:10:00.000Z");
+    expect(coerced!.progress_at).toBe("2026-08-03T01:20:00.000Z");
     expect(coerced!.context).toBe(108_000);
     expect(coerced!.eta).toBe(640);
     // No branch in this process asks what any of them MEAN — an `elapsed` is
@@ -508,6 +512,8 @@ describe("the published display record is stored and never interpreted", () => {
     expect(coerced!.eta).toBeNull();
     expect(coerced!.context).toBeNull();
     expect(coerced!.started_at).toBeNull();
+    expect(coerced!.phase_started_at).toBeNull();
+    expect(coerced!.progress_at).toBeNull();
   });
 });
 
