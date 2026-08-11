@@ -54,6 +54,7 @@ export function makeDeps(over: Partial<{
   workerLivenessVerdict: BootDeps["fs"]["workerLivenessVerdict"];
   workerWorkspaceLivenessVerdict: BootDeps["fs"]["workerWorkspaceLivenessVerdict"];
   workerStateRecordLivenessVerdict: BootDeps["fs"]["workerStateRecordLivenessVerdict"];
+  trimHistory: BootDeps["trimHistory"];
   viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
@@ -119,6 +120,7 @@ export function makeDeps(over: Partial<{
           }
         : {}),
     },
+    trimHistory: over.trimHistory ?? (async () => null),
     gh: {
       async editLabels(issue, remove, add) {
         calls.push(`gh.editLabels:${issue}`);
