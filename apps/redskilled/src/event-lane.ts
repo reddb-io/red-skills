@@ -72,7 +72,16 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-heal",
   "worker-death",
   "worker-budget-kill",
-] & { includes(searchElement: RedskilledWorkerEventKind | "demand-refusal" | "daemon-stop"): boolean };
+] & {
+  includes(
+    searchElement:
+      | RedskilledWorkerEventKind
+      | "demand-refusal"
+      | "daemon-start"
+      | "daemon-death"
+      | "daemon-stop",
+  ): boolean;
+};
 
 /**
  * The host-event kinds external consumers may rely on (ADR 0140).
