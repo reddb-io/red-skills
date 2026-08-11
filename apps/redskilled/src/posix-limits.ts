@@ -139,32 +139,35 @@ export function planPosixLimits(
 /**
  * The shell argv that applies these limits and then becomes the Worker. PURE.
  *
- * The command and its arguments ride as `"$0"` and `"$@"` rather than being
+ * The command and its arguments ride after a `--` placeholder and are executed
+ * as `"$@"` rather than being
  * interpolated into the script, so a workspace, a flag or a path containing
  * spaces or quotes is passed through byte-for-byte — a launcher that quoted its
  * own payload into a script would be one argument away from running something
  * else. `exec` is what makes the shell disappear: the Worker keeps the pid the
- * daemon sampled and there is no extra process between it and its limits.
+ * daemon sampled and there is no extra process between it and its limits. The
+ * core-dump cap is unconditional; callers without any other POSIX limits use the
+ * same argv shape with `limits` absent.
  */
 export function posixLimitsShellArgv(input: {
-  readonly limits: RedskilledPosixLimits;
+  readonly limits?: RedskilledPosixLimits;
   readonly nice: string | null;
   readonly command: string;
   readonly args: readonly string[];
 }): readonly string[] {
   const { limits } = input;
-  const lines: string[] = [];
+  const lines = ["ulimit -c 0"];
   // A ulimit the host refuses (a hard limit already lower) prints and continues:
   // a Worker that never started because it could not lower a soft limit would be
   // a worse outcome than one running under the limit it inherited.
-  if (limits.max_processes != null) lines.push(`ulimit -u ${limits.max_processes}`);
-  if (limits.cpu_seconds != null) lines.push(`ulimit -t ${limits.cpu_seconds}`);
+  if (limits?.max_processes != null) lines.push(`ulimit -u ${limits.max_processes}`);
+  if (limits?.cpu_seconds != null) lines.push(`ulimit -t ${limits.cpu_seconds}`);
   lines.push(
-    limits.nice != null && input.nice != null
-      ? `exec ${quote(input.nice)} -n ${limits.nice} "$0" "$@"`
-      : 'exec "$0" "$@"',
+    limits?.nice != null && input.nice != null
+      ? `exec ${quote(input.nice)} -n ${limits.nice} "$@"`
+      : 'exec "$@"',
   );
-  return ["-c", lines.join("\n"), input.command, ...input.args];
+  return ["-c", lines.join("\n"), "--", input.command, ...input.args];
 }
 
 /**
