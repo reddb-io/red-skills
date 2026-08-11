@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
+import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
@@ -71,7 +72,6 @@ import {
 } from "../registration-intent-store.js";
 import {
   buildProjectRegistration,
-  registrationRenewalStatus,
   renewProjectRegistration,
   RedskilledProjectUnregisteredError,
   sustainProjectRegistration,
@@ -2263,75 +2263,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     reattached.add(worker.worker_id);
     record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
   }
-  // Reconcile durable intent only AFTER replay and host discovery have answered
-  // which Workers are actually alive. Restoring records before this point made
-  // an abandoned registration authoritative merely because its deadline had not
-  // arrived yet, so a successor refused the fresh project_start that was the
-  // only live statement of intent (#3656).
-  const restoredAtMs = Date.parse(startedAt);
-  let abandonedRegistrations = 0;
-  for (const restored of restoredRegistrations) {
-    const renewByMs = Date.parse(restored.renew_by);
-    const hasLiveWorker = [...workers.values()].some(
-      (worker) => worker.project_label === restored.project_label,
-    );
-    const renewal = Number.isFinite(restoredAtMs)
-      ? registrationRenewalStatus(restored, restoredAtMs)
-      : "renewing";
-    if (!Number.isFinite(renewByMs) || renewal !== "running-on" || hasLiveWorker) {
-      registrations.set(restored.project_label, restored);
-      continue;
-    }
-
-    abandonedRegistrations += 1;
-    // Keep one bounded polling chance for the same reason an ordinarily lapsed
-    // registration gets one: a fresh queue observation may prove that the
-    // project is still draining. This map never conflicts with project_start.
-    if (!Number.isFinite(restoredAtMs) || restoredAtMs - renewByMs <= restored.renew_within_ms) {
-      recoverableRegistrations.set(restored.project_label, restored);
-    }
-    rememberLapse(
-      restored,
-      restoredAtMs,
-      `redskilled lapsed the recovered registration for project ${JSON.stringify(restored.project_label)}: ` +
-        "no session renewed it on cadence and no attributed Worker is alive",
-    );
-  }
-  // Rewrite even when classification only removed intent. Otherwise the next
-  // successor would read the same abandoned record and make recovery appear
-  // nondeterministic from one boot to the next.
+  const bootRecovery = planRegistrationBootRecovery(restoredRegistrations, workers.values(), startedAt);
+  for (const held of bootRecovery.live) registrations.set(held.project_label, held);
+  for (const held of bootRecovery.recoverable) recoverableRegistrations.set(held.project_label, held);
+  for (const held of bootRecovery.abandoned) rememberLapse(held, Date.parse(startedAt),
+    `redskilled lapsed the recovered registration for project ${JSON.stringify(held.project_label)}: ` +
+      "no session renewed it on cadence and no attributed Worker is alive");
   if (restoredRegistrations.length > 0) persistRegistrationIntent();
-  // A successor can prove an expired-but-recoverable intent immediately from a
-  // Worker the predecessor left running; no queue round-trip or human restart is
-  // needed before that project is registered again.
   recoverRegistrations(clock());
-  const latestDaemonLifecycle = [...laneEvents].reverse().find((event) =>
-    event.kind === "daemon-start" || event.kind === "daemon-death" || event.kind === "daemon-stop"
-  );
-  const silentPredecessor = latestDaemonLifecycle?.kind === "daemon-start"
-    ? { pid: latestDaemonLifecycle.pid, socketPath: latestDaemonLifecycle.workspace_path }
-    : latestDaemonLifecycle == null && heldLease != null && heldLease.pid !== owner.pid
-      ? { pid: heldLease.pid, socketPath: heldLease.socket_path }
-      : null;
-  if (silentPredecessor != null) {
-    await eventLane.recordDaemonDeath({
-      ts: startedAt,
-      pid: silentPredecessor.pid,
-      socketPath: silentPredecessor.socketPath,
-      detail: `redskilled recovered after daemon ${silentPredecessor.pid} left no stop record`,
-      reason: "silent-death",
-    });
-  }
-  if (restoredRegistrations.length > 0 || silentPredecessor != null) {
-    await eventLane.recordDaemonStart({
-      ts: startedAt,
-      pid: owner.pid,
-      socketPath: paths.socketPath,
-      detail:
-        `redskilled boot read the host registration intent store: recovered ${registrations.size} live, ` +
-        `lapsed ${abandonedRegistrations} abandoned`,
-    });
-  }
+  await recordDaemonBootRecovery({ eventLane, laneEvents, heldLease, ownerPid: owner.pid,
+    startedAt, socketPath: paths.socketPath, recovery: bootRecovery });
   // The bounded exception. A daemon that has just come back holds Workers it has
   // never heard a heartbeat from, so for those — and only those — it reads the log
   // ONCE, from the path the client GAVE at spawn and carried on the event lane. A
