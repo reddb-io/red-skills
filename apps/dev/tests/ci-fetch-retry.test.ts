@@ -144,20 +144,21 @@ describe("ci-fetch-with-retry", () => {
 });
 
 describe("CI setup network fetches", () => {
-  it("routes the workspace-CI tq install through the shared fetcher", async () => {
+  it("installs workspace-CI tq from the pinned official crate", async () => {
     const step = stepBody(await readWorkflow("red-workspace-ci.yml"), "Install pinned tq");
 
-    expect(step).toContain("scripts/ci-fetch-with-retry.sh");
-    // Piping the installer straight into `sh` would execute a partial body and
-    // make the retry meaningless — download first, then run.
-    expect(step).not.toMatch(/\|\s*\n?\s*sh$/m);
+    expect(step).toContain('cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked');
+    expect(step).toContain('tq_root="$RUNNER_TEMP/tq"');
+    expect(step).not.toContain("../toon");
     expect(step).not.toContain("curl ");
   });
 
-  it("routes the benchmark-CI tq install through the shared fetcher", async () => {
+  it("installs benchmark-CI tq from the pinned official crate", async () => {
     const step = stepBody(await readWorkflow("red-rsp-benchmark-ci.yml"), "Install pinned tq");
 
-    expect(step).toContain("scripts/ci-fetch-with-retry.sh");
+    expect(step).toContain('cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked');
+    expect(step).toContain('"$tq_root/bin/tq" --version');
+    expect(step).not.toContain("../toon");
     expect(step).not.toContain("curl ");
   });
 

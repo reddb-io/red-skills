@@ -189,7 +189,7 @@ export function encodeEffortDocument(effort: EffortRecord): string {
     schema: MANAGER_EFFORT_SCHEMA,
     version: MANAGER_EFFORT_SCHEMA_VERSION,
   };
-  return encodeRecords([header, encodeEffortRow(effort)]);
+  return encodeRecords([header, encodeEffortRow(effort)], {});
 }
 
 function requireString(row: ToonlRecord, field: string): string {

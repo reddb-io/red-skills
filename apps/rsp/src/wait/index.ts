@@ -34,7 +34,7 @@ import {
   type WaitRegistryEntry,
 } from "./model.js";
 import { waitRegistryDir, waitSpoolDir } from "./paths.js";
-import { createPrProbe, latestRunId, probeRelease, probeRun } from "./probes.js";
+import { createPrProbe, latestRunId, probeJob, probeRelease, probeRun } from "./probes.js";
 import type { GhCallOptions } from "./github.js";
 import { pidStartTime } from "./process-tree.js";
 import { listWaits, newRegistryEntry, registryPathFor, writeRegistryEntry } from "./registry.js";
@@ -219,9 +219,22 @@ async function dispatchWait(
       }
     }
 
+    case "job": {
+      const id = parsed.target ?? "";
+      if (!/^[1-9][0-9]*$/.test(id)) return { verdict: indeterminate("missing job id") };
+      return await pollUntilDone({
+        probe: () => probeJob(id, call),
+        timeoutMs: parsed.options.timeoutMs,
+        baseSleepMs: envDuration("RSP_WAIT_JOB_POLL_MS", 15_000),
+        registryPath,
+        entry,
+        signal,
+      });
+    }
+
     case "release":
       return await pollUntilDone({
-        probe: () => probeRelease(parsed.tagGlob, new Date(entry.started_at), call),
+        probe: () => probeRelease(parsed.tagGlob, new Date(entry.started_at), call, parsed.existing),
         timeoutMs: parsed.options.timeoutMs,
         baseSleepMs: envDuration("RSP_WAIT_RELEASE_POLL_MS", 60_000),
         registryPath,

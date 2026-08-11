@@ -42,8 +42,7 @@
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 
 /** The claim file name, inside whichever directory the machine shares. */
@@ -353,7 +352,7 @@ function belongsTo(claim: RedskilledMachineClaim, owner: RedskilledMachineOwner,
 }
 
 function serialize(claim: RedskilledMachineClaim): string {
-  return `${encode(claim as unknown as JsonValue, { keyedMapCollapse: true })}\n`;
+  return `${encode(claim as unknown as JsonValue)}\n`;
 }
 
 function parseSnapshot(raw: string): unknown {

@@ -191,7 +191,7 @@ The resident owns the drain:
 4. Bad lines or write failures become degradation events rather than blocking
    the drain.
 5. The telemetry index is pruned by telemetry TTL and byte budget.
-6. `writeStatusSummary()` writes `.red/tmp/rsp-status-summary.json` for the
+6. `writeStatusSummary()` writes `.red/state/rsp/rsp-status-summary.toon` for the
    statusline summary.
 
 Telemetry collections:

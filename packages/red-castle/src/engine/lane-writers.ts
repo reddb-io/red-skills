@@ -13,11 +13,12 @@ import {
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
 import {
+  decode,
+  encode,
   encodeToonlLines,
   parseRecords,
   type JsonValue,
 } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
 import {
   CASTLE_HISTORY_SCHEMA_ID,
   CASTLE_LANE_SCHEMA_ID,
@@ -312,7 +313,7 @@ export async function writeCastleStateSnapshot(
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(
     tmpPath,
-    encode(validated as unknown as JsonValue, { keyedMapCollapse: true }),
+    encode(validated as unknown as JsonValue),
     "utf8",
   );
   await rename(tmpPath, path);

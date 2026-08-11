@@ -2,8 +2,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import {
   DEV_TOON_MIGRATION_SURFACES,
   MEMORY_TOON_MIGRATION_SURFACES,
@@ -116,21 +115,21 @@ describe("shared TOON migration registry", () => {
           id: "dev.rsp-resident-registry",
           plugin: "dev",
           legacyPath: ".red/state/rsp/rsp-resident.pid.json",
-          toonPath: ".red/state/rsp/rsp-resident.pid.json",
+          toonPath: ".red/state/rsp/rsp-resident.pid.toon",
           kind: "toon",
         }),
         expect.objectContaining({
           id: "dev.rsp-status-summary",
           plugin: "dev",
           legacyPath: ".red/state/rsp/rsp-status-summary.json",
-          toonPath: ".red/state/rsp/rsp-status-summary.json",
+          toonPath: ".red/state/rsp/rsp-status-summary.toon",
           kind: "toon",
         }),
         expect.objectContaining({
           id: "dev.rsp-wait-registry",
           plugin: "dev",
           legacyPath: ".red/tmp/waits/*.json",
-          toonPath: ".red/tmp/waits/*.json",
+          toonPath: ".red/tmp/waits/*.toon",
           kind: "toon",
         }),
       ]),
@@ -165,12 +164,11 @@ describe("shared TOON migration registry", () => {
     const first = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "memory" });
     const toonPath = join(root, ".red/memory/config.toon");
     const afterFirst = await readFile(toonPath, "utf8");
-    const legacyAfterFirst = await readFile(legacy, "utf8");
     const second = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "memory" });
 
     expect(first.status).toBe("converted");
     expect(first.converted).toEqual(["memory.config"]);
-    expect(legacyAfterFirst).toBe(`${JSON.stringify({ mode: "graph", hooks: { sessionStart: true } })}\n`);
+    expect(await exists(legacy)).toBe(false);
     expect(second.status).toBe("noop");
     expect(second.skipped).toEqual(["memory.config"]);
     expect(await readFile(toonPath, "utf8")).toBe(afterFirst);
@@ -387,9 +385,9 @@ describe("shared TOON migration registry", () => {
     const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.toon"), "utf8");
     const countRaw = await readFile(join(root, ".red/state/statusline/statusline-cache.toon"), "utf8");
     const repoRaw = await readFile(join(root, ".red/state/statusline/statusline-repo-cache.toon"), "utf8");
-    const residentRaw = await readFile(join(root, ".red/state/rsp/rsp-resident.pid.json"), "utf8");
-    const summaryRaw = await readFile(join(root, ".red/state/rsp/rsp-status-summary.json"), "utf8");
-    const waitRaw = await readFile(join(root, ".red/tmp/waits/wait-a.json"), "utf8");
+    const residentRaw = await readFile(join(root, ".red/state/rsp/rsp-resident.pid.toon"), "utf8");
+    const summaryRaw = await readFile(join(root, ".red/state/rsp/rsp-status-summary.toon"), "utf8");
+    const waitRaw = await readFile(join(root, ".red/tmp/waits/wait-a.toon"), "utf8");
     expect(stateRaw.trimStart().startsWith("{")).toBe(false);
     expect(countRaw.trimStart().startsWith("{")).toBe(false);
     expect(repoRaw.trimStart().startsWith("{")).toBe(false);
@@ -402,6 +400,9 @@ describe("shared TOON migration registry", () => {
     expect((decode(residentRaw) as { resident_version?: string }).resident_version).toBe("old");
     expect((decode(summaryRaw) as { tokens_saved_today?: number }).tokens_saved_today).toBe(12);
     expect((decode(waitRaw) as { reason?: string }).reason).toBe("legacy");
+    await expect(access(join(root, ".red/state/rsp/rsp-resident.pid.json"))).rejects.toThrow();
+    await expect(access(join(root, ".red/state/rsp/rsp-status-summary.json"))).rejects.toThrow();
+    await expect(access(join(root, ".red/tmp/waits/wait-a.json"))).rejects.toThrow();
     expect(second.status).toBe("noop");
     expect(second.skipped).toEqual(
       expect.arrayContaining([
@@ -426,23 +427,32 @@ describe("encodeSnapshotToon keyed-map collapse", () => {
     },
   };
 
-  test("collapses a uniform object map and round-trips losslessly", () => {
-    const collapsed = encodeSnapshotToon(uniformMap);
-    const expanded = encode(uniformMap as JsonValue);
-    // The collapse rewrites the map into a brace-header tabular block, so the
-    // encoded text differs from default encoding and carries the header.
-    expect(collapsed).not.toBe(expanded);
-    expect(collapsed).toContain("storage_classes{records,bytes,raw_bytes}:");
-    expect(decode(collapsed)).toEqual(uniformMap);
+  test("uses the canonical counted keyed-map form and round-trips losslessly", () => {
+    const canonical = encodeSnapshotToon(uniformMap);
+    expect(canonical).toBe(encode(uniformMap as JsonValue));
+    expect(canonical).toContain("storage_classes[3:]{records,bytes,raw_bytes}:");
+    expect(decode(canonical)).toEqual(uniformMap);
   });
 
-  test("readers decode both the collapsed and the non-collapsed form (fixtures cover both)", () => {
-    const collapsed = encodeSnapshotToon(uniformMap);
-    const nonCollapsed = encode(uniformMap as JsonValue);
-    // Same logical value, two on-disk encodings; the reader is format-blind.
-    expect(decode(collapsed)).toEqual(uniformMap);
-    expect(decode(nonCollapsed)).toEqual(uniformMap);
-    expect(decode(collapsed)).toEqual(decode(nonCollapsed));
+  test("the canonical reader accepts both counted keyed-map and expanded v4.1 forms", () => {
+    const canonical = encodeSnapshotToon(uniformMap);
+    const expanded = [
+      "storage_classes:",
+      "  derivable:",
+      "    records: 3",
+      "    bytes: 40",
+      "    raw_bytes: 120",
+      "  \"re-executable\":",
+      "    records: 1",
+      "    bytes: 10",
+      "    raw_bytes: 55",
+      "  ephemeral:",
+      "    records: 2",
+      "    bytes: 22",
+      "    raw_bytes: 88",
+    ].join("\n");
+    expect(decode(canonical)).toEqual(uniformMap);
+    expect(decode(expanded)).toEqual(uniformMap);
   });
 
   test("leaves non-qualifying surfaces byte-identical to default encoding", () => {
@@ -471,8 +481,8 @@ describe("encodeSnapshotToon keyed-map collapse", () => {
     const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
     expect(report.converted).toContain("dev.rsp-status-summary");
 
-    const written = await readFile(join(root, ".red/state/rsp/rsp-status-summary.json"), "utf8");
-    expect(written).toContain("storage_classes{records,bytes,raw_bytes}:");
+    const written = await readFile(join(root, ".red/state/rsp/rsp-status-summary.toon"), "utf8");
+    expect(written).toContain("storage_classes[3:]{records,bytes,raw_bytes}:");
 
     const read = await readRegisteredToonSurface(root, "dev.rsp-status-summary");
     expect(read.value).toEqual(payload);

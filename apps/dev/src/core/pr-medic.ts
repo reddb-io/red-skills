@@ -1,7 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "@reddb-io/red-castle/engine";
 
 /**
@@ -202,7 +201,7 @@ export function createFileMedicStore(paths: EnginePaths): MedicStore {
     async write(state) {
       await mkdir(dirname(path), { recursive: true });
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
-      await writeFile(temporary, encode(validateMedicState(state) as unknown as JsonValue, { keyedMapCollapse: true }), "utf8");
+      await writeFile(temporary, encode(validateMedicState(state) as unknown as JsonValue), "utf8");
       await rename(temporary, path);
     },
   };

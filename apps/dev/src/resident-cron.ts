@@ -1,7 +1,6 @@
 import * as fsPromises from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import {
   createEnginePaths,
   createSingletonEventLane,
@@ -191,7 +190,7 @@ export function createResidentCron(options: ResidentCronOptions): ResidentCron {
     const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
     await fs.writeFile(
       temporary,
-      encode(schedule as unknown as JsonValue, { keyedMapCollapse: true }),
+      encode(schedule as unknown as JsonValue),
       { encoding: "utf8" },
     );
     await fs.rename(temporary, path);

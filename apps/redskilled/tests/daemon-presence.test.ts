@@ -22,8 +22,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { JsonValue } from "@reddb-io/toon";
-import { serialize as encode } from "@reddb-io/toon/legacy";
+import { encode, type JsonValue } from "@reddb-io/toon";
 import {
   describeRedskilledPresence,
   ensureRedskilledDaemon,
@@ -77,7 +76,7 @@ function lease(paths: RedskilledPaths, overrides: Partial<RedskilledLease> = {})
 }
 
 async function writeLease(paths: RedskilledPaths, record: RedskilledLease): Promise<void> {
-  await writeFile(paths.leasePath, `${encode(record as unknown as JsonValue, { keyedMapCollapse: true })}\n`, "utf8");
+  await writeFile(paths.leasePath, `${encode(record as unknown as JsonValue)}\n`, "utf8");
 }
 
 /** A socket that accepts a connection and never answers — the wedged daemon. */

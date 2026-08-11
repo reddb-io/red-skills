@@ -369,13 +369,17 @@ function trimLaneBeforeAppend<Row>(
 }
 
 async function renameActiveSpools(rootDir: string): Promise<string[]> {
-  const paths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const activePath = telemetrySpoolPath(rootDir);
+  const paths = [activePath, telemetryLegacySpoolPath(rootDir)];
   const renamed: string[] = [];
   for (const path of paths) {
     const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
     try {
       await rename(path, drainingPath);
-      await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+      // The JSONL path is a read-once migration input, never an active lane.
+      // Recreating it after ingestion made an obsolete internal format look
+      // canonical and left an empty `.jsonl` behind on every drain.
+      if (path === activePath) await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
       renamed.push(drainingPath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
@@ -385,10 +389,7 @@ async function renameActiveSpools(rootDir: string): Promise<string[]> {
 }
 
 async function ensureActiveSpoolFiles(rootDir: string): Promise<void> {
-  await Promise.all([
-    writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }),
-    writeFile(telemetryLegacySpoolPath(rootDir), "", { flag: "a" }),
-  ]).catch(() => undefined);
+  await writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }).catch(() => undefined);
 }
 
 async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetrySpoolEntry[]> {

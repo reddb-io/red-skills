@@ -597,7 +597,7 @@ describe("rsp cli", () => {
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
     await expect(readFile(legacyPath)).resolves.not.toEqual(legacyBytes);
-    await expect(readFile(legacyPath, "utf8")).resolves.toContain("\"version\":1");
+    expect(decode(await readFile(legacyPath, "utf8"))).toMatchObject({ version: 1 });
     await expect(stat(join(root, ".red", "tmp", "rsp-elisions.json"))).rejects.toMatchObject({ code: "ENOENT" });
   }, 120_000);
 

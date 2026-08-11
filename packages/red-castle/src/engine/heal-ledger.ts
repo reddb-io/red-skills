@@ -1,7 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
 
 export const HEAL_LEDGER_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -64,7 +63,7 @@ export function createFileHealLedgerStore(paths: EnginePaths): HealLedgerStore {
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
       await writeFile(
         temporary,
-        encode(validated as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(validated as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

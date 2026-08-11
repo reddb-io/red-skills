@@ -246,17 +246,12 @@ jobs:
         if: env.RUN_DEV == 'true'
         env:
           TQ_VERSION: v0.21.0
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          installer="$RUNNER_TEMP/tq-install.sh"
-          scripts/ci-fetch-with-retry.sh \
-            "https://api.github.com/repos/reddb-io/toon/contents/install.sh?ref=${TQ_VERSION}" \
-            "$installer" \
-            -H "Accept: application/vnd.github.raw+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28"
-          sh "$installer"
+          tq_root="$RUNNER_TEMP/tq"
+          cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked --root "$tq_root"
+          echo "$tq_root/bin" >> "$GITHUB_PATH"
+          "$tq_root/bin/tq" --version
 
       - name: Install workspace dependencies
         if: env.RUN_DEV == 'true'

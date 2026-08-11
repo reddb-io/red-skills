@@ -1,3 +1,0 @@
-workers{status,tokens}:
-  w1: running,12
-  w2: done,34

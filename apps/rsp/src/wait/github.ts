@@ -139,6 +139,28 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
       }),
     };
   }
+  if (args[0] === "job" && args[1] === "view" && args[2]) {
+    const response = await readGhConditionalJson({
+      path: `repos/{owner}/{repo}/actions/jobs/${args[2]}`,
+      args: ["run", "view", args[2]],
+      cwd,
+      signal,
+      command: `gh api repos/{owner}/{repo}/actions/jobs/${args[2]}`,
+    });
+    if (response.status !== 0) return response;
+    const row = recordOf(JSON.parse(response.stdout));
+    return {
+      status: 0,
+      stderr: response.stderr,
+      stdout: JSON.stringify({
+        databaseId: numberField(row, "id"),
+        name: stringField(row, "name"),
+        status: stringField(row, "status").toUpperCase(),
+        conclusion: stringField(row, "conclusion").toUpperCase(),
+        url: stringField(row, "html_url"),
+      }),
+    };
+  }
   if (args[0] === "run" && args[1] === "list") {
     const branch = optionAfter(args, "--branch");
     const limit = optionAfter(args, "--limit") ?? "20";
@@ -171,6 +193,27 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
       isDraft: row.draft === true,
     }));
     return { status: 0, stdout: JSON.stringify(rows), stderr: response.stderr };
+  }
+  if (args[0] === "release" && args[1] === "view" && args[2]) {
+    const tag = args[2];
+    const response = await readGhConditionalJson({
+      path: `repos/{owner}/{repo}/releases/tags/${encodeURIComponent(tag)}`,
+      args: ["release", "view", tag],
+      cwd,
+      signal,
+      command: `gh release view ${tag}`,
+    });
+    if (response.status !== 0) return response;
+    const row = recordOf(JSON.parse(response.stdout));
+    return {
+      status: 0,
+      stderr: response.stderr,
+      stdout: JSON.stringify({
+        tagName: stringField(row, "tag_name"),
+        publishedAt: stringField(row, "published_at"),
+        isDraft: row.draft === true,
+      }),
+    };
   }
   return null;
 }

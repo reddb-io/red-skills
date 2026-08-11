@@ -10,8 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import {
   isRedskilledProjectRegistration,
   type RedskilledProjectRegistration,
@@ -54,7 +53,7 @@ export function createRedskilledRegistrationIntentStore(
       version: 1,
       registrations: [...registrations],
     };
-    await writeFile(temporary, `${encode(snapshot as unknown as JsonValue, { keyedMapCollapse: true })}\n`, {
+    await writeFile(temporary, `${encode(snapshot as unknown as JsonValue)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });

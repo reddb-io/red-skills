@@ -7,8 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { serialize as encode } from "@reddb-io/toon/legacy";
+import { encode, type JsonValue } from "@reddb-io/toon";
 import type { ImpactClass, QueuedChange } from "./changeset-queue.js";
 
 export interface AttributedReleaseChange extends QueuedChange {
@@ -75,7 +74,7 @@ export function renderReleaseArtifacts(input: ReleaseArtifactInput): RenderedRel
     manifest,
     notes: renderReleaseNotes(manifest),
     json: `${JSON.stringify(manifest, null, 2)}\n`,
-    toon: withTrailingNewline(encode(manifest as unknown as JsonValue, { keyedMapCollapse: true })),
+    toon: withTrailingNewline(encode(manifest as unknown as JsonValue)),
   };
 }
 

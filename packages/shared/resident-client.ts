@@ -67,8 +67,8 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
     // the `.red/tmp/` root, every writer uses a named lane.
     wakeLockPath: join(rootDir, ".red", "tmp", "rsp", "wake.lock"),
     // Durable status + resident metadata live in the rsp state lane (ADR 0098).
-    summaryPath: join(rspState, "rsp-status-summary.json"),
-    registryPath: join(rspState, "rsp-resident.pid.json"),
+    summaryPath: join(rspState, "rsp-status-summary.toon"),
+    registryPath: join(rspState, "rsp-resident.pid.toon"),
   };
 }
 

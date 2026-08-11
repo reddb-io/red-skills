@@ -64,7 +64,7 @@ describe("lease document", () => {
     const foreign = encodeRecords([
       { kind: "manager.lease.schema", schema: MANAGER_LEASE_SCHEMA, version: 99 },
       { kind: "manager.lease", ...lease },
-    ]);
+    ], {});
     expect(() => decodeLeaseDocument(foreign)).toThrow(/schema version/);
   });
 });

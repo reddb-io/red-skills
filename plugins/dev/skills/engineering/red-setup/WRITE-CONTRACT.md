@@ -92,13 +92,13 @@ and the `rsp` opt-in block:
 
 Install and record required host binaries (Section E2):
 
-1. Run the pinned toon installer exactly as documented:
+1. Install the pinned official crate exactly as documented:
 
    ```bash
-   TQ_VERSION=v0.21.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.21.0/install.sh | sh
+   cargo install reddb-io-tq --version 0.21.0 --locked --force
    ```
 
-2. Verify `tq --version` reports `0.21.0`. If it does not, stop and report the mismatch; do not offer a jq fallback.
+2. Verify `tq --version` reports `0.21.0` or newer. If it is older, stop and report the mismatch; do not offer a jq fallback.
 3. Ensure `.red/config.yaml` records the pin:
 
    ```yaml

@@ -1,7 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
 import { isRunner, runners, type Runner } from "./runner-types.js";
 import { createSingletonEventLane } from "./singleton-event-lane.js";
@@ -145,7 +144,7 @@ export async function writeHostCapabilityProfile(
   const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
   await writeFile(
     temporary,
-    encode(validated as unknown as JsonValue, { keyedMapCollapse: true }),
+    encode(validated as unknown as JsonValue),
     "utf8",
   );
   await rename(temporary, path);

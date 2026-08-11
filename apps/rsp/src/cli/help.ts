@@ -31,18 +31,20 @@ function commandHelpLines(command: string | undefined): string[] {
         "--full           keep full supported wrapper detail",
       ], ["rsp git status --brief", "rsp git log --terse", "rsp git diff --query <path>"]);
     case "gh":
-      return scopedHelp("rsp gh <pr|issue|run> <list|view> [options] | <issues|prs|edit-labels|link-sub-issues> ...", [
+      return scopedHelp("rsp gh <pr|issue|run> <list|view> [options] | api <REST-path> | <issues|prs|edit-labels|link-sub-issues> ...", [
         "--brief          compact output, default lossless",
         "--terse          aggressively summarize and mint recovery handles",
         "--query <text>   filter rendered rows",
         "--full           keep full supported wrapper detail",
         "--json <fields>  select fields for batched issues/prs",
         "--repo <slug>    owner/repo override for batched operations",
+        "api GET reads    use the resident ETag/rate-aware client and emit canonical TOON",
       ], [
         "rsp gh issues 42 43 --json state,title,labels,body",
         "rsp gh prs 12 13 --json state,mergeable,statusCheckRollup",
         "rsp gh edit-labels --add ready-for-agent --remove blocked:crashed 42 43",
         "rsp gh link-sub-issues 100 101 102",
+        "rsp gh api repos/owner/repo/actions/runs/123",
       ]);
     case "vitest":
       return scopedHelp("rsp vitest [run] [vitest-options]", [
@@ -79,7 +81,7 @@ function commandHelpLines(command: string | undefined): string[] {
         "usage: rsp wait <subcommand> [options]",
         "",
         "Flags and defaults:",
-        "  --timeout <duration> default 30m for cmd, 60m for pr/run, 2h for release",
+        "  --timeout <duration> default 30m for cmd, 45m for pr/run/job, 2h for release",
         "  --reason <text>     default empty",
         "  --signal-pid <pid>  optional completion signal target",
         "  --signal <signal>   default USR1",
@@ -88,7 +90,8 @@ function commandHelpLines(command: string | undefined): string[] {
         "Examples:",
         "  rsp wait pr 123 --reason \"before merge\"",
         "  rsp wait run --branch feature/wait --latest",
-        "  rsp wait release --tag \"v2.*\"",
+        "  rsp wait job 93919316178",
+        "  rsp wait release --tag \"v2.*\" --existing",
         "  rsp wait cmd -- \"pnpm -C apps/rsp build\"",
         "  rsp wait ls",
         "",

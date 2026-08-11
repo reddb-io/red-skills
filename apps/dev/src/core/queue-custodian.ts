@@ -16,8 +16,7 @@ import {
 } from "./repair-lane.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
 export interface QueueCustodyIdentity {
   readonly repo: string;
@@ -109,7 +108,7 @@ export function createFileQueueCustodyStore(path: string): QueueCustodyStore {
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
       await writeFile(
         temporary,
-        encode(decodeCustody(state) as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(decodeCustody(state) as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

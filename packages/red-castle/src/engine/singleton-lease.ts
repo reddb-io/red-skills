@@ -8,8 +8,7 @@
  */
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
 
 export interface SingletonLeaseOwner {
@@ -138,7 +137,7 @@ export function createSingletonLeaseStore(
     const temporary = `${path}.tmp-${lease.pid}-${crypto.randomUUID()}`;
     await fs.writeFile(
       temporary,
-      encode(lease as unknown as JsonValue, { keyedMapCollapse: true }),
+      encode(lease as unknown as JsonValue),
       { encoding: "utf8" },
     );
     await fs.rename(temporary, path);
@@ -165,7 +164,7 @@ export function createSingletonLeaseStore(
         try {
           await fs.writeFile(
             path,
-            encode(lease as unknown as JsonValue, { keyedMapCollapse: true }),
+            encode(lease as unknown as JsonValue),
             { encoding: "utf8", flag: "wx" },
           );
           return { acquired: true, reaped, lease };

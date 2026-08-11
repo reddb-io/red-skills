@@ -19,8 +19,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 
 export interface RedskilledLeaseOwner {
@@ -192,7 +191,7 @@ function belongsTo(lease: RedskilledLease, owner: RedskilledLeaseOwner): boolean
 }
 
 function serialize(lease: RedskilledLease): string {
-  return `${encode(lease as unknown as JsonValue, { keyedMapCollapse: true })}\n`;
+  return `${encode(lease as unknown as JsonValue)}\n`;
 }
 
 function parseSnapshot(raw: string): unknown {

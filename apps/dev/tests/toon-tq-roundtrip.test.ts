@@ -48,7 +48,7 @@ describe("bundled toon encoder round-trips through pinned tq", () => {
       { ts: "2026-07-15T00:00:01Z", worker: "wRT", type: "agent", msg: "second, with comma", iteration: 2, kind: "text" },
     ];
     const lane = join(dir, "agent.log.toonl");
-    await writeFile(lane, encodeRecords(records), "utf8");
+    await writeFile(lane, encodeRecords(records, {}), "utf8");
 
     const { stdout } = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-c", ".", lane]);
     expect(stdout.trim().split("\n").map((line) => JSON.parse(line))).toEqual(records);
@@ -60,7 +60,7 @@ describe("bundled toon encoder round-trips through pinned tq", () => {
       { id: 2, note: "newline\nembedded", empty: "", nil: null, flag: false, ratio: -0.25 },
     ];
     const lane = join(dir, "gnarly.toonl");
-    await writeFile(lane, encodeRecords(records), "utf8");
+    await writeFile(lane, encodeRecords(records, {}), "utf8");
 
     const { stdout } = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-c", ".", lane]);
     expect(stdout.trim().split("\n").map((line) => JSON.parse(line))).toEqual(records);

@@ -1,7 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
 import {
   isRefused,
@@ -132,7 +131,7 @@ export function createFileIssueCuratorStore(paths: EnginePaths): IssueCuratorSto
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
       await writeFile(
         temporary,
-        encode(validated as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(validated as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

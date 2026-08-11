@@ -167,7 +167,7 @@ describe("rsp telemetry spool", () => {
 
     expect(drained.join("\n")).toContain('"id":"legacy-jsonl"');
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
-    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).resolves.toBe("");
+    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("ingests orphaned .drain files left behind by a crashed drain", async () => {

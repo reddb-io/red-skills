@@ -1,7 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@reddb-io/toon";
-import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "@reddb-io/red-castle/engine";
 import type { BootHaltError } from "../boot.js";
 
@@ -121,7 +120,7 @@ export function createFileBootBreakerStore(paths: EnginePaths): BootBreakerStore
       const payload = ledger === null ? { version: 1, closed: true } : ledger;
       await writeFile(
         temporary,
-        encode(payload as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(payload as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

@@ -2,8 +2,7 @@
 import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { JsonValue } from "@reddb-io/toon";
-import { serialize as encode } from "@reddb-io/toon/legacy";
+import { encode, type JsonValue } from "@reddb-io/toon";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,9 +87,7 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
 }
 
 function toon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
-    keyedMapCollapse: true,
-  });
+  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue);
 }
 
 export function createRedskilledMcpServer(root = process.cwd()): McpServer {

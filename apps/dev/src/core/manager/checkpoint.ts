@@ -85,7 +85,7 @@ export function encodeCheckpointDocument(checkpoint: Checkpoint): string {
     effort_count: checkpoint.meta.effort_count,
   };
   const rows = checkpoint.efforts.map((effort) => encodeEffortRow(effort));
-  return encodeRecords([header, meta, ...rows]);
+  return encodeRecords([header, meta, ...rows], {});
 }
 
 function requireString(row: ToonlRecord, field: string): string {
