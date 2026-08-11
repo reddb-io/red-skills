@@ -583,7 +583,7 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       : {
           deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT, {
             now: input.now,
-            healthyFleet: healthyFleet(input.hostState),
+            healthyFleet: (input.hostState.registrations ?? []).length > 0 && (input.hostState.registrations ?? []).every((registration) => input.hostState.workers.filter((worker) => worker.project_label === registration.project_label).length >= Math.max(0, registration.target)),
           }),
         }),
     engine: buildEngine(input.hostState),
@@ -591,18 +591,6 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     // holds, and a second derivation here would be a second authority on them.
     ...(input.metrics === undefined ? {} : { metrics: input.metrics }),
   };
-}
-
-/** True once every registered project has its admitted live Worker target. PURE. */
-function healthyFleet(hostState: RedskilledHostState): boolean {
-  const registrations = hostState.registrations ?? [];
-  if (registrations.length === 0) return false;
-  const liveByProject = new Map<string, number>();
-  for (const worker of hostState.workers) {
-    liveByProject.set(worker.project_label, (liveByProject.get(worker.project_label) ?? 0) + 1);
-  }
-  return registrations.every((registration) =>
-    (liveByProject.get(registration.project_label) ?? 0) >= Math.max(0, registration.target));
 }
 
 /**
