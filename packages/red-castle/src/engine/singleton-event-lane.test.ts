@@ -74,4 +74,42 @@ describe("castle singleton event lane", () => {
     expect(bytes.trimStart().startsWith("{")).toBe(false);
     expect(parseRecords(bytes)).toHaveLength(3);
   });
+
+  it("rewrites an overflowing lane to half its byte ceiling and preserves tail reads", async () => {
+    const root = join(
+      tmpdir(),
+      `castle-singleton-events-${crypto.randomUUID()}`,
+    );
+    roots.push(root);
+    const paths = createEnginePaths(join(root, ".red"));
+    const lane = createSingletonEventLane(paths, {
+      maxBytes: 600,
+    });
+
+    for (let delivery = 1; delivery <= 5; delivery += 1) {
+      await lane.append({
+        at: `2026-07-22T19:00:0${delivery}.000Z`,
+        singleton: "github-webhook",
+        kind: "github.delivery",
+        payload: { delivery: `d${delivery}`, detail: "xxxxxxxx" },
+      });
+    }
+
+    const bytes = await readFile(singletonEventLanePath(paths), "utf8");
+    expect(Buffer.byteLength(bytes)).toBeLessThanOrEqual(300);
+    expect(await lane.read({ tail: 2 })).toEqual([
+      {
+        at: "2026-07-22T19:00:04.000Z",
+        singleton: "github-webhook",
+        kind: "github.delivery",
+        payload: { delivery: "d4", detail: "xxxxxxxx" },
+      },
+      {
+        at: "2026-07-22T19:00:05.000Z",
+        singleton: "github-webhook",
+        kind: "github.delivery",
+        payload: { delivery: "d5", detail: "xxxxxxxx" },
+      },
+    ]);
+  });
 });

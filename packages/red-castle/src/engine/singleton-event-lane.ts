@@ -8,6 +8,12 @@
  */
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  LANE_RETENTION_REGISTRY,
+  laneOverCeiling,
+  trimLaneKeepLast,
+  type LaneRetentionPolicy,
+} from "@reddb-io/shared/lane-retention.js";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
 
@@ -31,6 +37,8 @@ export interface SingletonEventLaneFs {
 export interface SingletonEventLaneOptions {
   readonly fs?: SingletonEventLaneFs;
   readonly clock?: () => string;
+  /** Override the production byte ceiling; exposed for tiny-lane tests. */
+  readonly maxBytes?: number;
 }
 
 export interface SingletonEventReadOptions {
@@ -99,6 +107,31 @@ function assertTail(tail: number | undefined): void {
   }
 }
 
+function encodeRows(rows: readonly ToonlRecord[]): string {
+  if (rows.length === 0) return "";
+  const writer = encodeLines({ trailer: false });
+  return rows.map((row) => writer.push(row)).join("");
+}
+
+function keepLastWithin(
+  rows: readonly ToonlRecord[],
+  incomingBytes: number,
+  targetBytes: number,
+): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const retained = rows.slice(-middle);
+    if (Buffer.byteLength(encodeRows(retained)) + incomingBytes <= targetBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
+
 export function singletonEventLanePath(paths: EnginePaths): string {
   return join(paths.castleStateRoot, "singleton-events.toonl");
 }
@@ -110,14 +143,41 @@ export function createSingletonEventLane(
   const fs = options.fs ?? { appendFile, mkdir, readFile };
   const clock = options.clock ?? (() => new Date().toISOString());
   const path = singletonEventLanePath(paths);
+  const registeredPolicy = LANE_RETENTION_REGISTRY["castle-singleton-events"];
+  const retentionPolicy: LaneRetentionPolicy = {
+    ...registeredPolicy,
+    ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
+  };
 
   return {
     path,
 
     async append(input) {
       const event = validateEvent({ at: input.at ?? clock(), ...input });
+      const encoded = encodeLines().push(toRow(event));
+      const incomingBytes = Buffer.byteLength(encoded);
       await fs.mkdir(dirname(path), { recursive: true });
-      await fs.appendFile(path, encodeLines().push(toRow(event)), "utf8");
+      if (await laneOverCeiling(path, incomingBytes, retentionPolicy)) {
+        const ceiling = retentionPolicy.maxBytes!;
+        if (incomingBytes > ceiling) {
+          throw new Error(
+            `singleton event exceeds its ${ceiling}-byte lane ceiling`,
+          );
+        }
+        const raw = await fs.readFile(path, "utf8");
+        const rows = parseRecords(raw);
+        const halfTarget = Math.floor(
+          ceiling * registeredPolicy.targetRatio,
+        );
+        const targetBytes = Math.max(halfTarget, incomingBytes);
+        const keepLast = keepLastWithin(
+          rows,
+          incomingBytes,
+          targetBytes,
+        );
+        await trimLaneKeepLast(path, keepLast);
+      }
+      await fs.appendFile(path, encoded, "utf8");
       return event;
     },
 
