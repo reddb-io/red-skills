@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import {
   CASTLE_VALIDATION_SCHEMA_ID,
   appendCastleHistoryRecord,
@@ -42,7 +42,7 @@ describe("auditCastleStateLane", () => {
     await mkdir(paths.castleStateRoot, { recursive: true });
     await writeFile(
       paths.castleValidation,
-      encodeLines().push({
+      encodeToonlLines().push({
         schema: CASTLE_VALIDATION_SCHEMA_ID,
         name: "test:apps/dev",
         status: "passed",
@@ -80,7 +80,7 @@ describe("auditCastleStateLane", () => {
     await writeFile(paths.castleHistory, "not toonl\n", "utf8");
     await writeFile(
       paths.castleValidation,
-      encodeLines().push({ schema: "wrong.schema", name: "gate", status: "passed" }),
+      encodeToonlLines().push({ schema: "wrong.schema", name: "gate", status: "passed" }),
       "utf8",
     );
 
