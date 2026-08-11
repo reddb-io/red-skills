@@ -17,7 +17,6 @@ import {
   STATUSLINE_COMMAND_ABSENCE,
   STATUSLINE_COMMAND_DOCS,
   STATUSLINE_COMMAND_TERMINATOR,
-  STATUSLINE_DELEGATION_ISSUE,
   describeStatuslineAbsence,
   describeStatuslineDelegation,
   describeStatuslineDrift,
@@ -221,11 +220,9 @@ describe("daemon bundle resolution (#3074)", () => {
    * a bundle to. Asserted against the filename the warm path mints rather than a
    * literal, so renaming the cache key fails HERE.
    *
-   * Only `dev` is asserted while the interim reversal (#3166) holds: the command
-   * globs the renderer it invokes, and the daemon half is not invoked. `redskilled`
-   * is still WARMED — the daemon needs its own bundle regardless of who draws the
-   * statusline — so the companion set is asserted separately, and restoring the
-   * delegation for #3151 restores this glob with it.
+   * Only `dev` is asserted because it is the host's single producer. `redskilled`
+   * is still WARMED — the dev command reaches its daemon over the local socket —
+   * but the published shell must not invoke the daemon bundle a second time.
    */
   it("globs a name the dev warm path actually writes, for every bundle it invokes", () => {
     const [canonical] = readStatuslineCommands(REPO_ROOT);
@@ -248,23 +245,16 @@ describe("daemon bundle resolution (#3074)", () => {
 });
 
 /**
- * The interim reversal. The delegation was written before the thing delegated to
- * could draw: `--no-workers` silenced the dev bundle's rich Worker rows — bar,
- * colour, `phase·activity`, elapsed, heartbeat, diff and token vitals — and what
- * replaced them was a name and a memory figure. Every repo `/red-setup` touched
- * since the cutover shipped the poorer line, held byte-identical by the very
- * sweep that was working correctly.
- *
- * These tests keep the command on ONE producer and name the condition for going
- * back, so the next reader restores the delegation when #3151 can serve it rather
- * than because ADR 0130 rule 10 says it should.
+ * The host invokes one producer. The dev command draws the local bedrock and
+ * appends the daemon-fed tail itself, so a second redskilled command duplicates
+ * the host line and `--no-workers` is a fossil from the retired split (#3559).
  */
-describe(`one producer until ${STATUSLINE_DELEGATION_ISSUE} (#3166)`, () => {
-  it("names every copy that asks the dev bundle for the header alone", () => {
+describe("one statusline host producer (#3559)", () => {
+  it("names every copy that carries the retired split flag", () => {
     const muted = findStatuslineCommands("a.md", `"command": "sh -c '\\"$N\\" \\"$b\\" statusline --no-workers; exit 0'"`);
 
     expect(statuslineCommandsDelegatingWorkers(muted).map((site) => site.path)).toEqual(["a.md"]);
-    expect(describeStatuslineDelegation(muted)).toContain(STATUSLINE_DELEGATION_ISSUE);
+    expect(describeStatuslineDelegation(muted)).toContain("retired two-producer adapter");
   });
 
   it("names every copy that runs a second renderer under the first", () => {
@@ -299,17 +289,36 @@ describe(`one producer until ${STATUSLINE_DELEGATION_ISSUE} (#3166)`, () => {
     const run = renderStatusline(home);
 
     expect(run.stdout).toContain("» fixture (main) Opus");
-    expect(run.stdout, "the daemon half double-renders the Worker rows (#3166)").not.toContain("redskilled rows");
+    expect(run.stdout, "the daemon half double-renders the statusline (#3559)").not.toContain("redskilled rows");
     expect(run.stdout).not.toContain(STATUSLINE_COMMAND_ABSENCE);
     expect(run.status, run.stderr).toBe(0);
   });
 
-  it("hands the reader the issue that ends the interim, not a bare refusal", () => {
+  it("tells the reader to keep the bedrock and daemon tail behind one command", () => {
     const muted = findStatuslineCommands("a.md", `"command": "sh -c 'statusline --no-workers; exit 0'"`);
     const message = describeStatuslineDelegation(muted);
 
-    expect(STATUSLINE_DELEGATION_ISSUE).toBe("#3151");
-    expect(message).toContain("INTERIM");
+    expect(message).toContain("renders the local bedrock");
+    expect(message).toContain("bounded socket probe");
     expect(message).toContain("a.md:1");
+  });
+});
+
+describe("statusline architecture documentation (#3559)", () => {
+  it("describes the dev bundle as the one host producer with a local bedrock and daemon tail", () => {
+    const hostNotes = readFileSync(
+      join(REPO_ROOT, "plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md"),
+      "utf8",
+    );
+    const skill = readFileSync(
+      join(REPO_ROOT, "plugins/dev/skills/engineering/red-statusline/SKILL.md"),
+      "utf8",
+    );
+
+    expect(hostNotes).toContain("renders the local bedrock before appending the daemon-fed tail");
+    expect(hostNotes).not.toContain("calls `collectStatuslineAfk`");
+    expect(hostNotes).not.toContain("INTERIM, until #3151");
+    expect(skill).toContain("one bounded local socket read");
+    expect(skill).not.toContain("a direct collector client (ADR 0084)");
   });
 });
