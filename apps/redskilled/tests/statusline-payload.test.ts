@@ -14,6 +14,12 @@ import {
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
+import type {
+  RedskilledActivityCounts,
+  RedskilledActivityOutcome,
+  RedskilledRepositoryActivity,
+} from "../src/repository-activity.js";
+import { REDSKILLED_REMOTE_COUNTER_NAMES } from "../src/remote-counters.js";
 import {
   buildStatuslinePayload,
   isRedskilledStatuslinePayload,
@@ -319,6 +325,127 @@ describe("the statusline payload", () => {
     expect(payload.daemon.pid).toBe(daemon.hostState().pid);
     expect(payload.daemon.daemon_version).toBe(daemon.hostState().daemon_version);
     expect(payload.host.budget_accounting).toEqual(daemon.hostState().budget_accounting);
+  });
+});
+
+// ADR 0141 decision 2: every remote counter is daemon-owned, and decision 3 says
+// a request never fetches — so the counters ride the payload with the age stated
+// per counter. An unpolled counter is absent, never a zero: "the queue is empty"
+// and "nobody asked" are opposite facts about a repository.
+const POLLED_AT = "2026-08-11T12:00:00.000Z";
+
+function counts(overrides: Partial<RedskilledActivityCounts> = {}): RedskilledActivityCounts {
+  return {
+    open_pull_requests: 3,
+    open_issues: 24,
+    recently_closed: 5,
+    ready_queue: 1,
+    human_queue: 11,
+    ...overrides,
+  };
+}
+
+function activityOf(
+  projectCounts: RedskilledActivityCounts | null,
+  outcome: RedskilledActivityOutcome = "counted",
+  detail = "counted acme/widgets for project \"acme/widgets\"",
+): RedskilledRepositoryActivity {
+  return {
+    version: 1,
+    fetched_at: POLLED_AT,
+    request_count: 3,
+    project_count: 1,
+    rate_limit: { remaining: 4_900, reset_at: null, exhausted: false, point_cost: null },
+    projects: [{
+      project_label: "acme/widgets",
+      repository: "acme/widgets",
+      outcome,
+      counts: projectCounts,
+      detail,
+    }],
+  };
+}
+
+function payloadWith(activity: RedskilledRepositoryActivity | null, now: string) {
+  return buildStatuslinePayload({
+    hostState: hostStateOf([worker()]),
+    ceiling: UNBOUNDED_HOST_CEILING,
+    rss: {},
+    sampledAt: null,
+    now,
+    ...(activity === null ? {} : { repositoryActivity: activity }),
+  });
+}
+
+describe("the remote-counter block", () => {
+  it("ships every counter the daemon polled, each carrying its own age", () => {
+    const payload = payloadWith(activityOf(counts()), "2026-08-11T12:00:05.000Z");
+    const block = payload.remote_counters!;
+    const project = block.projects[0]!;
+
+    expect(project.project_label).toBe("acme/widgets");
+    expect(project.repository).toBe("acme/widgets");
+    expect(Object.keys(project.counters).sort()).toEqual([...REDSKILLED_REMOTE_COUNTER_NAMES].sort());
+    expect(project.counters.open_pull_requests).toMatchObject({ value: 3, fetched_at: POLLED_AT, age_ms: 5_000, stale: false });
+    expect(project.counters.open_issues).toMatchObject({ value: 24, age_ms: 5_000 });
+    expect(project.counters.ready_queue).toMatchObject({ value: 1, fetched_at: POLLED_AT, age_ms: 5_000, stale: false });
+    expect(project.counters.human_queue).toMatchObject({ value: 11, age_ms: 5_000 });
+    expect(isRedskilledStatuslinePayload(payload)).toBe(true);
+  });
+
+  it("carries a counter nobody polled as absent, never as a zero", () => {
+    const payload = payloadWith(
+      activityOf(counts({ ready_queue: null, human_queue: null })),
+      "2026-08-11T12:00:05.000Z",
+    );
+    const counters = payload.remote_counters!.projects[0]!.counters;
+
+    expect(counters.ready_queue.value).toBeNull();
+    expect(counters.ready_queue.fetched_at).toBeNull();
+    expect(counters.ready_queue.age_ms).toBeNull();
+    // Absent is not stale: nothing old is being shown, nothing was ever asked.
+    expect(counters.ready_queue.stale).toBe(false);
+    expect(counters.ready_queue.reason).toContain("absent rather than zero");
+    expect(counters.human_queue.value).toBeNull();
+    // Its neighbours still answer — one unpolled counter is a fact about itself.
+    expect(counters.open_issues.value).toBe(24);
+  });
+
+  it("states the age rather than presenting an old counter as current", () => {
+    const payload = payloadWith(activityOf(counts()), "2026-08-11T12:10:00.000Z");
+    const counters = payload.remote_counters!.projects[0]!.counters;
+
+    expect(counters.ready_queue.stale).toBe(true);
+    expect(counters.ready_queue.age_ms).toBe(600_000);
+    expect(counters.ready_queue.reason).toContain("past the");
+    expect(counters.open_pull_requests.stale).toBe(true);
+  });
+
+  it("keeps a spent quota out of the counters it would have read as empty", () => {
+    const payload = payloadWith(
+      activityOf(null, "rate-limited", "the host token's quota was spent before acme/widgets answered"),
+      "2026-08-11T12:00:05.000Z",
+    );
+    const project = payload.remote_counters!.projects[0]!;
+
+    expect(project.outcome).toBe("rate-limited");
+    for (const name of REDSKILLED_REMOTE_COUNTER_NAMES) {
+      expect(project.counters[name].value).toBeNull();
+      expect(project.counters[name].stale).toBe(false);
+      expect(project.counters[name].reason).toContain("quota");
+    }
+  });
+
+  it("is honestly empty when the daemon polled nothing, and validates without the block", () => {
+    const payload = payloadWith(null, "2026-08-11T12:00:00.000Z");
+
+    expect(payload.remote_counters!.projects).toEqual([]);
+    expect(payload.remote_counters!.reason).toContain("no repository");
+    expect(isRedskilledStatuslinePayload(payload)).toBe(true);
+    // A daemon older than this block answers completely without it, and a
+    // consumer must not reject the Worker set over a badge (ADR 0130 rule 3).
+    const { remote_counters: _absent, ...older } = payload;
+    expect(isRedskilledStatuslinePayload(older)).toBe(true);
   });
 });
 
