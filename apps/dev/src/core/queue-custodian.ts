@@ -16,7 +16,8 @@ import {
 } from "./repair-lane.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 
 export interface QueueCustodyIdentity {
   readonly repo: string;
