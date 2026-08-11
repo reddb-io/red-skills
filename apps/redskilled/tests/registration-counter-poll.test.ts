@@ -49,6 +49,14 @@ async function trackerStandingIn(): Promise<{
     let body: readonly Record<string, unknown>[];
     if (url.pathname.endsWith("/pulls")) {
       body = [{ number: 1 }, { number: 2 }];
+    } else if (url.pathname.endsWith("/search/issues")) {
+      res.writeHead(200, {
+        "content-type": "application/json",
+        etag: `"${requests.length}"`,
+        "x-ratelimit-remaining": "4900",
+      });
+      res.end(JSON.stringify({ total_count: 4, items: [] }));
+      return;
     } else if (url.searchParams.get("state") === "closed") {
       body = [{ number: 20, closed_at: "2026-08-11T12:00:00.000Z" }];
     } else if (url.searchParams.has("labels")) {
@@ -120,6 +128,7 @@ describe("the registration supplies the remote-counter poll", () => {
     const counters = payload.remote_counters!.projects[0]!.counters;
     expect(counters.open_pull_requests).toMatchObject({ value: 2, fetched_at: expect.any(String) });
     expect(counters.open_issues).toMatchObject({ value: 3, fetched_at: expect.any(String) });
+    expect(counters.merged_today).toMatchObject({ value: 4, fetched_at: expect.any(String), age_ms: expect.any(Number) });
     expect(counters.ready_queue).toMatchObject({ value: 1, fetched_at: expect.any(String) });
     expect(counters.human_queue).toMatchObject({ value: 1, fetched_at: expect.any(String) });
     expect(payload.repository_activity.projects[0]).toMatchObject({
@@ -127,11 +136,21 @@ describe("the registration supplies the remote-counter poll", () => {
       fetched_at: expect.any(String),
     });
 
-    // One selector list plus the activity cycle's three lists. Payload reads
+    // One selector list plus the activity cycle's four reads. Payload reads
     // remain cache-only, and every request used the one registration transport.
     daemon.statuslinePayload();
     daemon.statuslinePayload();
-    expect(tracker.requests).toHaveLength(4);
+    expect(tracker.requests).toHaveLength(5);
+
+    // The next attended cycle refreshes only the open-Issue representation that
+    // feeds the ready queue. Panorama counts remain last-known and retain their
+    // own earlier instant until their longer tier expires.
+    const panoramaAt = counters.merged_today.fetched_at;
+    await daemon.pollRepositoryActivity();
+    const refreshed = daemon.statuslinePayload().remote_counters!.projects[0]!.counters;
+    expect(tracker.requests).toHaveLength(6);
+    expect(refreshed.ready_queue.fetched_at).not.toBeNull();
+    expect(refreshed.merged_today.fetched_at).toBe(panoramaAt);
     expect(tracker.requests.every((request) => request.authorization === "token shared-host-token")).toBe(true);
   });
 });
