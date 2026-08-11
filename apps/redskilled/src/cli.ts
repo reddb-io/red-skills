@@ -16,6 +16,7 @@ import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
 import { deathLaneFileIn, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { formatDeathAttributions, runBootDeathReaper } from "@reddb-io/shared/death-attribution.js";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
+import { sweepLaneTemps } from "@reddb-io/shared/lane-retention.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
@@ -447,6 +448,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     // could not (slice #3028). The host singleton is the only process guaranteed
     // to boot after a machine freeze, so an un-trap-able death on this lane has
     // nowhere else to be attributed. Local files only; it never throws.
+    await sweepLaneTemps(hostStateRoot).catch(() => undefined);
     const reaped = runBootDeathReaper({ stateRoot: hostStateRoot });
     process.stderr.write(`${formatDeathAttributions(reaped)}\n`);
     const deaths = installDeathRecorder({
