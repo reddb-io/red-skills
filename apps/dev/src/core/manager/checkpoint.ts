@@ -28,7 +28,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { managerCheckpointFile } from "@reddb-io/shared/red-paths.js";
-import { encodeRecords, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeRecords, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import {
   LEASE_DEFAULT_TTL_MS,
   writeLease,
