@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   activityPollComesForward,
+  activityRateLimitBackoffMs,
   interactiveSessionsHolding,
   isCacheWarmCadenceMs,
   nextActivityPollMs,
@@ -83,6 +84,19 @@ describe("the poll cadence follows presence", () => {
     expect(nextActivityPollMs({ attended: true, attendedMs: 0 })).toBe(DEFAULT_REDSKILLED_ACTIVITY_MS);
     expect(nextActivityPollMs({ attended: false, unattendedMs: Number.NaN }))
       .toBe(REDSKILLED_ACTIVITY_UNATTENDED_MS);
+  });
+});
+
+describe("a rate-limited activity poll sleeps the poller", () => {
+  it("parks until reset instead of retrying on the attended request cadence", () => {
+    expect(activityRateLimitBackoffMs({
+      exhausted: true,
+      reset_at: new Date(T0_MS + 90_000).toISOString(),
+    }, 20_000, T0_MS)).toBe(91_000);
+  });
+
+  it("does not change the cadence after an ordinary answer", () => {
+    expect(activityRateLimitBackoffMs({ exhausted: false, reset_at: null }, 20_000, T0_MS)).toBe(20_000);
   });
 });
 
@@ -200,6 +214,32 @@ const REGISTRATION_REQUEST = {
 } as const;
 
 describe("the daemon's own loop spends at the window presence asks for", () => {
+  it("parks the live poller after a rate-limit refusal", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    let calls = 0;
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      repositoryActivity: {
+        projects: [{ project_label: "acme/p0", owner: "acme", name: "p0" }],
+        hostTokenRef: "host",
+        intervalMs: 10,
+        transport: async () => {
+          calls += 1;
+          throw new Error("API rate limit exceeded");
+        },
+      },
+    });
+    running.push(daemon);
+    daemon.registerProject({ ...REGISTRATION_REQUEST });
+
+    await vi.advanceTimersByTimeAsync(39);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toBe(2);
+  });
+
   it("holds an idle host at the back-off, then tightens the moment a session registers", async () => {
     // Only the intervals are faked: the daemon's start still does real I/O, and
     // a fake clock over all of it would stall the bind rather than the timers.
