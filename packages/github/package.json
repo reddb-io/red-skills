@@ -12,6 +12,7 @@
     "./surface.js": "./surface.ts",
     "./rest-plan.js": "./rest-plan.ts",
     "./balance.js": "./balance.ts",
+    "./balance-store.js": "./balance-store.ts",
     "./cache.js": "./cache.ts"
   },
   "dependencies": {
