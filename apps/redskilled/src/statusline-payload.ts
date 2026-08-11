@@ -71,6 +71,7 @@ export {
   type RedskilledDeathObservation,
   REDSKILLED_BOOT_LOOP_MIN_DEATHS,
   REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S,
+  REDSKILLED_DEATH_CLASS_FRESHNESS_MS,
   REDSKILLED_RECENT_DEATH_LIMIT,
   type RedskilledStatuslineBootLoop,
   type RedskilledStatuslineDeath,
@@ -579,12 +580,29 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     }),
     ...(input.deaths === undefined
       ? {}
-      : { deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT) }),
+      : {
+          deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT, {
+            now: input.now,
+            healthyFleet: healthyFleet(input.hostState),
+          }),
+        }),
     engine: buildEngine(input.hostState),
     // Echoed, never recomputed: the rates rest on a history only the daemon
     // holds, and a second derivation here would be a second authority on them.
     ...(input.metrics === undefined ? {} : { metrics: input.metrics }),
   };
+}
+
+/** True once every registered project has its admitted live Worker target. PURE. */
+function healthyFleet(hostState: RedskilledHostState): boolean {
+  const registrations = hostState.registrations ?? [];
+  if (registrations.length === 0) return false;
+  const liveByProject = new Map<string, number>();
+  for (const worker of hostState.workers) {
+    liveByProject.set(worker.project_label, (liveByProject.get(worker.project_label) ?? 0) + 1);
+  }
+  return registrations.every((registration) =>
+    (liveByProject.get(registration.project_label) ?? 0) >= Math.max(0, registration.target));
 }
 
 /**
