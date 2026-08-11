@@ -97,6 +97,18 @@ describe("worker placement — Linux with a user session", () => {
     expect(placement.budgetWarning).toBeUndefined();
   });
 
+  it("disables core dumps independently of the declared budget", () => {
+    const declared = plan(LINUX_WITH_SESSION);
+    const absent = plan(LINUX_WITH_SESSION, { budget: undefined });
+
+    for (const placement of [declared, absent]) {
+      const separator = placement.args.indexOf("--");
+      expect(placement.args.slice(0, separator).filter((arg) => arg.startsWith("--property=LimitCORE="))).toEqual([
+        "--property=LimitCORE=0",
+      ]);
+    }
+  });
+
   it("carries max_processes as TasksMax exactly when it is declared", () => {
     const declared = plan(LINUX_WITH_SESSION, {
       budget: { max_processes: 32, cpu_seconds: 60 },
