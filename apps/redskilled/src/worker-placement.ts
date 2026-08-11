@@ -97,9 +97,9 @@ export interface RedskilledWorkerBudget {
   readonly memory_max?: string;
   readonly cpu_weight?: number;
   /**
-   * `RLIMIT_NPROC`, honoured by the macOS backend and named as unenforced by the
-   * others — a declared limit that quietly did nothing is the failure every
-   * warning in this module exists to prevent.
+   * `RLIMIT_NPROC` on macOS and `TasksMax` on Linux. A declared limit that
+   * quietly did nothing is the failure every warning in this module exists to
+   * prevent.
    */
   readonly max_processes?: number;
   /** `RLIMIT_CPU` in seconds, on the same terms as {@link max_processes}. */
@@ -403,6 +403,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   if (budget.memory_high != null) unitArgs.push(`--property=MemoryHigh=${budget.memory_high}`);
   if (budget.memory_max != null) unitArgs.push(`--property=MemoryMax=${budget.memory_max}`);
   if (budget.cpu_weight != null) unitArgs.push(`--property=CPUWeight=${budget.cpu_weight}`);
+  if (budget.max_processes != null) unitArgs.push(`--property=TasksMax=${budget.max_processes}`);
   // The Worker's own placement joins its environment, so the process that dies
   // inside this unit can name the unit that held it and the ceiling it carried.
   const environment = workerPlacementEnvironment(opts, {
@@ -414,7 +415,9 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     unitArgs.push(`--setenv=${key}=${value}`);
   }
 
-  const unenforced = unenforcedPosixBudgetFields(opts.budget);
+  const unenforced = unenforcedPosixBudgetFields(
+    opts.budget == null ? undefined : { ...opts.budget, max_processes: undefined },
+  );
   return {
     isolated: true,
     backend: "transient-unit",
