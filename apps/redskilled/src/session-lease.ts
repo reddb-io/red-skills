@@ -19,7 +19,8 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 
 export interface RedskilledLeaseOwner {
