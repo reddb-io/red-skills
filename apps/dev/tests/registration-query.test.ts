@@ -45,6 +45,7 @@ describe("the query a registration hands the host", () => {
       repo: "widgets",
       labels: ["ready-for-agent", "lane:go", "type:ticket", "tag:alpha", "tag:beta"],
       creator: "octocat",
+      counter_labels: { ready: "ready-for-agent", human: "ready-for-human" },
     });
   });
 

@@ -18,7 +18,7 @@
 //
 // PURE — string in, string out, no tracker, no filesystem, no process.
 
-import { LABEL_READY, TAG_LABEL_PREFIX } from "./triage-labels.js";
+import { LABEL_HUMAN, LABEL_READY, TAG_LABEL_PREFIX } from "./triage-labels.js";
 
 /** The facets a registration may narrow its queue with. Mirrors `WorkSelector`. */
 export interface RegistrationQuerySelector {
@@ -44,6 +44,10 @@ export interface RegistrationPollPlan {
   readonly repo: string;
   readonly labels: readonly string[];
   readonly creator?: string;
+  readonly counter_labels: {
+    readonly ready: string;
+    readonly human: string;
+  };
 }
 
 /**
@@ -84,7 +88,8 @@ export function buildRegistrationQuery(input: RegistrationQueryInput): string {
 export function buildRegistrationPollPlan(input: RegistrationQueryInput): RegistrationPollPlan {
   const [owner, repo] = requireRepo(input.repo);
   const selector = input.selector ?? {};
-  const labels = [input.readyLabel ?? LABEL_READY];
+  const readyLabel = input.readyLabel ?? LABEL_READY;
+  const labels = [readyLabel];
   if (selector.lane != null && selector.lane !== "") labels.push(`lane:${selector.lane}`);
   if (selector.label != null && selector.label !== "") labels.push(selector.label);
   for (const tag of selector.tags ?? []) {
@@ -93,7 +98,15 @@ export function buildRegistrationPollPlan(input: RegistrationQueryInput): Regist
   const creator = selector.user != null && selector.user !== "" && selector.user !== "@me"
     ? selector.user
     : undefined;
-  return { owner, repo, labels, ...(creator === undefined ? {} : { creator }) };
+  return {
+    owner,
+    repo,
+    labels,
+    ...(creator === undefined ? {} : { creator }),
+    // Both names cross the registration boundary. The daemon compares them to
+    // tracker data but never learns what makes either one a workflow queue.
+    counter_labels: { ready: readyLabel, human: LABEL_HUMAN },
+  };
 }
 
 /**

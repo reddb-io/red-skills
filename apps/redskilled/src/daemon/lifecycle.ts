@@ -117,10 +117,10 @@ import { commandOp, evaluateSessionReach, type RedskilledSessionOp } from "../se
 import {
   assertOneHostToken,
   DEFAULT_REDSKILLED_ACTIVITY_MS,
-  fetchRepositoryActivity,
   type RedskilledRepositoryActivity,
 } from "../repository-activity.js";
 import { createRedskilledActivityPoller } from "./activity-poller.js";
+import { pollRegistrationActivity } from "./registration-activity.js";
 import { REDSKILLED_ACTIVITY_STALENESS_FACTOR } from "../activity-report.js";
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
@@ -511,7 +511,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     registrations: () => registrations.values(),
     clock,
     attendedMs: activityMs,
-    armed: activityRegistration != null && activityRegistration.projects.length > 0,
+    armed: queueRegistration != null || (activityRegistration != null && activityRegistration.projects.length > 0),
     stopping: () => stopping,
   });
   let resolveClosed!: () => void;
@@ -763,15 +763,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * to pass for current, because the failure is itself the fact a consumer needs.
    */
   async function pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null> {
-    if (activityRegistration == null || activityRegistration.projects.length === 0) return null;
-    lastActivity = await fetchRepositoryActivity({
-      projects: activityRegistration.projects,
-      hostTokenRef: activityRegistration.hostTokenRef,
-      transport: activityRegistration.transport,
-      closedWindowMs: activityRegistration.closedWindowMs,
+    return lastActivity = await pollRegistrationActivity({
+      ...(activityRegistration == null ? {} : { explicit: activityRegistration }),
+      registrations: registrations.values(),
+      resolveHostTransport: () => {
+        armQueueTransport();
+        return queueTransport;
+      },
       now: clock(),
     });
-    return lastActivity;
   }
 
   /**
