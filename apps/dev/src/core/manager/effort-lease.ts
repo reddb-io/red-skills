@@ -23,7 +23,9 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { managerLeaseFile } from "@reddb-io/shared/red-paths.js";
-import { encodeRecords, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeRecords, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import {
   ManagerSchemaError,
   ManagerStoreError,
