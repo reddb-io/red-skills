@@ -59,17 +59,16 @@ export interface WorkerPlacementProbes {
    */
   readonly jobObjects: RedskilledJobObjectReach;
   /**
-   * Whether POSIX rlimits and priority are reachable here, and when not, why.
+   * Whether the POSIX shell launch boundary is reachable here, and when not, why.
    *
-   * The macOS arm of the same shape `jobObjects` has, for the same reason: this
-   * backend is the one that adds real teeth without adding a memory ceiling, so
-   * a host that cannot even reach it must degrade with a sentence rather than a
-   * flag.
+   * macOS uses it for rlimits and priority; unisolated Linux uses the same argv
+   * boundary to disable core dumps. A host that cannot reach it must degrade
+   * with a sentence rather than a flag.
    */
   readonly posix: RedskilledPosixReach;
 }
 
-/** The POSIX shell a macOS launch wraps itself in. Present on every Unix host. */
+/** The POSIX shell a launch wraps itself in when the host actually has it. */
 export const POSIX_SHELL_PATH = "/bin/sh";
 
 /**
@@ -319,8 +318,9 @@ export interface PlanWorkerPlacementOptions {
  *
  * When the host affords it, the Worker runs under a transient
  * `<prefix>-<project>-<worker>.service` carrying the budget as unit properties.
- * Otherwise the original argv is returned unchanged WITH a warning — the launch
- * still happens, but a downgrade is never silent.
+ * An unisolated Linux launch still crosses the POSIX shell boundary to disable
+ * core dumps; without that shell the original argv is returned WITH a warning.
+ * The launch still happens, but a downgrade is never silent.
  */
 export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPlacementPlan {
   const args = [...(opts.args ?? [])];
