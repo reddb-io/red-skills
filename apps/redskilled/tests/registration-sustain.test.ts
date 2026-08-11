@@ -506,7 +506,8 @@ describe("a surface tells a registration from a name", () => {
     const render = renderRedskilledStatusline(payloadOf(["acme/widgets"], [worker]), options());
 
     expect(render.project_match).toBe("matched");
-    expect(render.line).toContain("acme/widgets 1w");
+    expect(render.line).toContain("1w 0B v0.1.0");
+    expect(render.line).not.toContain("acme/widgets");
     expect(render.line).not.toContain("unregistered");
   });
 
@@ -516,7 +517,8 @@ describe("a surface tells a registration from a name", () => {
     const render = renderRedskilledStatusline(payloadOf([], [worker]), options());
 
     expect(render.project_match).toBe("name-only");
-    expect(render.line).toContain("acme/widgets 1w");
+    expect(render.line).toContain("1w !unregistered 0B v0.1.0");
+    expect(render.line).not.toContain("acme/widgets");
     expect(render.line).toContain("!unregistered");
     expect(render.line).not.toContain("idle");
   });
