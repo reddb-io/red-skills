@@ -1,4 +1,4 @@
-# Statusline bedrock, daemon-owned remote counters, and serve-from-cache-always
+# 0141 — Statusline bedrock, daemon-owned remote counters, and serve-from-cache-always
 
 The statusline's data was coupled across owners: remote tracker counters (open PRs/issues, `rdy=`/`hmn=` queue counts) were fetched by local `gh` subprocesses under a 15-minute TTL (`STATUSLINE_CACHE_TTL_S = 900`), local git facts rode the same cache file, and the operator could not tell what stood between the line and its data when redskilled was down or the project unregistered. We decided to split the line by data ownership and make the daemon's cache semantics strict.
 
