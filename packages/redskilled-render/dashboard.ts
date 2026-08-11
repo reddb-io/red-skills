@@ -472,8 +472,11 @@ function buildHeader(
   if (deaths != null && deaths.count > 0 && deaths.latest != null) {
     const loop = deaths.boot_loop;
     const refusal = flattenPublishedLine(loop?.latest_refusal);
+    const current = Object.prototype.hasOwnProperty.call(deaths, "current_sender_attributed")
+      ? deaths.current_sender_attributed ?? null
+      : deaths.latest;
     parts.push(loop == null
-      ? `${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`
+      ? `${DEATH_MARK}${deaths.count}${current == null ? "" : ` ${current.sender_class}`}`
       : `${DEATH_MARK}${deaths.count} boot-refused ×${loop.count} in ${compactLoopSpan(loop.span_ms)}` +
         (refusal == null ? "" : ` — ${refusal}`));
   }
