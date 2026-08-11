@@ -7,17 +7,19 @@
 // evidence object stands in for the code an operator actually runs.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   attributeDeath,
   buildProcessPresence,
   collectHostDeathEvidence,
   decodeDeathAttributions,
+  encodeDeathAttributions,
   formatDeathAttributions,
   readProcessPresences,
   runBootDeathReaper,
   writeProcessPresence,
+  type DeathAttribution,
   type ProcessPresence,
 } from "./death-attribution.js";
 import {
@@ -31,7 +33,7 @@ import {
   type DeathRecorderHost,
   type ProcessResourceSample,
 } from "./death-record.js";
-import { deathPresenceDirIn } from "./red-paths.js";
+import { deathAttributionFileIn, deathPresenceDirIn } from "./red-paths.js";
 
 const roots: string[] = [];
 
@@ -76,6 +78,25 @@ function presence(overrides: Partial<ProcessPresence> = {}): ProcessPresence {
     boot_id: "boot-a",
     cgroup: "/user.slice/user-1000.slice/session-3.scope",
     last_phase: "gate",
+    ...overrides,
+  };
+}
+
+function laneAttribution(overrides: Partial<DeathAttribution> = {}): DeathAttribution {
+  return {
+    version: 1,
+    ts: "2026-08-08T20:00:00.000Z",
+    kind: "worker",
+    id: "retained",
+    pid: 4242,
+    last_seen: "2026-08-08T19:59:00.000Z",
+    last_phase: "gate",
+    sender_class: "unknown",
+    confidence: "none",
+    signal: null,
+    host_boot_changed: false,
+    evidence: [],
+    checked: [],
     ...overrides,
   };
 }
@@ -269,6 +290,43 @@ describe("the presence anchor", () => {
 });
 
 describe("the boot reaper", () => {
+  it("retains attribution history for fourteen days and one MiB, preserving unknown timestamps", () => {
+    const stateRoot = scratch();
+    const now = Date.parse("2026-08-15T20:00:00.000Z");
+    const recent = Array.from({ length: 1_200 }, (_, index) =>
+      laneAttribution({
+        id: `recent-${index}`,
+        ts: new Date(now - 1_000 + index).toISOString(),
+        checked: [`source-${index}-${"x".repeat(1_000)}`],
+      }),
+    );
+    const attributionPath = deathAttributionFileIn(stateRoot);
+    mkdirSync(dirname(attributionPath), { recursive: true });
+    writeFileSync(
+      attributionPath,
+      encodeDeathAttributions([
+        laneAttribution({ id: "too-old", ts: "2026-07-01T00:00:00.000Z" }),
+        laneAttribution({ id: "unknown-age", ts: "not-a-timestamp" }),
+        ...recent,
+      ]),
+    );
+    writeProcessPresence(deathPresenceDirIn(stateRoot), presence());
+
+    const result = runBootDeathReaper({
+      stateRoot,
+      evidence: collectHostDeathEvidence({ procRoot: poseProc("boot-a", [1]), journalPaths: [] }),
+      now: () => new Date(now).toISOString(),
+    });
+    const retained = decodeDeathAttributions(result.laneText());
+
+    expect(retained.map((entry) => entry.id)).not.toContain("too-old");
+    expect(retained.map((entry) => entry.id)).toContain("unknown-age");
+    expect(retained.map((entry) => entry.id)).not.toContain("recent-0");
+    expect(retained.map((entry) => entry.id)).toContain("recent-1199");
+    expect(retained.map((entry) => entry.id)).toContain("wOLFU");
+    expect(Buffer.byteLength(result.laneText())).toBeLessThanOrEqual(1024 * 1024);
+  });
+
   it("compacts an oversized death lane before serve boot returns", () => {
     const stateRoot = scratch();
     const lanePath = deathLaneFileIn(stateRoot);

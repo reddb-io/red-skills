@@ -32,6 +32,7 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "n
 import { join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import { deathAttributionFileIn, deathLaneFileIn, deathPresenceDirIn } from "./red-paths.js";
+import { LANE_RETENTION_REGISTRY } from "./lane-retention.js";
 import {
   compactProcessDeathLane,
   decodeProcessDeathRecords,
@@ -71,6 +72,18 @@ export {
 
 /** The attribution shape's version. */
 export const DEATH_ATTRIBUTION_VERSION = 1;
+
+/** Attribution history remains useful for fourteen days. */
+export const DEATH_ATTRIBUTION_LANE_RETENTION_MS =
+  LANE_RETENTION_REGISTRY["death-attributions"].maxAgeMs;
+
+/** The largest attribution-lane generation a boot asks readers to decode. */
+export const DEATH_ATTRIBUTION_LANE_MAX_BYTES =
+  LANE_RETENTION_REGISTRY["death-attributions"].maxBytes;
+
+/** A rewrite leaves half the generation free for later boot attributions. */
+const DEATH_ATTRIBUTION_LANE_TARGET_RATIO =
+  LANE_RETENTION_REGISTRY["death-attributions"].targetRatio;
 
 /** Who ended the process. Five classes, one of which is honest ignorance. */
 export type DeathSenderClass =
@@ -480,7 +493,13 @@ export function runBootDeathReaper(options: BootDeathReaperOptions): BootDeathRe
 
   const reapedAtMs = Date.parse(reapedAt);
   if (Number.isFinite(reapedAtMs)) compactProcessDeathLane(deathLaneFileIn(options.stateRoot), reapedAtMs);
-  if (attributions.length > 0) appendAttributions(attributionPath, attributions);
+  if (attributions.length > 0) {
+    appendAttributions(
+      attributionPath,
+      attributions,
+      Number.isFinite(reapedAtMs) ? reapedAtMs : Date.now(),
+    );
+  }
 
   return {
     attributions,
@@ -525,12 +544,17 @@ export function formatDeathAttributions(result: BootDeathReaperResult): string {
   return `death reaper: attributed ${result.attributions.length}${verdicts}${skipped}`;
 }
 
-function appendAttributions(path: string, attributions: readonly DeathAttribution[]): void {
+function appendAttributions(
+  path: string,
+  attributions: readonly DeathAttribution[],
+  nowMs: number,
+): void {
   try {
     mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
     const existing = readOrEmpty(path);
-    const prefix = existing === "" || existing.endsWith("\n") ? "" : "\n";
-    writeFileSync(path, `${existing}${prefix}${encodeDeathAttributions(attributions)}`, {
+    const combined = [...decodeDeathAttributions(existing), ...attributions];
+    const retained = retainAttributions(combined, nowMs);
+    writeFileSync(path, encodeDeathAttributions(retained), {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -538,6 +562,44 @@ function appendAttributions(path: string, attributions: readonly DeathAttributio
     // Best effort by contract: a lane that cannot be written must not turn a
     // boot-time investigation into a boot-time failure.
   }
+}
+
+/** Preserve unknown timestamps, then keep the newest dated history that fits. */
+function retainAttributions(
+  attributions: readonly DeathAttribution[],
+  nowMs: number,
+): DeathAttribution[] {
+  const cutoff = nowMs - DEATH_ATTRIBUTION_LANE_RETENTION_MS;
+  const ageRetained = attributions.filter((attribution) => {
+    const timestamp = Date.parse(attribution.ts);
+    return !Number.isFinite(timestamp) || timestamp >= cutoff;
+  });
+  if (Buffer.byteLength(encodeDeathAttributions(ageRetained)) <= DEATH_ATTRIBUTION_LANE_MAX_BYTES) {
+    return ageRetained;
+  }
+
+  const targetBytes = Math.floor(
+    DEATH_ATTRIBUTION_LANE_MAX_BYTES * DEATH_ATTRIBUTION_LANE_TARGET_RATIO,
+  );
+  const pinnedIndices = new Set<number>();
+  const optionalIndices: number[] = [];
+  ageRetained.forEach((attribution, index) => {
+    if (Number.isFinite(Date.parse(attribution.ts))) optionalIndices.push(index);
+    else pinnedIndices.add(index);
+  });
+
+  let low = 0;
+  let high = optionalIndices.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const selected = new Set([...pinnedIndices, ...optionalIndices.slice(middle)]);
+    const candidate = ageRetained.filter((_attribution, index) => selected.has(index));
+    if (Buffer.byteLength(encodeDeathAttributions(candidate)) <= targetBytes) high = middle;
+    else low = middle + 1;
+  }
+
+  const selected = new Set([...pinnedIndices, ...optionalIndices.slice(low)]);
+  return ageRetained.filter((_attribution, index) => selected.has(index));
 }
 
 function readOrEmpty(path: string): string {
