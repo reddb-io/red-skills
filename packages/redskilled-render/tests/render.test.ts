@@ -124,7 +124,7 @@ describe("one module, three densities", () => {
   it("publishes an operational table for wide terminals and a grouped table for narrow ones", () => {
     const doc = payload({
       workers: [worker({
-        display: display({ runner: "codex", issue: "3495", phase: "validating", step: "tests" }),
+        display: display({ runner: "codex", issue: "3495", phase: "validating", step: "testing" }),
         log: { last_line: "running focused checks", published_at: "2026-08-03T00:02:00.000Z" },
       })],
     });
@@ -138,12 +138,12 @@ describe("one module, three densities", () => {
     const wideTable = wide.table!;
     expect(wideTable.variant).toBe("operational");
     expect(wideTable.columns.map((column) => column.header)).toEqual([
-      "Worker", "Issue", "Runner", "Phase", "Progress", "Elapsed", "ETA", "Activity",
+      "Worker", "Issue", "Runner", "Phase", "Progress", "Clocks", "ETA", "Activity",
     ]);
     expect(wideTable.rows[0]).toEqual(expect.objectContaining({
       issue: "3495",
       runner: "codex opus high",
-      phase: "validating·tests",
+      phase: "validating 3/5 · testing",
       activity: "hb=3s · running focused checks",
     }));
 
@@ -159,7 +159,7 @@ describe("one module, three densities", () => {
       "Worker", "Work", "State", "Latest activity",
     ]);
     expect(narrowTable.rows[0]).toEqual(expect.objectContaining({
-      work: "3495 · validating·tests",
+      work: "3495 · validating 3/5 · testing",
       activity: "hb=3s · running focused checks",
     }));
   });
@@ -222,7 +222,7 @@ describe("one module, three densities", () => {
     for (const row of [line.lines[2]!, panel.worker_rows[1]!, table.rows[1]!.line]) {
       expect(stripAnsi(row)).toContain("lane=repair");
       expect(stripAnsi(row)).toContain("pr=#3291");
-      expect(stripAnsi(row)).toContain("merging·regenerate");
+      expect(stripAnsi(row)).toContain("merging 3/5 · regenerate");
       expect(row).toContain(`${MODEL_BG}${PAPER}lane=repair`);
     }
     expect(line.line).toContain("1 coding + 1 repairing");
