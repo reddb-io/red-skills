@@ -34,6 +34,7 @@ import type {
   RedskilledProjectActivity,
   RedskilledRepositoryActivity,
 } from "./repository-activity.js";
+import { REDSKILLED_PANORAMA_REFRESH_MS } from "./repository-activity.js";
 
 /**
  * Every counter this block carries, in the order a line reads them.
@@ -45,6 +46,7 @@ import type {
 export const REDSKILLED_REMOTE_COUNTER_NAMES = [
   "open_pull_requests",
   "open_issues",
+  "merged_today",
   "ready_queue",
   "human_queue",
 ] as const;
@@ -98,8 +100,10 @@ export function buildRemoteCounterReport(input: {
   readonly activity: RedskilledRepositoryActivity | null;
   readonly now: string;
   readonly stalenessMs?: number;
+  readonly panoramaStalenessMs?: number;
 }): RedskilledRemoteCounterReport {
   const threshold = input.stalenessMs ?? REDSKILLED_ACTIVITY_STALENESS_MS;
+  const panoramaThreshold = input.panoramaStalenessMs ?? REDSKILLED_PANORAMA_REFRESH_MS;
   const activity = input.activity;
   if (activity == null || activity.projects.length === 0) {
     return {
@@ -110,29 +114,39 @@ export function buildRemoteCounterReport(input: {
     };
   }
   const nowMs = Date.parse(input.now);
-  const fetchedMs = Date.parse(activity.fetched_at);
-  const ageMs = Number.isFinite(nowMs) && Number.isFinite(fetchedMs) ? Math.max(0, nowMs - fetchedMs) : null;
-
   const projects = activity.projects.map((project) =>
-    buildProjectCounters(project, { fetchedAt: activity.fetched_at, ageMs, threshold })
+    buildProjectCounters(project, { fetchedAt: activity.fetched_at, nowMs, threshold, panoramaThreshold })
   );
   return {
     version: 1,
     threshold_ms: threshold,
     projects,
-    reason: ageMs == null
+    reason: !Number.isFinite(nowMs) || !Number.isFinite(Date.parse(activity.fetched_at))
       ? "these counters carry no readable instant, so none of them can be presented as current"
-      : `every counter here was produced by the poll of ${activity.fetched_at}, ${ageMs}ms ago`,
+      : `these counters carry their queue and panorama poll instants as of ${activity.fetched_at}`,
   };
 }
 
 function buildProjectCounters(
   project: RedskilledProjectActivity,
-  ctx: { readonly fetchedAt: string; readonly ageMs: number | null; readonly threshold: number },
+  ctx: {
+    readonly fetchedAt: string;
+    readonly nowMs: number;
+    readonly threshold: number;
+    readonly panoramaThreshold: number;
+  },
 ): RedskilledProjectRemoteCounters {
   const counters = {} as Record<RedskilledRemoteCounterName, RedskilledRemoteCounter>;
   for (const name of REDSKILLED_REMOTE_COUNTER_NAMES) {
-    counters[name] = buildCounter(name, valueOf(project, name), project, ctx);
+    const panorama = name === "open_pull_requests" || name === "open_issues" || name === "merged_today";
+    const fetchedAt = panorama ? project.panorama_fetched_at ?? ctx.fetchedAt : project.queue_fetched_at ?? ctx.fetchedAt;
+    const fetchedMs = Date.parse(fetchedAt);
+    const ageMs = Number.isFinite(ctx.nowMs) && Number.isFinite(fetchedMs) ? Math.max(0, ctx.nowMs - fetchedMs) : null;
+    counters[name] = buildCounter(name, valueOf(project, name), project, {
+      fetchedAt,
+      ageMs,
+      threshold: panorama ? ctx.panoramaThreshold : ctx.threshold,
+    });
   }
   return {
     project_label: project.project_label,
@@ -151,6 +165,8 @@ function valueOf(project: RedskilledProjectActivity, name: RedskilledRemoteCount
       return counts.open_pull_requests;
     case "open_issues":
       return counts.open_issues;
+    case "merged_today":
+      return counts.merged_today ?? null;
     case "ready_queue":
       return counts.ready_queue;
     case "human_queue":

@@ -159,7 +159,7 @@ describe("the rendered statusline", () => {
     expect(render.generated_at).toBe(payload.generated_at);
   });
 
-  it("defaults to the local project's Workers and names no other project", () => {
+  it("defaults to the local project's Workers without repeating the project in the tail", () => {
     const payload = payloadOf(
       [worker(), worker({ worker_id: "w-2", project_label: "acme/gadgets", pid: 43 })],
       { "w-1": 512 * MB, "w-2": 128 * MB },
@@ -168,7 +168,8 @@ describe("the rendered statusline", () => {
     const render = renderRedskilledStatusline(payload, options({ project: "acme/widgets" }));
 
     expect(render.mode).toBe("local");
-    expect(render.line).toContain("acme/widgets 1w");
+    expect(render.line).toContain("1w !unregistered 512M v0.1.0");
+    expect(render.line).not.toContain("acme/widgets");
     expect(stripAnsi(render.lines[1]!)).toContain("w-1");
     expect(render.lines.join("\n")).not.toContain("w-2");
     expect(render.lines.join("\n")).not.toContain("acme/gadgets");
@@ -265,7 +266,7 @@ describe("the rendered statusline", () => {
     const render = renderRedskilledStatusline(idle, options({ project: "acme/widgets" }));
     expect(render.stale).toBe(false);
     expect(render.project_match).toBe("matched");
-    expect(render.line).toBe("acme/widgets 0w 0B idle v0.1.0");
+    expect(render.line).toBe("0w idle 0B v0.1.0");
   });
 });
 
@@ -346,6 +347,10 @@ describe("one renderer, machine-wide", () => {
     "apps/redskilled/src/daemon/tunables.ts",
     "apps/redskilled/src/protocol.ts",
     "apps/redskilled/src/client.ts",
+    // Probe-only transport and its command adapter carry the typed payload to
+    // the shared renderer; neither draws an independent statusline.
+    "apps/redskilled/src/statusline-probe.ts",
+    "apps/redskilled/src/statusline-command.ts",
   ]);
 
   it("keeps every other surface — every agent host included — on the string", () => {
@@ -450,6 +455,7 @@ describe("the host's whole job", () => {
     // The defect: `project unknown 0w` while the daemon held a labelled Worker.
     expect(written[0]).not.toContain("project unknown");
     expect(written[0]).not.toContain("0w");
-    expect(written[0]).toContain("reddb-io/red-skills");
+    expect(written[0]).toContain("1w !unregistered 512M");
+    expect(written[0]).not.toContain("reddb-io/red-skills");
   });
 });

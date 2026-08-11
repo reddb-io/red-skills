@@ -62,7 +62,6 @@
 import {
   createGithubClient,
   githubSurfaceFor,
-  isGithubRateLimitError,
   type GithubApiSurface,
   type GithubAttributionLedger,
   type GithubAttributedOperation,
@@ -70,6 +69,9 @@ import {
   type GithubPaginatedRestAnswer,
   type GithubResponseHeaders,
 } from "@reddb-io/github";
+import { fetchConditionalRepositoryActivity } from "./repository-activity-conditional.js";
+
+export { REDSKILLED_PANORAMA_REFRESH_MS } from "./repository-activity-conditional.js";
 
 /**
  * The gh argv this poll is equivalent to. It exists so the surface below is a
@@ -102,7 +104,7 @@ export const REDSKILLED_ACTIVITY_BATCH_SIZE = 100;
  * spending GitHub budget.
  */
 export const DEFAULT_REDSKILLED_ACTIVITY_MS = 20_000;
-
+/** Panorama totals refresh on a human-glance cadence while queue depth stays attended-fast. */
 /** How far back "recently closed" reaches, when a caller states no window. */
 export const DEFAULT_REDSKILLED_ACTIVITY_CLOSED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -163,6 +165,8 @@ export class RedskilledSplitCredentialError extends Error {
 export interface RedskilledActivityCounts {
   readonly open_pull_requests: number;
   readonly open_issues: number;
+  /** Pull requests merged since the operator's local calendar day began. */
+  readonly merged_today?: number;
   /** Issues and pull requests closed inside the window the fetch asked for. */
   readonly recently_closed: number;
   /**
@@ -196,6 +200,9 @@ export interface RedskilledProjectActivity {
   readonly outcome: RedskilledActivityOutcome;
   /** The counts; `null` for every outcome but `counted`, never a zero. */
   readonly counts: RedskilledActivityCounts | null;
+  /** The independent cache instants for the slow panorama and fast queue tiers. */
+  readonly panorama_fetched_at?: string;
+  readonly queue_fetched_at?: string;
   readonly detail: string;
 }
 
@@ -231,6 +238,7 @@ export interface RedskilledRepositoryActivity {
 export interface RedskilledActivityAlias {
   readonly alias: string;
   readonly search_alias: string;
+  readonly merged_alias: string;
   readonly project: RedskilledProjectRepository;
 }
 
@@ -239,6 +247,8 @@ export interface RedskilledActivityOperation {
   readonly aliases: readonly RedskilledActivityAlias[];
   /** The instant `recently_closed` counts back from, as the query states it. */
   readonly closed_since: string;
+  /** Operator-local day used by the merged-PR search. */
+  readonly merged_since: string;
 }
 
 /**
@@ -277,16 +287,24 @@ export function buildRepositoryActivityQuery(
   const nowMs = Date.parse(options.now);
   if (!Number.isFinite(nowMs)) throw new Error(`redskilled activity fetch needs an instant, not ${JSON.stringify(options.now)}`);
   const closedSince = new Date(nowMs - Math.max(0, windowMs)).toISOString();
+  const localNow = new Date(nowMs);
+  const mergedSince = [
+    localNow.getFullYear(),
+    String(localNow.getMonth() + 1).padStart(2, "0"),
+    String(localNow.getDate()).padStart(2, "0"),
+  ].join("-");
 
   const aliases: RedskilledActivityAlias[] = projects.map((project, index) => ({
     alias: `r${index}`,
     search_alias: `c${index}`,
+    merged_alias: `m${index}`,
     project,
   }));
-  const fields = aliases.flatMap(({ alias, search_alias, project }) => {
+  const fields = aliases.flatMap(({ alias, search_alias, merged_alias, project }) => {
     const owner = JSON.stringify(project.owner);
     const name = JSON.stringify(project.name);
     const search = JSON.stringify(`repo:${project.owner}/${project.name} is:closed closed:>=${closedSince}`);
+    const merged = JSON.stringify(`repo:${project.owner}/${project.name} is:pr is:merged merged:>=${mergedSince}`);
     return [
       `  ${alias}: repository(owner: ${owner}, name: ${name}) {`,
       "    nameWithOwner",
@@ -294,6 +312,7 @@ export function buildRepositoryActivityQuery(
       "    open_issues: issues(states: OPEN) { totalCount }",
       "  }",
       `  ${search_alias}: search(query: ${search}, type: ISSUE, first: 1) { issueCount }`,
+      `  ${merged_alias}: search(query: ${merged}, type: ISSUE, first: 1) { issueCount }`,
     ];
   });
   const query = [
@@ -302,7 +321,7 @@ export function buildRepositoryActivityQuery(
     ...fields,
     "}",
   ].join("\n");
-  return { query, aliases, closed_since: closedSince };
+  return { query, aliases, closed_since: closedSince, merged_since: mergedSince };
 }
 
 /**
@@ -324,15 +343,17 @@ export function parseRepositoryActivityResponse(
   const errors = Array.isArray(root.errors) ? root.errors.map(asRecord) : [];
   const rateLimit = readRateLimit(data.rateLimit, errors);
 
-  const projects = operation.aliases.map(({ alias, search_alias, project }): RedskilledProjectActivity => {
+  const projects = operation.aliases.map(({ alias, search_alias, merged_alias, project }): RedskilledProjectActivity => {
     const repository = project.owner + "/" + project.name;
     const node = data[alias];
-    const aliasError = errors.find((candidate) => pathIncludes(candidate.path, alias) || pathIncludes(candidate.path, search_alias));
+    const aliasError = errors.find((candidate) =>
+      pathIncludes(candidate.path, alias) || pathIncludes(candidate.path, search_alias) || pathIncludes(candidate.path, merged_alias));
     if (isRecord(node)) {
       const openPullRequests = totalCount(node.open_pull_requests);
       const openIssues = totalCount(node.open_issues);
       const recentlyClosed = issueCount(data[search_alias]);
-      if (openPullRequests != null && openIssues != null && recentlyClosed != null) {
+      const mergedToday = issueCount(data[merged_alias]);
+      if (openPullRequests != null && openIssues != null && recentlyClosed != null && mergedToday != null) {
         return {
           project_label: project.project_label,
           repository,
@@ -340,6 +361,7 @@ export function parseRepositoryActivityResponse(
           counts: {
             open_pull_requests: openPullRequests,
             open_issues: openIssues,
+            merged_today: mergedToday,
             recently_closed: recentlyClosed,
             // The aliased query asks for no label breakdown, so this path
             // produces no queue counters — and says so with `null` rather than
@@ -347,6 +369,8 @@ export function parseRepositoryActivityResponse(
             ready_queue: null,
             human_queue: null,
           },
+          panorama_fetched_at: options.fetchedAt,
+          queue_fetched_at: options.fetchedAt,
           detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
         };
       }
@@ -413,6 +437,9 @@ export interface RedskilledActivityTransport {
   conditionalList?(
     input: RedskilledConditionalListRequest,
   ): Promise<GithubPaginatedRestAnswer<Record<string, unknown>>>;
+  conditionalCount?(
+    input: RedskilledConditionalListRequest,
+  ): Promise<{ readonly data: { readonly total_count: number }; readonly headers: GithubResponseHeaders; readonly requestCount: number }>;
 }
 
 export interface FetchRepositoryActivityInput {
@@ -421,6 +448,8 @@ export interface FetchRepositoryActivityInput {
   readonly transport: RedskilledActivityTransport;
   readonly now: string;
   readonly closedWindowMs?: number;
+  readonly previous?: RedskilledRepositoryActivity | null;
+  readonly panoramaRefreshMs?: number;
 }
 
 /**
@@ -436,7 +465,14 @@ export async function fetchRepositoryActivity(
 ): Promise<RedskilledRepositoryActivity> {
   if (input.projects.length === 0) return emptyRepositoryActivity(input.now);
   assertOneHostToken(input.projects, input.hostTokenRef);
-  if (input.transport.conditionalList) return await fetchConditionalRepositoryActivity(input);
+  if (input.transport.conditionalList && input.transport.conditionalCount) {
+    const nowMs = Date.parse(input.now);
+    const queryNow = Number.isFinite(nowMs)
+      ? new Date(Math.floor(nowMs / (60 * 60 * 1000)) * 60 * 60 * 1000).toISOString()
+      : input.now;
+    const operation = buildRepositoryActivityQuery(input.projects, { now: queryNow, closedWindowMs: input.closedWindowMs });
+    return await fetchConditionalRepositoryActivity(input, operation);
+  }
   const operation = buildRepositoryActivityQuery(input.projects, {
     now: input.now,
     closedWindowMs: input.closedWindowMs,
@@ -462,114 +498,6 @@ export async function fetchRepositoryActivity(
       })),
     };
   }
-}
-
-const REDSKILLED_ACTIVITY_REST_OPERATION: GithubAttributedOperation = {
-  key: "redskilled repository activity poll",
-  budget: "rest",
-};
-
-async function fetchConditionalRepositoryActivity(
-  input: FetchRepositoryActivityInput,
-): Promise<RedskilledRepositoryActivity> {
-  assertActivityProjects(input.projects);
-  // A sliding timestamp would make the recently-closed URL different on every
-  // poll and therefore impossible to revalidate. Bucket that human-speed count
-  // by hour: its seven-day meaning changes by at most one hour, while 59 of 60
-  // minute polls can reuse the same representation validator.
-  const nowMs = Date.parse(input.now);
-  const queryNow = Number.isFinite(nowMs)
-    ? new Date(Math.floor(nowMs / (60 * 60 * 1000)) * 60 * 60 * 1000).toISOString()
-    : input.now;
-  const operation = buildRepositoryActivityQuery(input.projects, {
-    now: queryNow,
-    closedWindowMs: input.closedWindowMs,
-  });
-  const list = input.transport.conditionalList!;
-  const projects: RedskilledProjectActivity[] = [];
-  let requestCount = 0;
-  let rateLimit: RedskilledActivityRateLimit = {
-    remaining: null,
-    reset_at: null,
-    exhausted: false,
-    point_cost: null,
-  };
-
-  for (const project of input.projects) {
-    const repository = `${project.owner}/${project.name}`;
-    const queries = [
-      ["open-prs", "GET /repos/{owner}/{repo}/pulls", { owner: project.owner, repo: project.name, state: "open" }],
-      ["open-issues", "GET /repos/{owner}/{repo}/issues", { owner: project.owner, repo: project.name, state: "open" }],
-      [
-        "recently-closed",
-        "GET /repos/{owner}/{repo}/issues",
-        { owner: project.owner, repo: project.name, state: "closed", since: operation.closed_since },
-      ],
-    ] as const;
-    const counts: number[] = [];
-    let queue: RedskilledActivityQueueCounts = { ready_queue: null, human_queue: null };
-    try {
-      for (const [kind, route, parameters] of queries) {
-        const answer = await list({
-          cacheKey: `activity:${repository}:${kind}:${JSON.stringify(parameters)}`,
-          route,
-          parameters,
-          operation: REDSKILLED_ACTIVITY_REST_OPERATION,
-        });
-        requestCount += answer.requestCount;
-        const items = kind === "open-prs"
-          ? answer.data
-          : answer.data.filter((item) => !isRecord(item.pull_request));
-        // The queue counters come out of the open-Issue representation rather
-        // than out of two more label-filtered lists: this poll already holds
-        // every open Issue with its labels, so counting them here is free of
-        // both requests and budget.
-        if (kind === "open-issues" && project.queue_labels != null) queue = countQueueLabels(items, project.queue_labels);
-        counts.push(kind === "recently-closed"
-          ? items.filter((item) => stringValue(item.closed_at) >= operation.closed_since).length
-          : items.length);
-        rateLimit = mergeActivityRateLimit(rateLimit, activityRateLimitFromHeaders(answer.headers));
-      }
-      projects.push({
-        project_label: project.project_label,
-        repository,
-        outcome: "counted",
-        counts: {
-          open_pull_requests: counts[0]!,
-          open_issues: counts[1]!,
-          recently_closed: counts[2]!,
-          ...queue,
-        },
-        detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
-      });
-    } catch (error) {
-      const rateLimited = isGithubRateLimitError(error);
-      rateLimit = mergeActivityRateLimit(rateLimit, {
-        remaining: null,
-        reset_at: null,
-        exhausted: rateLimited,
-        point_cost: null,
-      });
-      projects.push({
-        project_label: project.project_label,
-        repository,
-        outcome: rateLimited ? "rate-limited" : "unreachable",
-        counts: null,
-        detail:
-          `the activity fetch failed before ${repository} answered: ` +
-          `${error instanceof Error ? error.message : String(error)}`,
-      });
-    }
-  }
-
-  return {
-    version: 1,
-    fetched_at: input.now,
-    request_count: requestCount,
-    project_count: projects.length,
-    rate_limit: rateLimit,
-    projects,
-  };
 }
 
 /**
@@ -605,6 +533,15 @@ export function createGitHubActivityTransport(options: {
       parameters: input.parameters,
       operation: input.operation,
     });
+  transport.conditionalCount = async (input) => {
+    const answer = await client.conditionalRest<{ total_count: number }>({
+      cacheKey: input.cacheKey,
+      route: input.route,
+      parameters: input.parameters,
+      operation: input.operation,
+    });
+    return { data: answer.data, headers: answer.headers, requestCount: 1 };
+  };
   return transport;
 }
 
@@ -615,67 +552,6 @@ function restBaseUrl(endpoint: string): string {
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
-}
-
-/** The two label-keyed counters, as the counted half of one poll's counts. */
-type RedskilledActivityQueueCounts = Pick<RedskilledActivityCounts, "ready_queue" | "human_queue">;
-
-/**
- * Count the open Issues carrying each named label. PURE.
- *
- * The names are compared, never read: this is a string equality over what the
- * representation already carries, which is the whole of what the daemon does
- * with a label.
- */
-function countQueueLabels(
-  items: readonly Record<string, unknown>[],
-  labels: RedskilledActivityQueueLabels,
-): RedskilledActivityQueueCounts {
-  const carries = (item: Record<string, unknown>, label: string): boolean =>
-    Array.isArray(item.labels) && item.labels.some((entry) => labelName(entry) === label);
-  return {
-    ready_queue: items.filter((item) => carries(item, labels.ready)).length,
-    human_queue: items.filter((item) => carries(item, labels.human)).length,
-  };
-}
-
-/** A label's name, from either REST shape: the object, or the bare string. */
-function labelName(entry: unknown): string {
-  if (typeof entry === "string") return entry;
-  return isRecord(entry) ? stringValue(entry.name) : "";
-}
-
-function activityRateLimitFromHeaders(headers: GithubResponseHeaders): RedskilledActivityRateLimit {
-  const remaining = integerHeader(headers, "x-ratelimit-remaining");
-  const resetSeconds = integerHeader(headers, "x-ratelimit-reset");
-  return {
-    remaining,
-    reset_at: resetSeconds == null ? null : new Date(resetSeconds * 1000).toISOString(),
-    exhausted: remaining === 0,
-    point_cost: null,
-  };
-}
-
-function mergeActivityRateLimit(
-  held: RedskilledActivityRateLimit,
-  next: RedskilledActivityRateLimit,
-): RedskilledActivityRateLimit {
-  const remaining = next.remaining == null
-    ? held.remaining
-    : held.remaining == null ? next.remaining : Math.min(held.remaining, next.remaining);
-  return {
-    remaining,
-    reset_at: next.reset_at ?? held.reset_at,
-    exhausted: held.exhausted || next.exhausted,
-    point_cost: null,
-  };
-}
-
-function integerHeader(headers: GithubResponseHeaders, name: string): number | null {
-  const raw = headers[name];
-  if (typeof raw !== "string" && typeof raw !== "number") return null;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function assertActivityProjects(projects: readonly RedskilledProjectRepository[]): void {

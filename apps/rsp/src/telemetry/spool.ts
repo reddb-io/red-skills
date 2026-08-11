@@ -1,5 +1,15 @@
 import { randomUUID, createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  writeSync,
+} from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
@@ -82,10 +92,16 @@ export async function appendTelemetryEvent(
   appendTelemetryEventSync(rootDir, event, retention);
 }
 
+export interface AppendTelemetryEventSyncOptions {
+  /** Test seam for posing a drain rename immediately after an append. */
+  readonly afterWrite?: (path: string, attempt: number) => void;
+}
+
 export function appendTelemetryEventSync(
   rootDir: string,
   event: RspTelemetryEvent,
   retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+  options: AppendTelemetryEventSyncOptions = {},
 ): void {
   try {
     const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
@@ -103,9 +119,37 @@ export function appendTelemetryEventSync(
       parseSpoolEntries,
       formatSpoolRow,
     );
-    appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
+    appendSpoolLineSync(path, line, options);
     if (droppedBytes > 0) appendRetentionCorrection(resolvedRoot, "telemetry spool retention", droppedBytes);
   } catch {}
+}
+
+/**
+ * Append to the active inode, then prove it is still the inode at the active
+ * path. A drainer can rename between open and write; retrying the same spool id
+ * makes that race at-least-once rather than silently lossy.
+ */
+function appendSpoolLineSync(
+  path: string,
+  line: string,
+  options: AppendTelemetryEventSyncOptions,
+): void {
+  let attempt = 0;
+  while (true) {
+    const descriptor = openSync(path, "a", 0o600);
+    try {
+      writeSync(descriptor, line, undefined, "utf8");
+      attempt += 1;
+      options.afterWrite?.(path, attempt);
+      const opened = fstatSync(descriptor);
+      const active = statSync(path);
+      if (opened.dev === active.dev && opened.ino === active.ino) return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      closeSync(descriptor);
+    }
+  }
 }
 
 function compactTelemetryEventForSpool(event: RspTelemetryEvent): RspTelemetryEvent {

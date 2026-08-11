@@ -93,6 +93,15 @@ const PAYLOAD: StatuslineAggregate = {
           stale: false,
           reason: "counted by daemon",
         },
+        merged_today: {
+          name: "merged_today",
+          value: 5,
+          fetched_at: "2026-08-11T12:00:00.000Z",
+          age_ms: 5_000,
+          threshold_ms: 60_000,
+          stale: false,
+          reason: "counted by daemon",
+        },
         ready_queue: {
           name: "ready_queue",
           value: 6,
@@ -122,7 +131,7 @@ const PAYLOAD: StatuslineAggregate = {
     projects: [{
       project_label: "red-skills",
       repository: "reddb-io/red-skills",
-      counts: { open_pull_requests: 3, open_issues: 24, recently_closed: 5 },
+      counts: { open_pull_requests: 3, open_issues: 24, merged_today: 5, recently_closed: 5 },
     }],
     reason: "daemon fixture",
   },

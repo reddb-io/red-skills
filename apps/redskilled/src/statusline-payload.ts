@@ -71,6 +71,7 @@ export {
   type RedskilledDeathObservation,
   REDSKILLED_BOOT_LOOP_MIN_DEATHS,
   REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S,
+  REDSKILLED_DEATH_CLASS_FRESHNESS_MS,
   REDSKILLED_RECENT_DEATH_LIMIT,
   type RedskilledStatuslineBootLoop,
   type RedskilledStatuslineDeath,
@@ -579,7 +580,12 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     }),
     ...(input.deaths === undefined
       ? {}
-      : { deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT) }),
+      : {
+          deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT, {
+            now: input.now,
+            healthyFleet: (input.hostState.registrations ?? []).length > 0 && (input.hostState.registrations ?? []).every((registration) => input.hostState.workers.filter((worker) => worker.project_label === registration.project_label).length >= Math.max(0, registration.target)),
+          }),
+        }),
     engine: buildEngine(input.hostState),
     // Echoed, never recomputed: the rates rest on a history only the daemon
     // holds, and a second derivation here would be a second authority on them.

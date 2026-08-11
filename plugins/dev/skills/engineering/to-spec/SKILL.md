@@ -16,7 +16,7 @@ The issue tracker and triage label vocabulary should have been provided to you �
 
 2. Sketch out the testing seams for the feature. Prefer existing, high-level seams over new low-level ones. If new seams are needed, propose them at the highest point that can exercise the behavior.
 
-Check with the user that these seams match their expectations.
+Check with the user that these seams match their expectations. **Read [`/start`'s INTERVIEW-ROUNDS.md](../start/INTERVIEW-ROUNDS.md) and follow its question format for this check and for every other question this skill asks** — the seam proposal is the evidence above the round; the ask itself is a `❓ **Q##**` block with `➡️` marking your recommendation.
 
 **Capture every HITL call** made during the conversation that led to this Spec — testing seam choices, module shape choices, trade-offs the user took a side on, alternatives they rejected, constraints they imposed. These go into the `Human Decisions` section of the template. Do not silently fold them into `Implementation Decisions` — once `/to-tickets` slices this Spec and `/afk` picks up the children, the human's calls become indistinguishable from agent inference unless they are flagged here.
 

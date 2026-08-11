@@ -88,7 +88,8 @@ describe("one render module, and the daemon's payload satisfies it", () => {
       ...REDSKILLED_STATUSLINE_DEFAULTS,
       project: "acme/widgets",
     });
-    expect(drawn.line).toContain("acme/widgets 1w");
+    expect(drawn.line).toContain("1w !unregistered 512M");
+    expect(drawn.line).not.toContain("acme/widgets");
     // Known by NAME: this daemon holds the Worker and no registration for its
     // project, and the shared render says so from the payload alone (#2973).
     expect(drawn.project_match).toBe("name-only");

@@ -317,8 +317,8 @@ describe("the dashboard carries the statusline's own fields", () => {
     expect(header.model).toBe("claude·opus·high");
     expect(header.counts).toMatchObject({ open_pull_requests: 3, open_issues: 24, recently_closed: 7 });
     expect(stripAnsi(header.line)).toContain("» acme/widgets v0.1.0");
-    expect(stripAnsi(header.line)).toContain("prs=3");
-    expect(stripAnsi(header.line)).toContain("cpr=7");
+    expect(stripAnsi(header.line)).toContain("pr=3");
+    expect(stripAnsi(header.line)).not.toContain("cpr=");
     expect(stripAnsi(header.line)).toContain("iss=24");
   });
 

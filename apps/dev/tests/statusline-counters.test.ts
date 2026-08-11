@@ -1,8 +1,8 @@
 /**
  * The tail counters ride the daemon payload (ADR 0141 decision 2, #3566).
  *
- * The claim under test is what an OPERATOR sees: `prs=`, `iss=`, `rdy=` and
- * `hmn=` reach the statusline from the daemon document, each stating its own age
+ * The claim under test is what an OPERATOR sees: `rdy=`, `iss=`, `pr=` and
+ * `mrg=` reach the statusline from the daemon document, each stating its own age
  * when it is served past the daemon's window — and no local `gh` count cache
  * stands anywhere between the fixture and the line.
  *
@@ -126,7 +126,7 @@ function daemonPayload(ageMs: number): RedskilledRenderPayload {
     known_projects: [PROJECT],
     registered_projects: [PROJECT],
     remote_counters: counters(
-      { open_pull_requests: 3, open_issues: 24, ready_queue: 5, human_queue: 2 },
+      { open_pull_requests: 3, open_issues: 24, merged_today: 7, ready_queue: 5, human_queue: 2 },
       ageMs,
     ),
   };
@@ -198,16 +198,18 @@ async function render(ageMs: number): Promise<string> {
 }
 
 describe("statusline tail counters", () => {
-  it("renders all four from the daemon payload, behind the bedrock", async () => {
+  it("renders the compact panorama from the daemon payload, behind the bedrock", async () => {
     const line = await render(5_000);
 
-    expect(line).toContain("prs=3 iss=24 rdy=5 hmn=2");
+    expect(line).toContain("0w idle rdy=5 iss=24 pr=3 mrg=7 0B v3.12.13");
+    expect(line).not.toContain("acme/widgets");
+    expect(line.match(/ · /g)).toHaveLength(1);
     // The bedrock still LEADS: the counters are the tail's, and the tail follows.
-    expect(line.indexOf("red-skills (afk/3566-counters)")).toBeLessThan(line.indexOf("prs=3"));
+    expect(line.indexOf("red-skills (afk/3566-counters)")).toBeLessThan(line.indexOf("rdy=5"));
     expect(line).toContain("loc=+12 -3");
   });
 
   it("states each counter's age when the daemon served it past its window", async () => {
-    expect(await render(900_000)).toContain("prs=3(15m) iss=24(15m) rdy=5(15m) hmn=2(15m)");
+    expect(await render(900_000)).toContain("rdy=5(15m) iss=24(15m) pr=3(15m) mrg=7(15m)");
   });
 });
