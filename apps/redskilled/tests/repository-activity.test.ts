@@ -168,7 +168,15 @@ describe("counts are stored and returned, never interpreted", () => {
       counts: { open_pull_requests: 7, open_issues: 3, recently_closed: 11 },
     });
     // A genuinely empty tracker IS a zero — this is the only outcome that carries one.
-    expect(activity.projects[1]!.counts).toEqual({ open_pull_requests: 0, open_issues: 0, recently_closed: 0 });
+    // The queue counters stay null even here: the aliased query asked for no
+    // label breakdown, so nothing counted them and nothing may read as drained.
+    expect(activity.projects[1]!.counts).toEqual({
+      open_pull_requests: 0,
+      open_issues: 0,
+      recently_closed: 0,
+      ready_queue: null,
+      human_queue: null,
+    });
   });
 
   it("counts recently closed work from the window the query stated", () => {
@@ -396,6 +404,8 @@ describe("the daemon serves the counts it polled", () => {
       open_pull_requests: 4,
       open_issues: 9,
       recently_closed: 2,
+      ready_queue: null,
+      human_queue: null,
     });
     expect(payload.repository_activity.projects[0]!.age_ms).not.toBeNull();
     expect(payload.repository_activity.age_ms).not.toBeNull();
