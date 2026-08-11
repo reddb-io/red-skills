@@ -70,6 +70,14 @@ vi.mock("../src/runtime/wire.js", () => ({
 
 import { statuslineCommand } from "../src/commands/statusline.js";
 import { readBuildInfo } from "@reddb-io/build-info";
+import {
+  BOLD,
+  DIM,
+  IDENTITY_BG,
+  IDENTITY_INK,
+  KEY,
+} from "@reddb-io/redskilled-render/palette.js";
+import { stripAnsi } from "@reddb-io/redskilled-render/format.js";
 
 const PAYLOAD = {
   model: { display_name: "Opus" },
@@ -80,6 +88,7 @@ const PAYLOAD = {
 
 const roots: string[] = [];
 const cacheDir = process.env.RED_SKILLS_CACHE_DIR;
+const noColor = process.env.NO_COLOR;
 
 beforeEach(async () => {
   // An empty bundle cache, so the bedrock's version label is the build stamp
@@ -88,6 +97,9 @@ beforeEach(async () => {
   const empty = await mkdtemp(join(tmpdir(), "statusline-render-path-cache-"));
   roots.push(empty);
   process.env.RED_SKILLS_CACHE_DIR = empty;
+  // The exact-string pins below are the NO_COLOR path — the semantic baseline
+  // (ADR 0137 decision 2). The themed suite deletes the variable per test.
+  process.env.NO_COLOR = "1";
 });
 
 afterEach(async () => {
@@ -95,6 +107,8 @@ afterEach(async () => {
   spawned.length = 0;
   if (cacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
   else process.env.RED_SKILLS_CACHE_DIR = cacheDir;
+  if (noColor === undefined) delete process.env.NO_COLOR;
+  else process.env.NO_COLOR = noColor;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -240,5 +254,69 @@ describe("dev statusline render path", () => {
       "../src/commands/statusline.js",
     );
     expect("statuslineRefreshCountsCommand" in command).toBe(false);
+  });
+});
+
+describe("dev statusline render path — colour", () => {
+  it("leads the painted daemon head with the themed bedrock, inside the deadline", async () => {
+    delete process.env.NO_COLOR;
+    const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
+    roots.push(root);
+    const out = sink();
+
+    const started = performance.now();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(JSON.stringify(PAYLOAD)));
+    const adapterMs = performance.now() - started;
+
+    expect(code).toBe(0);
+    const header = out.text().split("\n")[0]!;
+    expect(header).toContain(`${IDENTITY_BG}${IDENTITY_INK}» ${BOLD}red-skills`);
+    // The plain content survives under the paint — the seam and the daemon head
+    // are byte-identical to the NO_COLOR render.
+    expect(stripAnsi(header)).toContain(" · acme/widgets 1w 128M v3.12.10");
+    expect(adapterMs).toBeLessThan(100);
+  });
+
+  it("paints the lifecycle token when the daemon is away", async () => {
+    delete process.env.NO_COLOR;
+    probeStatusline.mockRejectedValueOnce(new Error("socket unavailable"));
+    const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
+    roots.push(root);
+    const out = sink();
+
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(JSON.stringify(PAYLOAD)));
+
+    expect(code).toBe(0);
+    expect(out.text()).toContain(`${KEY}rsk=${DIM}bedrock-only`);
+    expect(stripAnsi(out.text())).toBe(
+      `» red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
+        "5h=23% 7d=41% · loc=+142 -36 · rsk=bedrock-only\n",
+    );
+  });
+
+  it("strips the daemon's unconditional paint under NO_COLOR", async () => {
+    // The daemon paints by design (its palette contract says the caller
+    // strips); NO_COLOR must therefore reach the TAIL too, not just suppress
+    // the bedrock's own paint.
+    probeStatusline.mockResolvedValueOnce({
+      payload: {
+        generated_at: "2026-08-11T12:00:00.000Z",
+        staleness: { age_ms: 5_000, threshold_ms: 30_000, stale: false },
+      },
+      render: {
+        lines: [`[1macme/widgets[0m 1w`, `[39mw123 iss=42[0m`],
+        mode: "local",
+        project_match: "matched",
+      },
+    });
+    const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
+    roots.push(root);
+    const out = sink();
+
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(JSON.stringify(PAYLOAD)));
+
+    expect(code).toBe(0);
+    expect(out.text()).not.toContain("[");
+    expect(out.text()).toContain(" · acme/widgets 1w\nw123 iss=42\n");
   });
 });

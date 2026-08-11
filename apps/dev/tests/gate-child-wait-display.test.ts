@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CompactWorker } from "../src/core/monitor.js";
 import { renderWorkerCompactLine } from "../src/core/monitor.js";
-import { renderWorkerLine } from "../src/core/statusline-style.js";
 import { workerDisplayFromState } from "../src/core/worker-display-record.js";
 import { AfkStateSchema } from "../src/types/state.js";
 
@@ -64,24 +63,21 @@ describe("gate child declared-wait display (#3182)", () => {
     });
   });
 
+  // The statusline half of this claim now lives with the daemon renderer:
+  // packages/redskilled-render/tests/render.test.ts asserts the declared wait
+  // owns the liveness cell across its densities.
   it("renders an explained gate wait from the child's own start instead of stale agent heartbeat", () => {
-    const statusline = renderWorkerLine(worker(true), NOW_S).replace(/\x1b\[[0-9;]*m/g, "");
     const monitor = renderWorkerCompactLine(worker(true), NOW_S);
 
-    expect(statusline).toContain("gate=pnpm test 3m12s");
-    expect(statusline).not.toContain("hb=~7m+");
     expect(monitor).toContain("[wait]");
     expect(monitor).toContain("gate=pnpm test 3m12s");
     expect(monitor).not.toContain("[quiet]");
   });
 
   it("keeps an unexplained silence visually alarming", () => {
-    const statusline = renderWorkerLine(worker(false), NOW_S).replace(/\x1b\[[0-9;]*m/g, "");
     const monitor = renderWorkerCompactLine(worker(false), NOW_S);
 
-    expect(statusline).toContain("hb=~7m+");
     expect(monitor).toContain("[quiet]");
-    expect(statusline).not.toContain("gate=");
     expect(monitor).not.toContain("gate=");
   });
 });

@@ -30,6 +30,11 @@ import {
   renderStatuslineBedrock,
   type StatuslineBedrockInput,
 } from "../core/statusline-bedrock.js";
+import {
+  paintLifecycleTokens,
+  renderStatuslineBedrockThemed,
+} from "../core/statusline-bedrock-style.js";
+import { stripAnsi } from "@reddb-io/redskilled-render/format.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { loadConfig, getConfig } from "../core/config.js";
 import { resolveRspConfig } from "../../../rsp/src/config.js";
@@ -313,8 +318,9 @@ export async function resolveStatuslineBedrock(
 
 /**
  * `statusline "<project-root>"` — resolve the root and opt-out, render the
- * bedrock, then append the lifecycle-governed Shared redskilled tail. Emits
- * nothing (and exits 0) only when the project opted out.
+ * bedrock (themed unless NO_COLOR), then append the lifecycle-governed Shared
+ * redskilled tail (painted tokens, or stripped under NO_COLOR). Emits nothing
+ * (and exits 0) only when the project opted out.
  *
  * The bedrock renders FIRST and unconditionally (ADR 0141 §1): an unreachable
  * daemon costs the operator the tail, never the model, context, subscription
@@ -352,11 +358,22 @@ export async function statuslineCommand(
   // the document's most useful information, so the compatibility spelling is a
   // no-op. All other flags are taste owned by the redskilled renderer.
   const daemonArgs = args.filter((arg) => arg !== rootArg && arg !== "--no-workers");
-  const bedrock = renderStatuslineBedrock(await resolveStatuslineBedrock(root, payload));
+  // Colour is decided HERE and only here, on the de-facto NO_COLOR opt-out
+  // (the pre-#3546 convention, restored). The daemon paints unconditionally by
+  // design — its palette contract says the caller strips — so the plain path
+  // strips the tail at this boundary, and the themed path paints the plain
+  // lifecycle tokens to match. Both happen after the wire: the tail cache
+  // stores the daemon's lines verbatim, paint-agnostic.
+  const color = !process.env.NO_COLOR;
+  const bedrockInput = await resolveStatuslineBedrock(root, payload);
+  const bedrock = color
+    ? renderStatuslineBedrockThemed(bedrockInput)
+    : renderStatuslineBedrock(bedrockInput);
   // The tail is buffered rather than streamed so the bedrock can LEAD the header
   // line the daemon opens with — one line, two segments, in that order.
   const tail = await collectStatuslineTail(root, daemonArgs);
-  for (const line of composeStatuslineLines(bedrock, tail.lines)) {
+  const tailLines = color ? tail.lines.map(paintLifecycleTokens) : tail.lines.map(stripAnsi);
+  for (const line of composeStatuslineLines(bedrock, tailLines)) {
     stdout.write(`${line}\n`);
   }
   return 0;

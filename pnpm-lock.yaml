@@ -598,6 +598,9 @@ importers:
 
   packages/redskilled-render:
     dependencies:
+      '@reddb-io/brand-tokens':
+        specifier: workspace:*
+        version: link:../brand-tokens
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../shared

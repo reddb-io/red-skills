@@ -23,6 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@reddb-io/brand-tokens": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:"
   },

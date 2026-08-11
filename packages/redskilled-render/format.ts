@@ -68,10 +68,10 @@ export function width(line: string): number {
  *
  * **The cut lands between columns, never inside an escape, and always closes
  * what it opened.** Both halves of that are the same failure: a truncation that
- * splits `\x1b[38;2;255;214;214m` leaves the terminal reading `2;255;214;214m`
- * as text, and one that swallows the terminator leaves every subsequent row
- * painted. The budget is spent on visible columns alone, so the escapes that
- * survive cost nothing against it.
+ * splits a truecolor escape mid-parameters leaves the terminal reading the
+ * severed tail as text, and one that swallows the terminator leaves every
+ * subsequent row painted. The budget is spent on visible columns alone, so the
+ * escapes that survive cost nothing against it.
  */
 export function clamp(line: string, maxWidth: number): string {
   if (maxWidth <= 0) return "";

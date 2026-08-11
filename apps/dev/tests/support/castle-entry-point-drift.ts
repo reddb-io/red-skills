@@ -16,17 +16,6 @@ const HOST_ADAPTER_BOUNDARIES = [
     functions: ["resolveProject", "statuslineCommand"],
   },
   {
-    path: "core/statusline-style.ts",
-    functions: [
-      "projectContent",
-      "repoCountsKv",
-      "renderHeaderLine",
-      "workerCells",
-      "colorWorkerCell",
-      "renderWorkerLine",
-    ],
-  },
-  {
     path: "core/statusline.ts",
     functions: [
       "renderProjectBlock",

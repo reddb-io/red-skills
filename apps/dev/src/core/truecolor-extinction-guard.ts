@@ -8,11 +8,15 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 
-/** Source trees that can paint the dev statusline, VS Code dashboard, or herdr panes. */
+/** Source trees that can paint the dev statusline, VS Code dashboard, herdr
+ * panes, or the shared redskilled render (whose palette every one of those
+ * surfaces now speaks). The render package root has no `src/`, so the walker
+ * skips vendored directories rather than relying on the roots to exclude them. */
 export const PAINTED_SURFACE_SOURCE_ROOTS = [
   "apps/dev/src",
   "apps/vscode-extension-red-skills/src",
   "apps/herdr-plugin-red-skills/src",
+  "packages/redskilled-render",
 ] as const;
 
 /** Exact modules allowed to derive ANSI truecolor sequences from published tokens. */
@@ -23,6 +27,9 @@ export const BRAND_TOKEN_DERIVATION_MODULES = [
 
 const DERIVATION_MODULES = new Set<string>(BRAND_TOKEN_DERIVATION_MODULES);
 const SOURCE_EXTENSIONS = new Set([".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]);
+// Vendored and VCS trees are not our paint: a swept package root brings its own
+// node_modules, and reddening a dependency's escapes is noise nobody can fix here.
+const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git"]);
 
 // Assemble the forbidden SGR fragment so this guard's own source does not carry
 // the literal it rejects while scanning apps/dev/src.
@@ -53,6 +60,7 @@ function readSourceTree(
   for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const absolutePath = join(directory, entry.name);
     if (entry.isDirectory()) {
+      if (SKIPPED_DIRECTORIES.has(entry.name)) continue;
       readSourceTree(repoRoot, absolutePath, files);
       continue;
     }

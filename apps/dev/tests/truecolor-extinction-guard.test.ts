@@ -22,10 +22,17 @@ describe("literal truecolor escapes stay extinct on painted surfaces (ADR 0137)"
     const paths = readPaintedSurfaceSourceFiles(ROOT).map((file) => file.relativePath);
 
     expect(paths).toEqual(expect.arrayContaining([
-      "apps/dev/src/core/statusline-style.ts",
+      "apps/dev/src/core/statusline.ts",
       "apps/vscode-extension-red-skills/src/views/dashboard-panel.ts",
       "apps/herdr-plugin-red-skills/src/ui/ansi.mjs",
+      "packages/redskilled-render/palette.ts",
     ]));
+  });
+
+  it("skips a swept package's vendored node_modules", () => {
+    const paths = readPaintedSurfaceSourceFiles(ROOT).map((file) => file.relativePath);
+
+    expect(paths.some((path) => path.includes("/node_modules/"))).toBe(false);
   });
 
   it("fails with the file and line of a hand-tuned escape", () => {

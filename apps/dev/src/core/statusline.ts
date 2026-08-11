@@ -6,14 +6,13 @@
 //   red-skills · Opus·high · 47k 24% · 5h=23% 7d=41% · prs=3 iss=24 loc=+142 -36 · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17
 //
 // This module is the SINGLE-LINE plain form — the NO_COLOR / Codex-footer render.
-// The themed Claude Code render is MULTI-LINE (issue #1165): a repo-global header
-// line plus one line per live AFK worker. That layout lives in the sibling style
-// module (core/statusline-style.ts); this file stays one aggregate line.
+// The themed Claude Code prompt render is the bedrock's style sibling
+// (core/statusline-bedrock-style.ts); multi-line Worker rows come from the
+// daemon's Shared render. This file stays one aggregate line.
 //
 // The AFK KPIs use three-letter `key=value` mnemonics
-// (wrk/rdy/hmn/blk/loc/wai/tok/usd) instead of emojis; the optional ANSI
-// theming (a short wine identity zone, then a transparent key=value tail) lives
-// in the sibling style module, not here.
+// (wrk/rdy/hmn/blk/loc/wai/tok/usd) instead of emojis; ANSI theming lives in
+// the style sibling and the shared render palette, not here.
 //
 // The render here is PURE — no stdin parse, no filesystem, no git/gh, no cache,
 // no ANSI. The caller injects the already-resolved inputs (project basename +
