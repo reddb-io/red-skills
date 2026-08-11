@@ -61,7 +61,7 @@ export type RedskilledTerminationClassification = "budget-exceeded";
 export const REDSKILLED_STALL_CLASSIFICATION = "stalled";
 
 /** Which declared budget the floor enforced. The budget's own name, verbatim. */
-export type RedskilledBudgetName = "MemoryMax" | "MemoryHigh";
+export type RedskilledBudgetName = "MemoryMax" | "MemoryHigh" | "TasksMax";
 
 /**
  * One Worker the sampler measured over its budget.
@@ -74,16 +74,17 @@ export interface RedskilledBudgetTermination {
   readonly version: 1;
   readonly worker_id: string;
   readonly project_label: string;
-  readonly outcome: "terminated-over-memory-budget";
+  readonly outcome: "terminated-over-memory-budget" | "terminated-over-process-budget";
   readonly classification: RedskilledTerminationClassification;
   /** Never a stall — the daemon measured this Worker, it did not wait on it. */
   readonly stall: false;
   /** The budget that was exceeded, by its own name. */
   readonly budget_name: RedskilledBudgetName;
   /** The budget exactly as the client declared it, unparsed. */
-  readonly budget_declared: string;
-  readonly budget_bytes: number;
-  readonly observed_rss_bytes: number;
+  readonly budget_declared: string | number;
+  readonly budget_bytes?: number;
+  readonly observed_rss_bytes?: number;
+  readonly observed_processes?: number;
   /** The workspace whose branch or PR the client hands forward. */
   readonly workspace_path: string;
   /** A whole sentence naming the budget — what an operator reads. */
@@ -257,6 +258,42 @@ export function evaluateMemoryBudgets(input: {
   }
 
   return { terminations, unenforceable };
+}
+
+/** Judge unisolated process-tree counts against declared `max_processes`. PURE. */
+export function evaluateProcessBudgets(input: {
+  readonly workers: readonly RedskilledWorkerView[];
+  readonly processes: RedskilledProcessReading;
+}): RedskilledMemoryTickOutcome {
+  const terminations: RedskilledBudgetTermination[] = [];
+
+  for (const worker of input.workers) {
+    if (worker.isolated) continue;
+    const declared = appliedWorkerBudget(worker).max_processes;
+    if (declared == null || !Number.isSafeInteger(declared) || declared <= 0) continue;
+    const observed = input.processes[worker.worker_id];
+    if (typeof observed !== "number" || !Number.isSafeInteger(observed) || observed < 0) continue;
+    if (observed <= declared) continue;
+
+    const who = `Worker ${JSON.stringify(worker.worker_id)} of project ${JSON.stringify(worker.project_label)}`;
+    terminations.push({
+      version: 1,
+      worker_id: worker.worker_id,
+      project_label: worker.project_label,
+      outcome: "terminated-over-process-budget",
+      classification: "budget-exceeded",
+      stall: false,
+      budget_name: "TasksMax",
+      budget_declared: declared,
+      observed_processes: observed,
+      workspace_path: worker.workspace_path,
+      reason: `redskilled terminated ${who}: its process tree contained ${observed} processes, exceeding its TasksMax ` +
+        `budget of ${declared}. This is a budget termination, not a stall, and the work in ` +
+        `${JSON.stringify(worker.workspace_path)} is handed forward.`,
+    });
+  }
+
+  return { terminations, unenforceable: [] };
 }
 
 /** The terminal outcome document for one budgeted termination. PURE. */
