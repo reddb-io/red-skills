@@ -1988,6 +1988,7 @@ export async function processIssue(
       issue,
       title: input.title,
       labels,
+      changedFiles,
       nativeMergeQueue: deps.nativeMergeQueue,
       // #3377 — the gate's push step may reconcile a diverged `afk/*` tip only
       // while this Worker still OWNS the issue. `ownsCommentClaim` is that fact,
