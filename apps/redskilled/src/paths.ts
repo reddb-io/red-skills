@@ -52,6 +52,8 @@ export interface RedskilledPaths {
   readonly eventLanePath: string;
   /** The durable project registrations a successor daemon rehydrates. */
   readonly registrationIntentPath: string;
+  /** The canonical claim path resolved for this host and resolver environment. */
+  readonly machineClaimPathOfThisHost: string;
   /**
    * The machine-wide claim: the one record every OS user of this host can read.
    *
@@ -115,6 +117,11 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     uid: options.uid,
   });
   const machineIdHash = resolveMachineIdHash(options);
+  const machineClaimPathOfThisHost = resolveMachineClaimPath({
+    env: options.env,
+    machineIdHash,
+    platform: options.platform,
+  });
   const homeDir = options.homeDir
     ?? options.env?.HOME
     ?? (options.runtimeDir == null ? process.env.HOME : options.runtimeDir)
@@ -132,8 +139,8 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     // the socket stranded every drain when one process resolved XDG_RUNTIME_DIR
     // and its successor used the uid fallback (or vice versa).
     registrationIntentPath: join(redskilledHomeDir(homeDir), "redskilled.registrations.toon"),
-    machineClaimPath: options.machineClaimPath ??
-      resolveMachineClaimPath({ env: options.env, machineIdHash, platform: options.platform }),
+    machineClaimPathOfThisHost,
+    machineClaimPath: options.machineClaimPath ?? machineClaimPathOfThisHost,
   };
 }
 
