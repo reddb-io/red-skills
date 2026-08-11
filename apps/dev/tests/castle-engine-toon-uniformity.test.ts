@@ -8,7 +8,7 @@
 // JSON emission, so a future engine relocation cannot silently regress the
 // uniformity the TOON waves established.
 
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { decode } from "@reddb-io/toon";
@@ -73,8 +73,28 @@ describe("castle-engine write-surface TOON uniformity", () => {
       started_at: "2026-07-17T00:00:00.000Z",
     };
     writeIdentitySync(dir, identity);
+    expect(IDENTITY_FILENAME).toBe("identity.toon");
     const bytes = await readFile(join(dir, IDENTITY_FILENAME), "utf8");
     expectToonNotJson(bytes, identity);
+  });
+
+  it("converts a pre-cutover identity.json instead of keeping a JSON writer lane", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "castle-toon-identity-migrate-"));
+    const identity = {
+      worker_id: "wOLD1",
+      runner: "codex",
+      origin: "afk",
+      number: 2008,
+      started_at: "2026-07-16T00:00:00.000Z",
+    };
+    const legacyPath = join(dir, "identity.json");
+    await writeFile(legacyPath, JSON.stringify(identity), "utf8");
+
+    writeIdentitySync(dir, { ...identity, worker_id: "wNEW1" });
+
+    const bytes = await readFile(join(dir, IDENTITY_FILENAME), "utf8");
+    expectToonNotJson(bytes, identity);
+    await expect(access(legacyPath)).rejects.toThrow();
   });
 
   it("the per-attempt worker state snapshot is TOON, never raw JSON", async () => {

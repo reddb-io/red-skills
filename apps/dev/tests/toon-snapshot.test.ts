@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { assertDevSnapshotToonLossless, encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 
 describe("dev snapshot TOON encoding", () => {
-  it("collapses qualifying keyed maps losslessly", () => {
+  it("encodes qualifying keyed maps in the current counted form", () => {
     const snapshot = {
       statusline_counts: {
         before: { queue: 8, human: 2, ts: 100 },
@@ -13,7 +13,7 @@ describe("dev snapshot TOON encoding", () => {
 
     const toon = assertDevSnapshotToonLossless(snapshot);
 
-    expect(toon).toContain("statusline_counts{queue,human,ts}:");
+    expect(toon).toContain("statusline_counts[2:]{queue,human,ts}:");
     expect(toon).toContain("before: 8,2,100");
     expect(toon).toContain("after: 7,3,200");
     expect(decode(toon)).toEqual(snapshot);
@@ -39,8 +39,8 @@ describe("dev snapshot TOON encoding", () => {
     expect(decode(toon)).toEqual(snapshot);
   });
 
-  it("decodes collapsed, non-collapsed, and mixed transition documents", () => {
-    const collapsed = "attempts{runner,issue,phase}:\n  wAAAA: codex,1826,tests\n  wBBBB: claude,1827,done\n";
+  it("decodes current counted keyed maps and mixed documents", () => {
+    const counted = "attempts[2:]{runner,issue,phase}:\n  wAAAA: codex,1826,tests\n  wBBBB: claude,1827,done\n";
     const nonCollapsed = encode({
       attempts: {
         wAAAA: { runner: "codex", issue: 1826, phase: "tests" },
@@ -48,7 +48,7 @@ describe("dev snapshot TOON encoding", () => {
       },
     });
     const mixed = [
-      "attempts{runner,issue,phase}:",
+      "attempts[2:]{runner,issue,phase}:",
       "  wAAAA: codex,1826,tests",
       "  wBBBB: claude,1827,done",
       "repo_cache:",
@@ -58,7 +58,7 @@ describe("dev snapshot TOON encoding", () => {
       "",
     ].join("\n");
 
-    expect(decode(collapsed)).toEqual(decode(nonCollapsed));
+    expect(decode(counted)).toEqual(decode(nonCollapsed));
     expect(decode(mixed)).toEqual({
       attempts: {
         wAAAA: { runner: "codex", issue: 1826, phase: "tests" },
