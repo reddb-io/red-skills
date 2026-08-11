@@ -113,7 +113,8 @@ describe("rsp telemetry spool", () => {
       }),
     }));
     const correction = (await readCorrectionRows(root)).find((row) => row.event !== undefined);
-    expect((correction?.event as { bytes?: number }).bytes).toBeGreaterThan(0);
+    if (correction === undefined) throw new Error("no correction row carrying an event was written");
+    expect((correction.event as { bytes?: number }).bytes).toBeGreaterThan(0);
   });
 
   it("keeps spool lines that do not drain durably", async () => {
