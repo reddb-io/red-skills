@@ -120,7 +120,8 @@ describe("the local statusline mode, invoked inside a registered project", () =>
     // fixture produced before #2928 was `project unknown 0w 0B idle`.
     expect(written[0]).not.toContain("project unknown");
     expect(written[0]).not.toContain("idle");
-    expect(written[0]).toContain("reddb-io/red-skills 3w");
+    expect(written[0]).toContain("3w !unregistered 21M");
+    expect(written[0]).not.toContain("reddb-io/red-skills");
     for (const id of ["w-1", "w-2", "w-3"]) expect(written[0]).toContain(id);
   });
 
@@ -147,7 +148,8 @@ describe("the local statusline mode, invoked inside a registered project", () =>
     const code = await runStatusline([], { cwd, paths, write: (line) => written.push(line), warn: () => undefined });
 
     expect(code).toBe(0);
-    expect(written[0]).toContain("acme/declared 1w");
+    expect(written[0]).toContain("1w !unregistered 7M");
+    expect(written[0]).not.toContain("acme/declared");
   });
 });
 
@@ -198,7 +200,8 @@ describe("`project unknown`", () => {
     expect(render.line).not.toContain("project unknown");
     // An idle project says so, which is the fact `project unknown` must never
     // stand in for: one means "nothing running", the other "nobody knows you".
-    expect(render.line).toContain("acme/widgets 0w");
+    expect(render.line).toContain("0w idle");
+    expect(render.line).not.toContain("acme/widgets");
     expect(render.line).toContain("idle");
   });
 
@@ -209,7 +212,7 @@ describe("`project unknown`", () => {
     );
 
     expect(render.project_match).toBe("unregistered");
-    expect(render.line).toBe("acme/widgets 0w 0B idle v0.1.0");
+    expect(render.line).toBe("0w idle 0B v0.1.0");
     expect(render.repair).toBeUndefined();
     expect(render.repair_reason).toBeUndefined();
   });

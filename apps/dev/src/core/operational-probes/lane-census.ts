@@ -4,6 +4,7 @@ import { isAbsolute, join, relative } from "node:path";
 import {
   LANE_RETENTION_REGISTRY,
   LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES,
+  laneTempOwnerPid,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
 import {
@@ -253,8 +254,6 @@ function defaultPidAlive(pid: number): boolean {
   }
 }
 
-const LANE_TEMP_PID = /\.(?:rotate|retaining)-(\d+)(?:-|$)/;
-
 /** Collects bounded lane usage without mutating either project or host state. */
 export async function collectLaneCensusProbeInput(
   options: CollectLaneCensusOptions,
@@ -289,9 +288,8 @@ export async function collectLaneCensusProbeInput(
   const isPidAlive = options.isPidAlive ?? defaultPidAlive;
   const temps: LaneCensusTemp[] = [];
   for (const path of [...projectStateFiles, ...workerFiles, ...hostRootFiles, ...hostStateFiles]) {
-    const match = LANE_TEMP_PID.exec(path);
-    if (!match) continue;
-    const pid = Number(match[1]);
+    const pid = laneTempOwnerPid(path);
+    if (pid === null) continue;
     temps.push({
       path: safeDisplay(projectRoot, hostRoot, path),
       pid,

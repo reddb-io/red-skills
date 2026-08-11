@@ -75,11 +75,19 @@ describe("lane census operational probe", () => {
       const workerLog = join(projectRoot, ".red", "tmp", "workers", "wTEST", "worker.log.toonl");
       const unknown = join(projectRoot, ".red", "state", "unknown", "events.toonl");
       const deadTemp = `${projectDeaths}.rotate-42`;
+      const deadDrain = join(
+        projectRoot,
+        ".red",
+        "state",
+        "rsp",
+        "rsp-telemetry.spool.toonl.42.1783958744462.drain",
+      );
       const hostEvents = join(hostRoot, "redskilled.log.toonl");
       await Promise.all([
         mkdir(join(projectRoot, ".red", "state", "deaths"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "tmp", "workers", "wTEST"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "state", "unknown"), { recursive: true }),
+        mkdir(join(projectRoot, ".red", "state", "rsp"), { recursive: true }),
         mkdir(hostRoot, { recursive: true }),
       ]);
       await Promise.all([
@@ -87,6 +95,7 @@ describe("lane census operational probe", () => {
         writeFile(workerLog, "[3]{msg}:\none\ntwo\nthree\n"),
         writeFile(unknown, "mystery\n"),
         writeFile(deadTemp, "partial"),
+        writeFile(deadDrain, "pending telemetry"),
         writeFile(hostEvents, "host-event\n"),
       ]);
 
@@ -121,6 +130,11 @@ describe("lane census operational probe", () => {
       expect(input.unregisteredToonl).toEqual([".red/state/unknown/events.toonl"]);
       expect(input.temps).toContainEqual({
         path: ".red/state/deaths/deaths.toonl.rotate-42",
+        pid: 42,
+        pidAlive: false,
+      });
+      expect(input.temps).toContainEqual({
+        path: ".red/state/rsp/rsp-telemetry.spool.toonl.42.1783958744462.drain",
         pid: 42,
         pidAlive: false,
       });

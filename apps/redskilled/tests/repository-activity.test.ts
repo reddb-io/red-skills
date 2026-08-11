@@ -62,6 +62,7 @@ function answer(
       open_issues: { totalCount: issues },
     };
     data[`c${index}`] = { issueCount: closed };
+    data[`m${index}`] = { issueCount: 0 };
   });
   return { data };
 }
@@ -76,6 +77,8 @@ describe("one request per interval, whatever the project count", () => {
     for (let index = 0; index < projects.length; index += 1) {
       expect(operation.query).toContain(`r${index}: repository(owner: "acme", name: "p${index}")`);
       expect(operation.query).toContain(`c${index}: search(`);
+      expect(operation.query).toContain(`m${index}: search(`);
+      expect(operation.query).toContain("is:pr is:merged merged:>=2026-07-30");
     }
   });
 
@@ -171,7 +174,7 @@ describe("counts are stored and returned, never interpreted", () => {
       project_label: "acme/p0",
       repository: "acme/p0",
       outcome: "counted",
-      counts: { open_pull_requests: 7, open_issues: 3, recently_closed: 11 },
+      counts: { open_pull_requests: 7, open_issues: 3, recently_closed: 11, merged_today: 0 },
     });
     // A genuinely empty tracker IS a zero — this is the only outcome that carries one.
     // The queue counters stay null even here: the aliased query asked for no
@@ -180,6 +183,7 @@ describe("counts are stored and returned, never interpreted", () => {
       open_pull_requests: 0,
       open_issues: 0,
       recently_closed: 0,
+      merged_today: 0,
       ready_queue: null,
       human_queue: null,
     });
@@ -240,8 +244,10 @@ describe("an unreachable repository fails loudly", () => {
         rateLimit: { remaining: 4900, resetAt: "2026-07-30T13:00:00.000Z" },
         r0: { nameWithOwner: "acme/p0", open_pull_requests: { totalCount: 2 }, open_issues: { totalCount: 5 } },
         c0: { issueCount: 1 },
+        m0: { issueCount: 0 },
         r1: null,
         c1: null,
+        m1: null,
       },
       errors: [{ type: "NOT_FOUND", path: ["r1"], message: "Could not resolve to a Repository with the name 'acme/p1'." }],
     };
@@ -275,7 +281,7 @@ describe("a rate-limited fetch is not an empty one", () => {
     const projects = [project(0)];
     const operation = buildRepositoryActivityQuery(projects, { now: NOW });
     const payload = {
-      data: { rateLimit: { remaining: 0, resetAt: "2026-07-30T13:00:00.000Z" }, r0: null, c0: null },
+      data: { rateLimit: { remaining: 0, resetAt: "2026-07-30T13:00:00.000Z" }, r0: null, c0: null, m0: null },
       errors: [{ type: "RATE_LIMITED", path: ["r0"], message: "API rate limit exceeded" }],
     };
 
@@ -463,6 +469,7 @@ describe("the daemon serves the counts it polled", () => {
     expect(payload.repository_activity.projects[0]!.counts).toEqual({
       open_pull_requests: 4,
       open_issues: 9,
+      merged_today: 0,
       recently_closed: 2,
       ready_queue: null,
       human_queue: null,

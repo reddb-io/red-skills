@@ -92,6 +92,7 @@ function bootRefusal(id: string, ts: string): DeathAttribution {
 function payloadWith(
   deaths: readonly DeathAttribution[] | undefined,
   published?: { version: string | null; newer?: boolean; newest?: string | null },
+  healthy = false,
 ) {
   return buildStatuslinePayload({
     hostState: buildHostState({
@@ -101,6 +102,25 @@ function payloadWith(
       pid: 99,
       startedAt: "2026-07-29T00:00:00.000Z",
       workers: [worker()],
+      ...(healthy
+        ? {
+            registrations: [{
+              version: 1 as const,
+              project_label: "acme/widgets",
+              selector: "opaque",
+              argv: ["opaque"],
+              workspace_path: "/tmp/acme",
+              env: {},
+              target: 1,
+              registered_at: "2026-07-29T00:00:00.000Z",
+              renew_within_ms: 60_000,
+              renew_by: "2026-07-29T01:01:00.000Z",
+              renewed_at: "2026-07-29T01:00:00.000Z",
+              renewals: 1,
+              launch_revision: 0,
+            }],
+          }
+        : {}),
       ...(published == null
         ? {}
         : {
@@ -141,6 +161,7 @@ describe("the aggregate carries what could not be explained", () => {
       recent: [],
       latest: null,
       latest_sender_attributed: null,
+      current_sender_attributed: null,
       reaped_at: null,
     });
   });
@@ -208,6 +229,35 @@ describe("the aggregate says which engine answered, and whether it is current", 
 });
 
 describe("the statusline head answers both questions", () => {
+  it("keeps the aggregate after the death class ages out", () => {
+    const fresh = renderRedskilledStatusline(payloadWith([
+      attribution({ ts: "2026-07-29T00:50:06.000Z" }),
+    ]), {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      project: "acme/widgets",
+    });
+    const old = renderRedskilledStatusline(payloadWith([
+      attribution({ ts: "2026-07-29T00:50:04.000Z" }),
+    ]), {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      project: "acme/widgets",
+    });
+
+    expect(fresh.line).toContain("†1 oomd");
+    expect(old.line).toContain("†1");
+    expect(old.line).not.toContain("oomd");
+  });
+
+  it("clears the class once every registered target is healthy again", () => {
+    const render = renderRedskilledStatusline(payloadWith([attribution()], undefined, true), {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      project: "acme/widgets",
+    });
+
+    expect(render.line).toContain("†1");
+    expect(render.line).not.toContain("oomd");
+  });
+
   it("renders the engine version and the newest death's class", () => {
     const render = renderRedskilledStatusline(payloadWith([attribution()]), {
       ...REDSKILLED_STATUSLINE_DEFAULTS,
@@ -235,9 +285,9 @@ describe("the statusline head answers both questions", () => {
 
   it("names a repeated boot refusal as a loop, with its span and repair clue", () => {
     const payload = payloadWith([
-      bootRefusal("worker:w-9", "2026-07-29T00:04:00.000Z"),
-      bootRefusal("worker:w-9", "2026-07-29T00:02:00.000Z"),
-      bootRefusal("worker:w-9", "2026-07-29T00:00:00.000Z"),
+      bootRefusal("worker:w-9", "2026-07-29T00:59:00.000Z"),
+      bootRefusal("worker:w-9", "2026-07-29T00:57:00.000Z"),
+      bootRefusal("worker:w-9", "2026-07-29T00:55:00.000Z"),
     ]);
     const render = renderRedskilledStatusline(payload, {
       ...REDSKILLED_STATUSLINE_DEFAULTS,
