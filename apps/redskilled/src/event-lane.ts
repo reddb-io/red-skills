@@ -72,7 +72,11 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-heal",
   "worker-death",
   "worker-budget-kill",
-] & { includes(searchElement: RedskilledWorkerEventKind | "demand-refusal" | "daemon-stop"): boolean };
+] & {
+  includes(
+    searchElement: RedskilledWorkerEventKind | "demand-refusal" | "daemon-stop" | "daemon-takeover-failed",
+  ): boolean;
+};
 
 /**
  * The host-event kinds external consumers may rely on (ADR 0140).
@@ -89,7 +93,11 @@ export const REDSKILLED_PUBLIC_HOST_EVENT_KINDS = [
 export type RedskilledPublicHostEventKind = typeof REDSKILLED_PUBLIC_HOST_EVENT_KINDS[number];
 
 /** The daemon-owned records that deliberately name no Worker. */
-export const REDSKILLED_DAEMON_EVENT_KINDS = ["demand-refusal", "daemon-stop"] as const;
+export const REDSKILLED_DAEMON_EVENT_KINDS = [
+  "demand-refusal",
+  "daemon-stop",
+  "daemon-takeover-failed",
+] as const;
 
 export type RedskilledDaemonEventKind = typeof REDSKILLED_DAEMON_EVENT_KINDS[number];
 
@@ -251,6 +259,14 @@ export interface RecordDemandRefusalInput {
   readonly detail: string;
 }
 
+/** One successor that failed its boot handshake while the incumbent stayed live. */
+export interface RecordDaemonTakeoverFailedInput {
+  readonly ts: string;
+  readonly pid: number;
+  readonly socketPath: string;
+  readonly detail: string;
+}
+
 /** Build one event from a Worker view. PURE. */
 export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput): RedskilledHostEvent {
   const budget = input.worker.budget ?? {};
@@ -365,6 +381,43 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
   };
 }
 
+/** Build a failed takeover without forging a daemon departure. PURE. */
+export function buildDaemonTakeoverFailedEvent(
+  input: RecordDaemonTakeoverFailedInput,
+): RedskilledHostEvent {
+  return {
+    version: 1,
+    ts: input.ts,
+    kind: "daemon-takeover-failed",
+    event: "daemon-takeover-failed",
+    worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
+    project_label: "",
+    pid: input.pid,
+    workspace_path: input.socketPath,
+    fork_sha: null,
+    log_path: null,
+    isolated: false,
+    unit: null,
+    memory_high: null,
+    memory_max: null,
+    cpu_weight: null,
+    admission_verdict: null,
+    phase: null,
+    step: null,
+    tokens: null,
+    tools: null,
+    runner: null,
+    model: null,
+    base_head_sha: null,
+    base_commits_ahead: null,
+    heal_kind: null,
+    detail: input.detail,
+    exit_code: null,
+    signal: null,
+    reason: "successor-boot-failed",
+  };
+}
+
 /**
  * An open lane writer.
  *
@@ -382,6 +435,8 @@ export interface RedskilledEventLane {
   recordWorker(input: RecordWorkerEventInput): Promise<RedskilledHostEvent>;
   /** Append one demand decision that refused an otherwise birth-eligible project. */
   recordDemandRefusal(input: RecordDemandRefusalInput): Promise<RedskilledHostEvent>;
+  /** Append a failed takeover while the incumbent still owns the live session. */
+  recordDaemonTakeoverFailed(input: RecordDaemonTakeoverFailedInput): Promise<RedskilledHostEvent>;
   /**
    * Append the daemon's own stop; resolves once the bytes are on the lane.
    *
@@ -436,6 +491,7 @@ export function createRedskilledEventLane(
     record: (input) => append(buildHostEvent(input)),
     recordWorker: (input) => append(buildHostEvent(input)),
     recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
+    recordDaemonTakeoverFailed: (input) => append(buildDaemonTakeoverFailedEvent(input)),
     recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
     flush: async () => {
@@ -684,7 +740,7 @@ export function rehydrateWorkers(events: readonly RedskilledHostEvent[]): Redski
   for (const event of events) {
     // A daemon's own stop retires nothing: the daemon left and every Worker it
     // held is still running, which is exactly what the successor replays to find.
-    if (event.kind === "daemon-stop" || event.kind === "demand-refusal") continue;
+    if ((REDSKILLED_DAEMON_EVENT_KINDS as readonly RedskilledEventKind[]).includes(event.kind)) continue;
     if (event.kind === "worker-birth") alive.set(event.worker_id, toWorkerView(event));
     else if (event.kind === "worker-death" || event.kind === "worker-budget-kill") alive.delete(event.worker_id);
   }
