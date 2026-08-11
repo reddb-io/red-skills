@@ -199,39 +199,46 @@ describe("planAttemptCap", () => {
 
 // issue #1219 PART 4: liveness-gated read-time reclaim planner.
 describe("planLivenessReclaim (issue #1219)", () => {
+  const NOW = 2_000_000_000;
   const input = (over: Partial<LivenessReclaimInput>): LivenessReclaimInput => ({
     attemptDir: "/r/.red/tmp/workers/wA/5-a1",
     worktreePath: "/r/.red/tmp/workers/wA/5-a1/worktree",
     liveness: "dead",
-    preserved: false,
+    issueState: "CLOSED",
+    mtimeS: NOW,
     ...over,
   });
 
   it("never touches a dir the daemon has not called dead", () => {
-    expect(planLivenessReclaim([input({ liveness: "unknown" })])).toEqual([]);
+    expect(planLivenessReclaim([input({ liveness: "unknown" })], NOW)).toEqual([]);
   });
 
   it("never touches a live worker's dir", () => {
-    expect(planLivenessReclaim([input({ liveness: "alive" })])).toEqual([]);
+    expect(planLivenessReclaim([input({ liveness: "alive" })], NOW)).toEqual([]);
   });
 
-  it("reclaims a dead, non-preserved worker's whole dir (worktree + dir)", () => {
-    const [action] = planLivenessReclaim([input({ liveness: "dead", preserved: false })]);
-    expect(action.removeWorktree).toBe(true);
-    expect(action.reclaimDir).toBe(true);
-  });
-
-  it("removes only the worktree of a dead but preserved worker (keeps JSONL/handoff)", () => {
-    const [action] = planLivenessReclaim([input({ liveness: "dead", preserved: true })]);
+  it("strips a dead Worker's worktree at the 14-day OPEN-issue threshold", () => {
+    const [action] = planLivenessReclaim(
+      [input({ issueState: "OPEN", mtimeS: NOW - 14 * DAY })],
+      NOW,
+    );
     expect(action.removeWorktree).toBe(true);
     expect(action.reclaimDir).toBe(false);
+    expect(action.writeTombstone).toBe(true);
+  });
+
+  it("reclaims a dead Worker's CLOSED issue immediately", () => {
+    const [action] = planLivenessReclaim([input({ issueState: "CLOSED" })], NOW);
+    expect(action.removeWorktree).toBe(true);
+    expect(action.reclaimDir).toBe(true);
+    expect(action.writeTombstone).toBe(false);
   });
 
   it("keeps a live worker's dir while reclaiming a sibling dead worker", () => {
     const actions = planLivenessReclaim([
       input({ attemptDir: "/r/.red/tmp/workers/wLIVE/5-a1", liveness: "alive" }),
-      input({ attemptDir: "/r/.red/tmp/go-workers/wDEAD/6-a1", liveness: "dead", preserved: false }),
-    ]);
+      input({ attemptDir: "/r/.red/tmp/go-workers/wDEAD/6-a1", liveness: "dead" }),
+    ], NOW);
     expect(actions.map((a) => a.attemptDir)).toEqual(["/r/.red/tmp/go-workers/wDEAD/6-a1"]);
   });
 });

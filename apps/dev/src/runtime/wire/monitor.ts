@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readPublishedBundleVersion } from "../../core/published-version.js";
 import { decodeDevSnapshotSniff } from "../../core/toon-snapshot.js";
@@ -12,8 +13,6 @@ import { planLivenessReclaim, type LivenessReclaimInput } from "../../core/recla
 import type { WorkerProcessVerdict } from "../../core/worker-reclaim.js";
 import { readWorkerLivenessForTmpPath } from "../tmp-janitor.js";
 import { readHistoryRecords, type HistoryRecord } from "../../core/history.js";
-import { LABEL_HUMAN } from "../../core/triage-labels.js";
-import { blockedLabelsIn } from "../../core/state-transition.js";
 import {
   createEnginePaths,
   readCastleMonitorFleetState,
@@ -25,6 +24,10 @@ import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { collectLogLineCounts } from "../log-cursor.js";
 import { reapableWorktreeUnder } from "../supervisor-fs.js";
+import {
+  WORKTREE_RECLAIM_TOMBSTONE,
+  worktreeReclaimTombstoneLine,
+} from "../worker-workspace-retention.js";
 import { afkPaths } from "./paths.js";
 
 export interface MonitorInputs {
@@ -179,22 +182,25 @@ export interface DeadWorkerSweepDeps {
    * pid-file seam here, because keying reclaim on a pid file is what deleted a
    * live lane and kept the dead ones (#2679). */
   workerLiveness?: (workerDir: string) => Promise<WorkerProcessVerdict>;
-  /** Whether an issue is in a post-mortem preservation state (blocked:* /
-   * ready-for-human). Default `gh issue view --json labels`. Returns `true`
-   * (conservative — keep the JSONL) whenever it cannot resolve. */
-  isPreserved?: (issue: number) => Promise<boolean>;
+  /** Current tracker state. UNKNOWN conservatively retains the workspace. */
+  issueState?: (issue: number) => Promise<"OPEN" | "CLOSED" | "UNKNOWN">;
+  /** Worker-state mtime in epoch seconds; sibling tombstones do not reset it. */
+  dirMtimeS?: (statePath: string) => number | undefined;
+  /** Injected clock for the pure two-stage TTL planner. */
+  nowS?: number;
   /** `git worktree remove --force`. Default runtime git against `root`. */
   removeWorktree?: (worktreePath: string) => Promise<void>;
   /** `rm -rf`. Default `fsx.removeDir`. */
   removeDir?: (dir: string) => Promise<void>;
   /** Path existence probe. Default `existsSync`. */
   exists?: (path: string) => boolean;
+  /** Tombstone writer, injected so the stage-one side effect is testable. */
+  writeTombstone?: (path: string, contents: string) => Promise<void>;
 }
 
 /**
- * Read-time liveness-gated teardown (issue #1219): as workers finish/crash, take
- * them out of context — remove the heavy local `worktree/` and reclaim the
- * attempt dir immediately, without waiting for the boot TTLs (reclaim.ts). Runs
+ * Read-time liveness-gated teardown (issue #1219): as workers finish/crash,
+ * enforce the CLOSED-immediate / OPEN-two-stage policy from the pure planner. Runs
  * across the SAME namespace union the reader uses (workers/go-workers/
  * scout-workers) since it consumes {@link readAllWorkerStates} records.
  *
@@ -202,9 +208,8 @@ export interface DeadWorkerSweepDeps {
  *   - NEVER touch a dir whose OWNING Worker the daemon has not called dead — the
  *     verdict is per-Worker (shared across its attempts), so a Worker live on a
  *     later attempt keeps ALL its dirs.
- *   - A dead worker's disposable `worktree/` is ALWAYS removed.
- *   - The whole attempt dir is reclaimed UNLESS the issue is preserved
- *     (blocked:* / ready-for-human), where the JSONL/handoff stay for post-mortem.
+ *   - CLOSED issue dirs go immediately; OPEN issue dirs strip at 14 days and go
+ *     at 45 days; UNKNOWN issue state is retained.
  *
  * Best-effort throughout: every fs/git/gh failure is swallowed so the sweep never
  * breaks the read it rides on. Returns the reclaimed attempt-dir paths.
@@ -220,24 +225,31 @@ export async function reclaimDeadWorkers(
     deps.workerLiveness ??
     ((workerDir: string): Promise<WorkerProcessVerdict> =>
       readWorkerLivenessForTmpPath(afkPaths(root).tmpDir, workerDir));
-  const isPreserved =
-    deps.isPreserved ??
-    (async (issue: number): Promise<boolean> => {
+  const issueState =
+    deps.issueState ??
+    (async (issue: number): Promise<"OPEN" | "CLOSED" | "UNKNOWN"> => {
+      const state = await ghx.blockerState({ cwd: root, repo }, issue);
+      return state === "OPEN" || state === "CLOSED" ? state : "UNKNOWN";
+    });
+  const dirMtimeS =
+    deps.dirMtimeS ??
+    ((dir: string): number | undefined => {
       try {
-        const labels = await ghx.viewLabels({ cwd: root, repo }, issue);
-        // Empty labels (gh failed) → conservative: keep the JSONL.
-        if (labels.length === 0) return true;
-        return labels.includes(LABEL_HUMAN) || blockedLabelsIn(labels).length > 0;
+        return Math.floor(statSync(dir).mtimeMs / 1000);
       } catch {
-        return true;
+        return undefined;
       }
     });
+  const nowS = deps.nowS ?? Math.floor(Date.now() / 1000);
   const removeWorktree =
     deps.removeWorktree ??
     (async (worktreePath: string): Promise<void> => {
       await gitx.worktreeRemove({ cwd: root }, worktreePath);
     });
   const removeDir = deps.removeDir ?? ((dir: string) => fsx.removeDir(dir));
+  const writeTombstone =
+    deps.writeTombstone ??
+    ((path: string, contents: string): Promise<void> => writeFile(path, contents, "utf8"));
 
   // The daemon's verdict per Worker, memoized so a Worker's several attempt dirs
   // ask once. An unreachable daemon answers `unknown`, which spares the dir.
@@ -250,7 +262,7 @@ export async function reclaimDeadWorkers(
     return verdict;
   };
 
-  // Build the pure planner inputs, resolving preservation only for dead workers.
+  // Build the pure planner inputs, resolving tracker state only for dead workers.
   const inputs: LivenessReclaimInput[] = [];
   for (const rec of records) {
     const attemptDir = dirname(rec.path);
@@ -260,22 +272,31 @@ export async function reclaimDeadWorkers(
     const liveness = rec.renderableLive ? "unknown" : await workerVerdict(workerDir);
     const num = rec.state.current.number;
     const issue = typeof num === "number" ? num : Number.parseInt(String(num), 10);
-    const preserved =
-      Number.isFinite(issue) && issue > 0 ? await isPreserved(issue) : true;
+    const state =
+      Number.isFinite(issue) && issue > 0 ? await issueState(issue) : "UNKNOWN";
     inputs.push({
       attemptDir,
       // Current workers use the conventional direct child. During rollout,
       // hygiene may still discover a legacy nested worktree for removal only.
       worktreePath: reapableWorktreeUnder(attemptDir) ?? join(attemptDir, "worktree"),
       liveness,
-      preserved,
+      issueState: state,
+      mtimeS: dirMtimeS(rec.path) ?? nowS,
     });
   }
 
   const reclaimed: string[] = [];
-  for (const action of planLivenessReclaim(inputs)) {
+  for (const action of planLivenessReclaim(inputs, nowS)) {
+    let worktreeRemoved = false;
     if (action.removeWorktree && exists(action.worktreePath)) {
       await removeWorktree(action.worktreePath).catch(() => undefined);
+      worktreeRemoved = true;
+    }
+    if (action.writeTombstone && worktreeRemoved) {
+      await writeTombstone(
+        join(action.attemptDir, WORKTREE_RECLAIM_TOMBSTONE),
+        worktreeReclaimTombstoneLine(nowS),
+      ).catch(() => undefined);
     }
     if (action.reclaimDir) {
       await removeDir(action.attemptDir).catch(() => undefined);
@@ -294,10 +315,9 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   let workers = await readCastleMonitorWorkers(castlePaths);
   if (workers.length === 0) {
     const records = await readAllWorkerStates(paths.tmpDir);
-    // Read-time liveness-gated teardown (issue #1219): reclaim dead-worker
-    // worktrees/dirs immediately, not on the boot TTL. Best-effort — a failure
-    // here never blocks the render. Live-worker dirs and blocked/ready-for-human
-    // post-mortem artifacts are preserved (planLivenessReclaim).
+    // Read-time liveness-gated teardown (issue #1219): enforce the same
+    // CLOSED-immediate / OPEN-two-stage policy as the boot janitor. Best-effort
+    // — a failure here never blocks the render.
     await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
     await fsx.reapDeadEmptyWorkerShells(paths.tmpDir).catch(() => undefined);
     const currentRecords = currentRenderableWorkerRecords(records);

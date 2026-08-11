@@ -19,7 +19,6 @@ import {
 } from "../core/tmp-janitor.js";
 import {
   planWorkerReclaim,
-  type WorkerArtifact,
   type WorkerProcessVerdict,
   type WorkerReclaimPlan,
 } from "../core/worker-reclaim.js";
@@ -41,6 +40,10 @@ import {
   type DaemonWorkerSet,
   type DaemonWorkerSetReader,
 } from "./liveness-anchor.js";
+import {
+  collectWorkerWorkspaceArtifacts,
+  writeWorktreeReclaimTombstone,
+} from "./worker-workspace-retention.js";
 
 export const ORPHAN_TEST_RUNNER_MIN_AGE_S = 300;
 
@@ -277,41 +280,6 @@ function sweepLiveness(
     ask(workerId, evidence.has(workerId) || extraEvidence);
 }
 
-/**
- * Every artifact the Worker lanes hold, attributed to its owning Worker.
- *
- * The workspace path is DERIVED from the Worker's identity (ADR 0103/0105) — it
- * is a pure function of `workers/{id}/{issue}/worktree` — and the daemon still
- * decides whether the bytes go.
- */
-async function collectWorkerArtifacts(tmpDir: string): Promise<{
-  artifacts: WorkerArtifact[];
-  observedPaths: string[];
-}> {
-  const artifacts: WorkerArtifact[] = [];
-  const observedPaths: string[] = [];
-  for (const workersRoot of allWorkersRoots(tmpDir)) {
-    for (const worker of await listNames(workersRoot)) {
-      for (const issue of await listNames(join(workersRoot, worker))) {
-        const issueDir = join(workersRoot, worker, issue);
-        const worktree = join(issueDir, "worktree");
-        try {
-          if (!(await stat(worktree)).isDirectory()) continue;
-        } catch {
-          continue; // No workspace under this Worker's issue dir.
-        }
-        observedPaths.push(worktree);
-        artifacts.push({ worker_id: worker, kind: "worktree", path: worktree });
-        const log = join(workersRoot, worker, "worker.log.toonl");
-        if (await readText(log) !== null) {
-          artifacts.push({ worker_id: worker, kind: "log", path: log });
-        }
-      }
-    }
-  }
-  return { artifacts, observedPaths };
-}
-
 async function collectWorkerEntries(
   tmpDir: string,
   lookup: IssueStateLookup,
@@ -322,9 +290,11 @@ async function collectWorkerEntries(
     const workers = await listNames(workersRoot);
     for (const worker of workers) {
       const workerPath = join(workersRoot, worker);
+      let mtimeS: number;
       try {
         const st = await stat(workerPath);
         if (!st.isDirectory()) continue;
+        mtimeS = Math.floor(st.mtimeMs / 1000);
       } catch {
         continue;
       }
@@ -345,6 +315,7 @@ async function collectWorkerEntries(
       }
       out.push({
         path: workerPath,
+        mtimeS,
         liveness: verdict,
         issues: [...issues].map(([issue, state]) => ({ issue, state })),
       });
@@ -537,7 +508,7 @@ export async function collectTmpJanitorReport(
     await readDaemon(sources.daemon ?? readDaemonWorkerSet),
     await collectWorkerEvidence(tmpDir),
   );
-  const workerArtifacts = await collectWorkerArtifacts(tmpDir);
+  const workerArtifacts = await collectWorkerWorkspaceArtifacts(tmpDir, lookup);
   const workerReclaim = planWorkerReclaim(workerArtifacts.artifacts, {
     liveness: (workerId) => liveness(workerId),
     nowIso: new Date(nowS * 1000).toISOString(),
@@ -576,7 +547,7 @@ export async function collectTmpJanitorReport(
     }),
     workerReclaim,
     workerStateRecords,
-    staleWorkers: planWorkerDirJanitor(workers),
+    staleWorkers: planWorkerDirJanitor(workers, nowS),
     staleSupervisors: planSupervisorLaneJanitor(supervisorEntries),
     orphanFeedback,
     orphanTestRunners,
@@ -587,6 +558,7 @@ export async function applyTmpJanitorReport(
   tmpDir: string,
   report: TmpJanitorReport,
   options: TmpJanitorSources & {
+    nowS?: number;
     worktreePrune?: () => Promise<void>;
     reapProcessGroup?: (pgid: number) => Promise<boolean>;
     log?: (line: string) => void;
@@ -663,6 +635,9 @@ export async function applyTmpJanitorReport(
       continue;
     }
     await rm(path, { recursive: true, force: true });
+    if (verdict.artifact.reclaim_after !== undefined) {
+      await writeWorktreeReclaimTombstone(path, options.nowS ?? Date.now() / 1000);
+    }
     result.removals.push({ path, livenessVerdict: "worker-dead" });
     result.workerWorkspaces.push(path);
   }
@@ -811,5 +786,8 @@ export async function runTmpJanitor(
 ): Promise<TmpJanitorRunResult> {
   const report = await collectTmpJanitorReport(tmpDir, nowS, lookup, options);
   if (!options.fix) return report;
-  return { ...report, applied: await applyTmpJanitorReport(tmpDir, report, options) };
+  return {
+    ...report,
+    applied: await applyTmpJanitorReport(tmpDir, report, { ...options, nowS }),
+  };
 }

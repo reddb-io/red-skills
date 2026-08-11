@@ -19,6 +19,7 @@
 // janitor never deletes outside its known lanes.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { DEAD_WORKER_DIR_TTL_S } from "./reclaim.js";
 import type { WorkerProcessVerdict } from "./worker-reclaim.js";
 
 /**
@@ -270,6 +271,8 @@ export interface WorkerDirIssueState {
 
 export interface WorkerDirJanitorEntry {
   path: string;
+  /** Directory mtime in epoch seconds, collected once for the pure TTL plan. */
+  mtimeS: number;
   /**
    * The DAEMON's verdict on the Worker that owns this dir (Spec #2772 US 46).
    * `unknown` — an unreachable or stale daemon — is not `dead`, so it spares the
@@ -294,12 +297,22 @@ export interface WorkerDirJanitorPlan {
  * missing pid file is what deleted a live lane and kept the dead ones (#2679).
  * A missing pid file is therefore not even an input here — only the daemon's own
  * fresh answer can release a dir. */
-export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]): WorkerDirJanitorPlan {
+export function planWorkerDirJanitor(
+  entries: readonly WorkerDirJanitorEntry[],
+  nowS: number,
+): WorkerDirJanitorPlan {
   const reclaim: WorkerDirJanitorEntry[] = [];
   const spare: WorkerDirJanitorEntry[] = [];
   for (const entry of entries) {
     const issues = entry.issues;
-    if (entry.liveness === "dead" && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
+    const everyIssueClosed = issues.length > 0 && issues.every((issue) => issue.state === "CLOSED");
+    const everyIssueKnown = issues.length > 0 && issues.every((issue) => issue.state !== "UNKNOWN");
+    const anyIssueOpen = issues.some((issue) => issue.state === "OPEN");
+    const openIssueTtlExpired =
+      everyIssueKnown &&
+      anyIssueOpen &&
+      nowS - entry.mtimeS >= DEAD_WORKER_DIR_TTL_S;
+    if (entry.liveness === "dead" && (everyIssueClosed || openIssueTtlExpired)) {
       reclaim.push(entry);
     } else {
       spare.push(entry);

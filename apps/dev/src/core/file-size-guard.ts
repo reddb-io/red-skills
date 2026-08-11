@@ -45,7 +45,6 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/dev/src/runtime/doctor-classifiers.ts", lines: 900 },
   { path: "apps/dev/src/runtime/feedback-worktree.ts", lines: 1045 },
   { path: "apps/dev/src/runtime/git.ts", lines: 1023 },
-  { path: "apps/dev/src/runtime/tmp-janitor.ts", lines: 815 },
   { path: "apps/dev/tests/process-issue.test-helpers.ts", lines: 971 },
   { path: "apps/memory/src/bench-eval/runner.ts", lines: 1092 },
   { path: "apps/memory/src/cli/core.ts", lines: 1059 },

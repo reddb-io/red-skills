@@ -183,6 +183,7 @@ describe("planWorkerDirJanitor", () => {
   function worker(over: Partial<WorkerDirJanitorEntry>): WorkerDirJanitorEntry {
     return {
       path: "/red/tmp/workers/w1",
+      mtimeS: NOW,
       liveness: "dead",
       issues: [{ issue: 1, state: "CLOSED" }],
       ...over,
@@ -191,35 +192,35 @@ describe("planWorkerDirJanitor", () => {
 
   it("reclaims dead worker dirs when every represented issue is closed", () => {
     const entry = worker({ issues: [{ issue: 10, state: "CLOSED" }, { issue: 11, state: "CLOSED" }] });
-    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [entry], spare: [] });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [entry], spare: [] });
   });
 
   it("spares worker dirs the daemon calls alive", () => {
     const entry = worker({ liveness: "alive" });
-    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [], spare: [entry] });
   });
 
   it("spares a worker dir the daemon could not answer for, closed issues and all", () => {
     // The pid-keyed predecessor read a missing pid file as death and reclaimed
     // exactly this dir. An unreachable authority is not evidence (#2679).
     const entry = worker({ liveness: "unknown" });
-    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [], spare: [entry] });
   });
 
   it("spares worker dirs with open or unknown issues", () => {
     const open = worker({ path: "/red/tmp/workers/w-open", issues: [{ issue: 1, state: "OPEN" }] });
     const unknown = worker({ path: "/red/tmp/workers/w-unknown", issues: [{ issue: 2, state: "UNKNOWN" }] });
-    expect(planWorkerDirJanitor([open, unknown])).toEqual({ reclaim: [], spare: [open, unknown] });
+    expect(planWorkerDirJanitor([open, unknown], NOW)).toEqual({ reclaim: [], spare: [open, unknown] });
   });
 
   it("spares dead worker dirs with no issue-bearing attempts", () => {
     const entry = worker({ issues: [] });
-    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [], spare: [entry] });
   });
 
   it("reclaims a dead worker dir whose every issue is closed", () => {
     const entry = worker({ issues: [{ issue: 1, state: "CLOSED" }] });
-    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [entry], spare: [] });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [entry], spare: [] });
   });
 });
 
