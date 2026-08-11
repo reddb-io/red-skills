@@ -205,9 +205,7 @@ function keepLastWithin(
 }
 
 function encodeRows(rows: readonly ToonlRecord[]): string {
-  if (rows.length === 0) return "";
-  const writer = encodeLines({ trailer: false });
-  return rows.map((row) => writer.push(row)).join("");
+  return rows.map((row) => encodeLines({ trailer: false }).push(row)).join("");
 }
 
 function makeObservation(
