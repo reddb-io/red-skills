@@ -53,6 +53,7 @@ export {
   isGithubRateLimitError,
   type CreateGithubClientOptions,
   type GithubClient,
+  type GithubCachedFallback,
   type GithubConditionalRestRequest,
   type GithubEtagEntry,
   type GithubEtagStore,
