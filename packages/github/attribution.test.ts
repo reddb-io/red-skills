@@ -131,23 +131,43 @@ describe("the GitHub spend attribution ledger", () => {
     const maxBytes = 700;
     const ledger = createGithubAttributionLedger({ path, maxBytes });
 
+    let previousBytes = 0;
+    let trimmed = false;
+    for (let index = 0; index < 20; index += 1) {
+      await ledger.record({
+        operation: routeGithubArgs(["issue", "view", String(index)]),
+        cost: index + 1,
+        actor: `worker:w${String(index).padStart(2, "0")}`,
+        observedAt: `2026-08-03T12:${String(index).padStart(2, "0")}:00.000Z`,
+      });
+      const currentBytes = (await stat(path)).size;
+      if (currentBytes < previousBytes) {
+        expect(currentBytes).toBeLessThanOrEqual(Math.floor(maxBytes / 2));
+        trimmed = true;
+        break;
+      }
+      previousBytes = currentBytes;
+    }
+    expect(trimmed).toBe(true);
+
     await Promise.all(
-      Array.from({ length: 20 }, (_, index) =>
-        ledger.record({
+      Array.from({ length: 20 }, (_, offset) => {
+        const index = offset + 20;
+        return ledger.record({
           operation: routeGithubArgs(["issue", "view", String(index)]),
           cost: index + 1,
           actor: `worker:w${String(index).padStart(2, "0")}`,
           observedAt: `2026-08-03T12:${String(index).padStart(2, "0")}:00.000Z`,
-        }),
-      ),
+        });
+      }),
     );
 
     const raw = await readFile(path, "utf8");
     const rows = parseRecords(raw);
     expect(rows.length).toBeGreaterThan(0);
-    expect(rows.length).toBeLessThan(20);
+    expect(rows.length).toBeLessThan(40);
     expect((await stat(path)).size).toBeLessThanOrEqual(maxBytes);
-    expect(rows.at(-1)).toMatchObject({ actor: "worker:w19", cost: 20 });
+    expect(rows.at(-1)).toMatchObject({ actor: "worker:w39", cost: 40 });
 
     const report = await ledger.report({ from: HOUR_START, to: HOUR_END });
     expect(report.unreadable_records).toBe(0);
