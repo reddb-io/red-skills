@@ -333,6 +333,11 @@ describe("one renderer, machine-wide", () => {
     "apps/redskilled/src/statusline-render.ts",
     "apps/redskilled/src/dashboard-render.ts",
     "apps/redskilled/src/statusline-payload.ts",
+    // How much of the payload one reader asked for, which is the payload's own
+    // question rather than a second surface's: it takes a payload and returns
+    // the same payload with blocks nobody asked for replaced by their honest
+    // absence, and renders not one character.
+    "apps/redskilled/src/statusline-extras.ts",
     // The implementation, not the façade `daemon.ts`, which forwards only. The
     // daemon's payload types and its intervals live beside it, so all three are
     // consumers — the split moved the code, not the consumption.
