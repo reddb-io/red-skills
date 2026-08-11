@@ -27,7 +27,7 @@ describe("statusline bedrock render", () => {
         claude: CLAUDE,
         localDiff: { localAdded: 142, localRemoved: 36 },
       }),
-    ).toBe("red-skills (afk/3563-bedrock) v3.12.13 · Opus·high · 47k 24% · 5h=23% 7d=41% · loc=+142 -36");
+    ).toBe("red-skills (afk/3563-bedrock) v3.12.13 Opus·high ctx=47k 24% 5h=23% 7d=41% loc=+142 -36");
   });
 
   it("states the running version even when no newer bundle is cached", () => {
