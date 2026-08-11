@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,14 +6,17 @@ import { parseRecords } from "@reddb-io/toon";
 import {
   DEATH_PHASE_UNSTARTED,
   PROCESS_DEATH_LANE_RETENTION_MS,
+  PROCESS_DEATH_LANE_MAX_BYTES,
   activeDeathRecorder,
   appendProcessDeathRecord,
   buildProcessDeathRecord,
+  compactProcessDeathLane,
   decodeProcessDeathRecords,
   deathLaneFile,
   deathLaneFileIn,
   installDeathRecorder,
   markDeathPhase,
+  nodeDeathLaneIo,
   UNSCOPED_PROCESS,
   readProcessDeathLane,
   sampleProcessResources,
@@ -341,6 +344,82 @@ describe("death-record", () => {
     expect(records.map((r) => r.kind)).toEqual(["launcher", "worker"]);
   });
 
+  it("appends below the lane ceiling without reading the lane", () => {
+    let inspections = 0;
+    let reads = 0;
+    const io = {
+      ...nodeDeathLaneIo,
+      inspect(path: string) {
+        inspections += 1;
+        return nodeDeathLaneIo.inspect(path);
+      },
+      read(path: string) {
+        reads += 1;
+        return nodeDeathLaneIo.read(path);
+      },
+    };
+
+    appendProcessDeathRecord(
+      lanePath,
+      buildProcessDeathRecord(
+        {
+          ts: "2026-08-08T20:00:00.000Z",
+          kind: "worker",
+          id: "under-ceiling",
+          pid: 42,
+          exit_path: "exit",
+          exit_code: 0,
+          last_phase: "done",
+        },
+        sampleProcessResources(poseHost()),
+      ),
+      io,
+    );
+
+    expect(inspections).toBe(1);
+    expect(reads).toBe(0);
+  });
+
+  it("compacts exactly once to half the ceiling when an append fills the lane", () => {
+    const record = buildProcessDeathRecord(
+      {
+        ts: "2026-08-08T20:00:00.000Z",
+        kind: "worker",
+        id: "fills-lane",
+        pid: 43,
+        exit_path: "exit",
+        exit_code: 0,
+        last_phase: "done",
+        detail: "x".repeat(1_000),
+      },
+      sampleProcessResources(poseHost()),
+    );
+    appendProcessDeathRecord(lanePath, record);
+    const segment = readFileSync(lanePath, "utf8");
+    const segmentBytes = Buffer.byteLength(segment);
+    writeFileSync(lanePath, segment.repeat(Math.floor(PROCESS_DEATH_LANE_MAX_BYTES / segmentBytes)));
+
+    let reads = 0;
+    let replacements = 0;
+    const io = {
+      ...nodeDeathLaneIo,
+      read(path: string) {
+        reads += 1;
+        return nodeDeathLaneIo.read(path);
+      },
+      replace(path: string, text: string) {
+        replacements += 1;
+        nodeDeathLaneIo.replace(path, text);
+      },
+    };
+
+    appendProcessDeathRecord(lanePath, record, io);
+
+    expect(reads).toBe(1);
+    expect(replacements).toBe(1);
+    expect(statSync(lanePath).size).toBeLessThanOrEqual(PROCESS_DEATH_LANE_MAX_BYTES / 2);
+  });
+
   it("keeps fourteen days of deaths and drops older history when the lane advances", () => {
     const now = Date.parse("2026-08-08T20:00:00.000Z");
     const recordAt = (id: string, at: number) =>
@@ -360,8 +439,35 @@ describe("death-record", () => {
     appendProcessDeathRecord(lanePath, recordAt("too-old", now - PROCESS_DEATH_LANE_RETENTION_MS - 1));
     appendProcessDeathRecord(lanePath, recordAt("cutoff", now - PROCESS_DEATH_LANE_RETENTION_MS));
     appendProcessDeathRecord(lanePath, recordAt("recent", now));
+    compactProcessDeathLane(lanePath, now);
 
     expect(readProcessDeathLane(lanePath).map((record) => record.id)).toEqual(["cutoff", "recent"]);
+  });
+
+  it("preserves records whose timestamp cannot be parsed during retention", () => {
+    const now = Date.parse("2026-08-08T20:00:00.000Z");
+    const record = (id: string, ts: string) =>
+      buildProcessDeathRecord(
+        {
+          ts,
+          kind: "worker",
+          id,
+          pid: 44,
+          exit_path: "exit",
+          exit_code: 0,
+          last_phase: "done",
+        },
+        sampleProcessResources(poseHost()),
+      );
+
+    appendProcessDeathRecord(lanePath, record("unknown", "not-a-timestamp"));
+    appendProcessDeathRecord(
+      lanePath,
+      record("too-old", new Date(now - PROCESS_DEATH_LANE_RETENTION_MS - 1).toISOString()),
+    );
+    compactProcessDeathLane(lanePath, now);
+
+    expect(readProcessDeathLane(lanePath).map((entry) => entry.id)).toEqual(["unknown"]);
   });
 
   it("answers the process-wide phase marker and lets go on uninstall", () => {
