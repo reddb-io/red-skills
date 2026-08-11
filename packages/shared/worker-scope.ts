@@ -7,8 +7,9 @@
  * no idea which unit held it, so its own death record — the one artifact written
  * by the thing that died — could not say what contained it (Spec #3022, #3029).
  *
- * The contract is three environment variables, stated by the host at birth and
- * read by the Worker on the way out. Environment rather than a file because a
+ * The contract is the Worker's identity and birth instant plus three placement
+ * facts, stated by the host at birth and read by the Worker on the way out.
+ * Environment rather than a file because a
  * transient unit already carries `--setenv` and a Worker that had to find a file
  * would have to learn a layout the daemon deliberately does not teach it.
  *
@@ -28,6 +29,18 @@ export const WORKER_SCOPE_CEILING_ENV = "RED_WORKER_MEMORY_CEILING";
 
 /** Why the process is unscoped, when it is — never an absent scope alone. */
 export const WORKER_SCOPE_DEGRADATION_ENV = "RED_WORKER_SCOPE_DEGRADATION";
+
+/** The daemon-minted Worker identity carried by every process it births. */
+export const WORKER_ID_ENV = "RED_WORKER_ID";
+
+/** The daemon clock instant at which this Worker was born. */
+export const WORKER_BORN_AT_ENV = "RED_WORKER_BORN_AT";
+
+/** Stable attribution stamped onto a Worker's environment at birth. */
+export interface WorkerAttributionFacts {
+  readonly worker_id: string;
+  readonly born_at: string;
+}
 
 /**
  * Where a process runs and under what ceiling.
@@ -67,13 +80,21 @@ export function readWorkerScopeFacts(env: NodeJS.ProcessEnv): WorkerScopeFacts {
 }
 
 /**
- * The environment a host hands a Worker so it can read its own placement. PURE.
+ * The environment a host hands a Worker so it can read its attribution and
+ * placement. PURE.
  *
  * A fact the host does not have is OMITTED rather than set empty, so the Worker
  * inherits nothing it would have to reinterpret.
  */
-export function workerScopeEnvironment(facts: WorkerScopeFacts): Record<string, string> {
+export function workerScopeEnvironment(
+  facts: WorkerScopeFacts,
+  attribution?: WorkerAttributionFacts,
+): Record<string, string> {
   const environment: Record<string, string> = {};
+  if (attribution != null) {
+    environment[WORKER_ID_ENV] = attribution.worker_id;
+    environment[WORKER_BORN_AT_ENV] = attribution.born_at;
+  }
   if (facts.scope != null && facts.scope !== "") environment[WORKER_SCOPE_ENV] = facts.scope;
   if (facts.memory_ceiling != null && facts.memory_ceiling !== "") {
     environment[WORKER_SCOPE_CEILING_ENV] = facts.memory_ceiling;

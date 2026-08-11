@@ -20,7 +20,7 @@
  */
 import { randomInt } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { encodeLines } from "@reddb-io/toon";
 import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
@@ -279,6 +279,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   const clock = options.clock ?? (() => new Date().toISOString());
   const workerId = (spec.worker_id ?? options.workerId)?.trim()
     || mintHostWorkerId(options.liveWorkerIds ?? []);
+  const bornAt = clock();
   const probes = options.probes ?? detectWorkerPlacementProbes(env);
   // Resolved HERE, at the instant this Worker exists, and never earlier (#3440).
   // A client that cannot know the id the daemon is about to mint declares
@@ -313,6 +314,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   };
   const plan = planWorkerPlacement({
     workerId,
+    bornAt,
     projectLabel: spec.project_label,
     workspacePath: spec.workspace_path,
     command: spec.command,
@@ -350,6 +352,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     child.once("error", () => undefined);
     throw new RedskilledWorkerSpecError(`redskilled could not spawn ${JSON.stringify(plan.command)} for worker ${workerId}`);
   }
+  const procStartTime = readProcStartTime(child.pid);
 
   // The Windows backend isolates AFTER the spawn, because Node offers no way to
   // start a process already inside a job. The window between the two is bounded
@@ -380,7 +383,13 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     worker_id: workerId,
     project_label: spec.project_label,
     pid: child.pid,
-    started_at: clock(),
+    // Detached spawn makes the child the leader of a new process group, so the
+    // pgid is the child pid by construction on every platform where Node accepts
+    // this option. Paired with the kernel start tick when Linux exposes it, the
+    // pid remains an identity even after the number is eventually reused.
+    pgid: child.pid,
+    ...(procStartTime == null ? {} : { proc_start_time: procStartTime }),
+    started_at: bornAt,
     workspace_path: spec.workspace_path,
     // Reported only when the daemon ACTUALLY opened it (#3440). A view carrying
     // a path nothing ever created is what made a worker-death event name a file
@@ -419,6 +428,21 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     child,
     ...(placed?.job != null ? { job: placed.job } : {}),
   };
+}
+
+/** Read Linux `/proc/<pid>/stat` field 22, omitting it on every unavailable host. */
+function readProcStartTime(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const commEnd = stat.lastIndexOf(")");
+    if (commEnd < 0) return null;
+    // The slice begins at field 3 (`state`), making field 22 index 19. Reading
+    // past the final `)` keeps spaces and parentheses in `comm` from shifting it.
+    const value = stat.slice(commEnd + 1).trim().split(/\s+/)[19];
+    return value != null && /^\d+$/.test(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

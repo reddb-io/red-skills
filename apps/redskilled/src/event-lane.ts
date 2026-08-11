@@ -124,6 +124,10 @@ export interface RedskilledHostEvent {
   readonly worker_id: string;
   readonly project_label: string;
   readonly pid: number;
+  /** Detached process-group leader, when the birth writer recorded it. */
+  readonly pgid?: number;
+  /** OS process start discriminator, absent on legacy lanes or read failure. */
+  readonly proc_start_time?: string;
   readonly workspace_path: string;
   /** Granted fork point, null on legacy and non-trunk births. */
   readonly fork_sha?: string | null;
@@ -257,6 +261,10 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     worker_id: input.worker.worker_id,
     project_label: input.worker.project_label,
     pid: input.worker.pid,
+    ...(input.worker.pgid == null ? {} : { pgid: input.worker.pgid }),
+    ...(input.worker.proc_start_time == null
+      ? {}
+      : { proc_start_time: input.worker.proc_start_time }),
     workspace_path: input.worker.workspace_path,
     fork_sha: input.worker.fork_sha ?? null,
     log_path: input.worker.log_path ?? null,
@@ -710,6 +718,10 @@ export function toWorkerView(event: RedskilledHostEvent): RedskilledWorkerView {
     worker_id: event.worker_id,
     project_label: event.project_label,
     pid: event.pid,
+    ...(event.pgid == null ? {} : { pgid: event.pgid }),
+    ...(event.proc_start_time == null
+      ? {}
+      : { proc_start_time: event.proc_start_time }),
     started_at: event.ts,
     workspace_path: event.workspace_path,
     ...(event.fork_sha != null ? { fork_sha: event.fork_sha } : {}),
@@ -743,6 +755,10 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     worker_id: String(record.worker_id),
     project_label: text(record.project_label) ?? "",
     pid: Number(record.pid ?? 0),
+    ...(record.pgid == null || record.pgid === "" ? {} : { pgid: Number(record.pgid) }),
+    ...(text(record.proc_start_time) == null
+      ? {}
+      : { proc_start_time: text(record.proc_start_time)! }),
     workspace_path: text(record.workspace_path) ?? "",
     fork_sha: text(record.fork_sha),
     log_path: text(record.log_path),
