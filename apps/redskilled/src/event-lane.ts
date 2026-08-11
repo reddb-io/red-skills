@@ -29,7 +29,7 @@
  */
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import {
   readPositionedEventLane,
   type EventLanePosition,
@@ -37,6 +37,8 @@ import {
 } from "./event-lane-position.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 /**
  * The stable vocabulary for records about a Worker (ADR 0138).
@@ -404,7 +406,7 @@ export function createRedskilledEventLane(
   options: RedskilledEventLaneOptions = {},
 ): RedskilledEventLane {
   const maxBytes = options.maxBytes ?? DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES;
-  let emitter = encodeLines({ trailer: false });
+  let emitter = encodeToonlLines({ trailer: false });
   // Appends are serialised through one chain: two concurrent `appendFile` calls
   // could interleave a header and a row, and a header the reader sees mid-row is
   // exactly the corruption this lane promises not to produce.
@@ -421,7 +423,7 @@ export function createRedskilledEventLane(
         await rotateEventLane(path, maxBytes, event);
         // The compact generation has its own header. A new emitter makes the
         // next append a complete segment even when its schema changes later.
-        emitter = encodeLines({ trailer: false });
+        emitter = encodeToonlLines({ trailer: false });
       }
     });
     tail = write.catch(() => undefined);
@@ -528,7 +530,7 @@ function selectedEvents(
 
 function encodeEventLane(events: readonly RedskilledHostEvent[]): string {
   if (events.length === 0) return "";
-  const emitter = encodeLines({ trailer: false });
+  const emitter = encodeToonlLines({ trailer: false });
   return events.map((event) => emitter.push(toRow(event))).join("");
 }
 
