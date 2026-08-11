@@ -738,6 +738,10 @@ export function buildProcessDeps({
             }
           },
         });
+        // A volume transition is real work progress even before a commit. Keep
+        // its own timestamp so the operator-facing idle clock cannot be reset by
+        // oscillating tool/activity labels (#3676).
+        const locChanged = added !== lastHeartbeatDiff.added || removed !== lastHeartbeatDiff.removed;
         // Remember the volume for the on_heartbeat vitals provider (#832).
         lastHeartbeatDiff = { added, removed };
         // Update the per-attempt peak diff (only grows; never decreases).
@@ -760,6 +764,7 @@ export function buildProcessDeps({
           "current.loc_peak_added": peakLocAdded,
           "current.loc_peak_removed": peakLocRemoved,
           "current.worktree": worktree,
+          ...(locChanged ? { "current.last_loc_progress_at": ts } : {}),
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
         await castleBridge.record("worker.heartbeat", {
