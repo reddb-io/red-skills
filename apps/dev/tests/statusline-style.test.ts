@@ -128,19 +128,14 @@ describe("statusline style — header line", () => {
     expect(t).toContain("ctx=47k 24%"); // rest of the header intact
   });
 
-  it("prs= carries a compact age suffix when repo cacheAgeS is set (stale cache)", () => {
-    const t = stripAnsi(renderHeaderLine(input.project, claude, { ...repo, cacheAgeS: 720 }));
-    expect(t).toContain("prs=3 (12m)");
+  it("dates no count itself — the counter ages ride the daemon payload", () => {
+    // The suffix these two tokens used to carry described THIS app's `gh` count
+    // cache. That cache is gone (ADR 0141 decision 2) and each counter is dated
+    // by the daemon that polled it, so this render states numbers and no ages.
+    const t = stripAnsi(renderHeaderLine(input.project, claude, repo));
+    expect(t).toContain("prs=3");
     expect(t).toContain("iss=24");
-    expect(t.match(/\(12m\)/g)?.length ?? 0).toBe(1);
-  });
-
-  it("age suffix moves to iss= when openPrs is 0 and repo cache is stale", () => {
-    const t = stripAnsi(
-      renderHeaderLine(input.project, claude, { ...repo, openPrs: 0, cacheAgeS: 720 }),
-    );
-    expect(t).not.toContain("prs=");
-    expect(t).toContain("iss=24 (12m)");
+    expect(t).not.toMatch(/\(\d+[smh]\)/);
   });
 
   it("drops the repo blocks when counts are zero / a clean branch", () => {

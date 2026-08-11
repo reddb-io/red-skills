@@ -35,7 +35,6 @@ import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { collectDocsSweepInput, landDocsSweep } from "./docs.js";
-import { editLabelsWithStatuslineCache, statuslineCountCachePath } from "./statusline-cache.js";
 
 export async function collectBootOptions(
   ctx: RepoContext,
@@ -471,7 +470,6 @@ export async function buildBootDeps(
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const paths = afkPaths(ctx.root);
   const cfg = loadConfig(paths.configPath);
-  const countCachePath = statuslineCountCachePath(ctx.root);
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);
   const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
@@ -520,13 +518,13 @@ export async function buildBootDeps(
     gh: {
       ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
       editLabels: async (issue, remove, add) => {
-        const ok = await editLabelsWithStatuslineCache(
-          countCachePath,
-          () => ghx.editLabels(ghCtx, issue, remove, add),
-          remove,
-          add,
-        );
-        if (!ok) throw new Error(`failed to edit labels for issue #${issue}`);
+        // Just the edit. It used to also nudge the statusline's local count cache
+        // so a relabel showed up before the next TTL; that cache is gone and the
+        // counts are the daemon's poll (ADR 0141 decision 2), which sees the same
+        // relabel on its own cycle.
+        if (!(await ghx.editLabels(ghCtx, issue, remove, add))) {
+          throw new Error(`failed to edit labels for issue #${issue}`);
+        }
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       editBody: async (issue, body) => {

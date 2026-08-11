@@ -26,21 +26,11 @@ import * as fsx from "../fs.js";
 import { collectLogLineCounts } from "../log-cursor.js";
 import { reapableWorktreeUnder } from "../supervisor-fs.js";
 import { afkPaths } from "./paths.js";
-import { readStatuslineCache } from "./statusline-cache.js";
 
 export interface MonitorInputs {
   workers: CompactWorker[];
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
   fleet: FleetState | null;
-  /** GitHub queue/human counts read passively from the statusline TTL cache.
-   * Absent when the cache file has never been written (no statusline run yet). */
-  remoteQueue?: number;
-  remoteHuman?: number;
-  remoteQuarantine?: number;
-  /** Age of the statusline cache in seconds. Undefined when no cache file exists.
-   * The monitor render shows a stale marker when this exceeds the resolved
-   * statusline cache TTL ({@link resolveStatuslineCacheTtl}). */
-  remoteCacheAgeS?: number;
 }
 
 const SLOT_STATUSES = new Set<SlotDetail["status"]>(["open", "half-open", "idle-parked"]);
@@ -374,19 +364,9 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     fleet.latestBundleVersion = readPublishedBundleVersion().version ?? undefined;
   }
 
-  // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
-  // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
-  // and the cache age so the render can show a stale marker when the data is old.
-  const cached = readStatuslineCache(paths.statuslineCachePath);
-  const nowS = Math.floor(Date.now() / 1000);
-  const remoteExtra = cached !== null
-    ? {
-        remoteQueue: cached.queue,
-        remoteHuman: cached.human,
-        remoteQuarantine: cached.quarantine ?? 0,
-        remoteCacheAgeS: nowS - cached.ts,
-      }
-    : {};
-
-  return { workers, events, fleet, ...remoteExtra };
+  // The remote queue counts are NOT here. They used to be read out of the
+  // statusline's local `gh` count cache; that cache is gone (ADR 0141 decision 2)
+  // and the counts are the daemon's, so the monitor states the facts it owns and
+  // leaves the ones it does not to the surface that reads the payload.
+  return { workers, events, fleet };
 }

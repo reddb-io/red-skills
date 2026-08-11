@@ -25,6 +25,12 @@ import {
   isRedskilledStatuslinePayload,
   REDSKILLED_STALENESS_MS,
 } from "../src/statusline-payload.js";
+import {
+  renderRedskilledStatusline,
+  stripAnsi,
+  REDSKILLED_STATUSLINE_DEFAULTS,
+  type RedskilledRenderPayload,
+} from "@reddb-io/redskilled-render";
 import { deriveRedskilledLiveMetrics } from "../src/live-metrics.js";
 import { evaluateSessionReach, REDSKILLED_OP_REACH } from "../src/session-reach.js";
 
@@ -434,6 +440,20 @@ describe("the remote-counter block", () => {
       expect(project.counters[name].stale).toBe(false);
       expect(project.counters[name].reason).toContain("quota");
     }
+  });
+
+  it("reaches the statusline tail as the four counters a reader sees", () => {
+    // The seam between the block this daemon composes and the line a reader
+    // gets: one poll in, four dated numbers out, drawn by the shared renderer
+    // rather than by an assertion's own idea of the layout.
+    const payload = payloadWith(activityOf(counts()), "2026-08-11T12:00:05.000Z");
+
+    const line = stripAnsi(renderRedskilledStatusline(
+      payload as unknown as RedskilledRenderPayload,
+      { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" },
+    ).line);
+
+    expect(line).toContain("prs=3 cpr=5 iss=24 rdy=1 hmn=11");
   });
 
   it("is honestly empty when the daemon polled nothing, and validates without the block", () => {

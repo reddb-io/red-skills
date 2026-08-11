@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { directCollector, localGit, runStatusline } = vi.hoisted(() => ({
+const { directCollector, localGit, runStatusline, spawned } = vi.hoisted(() => ({
   directCollector: vi.fn(() => {
     throw new Error("the render path called a project collector");
   }),
+  /** Every command the render path tried to run, whatever the spawn shape. */
+  spawned: [] as string[],
   // The bedrock's ONE collector: local git under its micro-TTL. Zero network,
   // zero daemon — the membership rule of the segment (ADR 0141 §1), so it is the
   // one reach the render path is allowed to make.
@@ -31,19 +33,35 @@ const { directCollector, localGit, runStatusline } = vi.hoisted(() => ({
 
 vi.mock("@reddb-io/redskilled/statusline-command", () => ({ runStatusline }));
 
+// Every process this render could start, recorded rather than run. The counters
+// are the daemon's (ADR 0141 decision 2) and the local count caches are deleted,
+// so a `gh` here would be a network client back in front of a terminal prompt —
+// the #3546 regression, wearing a new source.
+vi.mock("node:child_process", () => {
+  const record = (command: string) => {
+    spawned.push(command);
+    throw new Error(`the render path spawned a subprocess: ${command}`);
+  };
+  return {
+    spawn: (command: string) => record(command),
+    spawnSync: (command: string) => record(command),
+    exec: (command: string) => record(command),
+    execFile: (command: string) => record(command),
+    execFileSync: (command: string) => record(command),
+    execSync: (command: string) => record(command),
+    fork: (command: string) => record(command),
+  };
+});
+
 vi.mock("../src/runtime/wire.js", () => ({
   collectStatuslineLocalGit: localGit,
   resolveRepoBasename: directCollector,
   collectStatuslineAfk: directCollector,
   collectStatuslineDocs: directCollector,
   collectStatuslineFleet: directCollector,
-  collectStatuslineRepo: directCollector,
   collectStatuslineValidationGate: directCollector,
   collectStatuslineWorkers: directCollector,
   inferGitHubRepoSlug: directCollector,
-  refreshStatuslineCountCache: directCollector,
-  refreshStatuslineRepoCache: directCollector,
-  resolveStatuslineCacheTtl: directCollector,
 }));
 
 import { statuslineCommand } from "../src/commands/statusline.js";
@@ -70,6 +88,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.clearAllMocks();
+  spawned.length = 0;
   if (cacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
   else process.env.RED_SKILLS_CACHE_DIR = cacheDir;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -184,5 +203,47 @@ describe("dev statusline render path", () => {
       `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
         "5h=23% 7d=41% · loc=+142 -36 · redskilled unreachable — Worker state unknown\n",
     );
+  });
+
+  it("spawns no gh subprocess on any render path — the count caches are gone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
+    roots.push(root);
+
+    // Daemon answering, daemon silent, daemon stating its absence: all three are
+    // render paths, and none of them may reach a tracker client.
+    runStatusline.mockImplementationOnce(async () => 0);
+    await statuslineCommand([root], root, sink().stream, fakeStdin(JSON.stringify(PAYLOAD)));
+    runStatusline.mockImplementationOnce(async (_args, io) => {
+      io.write?.("redskilled unreachable — Worker state unknown\n");
+      return 0;
+    });
+    await statuslineCommand([root], root, sink().stream, fakeStdin("{}"));
+    await statuslineCommand([root, "global"], root, sink().stream, fakeStdin("{}"));
+
+    expect(spawned).toEqual([]);
+    expect(directCollector).not.toHaveBeenCalled();
+  });
+
+  it("no longer ships the local count caches or their refresher", async () => {
+    // The pin above proves no subprocess ran; this proves there is nothing left
+    // to run one — the surface is deleted, not shrunk (no-legacy).
+    // The REAL module, not this file's mock of it: the claim is about what the
+    // barrel exports, and a mock would answer for itself.
+    const wire = await vi.importActual<Record<string, unknown>>("../src/runtime/wire.js");
+    for (const gone of [
+      "collectStatuslineRepo",
+      "refreshStatuslineCountCache",
+      "refreshStatuslineRepoCache",
+      "resolveStatuslineCacheTtl",
+      "statuslineCountCachePath",
+      "editLabelsWithStatuslineCache",
+      "startDetachedStatuslineCountRefresh",
+    ]) {
+      expect(gone in wire, `${gone} still exists`).toBe(false);
+    }
+    const command = await vi.importActual<Record<string, unknown>>(
+      "../src/commands/statusline.js",
+    );
+    expect("statuslineRefreshCountsCommand" in command).toBe(false);
   });
 });

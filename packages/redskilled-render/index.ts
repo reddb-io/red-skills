@@ -31,6 +31,15 @@ export {
 } from "./decode.js";
 
 export {
+  counterProject,
+  dashboardCounts,
+  hasDatedCounters,
+  REDSKILLED_COUNTER_LABELS,
+  remoteCounterTokens,
+  type RedskilledDashboardCounts,
+} from "./counters.js";
+
+export {
   clamp,
   flattenPublishedLine,
   formatAgeSeconds,
@@ -114,7 +123,6 @@ export {
   type RedskilledDashboard,
   type RedskilledDashboardCells,
   type RedskilledDashboardColumn,
-  type RedskilledDashboardCounts,
   type RedskilledDashboardHeader,
   type RedskilledDashboardOptions,
   type RedskilledDashboardRow,

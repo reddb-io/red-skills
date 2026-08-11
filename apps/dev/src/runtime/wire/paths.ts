@@ -54,10 +54,6 @@ export interface AfkPaths {
   supervisorRestartsPath: string;
   /** Runner circuit-breaker directory (tmp supervisor lane). */
   runnerCircuitDir: string;
-  /** GitHub queue/human count cache (statusline state lane). */
-  statuslineCachePath: string;
-  /** Repo-global diffstat cache (statusline state lane). */
-  statuslineRepoCachePath: string;
   /** Local git bedrock facts under their own micro-TTL (statusline state lane). */
   statuslineGitCachePath: string;
   /** Branch lock (state tier root). */
@@ -110,8 +106,6 @@ export function afkPaths(root: string): AfkPaths {
     supervisorResizePath: join(supervisorRuntime, "resize.toon"),
     supervisorRestartsPath: join(supervisorRuntime, "restarts.toon"),
     runnerCircuitDir: join(supervisorRuntime, "runner-circuit"),
-    statuslineCachePath: join(statusline, "statusline-cache.toon"),
-    statuslineRepoCachePath: join(statusline, "statusline-repo-cache.toon"),
     statuslineGitCachePath: join(statusline, "statusline-git-cache.toon"),
     branchLockPath: rp.branchLockFile(root),
     landLockPath: join(tmp, "afk-land.lock"),

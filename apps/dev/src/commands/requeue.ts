@@ -37,7 +37,7 @@ import {
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { makeFeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { pathExists, removeDir } from "../runtime/fs.js";
-import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
+import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
 import { getConfig, loadConfig, readHitlTypeLabels, readSetupCommands, readValidationResourceBudget } from "../core/config.js";
@@ -138,7 +138,6 @@ function parseIssue(raw: string | undefined): number | undefined {
 
 function ghFor(cwd: string, repo: string): RequeueGh {
   const repoArgs = repo ? ["--repo", repo] : [];
-  const countCachePath = statuslineCountCachePath(cwd);
   const run = (args: readonly string[]): ReturnType<ExecFn> =>
     execTool("gh", args, { cwd, maxBuffer: 32 * 1024 * 1024 });
   return {
@@ -160,17 +159,8 @@ function ghFor(cwd: string, repo: string): RequeueGh {
       const args = ["issue", "edit", String(issue), ...repoArgs];
       for (const l of remove) args.push("--remove-label", l);
       for (const l of add) args.push("--add-label", l);
-      const ok = await editLabelsWithStatuslineCache(
-        countCachePath,
-        async () => {
-          const out = await run(args);
-          if (out.code !== 0) throw new Error(`edit labels #${issue} failed: ${out.stderr.trim() || out.stdout.trim()}`);
-          return true;
-        },
-        remove,
-        add,
-      );
-      if (!ok) throw new Error(`edit labels #${issue} failed`);
+      const out = await run(args);
+      if (out.code !== 0) throw new Error(`edit labels #${issue} failed: ${out.stderr.trim() || out.stdout.trim()}`);
     },
     async comment(issue, body) {
       await run(["issue", "comment", String(issue), ...repoArgs, "--body", scrubOutbound(body)]);
@@ -349,7 +339,6 @@ async function runAdoptLanding(
   stdout: NodeJS.WritableStream,
 ): Promise<"landed" | "parked" | "skipped"> {
   const paths = afkPaths(cwd);
-  const countCachePath = statuslineCountCachePath(cwd);
   const ghCtx: GhContext = { cwd, repo };
   const gitCtx: GitContext = { cwd };
   const lockPath = branchLockPath(cwd);
@@ -387,14 +376,7 @@ async function runAdoptLanding(
       ...HOST_RECONCILE_PORTS,
       hitlTypes: readHitlTypeLabels(config),
       gh: {
-        editLabels: async (n, remove, add) => {
-          return editLabelsWithStatuslineCache(
-            countCachePath,
-            () => ghx.editLabels(ghCtx, n, remove, add),
-            remove,
-            add,
-          );
-        },
+        editLabels: (n, remove, add) => ghx.editLabels(ghCtx, n, remove, add),
         ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
         comment: (n, body) => ghx.comment(ghCtx, n, body),
         close: (n) => ghx.closeIssue(ghCtx, n),

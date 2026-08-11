@@ -689,19 +689,23 @@ describe("statusline_aggregate MCP tool", () => {
     expect(typeof project.docs_unlanded).toBe("number");
     expect(project.branch === null || typeof project.branch === "string").toBe(true);
 
+    // The remote counters are the daemon's (ADR 0141 decision 2) and this tool
+    // does not read its payload yet (#3568): it states their absence rather than
+    // a zero that would read as an empty repository. The diffstat is local and
+    // stays a number.
     const repo = result.repo as Record<string, unknown>;
-    expect(typeof repo.open_prs).toBe("number");
-    expect(typeof repo.today_prs).toBe("number");
-    expect(typeof repo.open_issues).toBe("number");
-    expect(repo.cache_age_s === null || typeof repo.cache_age_s === "number").toBe(true);
+    expect(repo.open_prs).toBeNull();
+    expect(repo.today_prs).toBeNull();
+    expect(repo.open_issues).toBeNull();
+    expect(typeof repo.local_added).toBe("number");
+    expect(typeof repo.local_removed).toBe("number");
 
     expect(Array.isArray(result.workers)).toBe(true);
     expect("fleet" in result).toBe(true);
 
     const queue = result.queue as Record<string, unknown>;
-    expect(typeof queue.ready_for_agent).toBe("number");
-    expect(typeof queue.ready_for_human).toBe("number");
-    expect(queue.cache_age_s === null || typeof queue.cache_age_s === "number").toBe(true);
+    expect(queue.ready_for_agent).toBeNull();
+    expect(queue.ready_for_human).toBeNull();
   });
 
   it("exposes model and effort on each worker record when present", async () => {

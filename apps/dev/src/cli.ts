@@ -25,7 +25,7 @@ import { stopCommand } from "./commands/stop.js";
 import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
 import { rspInstructionsCommand } from "./commands/rsp-instructions.js";
-import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
+import { statuslineCommand } from "./commands/statusline.js";
 import { triageCommand } from "./commands/triage.js";
 import { toonBumpCommand } from "./commands/toon-bump.js";
 import { toonMigrateCommand } from "./commands/toon-migrate.js";
@@ -63,7 +63,6 @@ export type CliCommand =
   | "route-model-tier"
   | "rsp-instructions"
   | "statusline"
-  | "statusline-refresh-counts"
   | "inject-development-workflow"
   | "install-type-labels"
   | "toon-bump"
@@ -115,7 +114,6 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "route-model-tier": {},
     "rsp-instructions": {},
     statusline: {},
-    "statusline-refresh-counts": {},
     "inject-development-workflow": {},
     "install-type-labels": {},
     "toon-bump": {},
@@ -269,7 +267,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "route-model-tier") return routeModelTierCommand(parsed.args);
   if (parsed.command === "rsp-instructions") return rspInstructionsCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
-  if (parsed.command === "statusline-refresh-counts") return statuslineRefreshCountsCommand(parsed.args);
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
   if (parsed.command === "install-type-labels") return installTypeLabelsCommand(parsed.args);
   if (parsed.command === "toon-bump") return toonBumpCommand(parsed.args);

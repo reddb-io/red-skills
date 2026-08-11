@@ -17,7 +17,6 @@ export const ENGINE_CONFIG_DEFAULTS = {
   "afk.default_runner": "claude",
   "afk.sandbox": "none",
   "afk.max_iterations": "12",
-  "afk.statusline_cache_ttl": "180",
   "afk.worktree_launches_pull_request": "true",
   "afk.claim_reaper.refresh_s": "300",
   "afk.claim_reaper.stale_tolerance": "3",
@@ -41,7 +40,6 @@ const RED_AFK_ENV_ACCESSORS = {
   RED_AFK_RUNNER: "afk.default_runner",
   RED_AFK_SANDBOX: "afk.sandbox",
   RED_AFK_MAX_ITERATIONS: "afk.max_iterations",
-  RED_AFK_STATUSLINE_CACHE_TTL_S: "afk.statusline_cache_ttl",
   RED_AFK_CLAIM_REFRESH_S: "afk.claim_reaper.refresh_s",
   RED_AFK_CLAIM_STALE_TOLERANCE: "afk.claim_reaper.stale_tolerance",
   RED_AFK_CLAIM_REAPER_GRACE_S: "afk.claim_reaper.grace_s",
@@ -51,6 +49,12 @@ const RED_AFK_ENV_ACCESSORS = {
 const DELETED_CONFIG_KEYS = new Set([
   "afk.attempt_timeout",
   "plugins.dev.afk.attempt_timeout",
+  // The statusline's local `gh` count cache is gone (ADR 0141 decision 2): every
+  // remote counter is the daemon's, polled on its cycle. A TTL for a cache that
+  // does not exist is accepted and dropped rather than warned about, so an
+  // operator's older config still loads.
+  "afk.statusline_cache_ttl",
+  "plugins.dev.afk.statusline_cache_ttl",
 ]);
 
 export interface LoadEngineConfigOptions {

@@ -335,6 +335,55 @@ export interface RedskilledRenderActivity {
   readonly reason: string;
 }
 
+/**
+ * Every remote counter a line draws, in the order it reads them.
+ *
+ * The names are the daemon's (`remote-counters`), not the render's: a surface
+ * that renamed them would be a second vocabulary for one poll, and the mnemonic
+ * a terminal shows is a separate decision made once, in `counters.ts`.
+ */
+export const REDSKILLED_RENDER_COUNTER_NAMES = [
+  "open_pull_requests",
+  "open_issues",
+  "ready_queue",
+  "human_queue",
+] as const;
+
+export type RedskilledRenderCounterName = (typeof REDSKILLED_RENDER_COUNTER_NAMES)[number];
+
+/**
+ * One counter, already dated by the daemon.
+ *
+ * `value: null` is an ABSENCE and never a zero — "the queue has drained", "the
+ * quota was spent before we asked" and "no label was ever named" are three facts
+ * and only the first is a number. `stale` is a claim about a number being shown,
+ * so an absence is never stale.
+ */
+export interface RedskilledRenderCounter {
+  readonly name: RedskilledRenderCounterName;
+  readonly value: number | null;
+  readonly fetched_at: string | null;
+  readonly age_ms: number | null;
+  readonly threshold_ms: number;
+  readonly stale: boolean;
+  readonly reason: string;
+}
+
+export interface RedskilledRenderCounterProject {
+  readonly project_label: string;
+  readonly repository: string;
+  readonly outcome: string;
+  readonly counters: Readonly<Record<RedskilledRenderCounterName, RedskilledRenderCounter>>;
+}
+
+/** The poll's counters, one by one, each carrying the age of its own value. */
+export interface RedskilledRenderCounters {
+  readonly version: 1;
+  readonly threshold_ms: number;
+  readonly projects: readonly RedskilledRenderCounterProject[];
+  readonly reason: string;
+}
+
 /** The graduated breaker's state, made observable. */
 export type RedskilledRenderBalancePosture = "open" | "reserved" | "spent" | "unknown";
 
@@ -379,6 +428,19 @@ export interface RedskilledRenderPayload {
   /** Registrations held by a live daemon other than the one this socket reached. */
   readonly orphaned_projects?: readonly string[];
   readonly repository_activity?: RedskilledRenderActivity;
+  /**
+   * The same poll's counters, each dated on its own instant.
+   *
+   * Beside `repository_activity` because the two answer different questions: the
+   * report dates the POLL — whether this daemon is still talking to GitHub — and
+   * this dates each COUNTER, which is what a line rendering four numbers side by
+   * side needs (ADR 0141 decision 2).
+   *
+   * OPTIONAL on the wire (ADR 0130 rule 3): a daemon that predates the block
+   * serves every other fact, and a surface that finds it absent falls back to the
+   * poll-dated counts rather than drawing an empty queue.
+   */
+  readonly remote_counters?: RedskilledRenderCounters;
   readonly github_balance?: RedskilledRenderBalance;
   readonly deaths?: RedskilledRenderDeaths;
   readonly engine?: RedskilledRenderEngine;

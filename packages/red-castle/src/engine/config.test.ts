@@ -69,7 +69,8 @@ describe("engine config reader", () => {
         "afk:",
         "  sandbox: docker",
         "  max_iterations: 4",
-        "  statusline_cache_ttl: 42",
+        "  claim_reaper:",
+        "    refresh_s: 42",
         "",
       ].join("\n"),
     );
@@ -79,14 +80,14 @@ describe("engine config reader", () => {
         RED_AFK_SANDBOX: "podman",
         RED_AFK_RUNNER: "codex",
         RED_AFK_MAX_ITERATIONS: "8",
-        RED_AFK_STATUSLINE_CACHE_TTL_S: "77",
+        RED_AFK_CLAIM_REFRESH_S: "77",
       },
     });
 
     expect(cfg.get("afk.sandbox")).toBe("podman");
     expect(cfg.get("afk.default_runner")).toBe("codex");
     expect(cfg.get("afk.max_iterations")).toBe("8");
-    expect(cfg.get("afk.statusline_cache_ttl")).toBe("77");
+    expect(cfg.get("afk.claim_reaper.refresh_s")).toBe("77");
     expect(cfg.values["RED_AFK_SANDBOX"]).toBeUndefined();
   });
 

@@ -25,6 +25,12 @@
  * it does not, because a plausible zero is worse than a missing column.
  */
 import {
+  dashboardCounts,
+  hasDatedCounters,
+  remoteCounterTokens,
+  type RedskilledDashboardCounts,
+} from "./counters.js";
+import {
   clamp,
   flattenPublishedLine,
   formatBytes,
@@ -119,16 +125,6 @@ export interface RedskilledDashboardRow {
   readonly line: string;
 }
 
-/** The repo-global counts the header carries, each `null` when unpolled. */
-export interface RedskilledDashboardCounts {
-  readonly open_pull_requests: number | null;
-  /** Pull requests and Issues closed inside the poller's window — the `cpr` cell. */
-  readonly recently_closed: number | null;
-  readonly open_issues: number | null;
-  /** True when the counts are older than the poller's own staleness window. */
-  readonly stale: boolean;
-}
-
 /**
  * The windows the daemon owns, as fractions.
  *
@@ -145,6 +141,8 @@ export interface RedskilledDashboardWindows {
   readonly worker_ceiling: number | null;
   readonly interactive_reservation: number;
 }
+
+export type { RedskilledDashboardCounts } from "./counters.js";
 
 export interface RedskilledDashboardHeader {
   /** The repository or project this view is standing in; `null` when unresolved. */
@@ -410,12 +408,7 @@ function buildHeader(
   const activity = (payload.repository_activity?.projects ?? []).find(
     (project) => project.project_label === options.project,
   );
-  const counts: RedskilledDashboardCounts = {
-    open_pull_requests: activity?.counts?.open_pull_requests ?? null,
-    recently_closed: activity?.counts?.recently_closed ?? null,
-    open_issues: activity?.counts?.open_issues ?? null,
-    stale: activity?.stale === true,
-  };
+  const counts = dashboardCounts(payload, options.project);
   const windows: RedskilledDashboardWindows = {
     memory_used_fraction: payload.host.ceiling_used_fraction,
     memory_used_bytes: payload.host.consumption.memory_bytes,
@@ -459,10 +452,14 @@ function buildHeader(
   parts.push(colourKeyValues(`${slots} reserve=${windows.interactive_reservation} interactive`));
   parts.push(colourKeyValues(memoryWindow(windows)));
   if (model != null) parts.push(`${WINE}${WHITE}${model}${NOBG}${SOFT}`);
-  if (counts.open_pull_requests != null) parts.push(colourKeyValues(`prs=${counts.open_pull_requests}`));
-  if (counts.recently_closed != null) parts.push(colourKeyValues(`cpr=${counts.recently_closed}`));
-  if (counts.open_issues != null) parts.push(colourKeyValues(`iss=${counts.open_issues}`));
-  if (counts.stale) parts.push("!counts stale");
+  // The counters come from the ONE builder both densities share, so the table
+  // and the line can never date the same poll differently.
+  for (const token of remoteCounterTokens(payload, options.project)) parts.push(colourKeyValues(token));
+  // The blanket marker is what a daemon WITHOUT the dated block can say. Once
+  // each counter carries its own age, repeating it would warn a second time
+  // about the numbers that already said so and warn at all about the ones that
+  // are fresh.
+  if (counts.stale && !hasDatedCounters(payload, options.project)) parts.push("!counts stale");
   // The rates go here, where a status bar still reads them, and they are the
   // FIRST thing dropped when the line does not fit — see below. Everything
   // before them answers "is this machine healthy"; the rates answer "how fast is
