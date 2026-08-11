@@ -2,7 +2,8 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import type { JsonValue } from "@reddb-io/toon";
+import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
 import {
   DEV_TOON_MIGRATION_SURFACES,
   MEMORY_TOON_MIGRATION_SURFACES,
