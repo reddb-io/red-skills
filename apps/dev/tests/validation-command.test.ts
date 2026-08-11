@@ -179,6 +179,21 @@ describe("suspect-infra duration", () => {
     expect(isSuspectInfraFailure({ status: "failed", durationMs: SUITE_MIN_PLAUSIBLE_MS - 1 })).toBe(true);
   });
 
+  it("keeps fast compiler diagnostics on changed branch files as branch faults (#3648)", () => {
+    expect(isSuspectInfraFailure({
+      status: "failed",
+      durationMs: 44,
+      output: "apps/dev/src/render.ts(19,7): error TS2322: Type 'RemoteCounters' is not assignable",
+      branchFiles: ["apps/dev/src/render.ts"],
+    })).toBe(false);
+    expect(isSuspectInfraFailure({
+      status: "failed",
+      durationMs: 44,
+      output: "error[E0308]: mismatched types\n  --> crates/toon/src/parser.rs:19:7",
+      branchFiles: ["crates/toon/src/parser.rs"],
+    })).toBe(false);
+  });
+
   it("leaves a plausible failure, a fast pass, and an unmeasured check alone", () => {
     expect(isSuspectInfraFailure({ status: "failed", durationMs: SUITE_MIN_PLAUSIBLE_MS })).toBe(false);
     expect(isSuspectInfraFailure({ status: "passed", durationMs: 3 })).toBe(false);
