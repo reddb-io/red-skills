@@ -42,7 +42,8 @@
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 
 /** The claim file name, inside whichever directory the machine shares. */
