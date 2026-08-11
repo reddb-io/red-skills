@@ -200,7 +200,7 @@ export const GITHUB_OPERATIONS: readonly GithubOperation[] = [
   write("issue develop", "graphql", "graphql", "linked-branch creation is a GraphQL mutation"),
   write("pr create", "rest", "rest", "gh POSTs to `repos/{o}/{r}/pulls`, a REST request"),
   write("pr comment", "rest", "rest", "a pull request comment is an issue comment: the same REST POST"),
-  write("pr merge", "graphql", "graphql", "gh merges with the mergePullRequest mutation"),
+  write("pr merge", "rest", "rest", "the default merge uses PUT `repos/{o}/{r}/pulls/{n}/merge` so a dry GraphQL pool cannot strand a finished Worker"),
   write("pr close", "graphql", "graphql", "gh closes with a GraphQL mutation"),
   write("pr edit", "graphql", "graphql", "gh edits with GraphQL mutations"),
   write("pr ready", "graphql", "graphql", "marking ready-for-review is a GraphQL mutation"),
