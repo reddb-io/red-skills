@@ -212,7 +212,9 @@ export async function collectStatuslineAggregate(
       open_prs: counterProject?.counters.open_pull_requests.value
         ?? activityProject?.counts?.open_pull_requests
         ?? null,
-      today_prs: activityProject?.counts?.recently_closed ?? null,
+      today_prs: counterProject?.counters.merged_today.value
+        ?? activityProject?.counts?.merged_today
+        ?? null,
       open_issues: counterProject?.counters.open_issues.value
         ?? activityProject?.counts?.open_issues
         ?? null,
