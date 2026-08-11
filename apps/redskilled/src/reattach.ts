@@ -72,6 +72,34 @@ export async function reattachWorkers(
   return { alive, dead };
 }
 
+export interface SweepHeldWorkerLivenessInput {
+  readonly workers: readonly RedskilledWorkerView[];
+  readonly reattached_worker_ids: ReadonlySet<string>;
+  readonly now_ms: number;
+  readonly grace_ms: number;
+  readonly probe: RedskilledLivenessProbe;
+  readonly on_dead: (worker: RedskilledWorkerView) => void | Promise<void>;
+}
+
+/**
+ * Probe every held Worker old enough to judge, retiring those the host no
+ * longer confirms. Reattached Workers have no child handle, so they are always
+ * eligible; newborns retain their grace while the init system creates a unit.
+ */
+export async function sweepHeldWorkerLiveness(
+  input: SweepHeldWorkerLivenessInput,
+): Promise<readonly RedskilledWorkerView[]> {
+  const held = input.workers.filter((worker) => {
+    if (input.reattached_worker_ids.has(worker.worker_id)) return true;
+    const bornMs = Date.parse(worker.started_at);
+    return !Number.isFinite(bornMs) || input.now_ms - bornMs >= input.grace_ms;
+  });
+  if (held.length === 0) return [];
+  const { dead } = await reattachWorkers(held, input.probe);
+  for (const worker of dead) await input.on_dead(worker);
+  return dead;
+}
+
 /**
  * How long a newborn Worker is exempt from the liveness sweep.
  *

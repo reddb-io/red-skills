@@ -511,9 +511,13 @@ export function parseCgroupCpuStat(raw: string): number | null {
 }
 
 /** One `/proc` row, in the kernel's own units. */
-interface ProcessEntry {
+export interface ProcessEntry {
   readonly pid: number;
   readonly ppid: number;
+  readonly pgid: number;
+  readonly sid: number;
+  /** Linux process birth discriminator, in clock ticks since boot. */
+  readonly starttime: string;
   readonly rssPages: number;
   /** `utime + stime`, in the clock ticks `/proc` counts them in. */
   readonly cpuTicks: number;
@@ -670,17 +674,25 @@ export function parseProcStat(raw: string): ProcessEntry | null {
   const pid = Number(raw.slice(0, raw.indexOf(" ")));
   const fields = raw.slice(close + 1).trim().split(/\s+/);
   // Fields after `comm` are 1-indexed from `state` (field 3), so `ppid` (field 4)
-  // is index 1, `utime` (field 14) is index 11, `stime` (field 15) is index 12 and
-  // `rss` (field 24) is index 21.
+  // is index 1, `pgrp` (field 5) is index 2, `session` (field 6) is index 3,
+  // `utime` (field 14) is index 11, `stime` (field 15) is index 12, `starttime`
+  // (field 22) is index 19 and `rss` (field 24) is index 21.
   const ppid = Number(fields[1]);
+  const pgid = Number(fields[2]);
+  const sid = Number(fields[3]);
   const utime = Number(fields[11]);
   const stime = Number(fields[12]);
+  const starttime = fields[19];
   const rssPages = Number(fields[21]);
-  if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(ppid) || !Number.isFinite(rssPages)) return null;
+  if (![pid, ppid, pgid, sid].every(Number.isSafeInteger) || !Number.isFinite(rssPages)) return null;
   if (!Number.isFinite(utime) || !Number.isFinite(stime)) return null;
+  if (starttime == null || !/^\d+$/.test(starttime) || !Number.isSafeInteger(Number(starttime))) return null;
   return {
     pid,
     ppid,
+    pgid,
+    sid,
+    starttime,
     rssPages: Math.max(0, rssPages),
     cpuTicks: Math.max(0, utime) + Math.max(0, stime),
   };

@@ -21,6 +21,10 @@ import { type RedskilledBudgetTermination,
 import { type RedskilledMachineClaimStore,
   type RedskilledMachineOwner,
 } from "../machine-scope.js";
+import type {
+  RedskilledOrphanReaperMode,
+  RedskilledProcessCensusRow,
+} from "../orphan-reaper.js";
 import { type RedskilledLaunchTemplate } from "../launch-template.js";
 import type { RedskilledPaths } from "../paths.js";
 import { type RedskilledRegistrationIntentStore,
@@ -134,6 +138,18 @@ export interface RedskilledDaemonOptions {
   readonly leaseRenewMs?: number;
   /** Window between registration sustain passes; 0 or below leaves the belt unarmed. */
   readonly registrationSustainMs?: number;
+  /** Independent orphan-census cadence; 0 or below leaves the timer unarmed. */
+  readonly orphanReaperMs?: number;
+  /** Operator kill-switch posture; defaults from `REDSKILLED_ORPHAN_REAPER`. */
+  readonly orphanReaperMode?: RedskilledOrphanReaperMode;
+  /** Process-table census seam; supplying it explicitly authorizes a fixture sweep. */
+  readonly orphanCensus?: () => readonly RedskilledProcessCensusRow[] | Promise<readonly RedskilledProcessCensusRow[]>;
+  /** PID-reuse verification seam, immediately before a stamped group kill. */
+  readonly orphanStarttime?: (pid: number) => string | null | Promise<string | null>;
+  /** Whole-process-group escalating teardown seam. */
+  readonly orphanKillGroup?: (pgid: number) => boolean | Promise<boolean>;
+  /** Where suspects and withheld actions are reported. */
+  readonly orphanReport?: (detail: string) => void;
   /**
    * How the daemon performs a bounded read after restart or pre-heartbeat death.
    *
@@ -475,6 +491,8 @@ export interface RedskilledDaemon {
   demand(): RedskilledDemandTick | null;
   /** Re-probe every held Worker, retiring the ones the host no longer confirms. */
   sweepWorkerLiveness(): Promise<readonly RedskilledWorkerView[]>;
+  /** Census, adopt, reap or report orphan process groups once. */
+  sweepOrphanProcesses(): Promise<{ readonly adopted: number; readonly reaped: number; readonly suspects: number }>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
   reattached(): readonly RedskilledWorkerView[];
   /** Resolves once every event handed to the lane has reached disk. */

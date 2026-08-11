@@ -15,6 +15,7 @@
     "./host-config": "./src/host-config.ts",
     "./launch-template": "./src/launch-template.ts",
     "./live-metrics": "./src/live-metrics.ts",
+    "./orphan-reaper": "./src/orphan-reaper.ts",
     "./paths": "./src/paths.ts",
     "./project-breaker": "./src/project-breaker.ts",
     "./project-registration": "./src/project-registration.ts",
