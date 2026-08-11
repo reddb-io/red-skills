@@ -1710,10 +1710,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return dead;
   }
   const orphanReaper = createRedskilledOrphanReaperRuntime({
-    authorized: maySweepMachine(
-      paths.machineClaimPath,
-      paths.machineClaimPathOfThisHost,
-    ),
+    authorized: maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost),
     interval_ms: options.orphanReaperMs, mode: options.orphanReaperMode, census: options.orphanCensus, active_worker_units: unitInventory, dump_files: options.orphanDumpFiles,
     read_starttime: options.orphanStarttime, kill_group: options.orphanKillGroup, report: options.orphanReport,
     clock, held_worker_ids: () => workers.keys(), live_births: async () => rehydrateWorkers(await eventLane.read()),
