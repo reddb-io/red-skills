@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import {
   afkPaths,
   appendCastleHistoryRecord,
@@ -331,7 +331,7 @@ describe("collectMonitorInputs", () => {
         JSON.stringify({ worker_id: "wAB12", pid: process.pid, runner: "claude", total: 3, done: 1 }),
       );
       const workerLog = join(dirname(attemptDir), "worker.log.toonl");
-      const lane = encodeLines({ trailer: false });
+      const lane = encodeToonlLines({ trailer: false });
       writeFileSync(
         workerLog,
         lane.push({ at: "2026-08-04T00:00:00Z", kind: "worker.log", msg: "a" })
@@ -347,7 +347,7 @@ describe("collectMonitorInputs", () => {
       // the renderableLive render-gate — a bare process.pid worker renders but is not active.
       expect(workers[0]!.live).toBe(false);
 
-      const lane2 = encodeLines({ trailer: false });
+      const lane2 = encodeToonlLines({ trailer: false });
       writeFileSync(
         workerLog,
         lane2.push({ at: "2026-08-04T00:00:00Z", kind: "worker.log", msg: "a" })
