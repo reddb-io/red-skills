@@ -74,6 +74,10 @@ export interface RedskilledWorkerDisplay {
    * Worker that took a second work item is a new span the host cannot see.
    */
   readonly started_at: string | null;
+  /** When the current macro phase began, ISO-8601; null before it was witnessed. */
+  readonly phase_started_at: string | null;
+  /** Last LOC or commit movement, ISO-8601; the non-resetting stall anchor. */
+  readonly progress_at: string | null;
   /**
    * Input-side tokens the last turn carried — the context window's occupancy.
    *
@@ -143,6 +147,8 @@ export const REDSKILLED_WORKER_DISPLAY_ABSENT: RedskilledWorkerDisplay = {
   wait_deadline: null,
   wait_escalation: null,
   started_at: null,
+  phase_started_at: null,
+  progress_at: null,
   context: null,
   eta: null,
   added: null,
@@ -168,6 +174,8 @@ const TEXT_FIELDS = [
   "wait_deadline",
   "wait_escalation",
   "started_at",
+  "phase_started_at",
+  "progress_at",
 ] as const;
 const COUNT_FIELDS = [
   "phase_index",
