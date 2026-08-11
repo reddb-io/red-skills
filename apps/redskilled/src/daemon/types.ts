@@ -79,6 +79,16 @@ import { type RedskilledLease,
 } from "../session-lease.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
+  /** Hard deadline for each daemon-owned GitHub call; 0 or below disables it. */
+  readonly remotePollTimeoutMs?: number;
+  /** Self-request cadence; 0 or below disables request-lane monitoring. */
+  readonly selfPingIntervalMs?: number;
+  /** Wall-clock deadline for one self-request. */
+  readonly selfPingTimeoutMs?: number;
+  /** Consecutive misses that make host-state report the lane degraded. */
+  readonly selfPingMissThreshold?: number;
+  /** Test seam; production probes the daemon's own socket. */
+  readonly selfPing?: () => Promise<unknown>;
   readonly daemonVersion?: string;
   /**
    * The verdicts this host's boot reaper posed, carried into every surface.
