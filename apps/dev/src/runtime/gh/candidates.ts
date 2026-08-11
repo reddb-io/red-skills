@@ -12,6 +12,34 @@ import type {
 import { isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
 
+const TARGET_POINT_READ_BACKOFF_MS = [250, 750, 1_500] as const;
+
+async function readTargetIssue(
+  ctx: GhContext,
+  issue: number,
+): Promise<Awaited<ReturnType<typeof readSingleObject>>> {
+  for (const delayMs of TARGET_POINT_READ_BACKOFF_MS) {
+    const read = await readSingleObject(ctx, "issue", issue, [
+      "number",
+      "title",
+      "body",
+      "state",
+      "labels",
+    ]);
+    if (read.row !== null || !/\bHTTP 404\b/i.test(`${read.out.stdout}\n${read.out.stderr}`)) {
+      return read;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
+  return readSingleObject(ctx, "issue", issue, [
+    "number",
+    "title",
+    "body",
+    "state",
+    "labels",
+  ]);
+}
+
 interface RspIssueListItem {
   number: number;
   title: string;
@@ -149,13 +177,7 @@ export async function resolveDispatchCandidates(
 
   const rows = await Promise.all(
     filter.numbers.map(async (issue): Promise<IssueCandidate | null> => {
-      const read = await readSingleObject(ctx, "issue", issue, [
-        "number",
-        "title",
-        "body",
-        "state",
-        "labels",
-      ]);
+      const read = await readTargetIssue(ctx, issue);
       if (read.row === null) return null;
       const number = Number(read.row.number ?? 0);
       const state = String(read.row.state ?? "").toUpperCase();
