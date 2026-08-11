@@ -108,7 +108,7 @@ rsp:
 # TOON/TOONL inspection; there is no jq fallback lane.
 host_binaries:
   tq:
-    version: 0.13.0
+    version: 0.21.0
 
 # Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
 # worktrees must live under a registered .red/tmp/ lane, and branch-changing
