@@ -7,6 +7,7 @@ import { createGithubAttributionLedger } from "./attribution.js";
 import {
   createGithubClient,
   GithubPoolUnavailableError,
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type GithubRequestFetch,
 } from "./conditional-client.js";
@@ -20,6 +21,22 @@ const SEARCH_POLL: GithubAttributedOperation = {
 };
 
 const roots: string[] = [];
+
+describe("rate-limit reset evidence", () => {
+  it("reads the primary reset instant from a refused response", () => {
+    expect(githubRateLimitResetAt({
+      status: 403,
+      response: { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1" } },
+    }, 0)).toBe("1970-01-01T00:00:01.000Z");
+  });
+
+  it("dates a secondary-limit retry-after from the refusal instant", () => {
+    expect(githubRateLimitResetAt({
+      status: 429,
+      response: { headers: { "retry-after": "60" } },
+    }, 0)).toBe("1970-01-01T00:01:00.000Z");
+  });
+});
 
 function balance(restRemaining: number, graphqlRemaining: number): GithubBalance {
   const reset = "2026-08-05T12:00:00.000Z";
