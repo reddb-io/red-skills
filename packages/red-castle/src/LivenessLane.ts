@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { parseRecords } from "@reddb-io/toon";
+import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import type { AgentStreamEvent } from "./AgentStreamEmitter.js";
 import {
   appendCastleLaneRecord,
@@ -77,7 +78,7 @@ export class LivenessLane {
       at: new Date(record.at).toISOString(),
       kind: "worker.heartbeat",
       payload: { signal: kind },
-    });
+    }, { retentionPolicy: LANE_RETENTION_REGISTRY["worker-liveness"] });
     return record;
   }
 }

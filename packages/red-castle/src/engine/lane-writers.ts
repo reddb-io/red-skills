@@ -7,6 +7,12 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  LANE_RETENTION_REGISTRY,
+  laneOverCeiling,
+  trimLaneKeepLast,
+  type LaneRetentionPolicy,
+} from "@reddb-io/shared/lane-retention.js";
+import {
   decode,
   encode,
   encodeLines,
@@ -41,6 +47,33 @@ export const CASTLE_LANE_FILENAMES = {
 } as const;
 
 export type CastleLaneName = keyof typeof CASTLE_LANE_FILENAMES;
+
+function encodedRows(rows: readonly ToonlRecord[]): string {
+  if (rows.length === 0) return "";
+  const writer = encodeLines({ trailer: false });
+  return rows.map((row) => writer.push(row)).join("");
+}
+
+function keepLastWithinByteTarget(
+  rows: readonly ToonlRecord[],
+  incomingBytes: number,
+  targetBytes: number,
+): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (
+      Buffer.byteLength(encodedRows(rows.slice(-middle))) + incomingBytes <=
+      targetBytes
+    ) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
 
 const CONTRACT_FIELDS = new Map(
   CASTLE_PUBLISHED_CONTRACTS.map((contract) => [
@@ -165,9 +198,40 @@ export function validateCastleHistoryRecord(
 async function appendToonlRecord<T extends Record<string, unknown>>(
   path: string,
   record: T,
+  retentionPolicy?: LaneRetentionPolicy,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, encodeLines().push(toToonlRecord(record)), "utf8");
+  const encoded = encodeLines().push(toToonlRecord(record));
+  if (
+    retentionPolicy?.maxBytes !== undefined &&
+    await laneOverCeiling(path, Buffer.byteLength(encoded), retentionPolicy)
+  ) {
+    const ceiling = retentionPolicy.maxBytes;
+    const incomingBytes = Buffer.byteLength(encoded);
+    if (incomingBytes > ceiling) {
+      throw new Error(`castle lane record exceeds its ${ceiling}-byte ceiling`);
+    }
+    let raw = "";
+    try {
+      raw = await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const rows = raw === "" ? [] : parseRecords(raw);
+    const targetBytes = Math.max(
+      incomingBytes,
+      Math.floor(ceiling * (retentionPolicy.targetRatio ?? 0.5)),
+    );
+    const keepLast = keepLastWithinByteTarget(
+      rows,
+      incomingBytes,
+      targetBytes,
+    );
+    await trimLaneKeepLast(path, keepLast);
+  }
+  // `appendFile` opens and closes the lane for every beat. That close-before-
+  // next-stat lifecycle is what makes the preceding atomic replacement safe.
+  await appendFile(path, encoded, "utf8");
 }
 
 function toToonlRecord(record: Record<string, unknown>): ToonlRecord {
@@ -216,11 +280,13 @@ function normalizeCastleHistoryRecord(record: unknown): CastleHistoryRecord {
 export async function appendCastleLaneRecord(
   path: string,
   record: CastleLaneRecord,
+  options: { readonly retentionPolicy?: LaneRetentionPolicy } = {},
 ): Promise<CastleLaneRecord> {
   const validated = validateCastleLaneRecord(record);
   await appendToonlRecord(
     path,
     validated as unknown as Record<string, unknown>,
+    options.retentionPolicy,
   );
   return validated;
 }
@@ -332,16 +398,26 @@ export interface CastleLaneWriters {
 
 export interface CastleLaneWritersOptions {
   readonly clock?: () => string;
+  /** Tiny override for posed tests; production uses the shared 1 MiB policy. */
+  readonly livenessMaxBytes?: number;
 }
 
-function makeLaneWriter(path: string, clock: () => string): CastleLaneWriter {
+function makeLaneWriter(
+  path: string,
+  clock: () => string,
+  retentionPolicy?: LaneRetentionPolicy,
+): CastleLaneWriter {
   return {
     path,
     async append(record) {
-      return appendCastleLaneRecord(path, {
-        at: record.at ?? clock(),
-        ...record,
-      });
+      return appendCastleLaneRecord(
+        path,
+        {
+          at: record.at ?? clock(),
+          ...record,
+        },
+        { retentionPolicy },
+      );
     },
   };
 }
@@ -351,6 +427,12 @@ export function createCastleLaneWriters(
   options: CastleLaneWritersOptions = {},
 ): CastleLaneWriters {
   const clock = options.clock ?? (() => new Date().toISOString());
+  const livenessPolicy: LaneRetentionPolicy = {
+    ...LANE_RETENTION_REGISTRY["worker-liveness"],
+    ...(options.livenessMaxBytes === undefined
+      ? {}
+      : { maxBytes: options.livenessMaxBytes }),
+  };
   return {
     worker: (id) => makeLaneWriter(castleLanePath(paths, "worker", id), clock),
     supervisor: (id) =>
@@ -358,6 +440,10 @@ export function createCastleLaneWriters(
     monitor: (id) =>
       makeLaneWriter(castleLanePath(paths, "monitor", id), clock),
     liveness: (workerId) =>
-      makeLaneWriter(castleLanePath(paths, "liveness", workerId), clock),
+      makeLaneWriter(
+        castleLanePath(paths, "liveness", workerId),
+        clock,
+        livenessPolicy,
+      ),
   };
 }

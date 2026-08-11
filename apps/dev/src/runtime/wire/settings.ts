@@ -20,6 +20,7 @@ import {
 import { isRunner, type Runner } from "../../types/runner.js";
 import * as gitx from "../git.js";
 import { afkPaths } from "./paths.js";
+import { runWithQuiescentWorkerLogTrim } from "../worker-log-retention.js";
 
 export interface RunSettings {
   sandbox: SandboxMode;
@@ -258,7 +259,7 @@ export function makeRunAgent(
       branch: input.branch,
       attemptDir: laneAttemptDir,
     });
-    return runAgent(deps, {
+    const invoke = () => runAgent(deps, {
       ...input,
       sandboxMode: effectiveSandbox,
       // Stable container image (#2340). Per-call input wins (the untrusted-author
@@ -289,5 +290,8 @@ export function makeRunAgent(
           }
         : {}),
     });
+    return input.logPath === undefined
+      ? invoke()
+      : runWithQuiescentWorkerLogTrim(input.logPath, invoke);
   };
 }

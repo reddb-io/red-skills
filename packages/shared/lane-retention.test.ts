@@ -37,6 +37,7 @@ describe("shared lane retention", () => {
     expect(LANE_RETENTION_REGISTRY["rsp-telemetry-corrections"].maxBytes).toBe(1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["death-attributions"].maxAgeMs).toBe(14 * 24 * 60 * 60 * 1_000);
     expect(LANE_RETENTION_REGISTRY["worker-log"].maxLines).toBe(50_000);
+    expect(LANE_RETENTION_REGISTRY["worker-liveness"].maxBytes).toBe(1024 * 1024);
   });
 
   it("checks an append ceiling with exactly one stat in async and exit-handler paths", async () => {

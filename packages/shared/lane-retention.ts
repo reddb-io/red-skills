@@ -80,6 +80,10 @@ export const LANE_RETENTION_REGISTRY = {
     maxLines: 50_000,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "worker-liveness": {
+    maxBytes: MIB,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
   "castle-history": {
     maxLines: 10_000,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
