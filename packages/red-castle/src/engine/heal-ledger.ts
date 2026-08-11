@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import type { EnginePaths } from "./paths.js";
 
 export const HEAL_LEDGER_WINDOW_MS = 24 * 60 * 60 * 1000;
