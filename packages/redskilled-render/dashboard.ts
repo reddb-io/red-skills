@@ -77,7 +77,6 @@ import {
   type RedskilledRenderWorker,
   type RedskilledRenderWorkerDisplay,
   type RedskilledStatuslineMode,
-  workerElapsedMs,
 } from "./payload.js";
 import {
   resolveStatuslineProjectMatch,
@@ -334,9 +333,9 @@ export function workerCells(
     org: repair ? "lane=repair" : landing ? "org=landing" : display.origin == null ? "" : `org=${display.origin}`,
     iss: display.issue == null ? "" : repair ? `pr=#${display.issue.replace(/^#/, "")}` : `iss=${display.issue}`,
     bar: progressBar(display),
-    phase: [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·"),
+    phase: phaseActivityCell(display),
     base: worker.base_commits_ahead == null ? "" : `base +${worker.base_commits_ahead}`,
-    elapsed: formatDuration(workerElapsedMs(worker, generatedAt)),
+    elapsed: workerClocksCell(worker, display, generatedAt),
     // A Worker whose project will not estimate gets NO cell — not `eta=—`, and
     // certainly not a figure this module could have extrapolated off the bar
     // beside it. The absence is the honest answer and it is legible as one.
@@ -354,6 +353,40 @@ export function workerCells(
     rsn: noAgent || display.reasoning == null ? "" : `rsn=${display.reasoning}`,
     txt: noAgent || display.text == null ? "" : `txt=${display.text}`,
   };
+}
+
+/** Macro position and momentary verb, with their axes visible in the grammar. */
+function phaseActivityCell(display: RedskilledRenderWorkerDisplay): string {
+  const phase = display.phase;
+  const total = display.phase_total;
+  const index = display.phase_index;
+  const positioned = phase != null && total != null && total > 0 && index != null && index >= 0
+    ? `${phase} ${Math.min(Math.floor(index) + 1, Math.floor(total))}/${Math.floor(total)}`
+    : phase;
+  return [positioned, display.step].filter((part): part is string => Boolean(part)).join(" · ");
+}
+
+function elapsedSince(startedAt: string | null | undefined, generatedAt: string): number | null {
+  if (startedAt == null || startedAt === "") return null;
+  const started = Date.parse(startedAt);
+  const now = Date.parse(generatedAt);
+  return Number.isFinite(started) && Number.isFinite(now) ? Math.max(0, now - started) : null;
+}
+
+/** Three named clocks: process age, macro-phase age, and real-progress idle age. */
+function workerClocksCell(
+  worker: RedskilledRenderWorker,
+  display: RedskilledRenderWorkerDisplay,
+  generatedAt: string,
+): string {
+  const age = worker.uptime_ms ?? elapsedSince(worker.started_at, generatedAt);
+  const phase = elapsedSince(display.phase_started_at, generatedAt);
+  const idle = elapsedSince(display.progress_at, generatedAt);
+  return [
+    age == null ? null : `age=${formatDuration(age)}`,
+    phase == null ? null : `phase=${formatDuration(phase)}`,
+    idle == null ? null : `idle=${formatDuration(idle)}`,
+  ].filter((part): part is string => part != null).join(" ");
 }
 
 /** The wait's own clock replaces the stale agent heartbeat while a child is
