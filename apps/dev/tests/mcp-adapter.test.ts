@@ -11,6 +11,7 @@ import {
   castleLanePath,
   createEnginePaths,
 } from "@reddb-io/red-castle/engine";
+import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
 import { afkPaths } from "../src/runtime/wire.js";
 import { recordBootError } from "../src/commands/run/state.js";
 import {
@@ -677,6 +678,82 @@ describe("rsp wait MCP tools", () => {
 });
 
 describe("statusline_aggregate MCP tool", () => {
+  it("serves dated repository and queue counters from the daemon payload without tracker reads", async () => {
+    const cwd = await root();
+    const projectLabel = cwd.split("/").at(-1)!;
+    const counter = (
+      name: "open_pull_requests" | "open_issues" | "ready_queue" | "human_queue",
+      value: number,
+      ageMs: number,
+    ) => ({
+      name,
+      value,
+      fetched_at: "2026-08-11T12:00:00.000Z",
+      age_ms: ageMs,
+      threshold_ms: 60_000,
+      stale: ageMs > 60_000,
+      reason: `daemon fixture ${name}`,
+    });
+    const remoteCounters = {
+      version: 1 as const,
+      threshold_ms: 60_000,
+      projects: [{
+        project_label: projectLabel,
+        repository: "acme/widgets",
+        outcome: "counted",
+        counters: {
+          open_pull_requests: counter("open_pull_requests", 3, 5_000),
+          open_issues: counter("open_issues", 24, 65_000),
+          ready_queue: counter("ready_queue", 7, 15_000),
+          human_queue: counter("human_queue", 2, 75_000),
+        },
+      }],
+      reason: "daemon fixture",
+    };
+    const trackerReads: string[] = [];
+    const deps = createCastleMcpDependencies(cwd, fakeOperations(), {
+      statuslinePayload: async () => ({
+        remote_counters: remoteCounters,
+        repository_activity: {
+          fetched_at: "2026-08-11T12:00:00.000Z",
+          age_ms: 5_000,
+          stale: false,
+          projects: [{
+            project_label: projectLabel,
+            repository: "acme/widgets",
+            counts: { open_pull_requests: 3, open_issues: 24, recently_closed: 5 },
+          }],
+          reason: "daemon fixture",
+        },
+      }),
+      listCandidates: async () => {
+        trackerReads.push("ready-for-agent");
+        return [];
+      },
+      listHitlCandidates: async () => {
+        trackerReads.push("ready-for-human");
+        return [];
+      },
+    });
+    const aggregate = createCastleMcpTools(deps)
+      .find((tool) => tool.name === "statusline_aggregate")!;
+
+    await expect(aggregate.invoke({})).resolves.toMatchObject({
+      remote_counters: remoteCounters,
+      repo: { open_prs: 3, today_prs: 5, open_issues: 24 },
+      queue: { ready_for_agent: 7, ready_for_human: 2 },
+    });
+    expect(remoteCounters.projects[0]!.counters.open_issues).toMatchObject({
+      age_ms: 65_000,
+      stale: true,
+    });
+    expect(remoteCounters.projects[0]!.counters.human_queue).toMatchObject({
+      age_ms: 75_000,
+      stale: true,
+    });
+    expect(trackerReads).toEqual([]);
+  });
+
   it("returns the payload shape with project, repo, fleet, workers, and queue", async () => {
     const cwd = await root();
     const deps = createCastleMcpDependencies(cwd, fakeOperations());
