@@ -30,9 +30,11 @@ ADR refuses, and the refusal is the whole reason the record exists.
    the change, which is affordable precisely because the changes are rare.
 5. **The lane rotates, and a consumer that fell behind re-baselines rather than replays.**
    The event shape was designed for this from the start — every event carries its own
-   identity so "a lane whose head was rotated away" still reads (`event-lane.ts`) — but the
-   mechanism was never built, and the file now grows without bound and is replayed whole at
-   every daemon boot. Rotation must land before consumers depend on positions in it.
+   identity so "a lane whose head was rotated away" still reads (`event-lane.ts`). Rotation
+   shipped in #3512 with a 4 MiB writer-triggered ceiling, and #3540 amortized compaction so a
+   full lane does not pay a whole-generation rewrite on every subsequent append. The writer
+   atomically compacts when an append would cross the ceiling. A daemon boot still replays the
+   whole visible generation; rotation bounds that replay rather than making it incremental.
 6. **The lane is watchable only from the side that writes it.** File-change notification does
    not cross the WSL boundary: a native-Windows consumer watching a WSL-side lane receives
    nothing, forever, with no error. The daemon therefore gains its first WSL detection and
@@ -62,8 +64,9 @@ ADR refuses, and the refusal is the whole reason the record exists.
 - The word "hook" now names two opposite directions. `.red/contexts/dev/CONTEXT.md` fixes
   both senses: a **Host hook** is outbound (daemon → local consumer, this ADR), a **Webhook**
   is inbound (GitHub → daemon, #3387, to stop polling). Neither may be called "hook" bare.
-- Rotation (decision 5) is now a prerequisite rather than hygiene, and it lands beside the
-  same unbounded-growth fix the death lane needs.
+- Rotation (decision 5) is shipped (#3512, #3540): the writer enforces the 4 MiB ceiling and
+  amortizes compaction. Boot still replays the whole bounded lane, so the ceiling limits replay
+  cost without changing the boot model.
 - The daemon acquires WSL awareness it has never had — there is currently no occurrence of
   `wsl` anywhere in `apps/redskilled/src/`.
 

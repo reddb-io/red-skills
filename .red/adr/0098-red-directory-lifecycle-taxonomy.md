@@ -55,7 +55,12 @@ Every writer under `.red/state/`, `.red/tmp/`, or `.red/researches/` owns a name
 
 New writers must either use one of these lanes or extend the registry by ADR/docs amendment. Unknown tmp lanes are reported by doctor/janitor surfaces, not deleted blindly.
 
-### 3. TTL policy
+### 3. Retention policy
+
+The **state-tier retention rule** is mandatory at lane birth: every TOONL lane under
+`.red/state/` or the daemon home declares its retention policy in the lane-retention registry.
+The lane's writer performs any trimming as an amortized part of writing. The janitor reports a
+missing declaration or a lane that exceeds its declared policy; it never trims or deletes state.
 
 Janitor cleanup is lane-specific:
 
