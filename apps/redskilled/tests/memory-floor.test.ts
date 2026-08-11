@@ -10,6 +10,7 @@ import { readRedskilledEvents } from "../src/event-lane.js";
 import { isRedskilledWorkerView, type RedskilledWorkerView } from "../src/host-state.js";
 import {
   evaluateMemoryBudgets,
+  evaluateProcessBudgets,
   parseProcStat,
   REDSKILLED_STALL_CLASSIFICATION,
   resolveEnforcedBudget,
@@ -98,6 +99,27 @@ function worker(overrides: Partial<RedskilledWorkerView> = {}): RedskilledWorker
 }
 
 describe("the memory floor", () => {
+  it("names TasksMax in the termination for an over-limit unisolated tree", () => {
+    const { terminations } = evaluateProcessBudgets({
+      workers: [worker({ isolated: false, unit: undefined, budget: { max_processes: 2 } })],
+      processes: { "w-1": 3 },
+    });
+
+    expect(terminations).toEqual([
+      expect.objectContaining({
+        version: 1,
+        worker_id: "w-1",
+        outcome: "terminated-over-process-budget",
+        classification: "budget-exceeded",
+        stall: false,
+        budget_name: "TasksMax",
+        budget_declared: 2,
+        observed_processes: 3,
+      }),
+    ]);
+    expect(terminations[0]!.reason).toContain("TasksMax");
+  });
+
   it("terminates a Worker over its budget against a synthetic sampler", async () => {
     const paths = await sessionPaths();
     const stopped: string[] = [];
