@@ -47,6 +47,7 @@ import { type RedskilledProjectDeregistered,
   type RedskilledWorkerHeartbeatRequest,
 } from "../protocol.js";
 import { type GithubBalance,
+  type GithubBalanceStore,
   type GithubBalanceTransport,
 } from "@reddb-io/github";
 import { type RedskilledActivityTransport,
@@ -279,6 +280,8 @@ export interface RedskilledActivityRegistration {
  */
 export interface RedskilledBalanceRegistration {
   readonly transport: GithubBalanceTransport;
+  /** Host-state snapshot shared with fresh and parallel local processes. */
+  readonly store?: GithubBalanceStore;
   /**
    * A hard window, for a test that needs one. Production leaves this absent and
    * lets the balance decide — that is the whole decision.
