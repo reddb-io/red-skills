@@ -59,13 +59,20 @@ function state(current: Record<string, unknown> = {}, top: Record<string, unknow
 }
 
 describe("the three fields the record was missing", () => {
-  it("publishes started_at, context and eta", () => {
-    const display = workerDisplayFromState(state({ context_tokens: 108_000 }), {
+  it("publishes the age anchors, context and eta", () => {
+    const display = workerDisplayFromState(state({
+      context_tokens: 108_000,
+      last_commit_at: "2026-08-03T01:20:00.000Z",
+      last_loc_progress_at: "2026-08-03T01:25:00.000Z",
+    }), {
       etaSeconds: 1_020,
       nowMs: NOW,
+      phaseStartedAt: "2026-08-03T01:10:00.000Z",
     });
 
     expect(display.started_at).toBe("2026-08-03T01:00:00.000Z");
+    expect(display.phase_started_at).toBe("2026-08-03T01:10:00.000Z");
+    expect(display.progress_at).toBe("2026-08-03T01:25:00.000Z");
     expect(display.context).toBe(108_000);
     expect(display.eta).toBe(1_020);
     // `elapsed` is deliberately NOT on the record: two surfaces publishing their
@@ -85,6 +92,26 @@ describe("the three fields the record was missing", () => {
     // Worker can be minutes in with no observation at all. A `0` there would read
     // as an empty context window, which is the opposite fact.
     expect(workerDisplayFromState(state(), { etaSeconds: null, nowMs: NOW }).context).toBeNull();
+  });
+});
+
+describe("operator-facing activity vocabulary", () => {
+  it.each([
+    ["coding", "setup", "preparing"],
+    ["coding", "review", "reading"],
+    ["coding", "explore", "searching"],
+    ["coding", "impl", "editing"],
+    ["coding", "tests", "testing"],
+    ["coding", "typecheck", "typechecking"],
+    ["coding", "lint", "linting"],
+    ["coding", "build", "building"],
+    ["coding", "commit", "committing"],
+    ["coding", "push", "pushing"],
+    ["validating", "review", "reviewing"],
+    ["gate", "landing", "landing"],
+  ])("renders %s/%s as %s", (phase, activity, expected) => {
+    const display = workerDisplayFromState(state({ phase, activity }), { etaSeconds: null, nowMs: NOW });
+    expect(display.step).toBe(expected);
   });
 });
 
