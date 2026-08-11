@@ -64,7 +64,7 @@ import {
   uninstallRedskilledUnit,
   type RedskilledUnitIO,
 } from "./supervision.js";
-import { isRedskilledSupervised } from "./self-replace.js";
+import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
 import { stabilizeRedskilledEntry } from "./stable-bundle.js";
 
 /**
@@ -472,6 +472,10 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     const paths = servePaths(values);
     let daemon;
     try {
+      // A replacement boots this entry while the incumbent still owns the
+      // session. Reaching here proves the successor loaded and configured; it
+      // waits for the incumbent's commit before competing for the singleton.
+      await awaitRedskilledTakeoverCommit();
       daemon = await startRedskilledDaemon({
         paths,
         idleMs: hostSettings.idleMs,
