@@ -15,29 +15,31 @@ import {
 
 const NO_JOB_OBJECTS = { available: false, reason: "Job Object placement is the Windows backend (platform=linux)" } as const;
 
-const NO_POSIX = { available: false, reason: "POSIX rlimit and priority placement is the macOS backend (platform=linux)" } as const;
+const LINUX_POSIX = { available: true, shell: "/bin/sh", nice: null } as const;
+const NO_POSIX = { available: false, reason: "no POSIX shell was found at /bin/sh" } as const;
 
 const LINUX_WITH_SESSION: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
   userSession: true,
   jobObjects: NO_JOB_OBJECTS,
-  posix: NO_POSIX,
+  posix: LINUX_POSIX,
 };
 const LINUX_WITHOUT_SESSION: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
   userSession: false,
   jobObjects: NO_JOB_OBJECTS,
-  posix: NO_POSIX,
+  posix: LINUX_POSIX,
 };
 const LINUX_WITHOUT_SYSTEMD: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: null,
   userSession: false,
   jobObjects: NO_JOB_OBJECTS,
-  posix: NO_POSIX,
+  posix: LINUX_POSIX,
 };
+const LINUX_WITHOUT_SHELL: WorkerPlacementProbes = { ...LINUX_WITHOUT_SYSTEMD, posix: NO_POSIX };
 // An OS with neither backend: the case that proves an unknown platform still
 // launches and still says what it gave up. macOS has its own backend now, so it
 // is no longer the example of a host with nothing.
@@ -97,16 +99,30 @@ describe("worker placement — Linux with a user session", () => {
     expect(placement.budgetWarning).toBeUndefined();
   });
 
+  it("disables core dumps independently of the declared budget", () => {
+    const declared = plan(LINUX_WITH_SESSION);
+    const absent = plan(LINUX_WITH_SESSION, { budget: undefined });
+
+    for (const placement of [declared, absent]) {
+      const separator = placement.args.indexOf("--");
+      expect(placement.args.slice(0, separator).filter((arg) => arg.startsWith("--property=LimitCORE="))).toEqual([
+        "--property=LimitCORE=0",
+      ]);
+    }
+  });
+
   it("carries max_processes as TasksMax exactly when it is declared", () => {
     const declared = plan(LINUX_WITH_SESSION, {
       budget: { max_processes: 32, cpu_seconds: 60 },
     });
     const absent = plan(LINUX_WITH_SESSION, { budget: { cpu_seconds: 60 } });
+    const declaredPlacementArgs = declared.args.slice(0, declared.args.indexOf("--"));
+    const absentPlacementArgs = absent.args.slice(0, absent.args.indexOf("--"));
 
-    expect(declared.args.filter((arg) => arg.startsWith("--property=TasksMax="))).toEqual([
+    expect(declaredPlacementArgs.filter((arg) => arg.startsWith("--property=TasksMax="))).toEqual([
       "--property=TasksMax=32",
     ]);
-    expect(absent.args.some((arg) => arg.startsWith("--property=TasksMax="))).toBe(false);
+    expect(absentPlacementArgs.some((arg) => arg.startsWith("--property=TasksMax="))).toBe(false);
     expect(declared.budgetWarning).toMatch(/cpu_seconds/);
     expect(declared.budgetWarning).not.toMatch(/max_processes/);
   });
@@ -135,8 +151,16 @@ describe("worker placement — Linux without a user session", () => {
     const placement = plan(LINUX_WITHOUT_SESSION);
 
     expect(placement.isolated).toBe(false);
-    expect(placement.command).toBe("/usr/bin/node");
-    expect(placement.args).toEqual(["worker.js", "--issue", "2774"]);
+    expect(placement.command).toBe("/bin/sh");
+    expect(placement.args).toEqual([
+      "-c",
+      'ulimit -c 0\nexec "$@"',
+      "--",
+      "/usr/bin/node",
+      "worker.js",
+      "--issue",
+      "2774",
+    ]);
     expect(placement.cwd).toBe("/given/workspace");
     expect(placement.unit).toBeUndefined();
     expect(placement.warning).toMatch(/no systemd --user session/);
@@ -149,6 +173,15 @@ describe("worker placement — Linux without a user session", () => {
 
   it("warns about the missing binary when systemd-run is not on PATH", () => {
     expect(plan(LINUX_WITHOUT_SYSTEMD).warning).toMatch(/systemd-run is not on PATH/);
+  });
+
+  it("degrades loudly when /bin/sh is absent and cannot cap core dumps", () => {
+    const placement = plan(LINUX_WITHOUT_SHELL);
+
+    expect(placement.command).toBe("/usr/bin/node");
+    expect(placement.args).toEqual(["worker.js", "--issue", "2774"]);
+    expect(placement.warning).toMatch(/core dumps are not capped/);
+    expect(placement.warning).toMatch(/no POSIX shell/);
   });
 });
 

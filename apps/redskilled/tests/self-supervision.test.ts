@@ -172,6 +172,7 @@ describe("the user unit that supervises the daemon", () => {
     }
     // The whole reason the unit exists.
     expect(plan.text).toContain("Restart=always");
+    expect(plan.text).toContain("LimitCORE=0");
     expect(plan.text).toContain("StartLimitIntervalSec=60");
     expect(plan.text).toContain("StartLimitBurst=5");
     expect(plan.text).toContain(`Environment="${REDSKILLED_SUPERVISED_ENV}=1"`);

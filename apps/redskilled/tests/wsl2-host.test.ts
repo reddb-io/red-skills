@@ -153,9 +153,10 @@ describe("WSL2 — the probes a host without systemd answers", () => {
     // Worker would inherit, and the session is proven by its private socket.
     expect(probes.systemdRun).toBeNull();
     expect(probes.userSession).toBe(false);
-    // The other two backends belong to other platforms, and each says which.
+    // Job Objects belong to another platform. The POSIX shell is still reachable
+    // here because an unisolated Linux launch uses it to disable core dumps.
     expect(probes.jobObjects.available).toBe(false);
-    expect(probes.posix.available).toBe(false);
+    expect(probes.posix).toMatchObject({ available: true, shell: "/bin/sh" });
   });
 
   it("still finds no session when XDG_RUNTIME_DIR names a directory with no systemd socket in it", async () => {
@@ -171,7 +172,7 @@ describe("WSL2 — the probes a host without systemd answers", () => {
 describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
   const WSL2_PROBES = detectWorkerPlacementProbes(WSL2_ENV, "linux");
 
-  it("plans an unwrapped launch and names systemd-run as what it could not reach", () => {
+  it("wraps the unisolated launch to disable core dumps and names the isolation it lost", () => {
     const plan = planWorkerPlacement({
       workerId: "wWSL2",
       projectLabel: "acme/widgets",
@@ -184,9 +185,14 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
 
     expect(plan.backend).toBe("none");
     expect(plan.isolated).toBe(false);
-    // The argv is the caller's own, untouched — there is no launcher to wrap it in.
-    expect(plan.command).toBe("/usr/bin/node");
-    expect(plan.args).toEqual(["worker.js"]);
+    expect(plan.command).toBe("/bin/sh");
+    expect(plan.args).toEqual([
+      "-c",
+      'ulimit -c 0\nexec "$@"',
+      "--",
+      "/usr/bin/node",
+      "worker.js",
+    ]);
     expect(plan.cwd).toBe("/home/wsluser/acme");
     expect(plan.unit).toBeUndefined();
     expect(plan.warning).toMatch(/systemd-run is not on PATH/);
@@ -209,7 +215,7 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
         command: process.execPath,
         args: [
           "-e",
-          "require('node:fs').writeFileSync('proof.json', JSON.stringify({ cwd: process.cwd(), worker_id: process.env.RED_WORKER_ID, born_at: process.env.RED_WORKER_BORN_AT })); setTimeout(() => {}, 250);",
+          "const { execFileSync } = require('node:child_process'); require('node:fs').writeFileSync('proof.json', JSON.stringify({ cwd: process.cwd(), worker_id: process.env.RED_WORKER_ID, born_at: process.env.RED_WORKER_BORN_AT, core_limit: execFileSync('/bin/sh', ['-c', 'ulimit -c'], { encoding: 'utf8' }).trim() })); setTimeout(() => {}, 250);",
         ],
         budget: { memory_max: "4G" },
       },
@@ -234,6 +240,7 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
           cwd: workspace,
           worker_id: launched.worker.worker_id,
           born_at: launched.worker.started_at,
+          core_limit: "0",
         });
         return;
       } catch {

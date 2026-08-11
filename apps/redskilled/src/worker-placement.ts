@@ -59,17 +59,16 @@ export interface WorkerPlacementProbes {
    */
   readonly jobObjects: RedskilledJobObjectReach;
   /**
-   * Whether POSIX rlimits and priority are reachable here, and when not, why.
+   * Whether the POSIX shell launch boundary is reachable here, and when not, why.
    *
-   * The macOS arm of the same shape `jobObjects` has, for the same reason: this
-   * backend is the one that adds real teeth without adding a memory ceiling, so
-   * a host that cannot even reach it must degrade with a sentence rather than a
-   * flag.
+   * macOS uses it for rlimits and priority; unisolated Linux uses the same argv
+   * boundary to disable core dumps. A host that cannot reach it must degrade
+   * with a sentence rather than a flag.
    */
   readonly posix: RedskilledPosixReach;
 }
 
-/** The POSIX shell a macOS launch wraps itself in. Present on every Unix host. */
+/** The POSIX shell a launch wraps itself in when the host actually has it. */
 export const POSIX_SHELL_PATH = "/bin/sh";
 
 /**
@@ -193,9 +192,7 @@ export function detectWorkerPlacementProbes(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): WorkerPlacementProbes {
-  const noPosix = posixLimitsUnavailable(
-    `POSIX rlimit and priority placement is the macOS backend (platform=${platform})`,
-  );
+  const noPosix = posixLimitsUnavailable(`POSIX shell placement is unavailable on platform=${platform}`);
   if (platform === "win32") {
     return {
       platform,
@@ -221,7 +218,7 @@ export function detectWorkerPlacementProbes(
     systemdRun: which("systemd-run", env),
     userSession,
     jobObjects: noJobObjects,
-    posix: noPosix,
+    posix: detectPosixReach(env),
   };
 }
 
@@ -321,8 +318,9 @@ export interface PlanWorkerPlacementOptions {
  *
  * When the host affords it, the Worker runs under a transient
  * `<prefix>-<project>-<worker>.service` carrying the budget as unit properties.
- * Otherwise the original argv is returned unchanged WITH a warning — the launch
- * still happens, but a downgrade is never silent.
+ * An unisolated Linux launch still crosses the POSIX shell boundary to disable
+ * core dumps; without that shell the original argv is returned WITH a warning.
+ * The launch still happens, but a downgrade is never silent.
  */
 export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPlacementPlan {
   const args = [...(opts.args ?? [])];
@@ -341,27 +339,36 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   const declaredBudget = budget.memory_high != null || budget.memory_max != null || budget.cpu_weight != null;
   const target = opts.target ?? { isolation: "transient-unit" as const };
 
-  const unisolated = (warning: string): WorkerPlacementPlan => ({
-    isolated: false,
-    backend: "none",
-    command: opts.command,
-    args,
-    cwd: opts.workspacePath,
-    warning,
-    budget,
-    ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
-    // The Worker still learns its ceiling here, and learns WHY it has no scope:
-    // an unscoped death that named neither would be the silent degradation this
-    // whole module refuses.
-    environment: workerPlacementEnvironment(opts, {
-      scope: null,
-      memory_ceiling: ceilingValue,
-      scope_degradation: warning,
-    }),
-    ...(declaredBudget
-      ? { budgetWarning: "a budget was declared but this placement cannot enforce it: the daemon's RSS sampling is the only remaining floor" }
-      : {}),
-  });
+  const unisolated = (isolationWarning: string): WorkerPlacementPlan => {
+    const reach = opts.probes.posix;
+    const coreLimited = opts.probes.platform === "linux" && reach.available;
+    const warning = opts.probes.platform === "linux" && !reach.available
+      ? `${isolationWarning}; core dumps are not capped because ${reach.reason}`
+      : isolationWarning;
+    return {
+      isolated: false,
+      backend: "none",
+      command: coreLimited ? reach.shell : opts.command,
+      args: coreLimited
+        ? posixLimitsShellArgv({ nice: null, command: opts.command, args })
+        : args,
+      cwd: opts.workspacePath,
+      warning,
+      budget,
+      ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
+      // The Worker still learns its ceiling here, and learns WHY it has no scope:
+      // an unscoped death that named neither would be the silent degradation this
+      // whole module refuses.
+      environment: workerPlacementEnvironment(opts, {
+        scope: null,
+        memory_ceiling: ceilingValue,
+        scope_degradation: warning,
+      }),
+      ...(declaredBudget
+        ? { budgetWarning: "a budget was declared but this placement cannot enforce it: the daemon's RSS sampling is the only remaining floor" }
+        : {}),
+    };
+  };
 
   if (target.isolation === "inherit") {
     return unisolated("placement target is `inherit`: the Worker is charged to the daemon's own resource group, so a memory-pressure kill can land on the daemon and every Worker it holds");
@@ -394,6 +401,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     "--wait",
     `--unit=${unit}`,
     `--working-directory=${opts.workspacePath}`,
+    "--property=LimitCORE=0",
   ];
   // `--pipe` connects the unit's stdio to this process's, which is what makes an
   // inherited log fd reach the Worker at all. Without it a transient unit writes
