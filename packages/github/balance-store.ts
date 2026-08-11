@@ -66,8 +66,9 @@ function isGithubBalance(value: unknown): value is GithubBalance {
   if (typeof value.asked_at !== "string" || !Number.isFinite(Date.parse(value.asked_at))) return false;
   if (!Number.isSafeInteger(value.request_count) || (value.request_count as number) < 0) return false;
   if (!record(value.pools) || !Array.isArray(value.unreported_pools) || typeof value.detail !== "string") return false;
+  const pools = value.pools;
   return GITHUB_POOLS.every((pool) => {
-    const candidate = value.pools![pool];
+    const candidate = pools[pool];
     return candidate === null || isPool(candidate, pool);
   }) && value.unreported_pools.every((pool) => GITHUB_POOLS.includes(pool as GithubRateBudget));
 }
