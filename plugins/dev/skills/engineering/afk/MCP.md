@@ -194,19 +194,23 @@ cached, the next round retries it, and the round consumes no Re-seed budget.
 `1/1 100%` with no attempt. Release it through the tool, never by flipping
 labels by hand.
 
-### Merge driver — armed PRs land without native auto-merge
+### Merge driver — explicit recovery custody
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `merge_arm` | mutating | Hand one open PR to the project merge driver — it owns the PR to a terminal state. |
-| `merge_status` | read | The driver's durable per-PR records: armed set, attempts, terminal classifications. |
+| `merge_arm` | mutating | Hand one open PR to a live `merge-driver` process; refuses when that process is missing so custody cannot become orphaned. |
+| `merge_status` | read | Whether the `merge-driver` process is `ticking` or `missing`, plus durable per-PR records whose `actionability` distinguishes armed records as `driver-ticking` or `orphaned`. |
 | `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
 
-The driver (#2512) runs in the project MCP resident on a fixed cadence: BEHIND →
+When the recovery driver (#2512) is running, its fixed cadence handles BEHIND →
 update-branch, green at head → merge with the merge-commit strategy (never an
-admin override), transient faults → bounded retries, DIRTY or failing checks →
-terminal `needs-medic`/`needs-human` classification instead of a loop. Its
-state survives resident restarts in `.red/state/castle/merge-driver.toon`.
+admin override), transient faults → bounded retries, and DIRTY or failing
+checks → terminal `needs-medic`/`needs-human` classification instead of a loop.
+Its state survives process restarts in `.red/state/castle/merge-driver.toon`.
+The ordinary MCP session no longer starts this loop (ADR 0136): native intent
+and the Queue Custodian own the normal landing tail. Therefore `merge_arm`
+fails loudly unless a live recovery process owns the `merge-driver` singleton;
+`merge_status` marks any older armed record `orphaned` when that owner is gone.
 
 ### Worktree — the disposable pool
 
