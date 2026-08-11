@@ -550,6 +550,7 @@ function hasNextPage(headers: GithubResponseHeaders): boolean {
 
 /** Primary/secondary quota refusal, distinct from 304 and transport failure. */
 export function isGithubRateLimitError(error: unknown): boolean {
+  if (error instanceof GithubPoolUnavailableError) return true;
   const status = httpStatus(error);
   const headers = errorHeaders(error);
   return status === 429 ||
