@@ -1,4 +1,5 @@
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 
 export function encodeDevSnapshotToon(value: JsonValue): string {
   return encode(value, { keyedMapCollapse: true });
