@@ -143,7 +143,7 @@ export interface RedskilledDaemonOptions {
   readonly orphanReaperMs?: number;
   /** Operator kill-switch posture; defaults from `REDSKILLED_ORPHAN_REAPER`. */
   readonly orphanReaperMode?: RedskilledOrphanReaperMode;
-  /** Process-table census seam; supplying it explicitly authorizes a fixture sweep. */
+  /** Process-table census seam; authority still comes only from the machine claim. */
   readonly orphanCensus?: () => readonly RedskilledProcessCensusRow[] | Promise<readonly RedskilledProcessCensusRow[]>;
   /** Crash/core dump census seam; detection only and never an unlink authority. */
   readonly orphanDumpFiles?: () => readonly string[] | Promise<readonly string[]>;
