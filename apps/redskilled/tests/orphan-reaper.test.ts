@@ -116,7 +116,7 @@ describe("the daemon orphan-reaper control", () => {
 });
 
 describe("the orphan reaper process census", () => {
-  it("reads stamp, cwd, pgid, sid and starttime for a reparented candidate", async () => {
+  it("reads stamp, identity and age using the host's clock-tick rate", async () => {
     const root = await scratch("redskilled-orphan-proc-");
     const processDir = join(root, "4242");
     const cwd = join(root, "repo", ".red", "tmp", "workers", "wLOST", "3589", "worktree");
@@ -131,10 +131,10 @@ describe("the orphan reaper process census", () => {
     );
     await symlink(cwd, join(processDir, "cwd"));
 
-    await expect(censusRedskilledProcesses({ proc_root: root })).resolves.toEqual([processRow({
+    await expect(censusRedskilledProcesses({ proc_root: root, clock_ticks_per_second: 250 })).resolves.toEqual([processRow({
       sid: 4000,
       starttime: "900000",
-      age_ms: 1_000_000,
+      age_ms: 6_400_000,
       cwd,
     })]);
   });
