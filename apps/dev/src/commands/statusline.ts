@@ -14,7 +14,7 @@
 // else `.workspace.current_dir // .cwd`, else `process.cwd()`.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, basename, dirname } from "node:path";
+import { join } from "node:path";
 // From the COMMAND module, never the CLI: cli.ts ends in a self-invocation
 // guard that is always true inside a single-file bundle, so importing it ships
 // a second argv-reading CLI inside every dev binary (#3546, canary catch).
@@ -23,16 +23,29 @@ import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
 import { readDevBundleCacheState } from "../core/bundle-version.js";
-import { type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
+import {
+  type ClaudeInput,
+  type ProjectInput,
+  type RspStatusInput,
+  type StatuslinePreset,
+} from "../core/statusline.js";
+import {
+  composeStatuslineLines,
+  renderStatuslineBedrock,
+  type StatuslineBedrockInput,
+} from "../core/statusline-bedrock.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { loadConfig, getConfig } from "../core/config.js";
-import { git as gitExec } from "../runtime/exec.js";
 import { resolveRspConfig } from "../../../rsp/src/config.js";
 import { resolveResidentPaths } from "../../../rsp/src/resident-client.js";
 import {
+  collectStatuslineLocalGit,
   inferGitHubRepoSlug,
   refreshStatuslineCountCache,
   refreshStatuslineRepoCache,
+  resolveRepoBasename,
+  type StatuslineLocalGit,
+  type StatuslineLocalGitDeps,
 } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
 
@@ -262,20 +275,58 @@ export async function resolveProject(root: string): Promise<ProjectInput> {
   return withPointer;
 }
 
-async function resolveRepoBasename(root: string): Promise<string> {
-  const fallback = basename(root);
-  const commonDir = await gitExec(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root });
-  if (commonDir.code !== 0) return fallback;
-  const gitCommonDir = commonDir.stdout.trim();
-  if (!gitCommonDir) return fallback;
-  return basename(dirname(gitCommonDir)) || fallback;
+/** The block-2/3 render inputs read straight off the Claude Code stdin payload.
+ * They are the freshest facts on the line — this render tick's, with no cache
+ * between them and the operator — and the reason the bedrock is stdin-owned. */
+function claudeInputFrom(payload: ClaudePayload): ClaudeInput {
+  return {
+    model: payload.model?.display_name,
+    effort: payload.effort?.level,
+    contextTokens: payload.context_window?.total_input_tokens,
+    contextPercent: payload.context_window?.used_percentage,
+    usage5h: payload.rate_limits?.five_hour?.used_percentage,
+    usage7d: payload.rate_limits?.seven_day?.used_percentage,
+  };
 }
 
 /**
- * `statusline "<project-root>"` — resolve the root and opt-out, then print the
- * shared redskilled render. Emits nothing (and exits 0) only when the project
- * opted out. An unreachable daemon emits its explicit absence line and still
- * exits 0; it never falls back to project collectors or the tracker.
+ * Resolve the bedrock's inputs: the stdin payload (free), the running bundle
+ * version and its cache state (file reads), and the local git facts (one micro-
+ * TTL'd read, {@link collectStatuslineLocalGit}). Nothing here touches the
+ * network or the daemon — that is the whole membership rule of the segment.
+ */
+export async function resolveStatuslineBedrock(
+  root: string,
+  payload: ClaudePayload,
+  gitDeps: StatuslineLocalGitDeps = {},
+): Promise<StatuslineBedrockInput> {
+  const version = readBuildInfo("dev").version;
+  const bundleCache = readDevBundleCacheState(version);
+  const git: StatuslineLocalGit = await collectStatuslineLocalGit(root, gitDeps);
+  const project: ProjectInput = { basename: git.basename, version };
+  if (git.branch) project.branch = git.branch;
+  else if (git.detachedSha) project.detachedSha = git.detachedSha;
+  if (bundleCache.laneNewestVersion !== undefined) {
+    project.latestCachedVersion = bundleCache.laneNewestVersion;
+  }
+  if (bundleCache.pointerVersion) project.pointerVersion = bundleCache.pointerVersion;
+  return {
+    project,
+    claude: claudeInputFrom(payload),
+    localDiff: { localAdded: git.localAdded, localRemoved: git.localRemoved },
+  };
+}
+
+/**
+ * `statusline "<project-root>"` — resolve the root and opt-out, render the
+ * bedrock, then append the shared redskilled render as the tail. Emits nothing
+ * (and exits 0) only when the project opted out.
+ *
+ * The bedrock renders FIRST and unconditionally (ADR 0141 §1): an unreachable
+ * daemon costs the operator the tail, never the model, context, subscription
+ * windows, branch, local diff, or bundle version their own machine already
+ * holds. The tail is still the daemon's stated absence, never a fallback to
+ * project collectors or the tracker (#3546).
  */
 export async function statuslineCommand(
   args: string[],
@@ -306,12 +357,20 @@ export async function statuslineCommand(
   // the document's most useful information, so the compatibility spelling is a
   // no-op. All other flags are taste owned by the redskilled renderer.
   const daemonArgs = args.filter((arg) => arg !== rootArg && arg !== "--no-workers");
-  return runRedskilledStatusline(daemonArgs, {
+  const bedrock = renderStatuslineBedrock(await resolveStatuslineBedrock(root, payload));
+  // The tail is buffered rather than streamed so the bedrock can LEAD the header
+  // line the daemon opens with — one line, two segments, in that order.
+  const tail: string[] = [];
+  const code = await runRedskilledStatusline(daemonArgs, {
     cwd: root,
     write: (line) => {
-      stdout.write(line);
+      tail.push(line);
     },
   });
+  for (const line of composeStatuslineLines(bedrock, tail.join("").split("\n"))) {
+    stdout.write(`${line}\n`);
+  }
+  return code;
 }
 
 export async function statuslineRefreshCountsCommand(args: string[], cwd = process.cwd()): Promise<number> {
