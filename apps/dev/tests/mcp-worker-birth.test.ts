@@ -42,7 +42,7 @@ describe("the dispatch launcher's birth attribution", () => {
       pid: 36_670,
       fork_sha: "fork-3667",
       log: "/tmp/workers/w3667/worker.log.toonl",
-      warnings: [],
+      warnings: ["birth landed after the reply timed out; use these handles to watch it"],
       admission: "admitted-interactive-reservation",
     });
     expect(drainEvents).toHaveBeenCalledTimes(2);
