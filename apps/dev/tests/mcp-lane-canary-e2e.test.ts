@@ -23,6 +23,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { decode } from "@reddb-io/toon";
+import { readRedskilledHostState } from "@reddb-io/redskilled/client";
+import { readRedskilledEvents } from "@reddb-io/redskilled/event-lane";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import { runMcpLaneCanary } from "../src/core/mcp-lane-canary.js";
 import {
@@ -155,6 +157,30 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () =
       expect(result.summary).toContain("redskilled");
       expect(socketPath).toBeTruthy();
       expect(result.summary).toContain(socketPath!);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("MCP lane canary — failed version takeover", () => {
+  it(
+    "keeps the incumbent live when a deliberately broken successor exits at boot",
+    async () => {
+      const sandbox = await createCanarySandbox("healthy", "broken-successor");
+      const paths = resolveRedskilledPaths({ env: sandbox.env });
+      const deadline = Date.now() + 30_000;
+      let failure = false;
+      while (Date.now() < deadline) {
+        failure = (await readRedskilledEvents(paths.eventLanePath)).some(
+          (event) => event.event === "daemon-takeover-failed",
+        );
+        if (failure) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      expect(failure).toBe(true);
+      const incumbent = await readRedskilledHostState(paths, { readyTimeoutMs: 5_000 });
+      expect(incumbent.daemon_version).toBe("1.0.0");
     },
     TIMEOUT,
   );
