@@ -14,12 +14,11 @@ import {
 } from "@reddb-io/shared/lane-retention.js";
 import {
   decode,
-  encode,
-  encodeLines,
+  encodeToonlLines,
   parseRecords,
   type JsonValue,
-  type ToonlRecord,
 } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import {
   CASTLE_HISTORY_SCHEMA_ID,
   CASTLE_LANE_SCHEMA_ID,
@@ -31,6 +30,8 @@ import {
   type CastleStateSnapshot,
 } from "./contracts/index.js";
 import type { EnginePaths } from "./paths.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 export class CastleLaneValidationError extends Error {
   constructor(message: string) {
@@ -50,7 +51,7 @@ export type CastleLaneName = keyof typeof CASTLE_LANE_FILENAMES;
 
 function encodedRows(rows: readonly ToonlRecord[]): string {
   if (rows.length === 0) return "";
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return rows.map((row) => writer.push(row)).join("");
 }
 
@@ -201,7 +202,7 @@ async function appendToonlRecord<T extends Record<string, unknown>>(
   retentionPolicy?: LaneRetentionPolicy,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const encoded = encodeLines().push(toToonlRecord(record));
+  const encoded = encodeToonlLines().push(toToonlRecord(record));
   if (
     retentionPolicy?.maxBytes !== undefined &&
     await laneOverCeiling(path, Buffer.byteLength(encoded), retentionPolicy)
