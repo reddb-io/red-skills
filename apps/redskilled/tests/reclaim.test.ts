@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { encode } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import { runReclaim } from "../src/cli.js";
 import {
   reclaimRedskilledRuntimeDirs,
