@@ -2167,9 +2167,16 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
 
     // 3. Merge: branch protection is honored rather than bypassed (#1103). With
     // a native merge queue, `--auto` enqueues and the forge serializes the tail.
-    const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
-    if (mergeQueue) mergeArgs.push("--auto");
-    if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
+    const mergeArgs = [
+      "gh",
+      "api",
+      "-X",
+      "PUT",
+      `repos/${repo}/pulls/${prNumber}/merge`,
+      "-f",
+      "merge_method=merge",
+    ];
+    if (mergeTitle) mergeArgs.push("-f", `commit_title=${scrubOutbound(mergeTitle)}`);
     if (mergeQueue && input.queueHandoff) {
       const custody = await input.queueHandoff(prNumber, async () => {
         const rejected = await mergeWithStaleBranchRecovery(exec, {
@@ -2360,18 +2367,18 @@ async function ensurePr(
   }
   const create = await exec([
     "gh",
-    "-R",
-    repo,
-    "pr",
-    "create",
-    "--base",
-    target,
-    "--head",
-    branch,
-    "--title",
-    scrubOutbound(prTitle),
-    "--body",
-    scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
+    "api",
+    "-X",
+    "POST",
+    `repos/${repo}/pulls`,
+    "-f",
+    `base=${target}`,
+    "-f",
+    `head=${branch}`,
+    "-f",
+    `title=${scrubOutbound(prTitle)}`,
+    "-f",
+    `body=${scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`)}`,
   ]);
   if (create.code !== 0) return undefined;
   return await listOpenPr(exec, repo, branch, target);
@@ -2409,19 +2416,20 @@ export async function openDraftPr(exec: Exec, input: OpenDraftPrInput): Promise<
   if (existing !== undefined) return existing;
   const create = await exec([
     "gh",
-    "-R",
-    repo,
-    "pr",
-    "create",
-    "--draft",
-    "--base",
-    target,
-    "--head",
-    branch,
-    "--title",
-    scrubOutbound(`merge: #${n} ${title}`),
-    "--body",
-    scrubOutbound(body),
+    "api",
+    "-X",
+    "POST",
+    `repos/${repo}/pulls`,
+    "-F",
+    "draft=true",
+    "-f",
+    `base=${target}`,
+    "-f",
+    `head=${branch}`,
+    "-f",
+    `title=${scrubOutbound(`merge: #${n} ${title}`)}`,
+    "-f",
+    `body=${scrubOutbound(body)}`,
   ]);
   if (create.code !== 0) return undefined;
   return await listOpenPr(exec, repo, branch, target);
