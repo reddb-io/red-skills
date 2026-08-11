@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { mergeableState } from "../src/wait/github.js";
 import { verdictForJob } from "../src/wait/probes.js";
+
+describe("GitHub mergeability vocabulary", () => {
+  it("normalizes REST dirty to the conflict verdict vocabulary", () => {
+    expect(mergeableState({ mergeable_state: "dirty", mergeable: false })).toBe("CONFLICTING");
+    expect(mergeableState({ mergeable_state: "clean", mergeable: true })).toBe("MERGEABLE");
+  });
+});
 
 describe("GitHub Actions job verdicts", () => {
   it("keeps an in-progress job non-terminal", () => {

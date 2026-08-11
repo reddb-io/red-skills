@@ -1,7 +1,10 @@
 import { join } from "node:path";
 import {
+  createGithubBalanceTransport,
   createGithubAttributionLedger,
   createGithubClient,
+  fetchGithubBalance,
+  githubBalanceCadenceMs,
   isGithubRateLimitError,
   routeGithubArgs,
   type GithubBalance,
@@ -40,6 +43,31 @@ export interface CreateRspResidentGithubClientOptions {
   readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
   readonly retryCount?: number;
   readonly throttle?: boolean;
+}
+
+/** One adaptive balance reader shared by resident and long-lived wait clients. */
+export function createCachedGithubBalanceReader(
+  token: string,
+  origin?: string,
+): () => Promise<GithubBalance | null> {
+  const transport = createGithubBalanceTransport({ token, ...(origin ? { origin } : {}) });
+  let held: GithubBalance | null = null;
+  let freshUntil = 0;
+  let inFlight: Promise<GithubBalance | null> | null = null;
+  return async (): Promise<GithubBalance | null> => {
+    const now = Date.now();
+    if (now < freshUntil) return held;
+    if (inFlight !== null) return await inFlight;
+    const askedAt = new Date(now).toISOString();
+    inFlight = fetchGithubBalance({ transport, now: askedAt }).then((answer) => {
+      held = answer;
+      freshUntil = Date.now() + githubBalanceCadenceMs(answer, { now: new Date().toISOString() });
+      return held;
+    }).finally(() => {
+      inFlight = null;
+    });
+    return await inFlight;
+  };
 }
 
 /**
