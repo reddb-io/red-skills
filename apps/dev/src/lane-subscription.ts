@@ -4,7 +4,8 @@ import {
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { encode, type JsonValue } from "@reddb-io/toon";
+import type { JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import type {
   CastleLaneRecord,
   LaneEvent,
