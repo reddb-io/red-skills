@@ -118,6 +118,9 @@ export type RedskilledRssReading = Readonly<Record<string, number>>;
  */
 export type RedskilledCpuReading = Readonly<Record<string, number>>;
 
+/** Number of processes visited in each unisolated Worker's tree. */
+export type RedskilledProcessReading = Readonly<Record<string, number>>;
+
 /**
  * One tick's reading of the whole Worker set — both measurements, one walk.
  *
@@ -128,6 +131,8 @@ export type RedskilledCpuReading = Readonly<Record<string, number>>;
 export interface RedskilledTreeReading {
   readonly rss: RedskilledRssReading;
   readonly cpu_seconds: RedskilledCpuReading;
+  /** Optional for injected legacy samplers; the host sampler always states it. */
+  readonly processes?: RedskilledProcessReading;
   /**
    * Which instrument answered for each Worker, keyed by `worker_id`.
    *
@@ -142,6 +147,11 @@ export interface RedskilledTreeReading {
    * sampleWorkerTrees} always states it.
    */
   readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
+}
+
+/** The complete reading returned by the daemon's host sampler. */
+export interface RedskilledSampledTreeReading extends RedskilledTreeReading {
+  readonly processes: RedskilledProcessReading;
 }
 
 /** Measures the whole Worker set in one call. Injected, so a test needs no process. */
@@ -301,13 +311,14 @@ const PAGE_SIZE_BYTES = 4096;
 export function sampleWorkerTrees(
   workers: readonly RedskilledWorkerView[],
   options: SampleWorkerTreesOptions = {},
-): RedskilledTreeReading {
+): RedskilledSampledTreeReading {
   const platform = options.platform ?? process.platform;
-  const empty: RedskilledTreeReading = { rss: {}, cpu_seconds: {}, sources: {} };
+  const empty: RedskilledSampledTreeReading = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
   if (workers.length === 0) return empty;
 
   const rss: Record<string, number> = {};
   const cpuSeconds: Record<string, number> = {};
+  const processes: Record<string, number> = {};
   const sources: Record<string, RedskilledRssSource> = {};
 
   // The kernel's own charge first, for every Worker the daemon put in a unit.
@@ -323,10 +334,10 @@ export function sampleWorkerTrees(
   // The walk answers only for whoever the kernel did not: an unisolated Worker, a
   // host with no cgroup filesystem, or a unit whose directory is already gone.
   const remaining = workers.filter((worker) => sources[worker.worker_id] == null);
-  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, sources };
+  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources };
 
   const table = readHostProcessTable(platform, options);
-  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, sources };
+  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources };
 
   const children = new Map<number, number[]>();
   for (const entry of table.values()) {
@@ -339,6 +350,7 @@ export function sampleWorkerTrees(
     if (!table.has(worker.pid)) continue;
     let totalRss = 0;
     let totalCpu = 0;
+    let processCount = 0;
     const queue = [worker.pid];
     const seen = new Set<number>();
     while (queue.length > 0) {
@@ -347,15 +359,17 @@ export function sampleWorkerTrees(
       seen.add(pid);
       const entry = table.get(pid);
       if (!entry) continue;
+      processCount += 1;
       totalRss += entry.rssBytes;
       totalCpu += entry.cpuSeconds;
       for (const child of children.get(pid) ?? []) queue.push(child);
     }
     rss[worker.worker_id] = totalRss;
     cpuSeconds[worker.worker_id] = totalCpu;
+    processes[worker.worker_id] = processCount;
     sources[worker.worker_id] = "process-tree";
   }
-  return { rss, cpu_seconds: cpuSeconds, sources };
+  return { rss, cpu_seconds: cpuSeconds, processes, sources };
 }
 
 export interface SampleWorkerTreesOptions {
