@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decode, parseRecords } from "@reddb-io/toon";
@@ -98,6 +98,29 @@ describe("castle lane writers", () => {
         payload: { runner: "codex" },
       },
     ]);
+  });
+
+  it("caps liveness on append with a tiny ceiling and keeps the newest beat", async () => {
+    const paths = createEnginePaths(redRoot);
+    const maxBytes = 420;
+    const writers = createCastleLaneWriters(paths, {
+      clock: () => "2026-07-16T20:00:00.000Z",
+      livenessMaxBytes: maxBytes,
+    });
+    const writer = writers.liveness("wAB12");
+
+    for (let beat = 1; beat <= 12; beat += 1) {
+      await writer.append({
+        kind: "worker.heartbeat",
+        worker_id: "wAB12",
+        payload: { signal: `beat-${beat}` },
+      });
+    }
+
+    expect((await stat(writer.path)).size).toBeLessThanOrEqual(maxBytes);
+    const records = await readCastleLaneRecords(writer.path);
+    expect(records.length).toBeLessThan(12);
+    expect(records.at(-1)?.payload).toEqual({ signal: "beat-12" });
   });
 
   it("writes worker and supervisor state snapshots as TOON state.toon documents", async () => {
