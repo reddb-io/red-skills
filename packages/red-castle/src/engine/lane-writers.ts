@@ -13,12 +13,11 @@ import {
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
 import {
-  decode,
   encodeToonlLines,
   parseRecords,
   type JsonValue,
 } from "@reddb-io/toon";
-import { serialize as encode } from "@reddb-io/toon/legacy";
+import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
 import {
   CASTLE_HISTORY_SCHEMA_ID,
   CASTLE_LANE_SCHEMA_ID,
