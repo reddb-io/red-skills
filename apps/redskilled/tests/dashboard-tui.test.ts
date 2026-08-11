@@ -120,7 +120,7 @@ describe("the dashboard TUI frame", () => {
     expectBorderlessTable(
       frame,
       120,
-      /Worker +Issue +Runner +Phase +Progress +Elapsed +ETA +Activity/u,
+      /Worker +Issue +Runner +Phase +Progress +Clocks +ETA +Activity/u,
       /A +B +C +D +E +F +G +H/u,
     );
   });
