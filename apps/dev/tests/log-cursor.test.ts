@@ -8,6 +8,7 @@ import {
   readLogLineCursors,
 } from "../src/runtime/log-cursor.js";
 import { appendRecordToonlTaggedRow } from "../src/core/jsonl-log.js";
+import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/red-castle/engine";
 
 describe("monitor log cursor", () => {
   it("counts only appended log lines after the first read", async () => {
@@ -72,5 +73,35 @@ describe("monitor log cursor", () => {
     });
     const second = await collectLogLineCounts(cache, [log]);
     expect(second.get(log)).toEqual({ lines: 2, newLines: 1 });
+  });
+
+  it("rescans a writer-capped liveness lane after its cursor is invalidated", async () => {
+    const root = await mkdtemp(join(tmpdir(), "afk-log-cursor-liveness-"));
+    const writers = createCastleLaneWriters(createEnginePaths(join(root, ".red")), {
+      clock: () => "2026-07-15T12:00:00.000Z",
+      livenessMaxBytes: 640,
+    });
+    const writer = writers.liveness("wAB12");
+    for (let beat = 1; beat <= 5; beat += 1) {
+      await writer.append({
+        kind: "worker.heartbeat",
+        worker_id: "wAB12",
+        payload: { signal: `before-${beat}` },
+      });
+    }
+    const first = await countLogLinesSinceCursor(writer.path, undefined);
+
+    for (let beat = 1; beat <= 5; beat += 1) {
+      await writer.append({
+        kind: "worker.heartbeat",
+        worker_id: "wAB12",
+        payload: { signal: `after-${beat}` },
+      });
+    }
+    const second = await countLogLinesSinceCursor(writer.path, first?.cursor);
+
+    expect(second).not.toBeNull();
+    expect(second!.count.newLines).toBeGreaterThan(0);
+    expect(second!.cursor.size).toBeLessThanOrEqual(640);
   });
 });
