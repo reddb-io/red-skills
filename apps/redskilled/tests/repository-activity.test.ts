@@ -8,6 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
+import {
+  readRedskilledStatuslinePayload,
+  readRedskilledStatuslineString,
+} from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledStatuslinePayload } from "../src/statusline-payload.js";
@@ -373,6 +377,60 @@ async function sessionPaths(): Promise<RedskilledPaths> {
 }
 
 describe("the daemon serves the counts it polled", () => {
+  it("serves repeated socket and consumer reads from cache while only its poll tick reaches GitHub", async () => {
+    const projects = [project(0)];
+    const requests: string[] = [];
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      idleMs: 60_000,
+      sampleMs: 0,
+      clock: () => NOW,
+      repositoryActivity: {
+        projects,
+        hostTokenRef: "host",
+        // The test drives the daemon's own cycle explicitly. A timer firing here
+        // would be another poll tick, not a request path, and would blur the seam.
+        intervalMs: 0,
+        transport: async (query) => {
+          requests.push(query);
+          return answer(projects, [[4, 9, 2]]);
+        },
+      },
+    });
+    running.push(daemon);
+
+    for (let index = 0; index < 5; index += 1) {
+      const payload = await readRedskilledStatuslinePayload(paths, {
+        sessionProject: "acme/p0",
+      });
+      const rendered = await readRedskilledStatuslineString(paths, undefined, {
+        sessionProject: "acme/p0",
+      });
+      expect(payload.repository_activity.projects).toEqual([]);
+      expect(rendered.generated_at).toBe(NOW);
+    }
+
+    // A request-driven fetch would make this non-zero. The explicit cycle below
+    // is the positive control: the same recorder sees exactly the daemon's poll.
+    expect(requests).toHaveLength(0);
+
+    await daemon.pollRepositoryActivity();
+
+    expect(requests).toHaveLength(1);
+    const cached = await readRedskilledStatuslinePayload(paths, {
+      sessionProject: "acme/p0",
+    });
+    expect(requests).toHaveLength(1);
+    expect(cached.repository_activity.projects[0]).toMatchObject({
+      project_label: "acme/p0",
+      fetched_at: NOW,
+      age_ms: 0,
+      counts: { open_pull_requests: 4, open_issues: 9 },
+    });
+  });
+
   it("carries every registered project's counts, dated, on the statusline payload", async () => {
     const projects = [project(0), project(1)];
     let calls = 0;
