@@ -2,7 +2,6 @@
 import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { encode, type JsonValue } from "@reddb-io/toon";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +52,7 @@ import {
   newestInstalledPluginVersion,
   refreshPublishedBundleVersion,
 } from "./core/published-version.js";
+import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
 const REGISTRATION_DELIVERY_RENEW_MS = 150_000;
@@ -86,12 +86,6 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
   return { stop: () => clearInterval(timer) };
 }
 
-function toon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
-    keyedMapCollapse: true,
-  });
-}
-
 export function createRedskilledMcpServer(root = process.cwd()): McpServer {
   const server = new McpServer({ name: "redskilled", version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
@@ -115,7 +109,10 @@ export function createRedskilledMcpServer(root = process.cwd()): McpServer {
       },
       async (input) => ({
         content: [
-          { type: "text" as const, text: toon(await tool.invoke(input)) },
+          {
+            type: "text" as const,
+            text: encodeRedskilledMcpToon(await tool.invoke(input)),
+          },
         ],
       }),
     );
