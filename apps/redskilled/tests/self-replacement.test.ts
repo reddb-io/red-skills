@@ -401,6 +401,7 @@ describe("a daemon that has observed a newer published version", () => {
       idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
+      supervised: false,
       publishedVersion: async () => PUBLISHED_VERSION,
       eventLane: lane,
       replacementIO: {
