@@ -28,11 +28,11 @@
  * PURE.
  */
 
-import {
-  REDSKILLED_ACTIVITY_STALENESS_MS,
-  type RedskilledActivityOutcome,
-  type RedskilledProjectActivity,
-  type RedskilledRepositoryActivity,
+import { REDSKILLED_ACTIVITY_STALENESS_MS } from "./activity-report.js";
+import type {
+  RedskilledActivityOutcome,
+  RedskilledProjectActivity,
+  RedskilledRepositoryActivity,
 } from "./repository-activity.js";
 
 /**
