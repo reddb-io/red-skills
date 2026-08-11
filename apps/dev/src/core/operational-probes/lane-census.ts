@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import {
   LANE_RETENTION_REGISTRY,
+  LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES,
   laneTempOwnerPid,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
@@ -49,10 +50,18 @@ export interface LaneCensusTemp {
   readonly pidAlive: boolean;
 }
 
+export interface LaneCensusLiveLog {
+  readonly path: string;
+  readonly bytes: number;
+  readonly warnBytes: number;
+}
+
 export interface LaneCensusProbeInput {
   readonly lanes: readonly LaneCensusLane[];
   readonly unregisteredToonl: readonly string[];
   readonly temps: readonly LaneCensusTemp[];
+  /** Live Workers' logs over the warning threshold — detection only (#3644). */
+  readonly liveLogs?: readonly LaneCensusLiveLog[];
 }
 
 export interface CollectLaneCensusOptions {
@@ -60,6 +69,8 @@ export interface CollectLaneCensusOptions {
   /** The already-resolved daemon home, injected to keep private paths out of results. */
   readonly hostRoot: string;
   readonly isPidAlive?: (pid: number) => boolean | Promise<boolean>;
+  /** Stat seam for the live-log size read; defaults to fs stat. */
+  readonly readStat?: (path: string) => Promise<{ size: number }> | { size: number };
 }
 
 interface LaneRegistration {
@@ -286,10 +297,29 @@ export async function collectLaneCensusProbeInput(
     });
   }
 
+  const readStat = options.readStat ?? stat;
+  const liveLogs: LaneCensusLiveLog[] = [];
+  for (const absolutePath of workerFiles) {
+    const segments = slash(relative(workersRoot, absolutePath)).split("/");
+    if (segments.length !== 2 || segments[1] !== "worker.log.toonl") continue;
+    const pidPath = join(workersRoot, segments[0]!, "worker.pid");
+    if (!workerFiles.includes(pidPath)) continue;
+    const pid = Number((await readFile(pidPath, "utf8").catch(() => "")).trim());
+    if (!Number.isInteger(pid) || pid <= 0 || !(await isPidAlive(pid))) continue;
+    const size = (await readStat(absolutePath)).size;
+    if (size <= LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES) continue;
+    liveLogs.push({
+      path: projectDisplay(projectRoot, absolutePath),
+      bytes: size,
+      warnBytes: LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES,
+    });
+  }
+
   return {
     lanes: (await Promise.all(registrations.map(inspectLane))).sort((a, b) => a.path.localeCompare(b.path)),
     unregisteredToonl,
     temps: temps.sort((a, b) => a.path.localeCompare(b.path)),
+    liveLogs: liveLogs.sort((a, b) => a.path.localeCompare(b.path)),
   };
 }
 
@@ -319,8 +349,13 @@ export function runLaneCensusProbe(input: LaneCensusProbeInput | undefined): Ope
 
   const over = input.lanes.filter(laneOverCeiling);
   const deadTemps = input.temps.filter((temp) => !temp.pidAlive);
-  const red = over.length > 0 || input.unregisteredToonl.length > 0 || deadTemps.length > 0;
+  const liveLogs = input.liveLogs ?? [];
+  const red = over.length > 0 || input.unregisteredToonl.length > 0 || deadTemps.length > 0
+    || liveLogs.length > 0;
   const details = input.lanes.map(laneEvidence);
+  for (const log of liveLogs) {
+    details.push(`live-log=${log.path} ${log.bytes}/${log.warnBytes} bytes [over]`);
+  }
   if (input.unregisteredToonl.length > 0) {
     details.push(`unregistered=${input.unregisteredToonl.join(",")}`);
   }

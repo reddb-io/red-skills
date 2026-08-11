@@ -29,6 +29,7 @@ const execFileAsync = promisify(execFile);
 
 export const DEFAULT_LANE_RETENTION_TARGET_RATIO = 0.5;
 export const LANE_RETENTION_TQ_TIMEOUT_MS = 5_000;
+export const LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES = 256 * 1024 * 1024;
 
 /** A lane declares only the ceilings meaningful to its own record stream. */
 export interface LaneRetentionPolicy {
