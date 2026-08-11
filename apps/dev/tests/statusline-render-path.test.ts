@@ -2,12 +2,21 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { directCollector, runStatusline } = vi.hoisted(() => ({
+const { directCollector, localGit, runStatusline } = vi.hoisted(() => ({
   directCollector: vi.fn(() => {
     throw new Error("the render path called a project collector");
   }),
+  // The bedrock's ONE collector: local git under its micro-TTL. Zero network,
+  // zero daemon — the membership rule of the segment (ADR 0141 §1), so it is the
+  // one reach the render path is allowed to make.
+  localGit: vi.fn(async () => ({
+    basename: "red-skills",
+    branch: "afk/3563-bedrock",
+    localAdded: 142,
+    localRemoved: 36,
+  })),
   runStatusline: vi.fn(async (
     _args: readonly string[],
     io: { readonly cwd?: string; readonly write?: (line: string) => void },
@@ -23,6 +32,8 @@ const { directCollector, runStatusline } = vi.hoisted(() => ({
 vi.mock("@reddb-io/redskilled/statusline-command", () => ({ runStatusline }));
 
 vi.mock("../src/runtime/wire.js", () => ({
+  collectStatuslineLocalGit: localGit,
+  resolveRepoBasename: directCollector,
   collectStatuslineAfk: directCollector,
   collectStatuslineDocs: directCollector,
   collectStatuslineFleet: directCollector,
@@ -36,11 +47,31 @@ vi.mock("../src/runtime/wire.js", () => ({
 }));
 
 import { statuslineCommand } from "../src/commands/statusline.js";
+import { readBuildInfo } from "@reddb-io/build-info";
+
+const PAYLOAD = {
+  model: { display_name: "Opus" },
+  effort: { level: "high" },
+  context_window: { total_input_tokens: 47_000, used_percentage: 24 },
+  rate_limits: { five_hour: { used_percentage: 23 }, seven_day: { used_percentage: 41 } },
+};
 
 const roots: string[] = [];
+const cacheDir = process.env.RED_SKILLS_CACHE_DIR;
+
+beforeEach(async () => {
+  // An empty bundle cache, so the bedrock's version label is the build stamp
+  // alone: the developer's own `~/.cache` must not decide whether the rendered
+  // line carries the newer-bundle `*`.
+  const empty = await mkdtemp(join(tmpdir(), "statusline-render-path-cache-"));
+  roots.push(empty);
+  process.env.RED_SKILLS_CACHE_DIR = empty;
+});
 
 afterEach(async () => {
   vi.clearAllMocks();
+  if (cacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
+  else process.env.RED_SKILLS_CACHE_DIR = cacheDir;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -85,6 +116,9 @@ describe("dev statusline render path", () => {
       expect.objectContaining({ cwd: root }),
     );
     expect(directCollector).not.toHaveBeenCalled();
+    // The bedrock LEADS the daemon's header line; the Worker lines follow it
+    // untouched.
+    expect(out.text().split("\n")[0]).toContain(" · acme/widgets 1w 128M v3.12.10");
     expect(out.text()).toContain("run=codex gpt-5.6 xhigh");
     expect(out.text()).toContain("iss=3546");
     expect(out.text()).toContain("loc=+12 -3  tks=45k  tls=9 rsn=2 txt=1");
@@ -108,8 +142,47 @@ describe("dev statusline render path", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(""));
 
     expect(code).toBe(0);
-    expect(out.text()).toBe("redskilled unreachable — Worker state unknown\n");
+    expect(out.text()).toContain("redskilled unreachable — Worker state unknown");
     expect(directCollector).not.toHaveBeenCalled();
     expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it("renders the bedrock COMPLETE under a daemon-absent fixture", async () => {
+    // The daemon answers nothing at all — not even an absence line. Everything
+    // the operator's own machine holds must still reach the screen: model·effort
+    // and context and the subscription windows from stdin, basename/branch/diff
+    // from local git, and the running bundle version (ADR 0141 §1).
+    runStatusline.mockImplementationOnce(async () => 0);
+    const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
+    roots.push(root);
+    const out = sink();
+
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(JSON.stringify(PAYLOAD)));
+
+    expect(code).toBe(0);
+    expect(out.text()).toBe(
+      `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
+        "5h=23% 7d=41% · loc=+142 -36\n",
+    );
+    expect(localGit).toHaveBeenCalledOnce();
+    expect(directCollector).not.toHaveBeenCalled();
+  });
+
+  it("still renders the bedrock when the daemon states its absence", async () => {
+    runStatusline.mockImplementationOnce(async (_args, io) => {
+      io.write?.("redskilled unreachable — Worker state unknown\n");
+      return 0;
+    });
+    const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
+    roots.push(root);
+    const out = sink();
+
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(JSON.stringify(PAYLOAD)));
+
+    expect(code).toBe(0);
+    expect(out.text()).toBe(
+      `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
+        "5h=23% 7d=41% · loc=+142 -36 · redskilled unreachable — Worker state unknown\n",
+    );
   });
 });

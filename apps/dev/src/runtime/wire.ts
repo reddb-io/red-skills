@@ -43,6 +43,14 @@ export {
   refreshStatuslineRepoCache,
 } from "./wire/statusline.js";
 
+export type { StatuslineLocalGit, StatuslineLocalGitDeps } from "./wire/statusline-git.js";
+export {
+  STATUSLINE_GIT_MICRO_TTL_MS,
+  STATUSLINE_GIT_DEADLINE_MS,
+  collectStatuslineLocalGit,
+  resolveRepoBasename,
+} from "./wire/statusline-git.js";
+
 export { collectStatuslineDocs, collectDocsSweepInput, landDocsSweep } from "./wire/docs.js";
 
 export type { ReapInputs } from "./wire/reap.js";
