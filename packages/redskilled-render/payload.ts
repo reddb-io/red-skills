@@ -226,6 +226,8 @@ export interface RedskilledRenderDeaths {
   readonly latest: RedskilledRenderDeath | null;
   /** Optional for the same rolling-upgrade window as `sender_attributed_count`. */
   readonly latest_sender_attributed?: RedskilledRenderDeath | null;
+  /** Optional for rolling compatibility; null means the historical class is no longer current. */
+  readonly current_sender_attributed?: RedskilledRenderDeath | null;
   readonly reaped_at: string | null;
   readonly boot_loop?: RedskilledRenderBootLoop;
 }
@@ -316,6 +318,7 @@ export interface RedskilledRenderHourlyHistory {
 export interface RedskilledRenderActivityCounts {
   readonly open_pull_requests: number;
   readonly open_issues: number;
+  readonly merged_today?: number;
   readonly recently_closed: number;
 }
 
@@ -345,6 +348,7 @@ export interface RedskilledRenderActivity {
 export const REDSKILLED_RENDER_COUNTER_NAMES = [
   "open_pull_requests",
   "open_issues",
+  "merged_today",
   "ready_queue",
   "human_queue",
 ] as const;
