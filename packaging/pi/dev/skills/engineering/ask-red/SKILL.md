@@ -204,8 +204,11 @@ through `/memory:view`, `memory docs reference-graph`, and
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set, reports/fixes ADR 0098 tmp janitor hygiene, and
   runs the shared operational probe registry that fleet boot also consumes. It
-  also reports the detection-only runtime lane census: registered project and host
-  TOONL bytes/lines against their ceilings, unregistered lanes, and dead-pid temps,
+  also reports both detection-only runtime censuses: the process census counts
+  active Worker units, daemon-held Workers, stamped orphans, unstamped suspects,
+  and dump files (inspect it directly with `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled reap --report`);
+  the lane census reports registered project and host TOONL bytes/lines against
+  their ceilings, unregistered lanes, and dead-pid temps,
   and compares configured Validation moment declarations with the lifecycle
   engine registry, so a schedule key the engine would ignore is visible before
   a drain. It also
