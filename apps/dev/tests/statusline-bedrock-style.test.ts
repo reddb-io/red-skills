@@ -75,7 +75,7 @@ describe("the themed bedrock is the plain bedrock behind the » mark", () => {
       `${IDENTITY_BG}${IDENTITY_INK}» ${BOLD}red-skills${NOBOLD} (afk/3563-bedrock) v3.12.13${NOBG}`,
     );
     expect(line).toContain(`${MODEL_BG}${PAPER}Opus·high${NOBG}`);
-    expect(line).toContain(`${VAL}47k 24%`);
+    expect(line).toContain(`${KEY}ctx=${VAL}47k 24%`);
     expect(line).toContain(`${KEY}5h=${VAL}23%`);
     expect(line).toContain(`${KEY}7d=${VAL}41%`);
     expect(line).toContain(`${KEY}loc=${VAL}+142`);
