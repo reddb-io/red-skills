@@ -65,6 +65,7 @@ import {
   RedskilledMachineHeldError,
   resolveMachineClaimPath,
 } from "../machine-scope.js";
+import { createRedskilledOrphanReaperRuntime } from "../orphan-reaper.js";
 import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-template.js";
 import {
   createRedskilledRegistrationIntentStore,
@@ -88,6 +89,7 @@ import {
   nameUnownedProject,
   reattachWorkers,
   REDSKILLED_LIVENESS_GRACE_MS,
+  sweepHeldWorkerLiveness,
   stopWorker,
 } from "../reattach.js";
 import {
@@ -1697,38 +1699,33 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     deathAttributions = pruneRedskilledMetricHistory(merged, (death) => death.ts, { now: clock() });
   }
 
-  /**
-   * Ask the host about every Worker it holds; return and retire those no longer confirmed.
-   *
-   * **Every record, not just the re-attached ones (#3123).** The narrow sweep
-   * trusted a child handle to deliver each birth's death, and a record whose
-   * launch client died without one — its pid reclaimed, its unit gone — then held
-   * a slot for two hours with no verb able to release it: the daemon's statusline
-   * said `1w` while the project's own read said none, and the machine refused to
-   * birth anything at `target: 1`. Two hours is not a race.
-   *
-   * The grace window is what keeps that from becoming the opposite bug: a Worker
-   * born a moment ago has not necessarily reached the init system, so probing it
-   * would reap a Worker mid-birth. Younger than {@link REDSKILLED_LIVENESS_GRACE_MS}
-   * is left to the child handle, which is authoritative for exactly that window.
-   */
   async function sweepWorkerLiveness(): Promise<readonly RedskilledWorkerView[]> {
-    const nowMs = Date.parse(clock());
-    const held = [...workers.values()].filter((worker) => {
-      if (reattached.has(worker.worker_id)) return true;
-      const bornMs = Date.parse(worker.started_at);
-      return !Number.isFinite(bornMs) || nowMs - bornMs >= livenessGraceMs;
+    const dead = await sweepHeldWorkerLiveness({
+      workers: [...workers.values()], reattached_worker_ids: reattached,
+      now_ms: Date.parse(clock()), grace_ms: livenessGraceMs, probe: liveness,
+      on_dead: (worker) => {
+        forgetWorker(worker.worker_id); record("worker-death", worker, "the host no longer confirms this Worker");
+      },
     });
-    if (held.length === 0) return [];
-    const { dead } = await reattachWorkers(held, liveness);
-    for (const worker of dead) {
-      forgetWorker(worker.worker_id);
-      record("worker-death", worker, "the host no longer confirms this Worker");
-    }
     if (dead.length > 0) armIdleTimer();
     return dead;
   }
 
+  const orphanReaper = createRedskilledOrphanReaperRuntime({
+    authorized: options.orphanCensus != null ||
+      paths.machineClaimPath === resolveMachineClaimPath({ machineIdHash: paths.machineIdHash }),
+    interval_ms: options.orphanReaperMs, mode: options.orphanReaperMode, census: options.orphanCensus,
+    read_starttime: options.orphanStarttime, kill_group: options.orphanKillGroup, report: options.orphanReport,
+    clock, held_worker_ids: () => workers.keys(), live_births: async () => rehydrateWorkers(await eventLane.read()),
+    adopt: async (worker, recordBirth, detail) => {
+      workers.set(worker.worker_id, worker); reattached.add(worker.worker_id);
+      if (recordBirth) { record("worker-birth", worker, detail); await eventLane.flush(); }
+      armIdleTimer();
+    },
+    record_reaped: async (worker, detail) => {
+      forgetWorker(worker.worker_id); record("worker-death", worker, detail); await eventLane.flush(); armIdleTimer();
+    },
+  });
   async function killWorkerOverBudget(workerId: string, detail: string): Promise<boolean> {
     const worker = workers.get(workerId);
     if (!worker) return false;
@@ -2182,6 +2179,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (sampleTimer) clearInterval(sampleTimer);
     if (leaseTimer) clearInterval(leaseTimer);
     if (registrationTimer) clearInterval(registrationTimer);
+    orphanReaper.stop();
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     activityPoller.stop();
@@ -2428,6 +2426,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armSampleTimer();
   armLeaseTimer();
   armRegistrationTimer();
+  orphanReaper.arm();
   armReplaceTimer();
   activityPoller.arm();
   armBalanceTimer();
@@ -2453,6 +2452,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     driveDemand,
     demand: () => lastDemand,
     sweepWorkerLiveness,
+    sweepOrphanProcesses: () => stopping ? Promise.resolve({ adopted: 0, reaped: 0, suspects: 0 }) : orphanReaper.sweep(),
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
     flushEvents: async () => { await workerBirthTail; await projectHooks.waitForSettled(); await eventLane.flush(); },

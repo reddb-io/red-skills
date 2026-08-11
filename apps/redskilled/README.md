@@ -93,6 +93,7 @@ kill.
 | What the daemon remembers across a restart | `src/event-lane.ts` — bounded TOONL generations: Worker lifecycle, metric observations, and the daemon's own stop |
 | What a stop is giving up | `src/daemon-stop.ts` — the pure report: what is held, what survives, why it stopped |
 | Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
+| Finding processes a crashed daemon left outside its Worker set | `src/orphan-reaper.ts` — pure candidate selection, `/proc` census, PID-reuse guard |
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
 | Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
 | Which file a spawn runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
@@ -162,6 +163,17 @@ kill.
   machine-wide claim sweeps — a second instance adopting the arbiter's Workers
   would be the same accounting hole from the other side — and
   `REDSKILLED_UNIT_DISCOVERY=off` declines the sweep outright.
+- **Stamped process orphans are reconciled on their own five-minute census.**
+  Only the machine-claim arbiter runs it. A reparented process carrying
+  `RED_WORKER_ID` is adopted when its event-lane birth is still live; without a
+  live birth it receives a ten-minute grace, is recorded as an adopted birth,
+  and is then stopped as a whole process group. The leader's `/proc` starttime
+  must still match the census immediately before signalling, so pid reuse costs
+  the reap rather than a stranger. An unstamped process under a canonical Worker
+  lane is reported after thirty minutes and is never signalled. Set
+  `REDSKILLED_ORPHAN_REAPER=report` to withhold no-birth orphan adoption and
+  teardown while retaining reports (live births are still reattached), or
+  `REDSKILLED_ORPHAN_REAPER=off` to skip the census.
 - **Host facts share one lane.** Worker lifecycle and cumulative metric
   observations are daemon-owned and live in the same append-only TOONL lane.
   The observations retain enough counter history to reconstruct the dashboard's

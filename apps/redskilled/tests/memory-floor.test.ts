@@ -41,6 +41,9 @@ async function sessionPaths(): Promise<RedskilledPaths> {
 interface StatRow {
   readonly pid: number;
   readonly ppid: number;
+  readonly pgid?: number;
+  readonly sid?: number;
+  readonly starttime?: number;
   readonly rssPages: number;
   readonly utime?: number;
   readonly stime?: number;
@@ -53,12 +56,16 @@ interface StatRow {
  * the reader walks past `comm` instead of splitting on it.
  */
 function procStatLine(row: StatRow): string {
-  // Fields after `comm`: index 0 `state`, 1 `ppid`, 11 `utime`, 12 `stime`, 21 `rss`.
+  // Fields after `comm`: index 0 `state`, 1 `ppid`, 2 `pgrp`, 3 `session`,
+  // 11 `utime`, 12 `stime`, 19 `starttime`, 21 `rss`.
   const after = Array.from({ length: 22 }, () => "0");
   after[0] = "S";
   after[1] = String(row.ppid);
+  after[2] = String(row.pgid ?? row.pid);
+  after[3] = String(row.sid ?? row.pid);
   after[11] = String(row.utime ?? 0);
   after[12] = String(row.stime ?? 0);
+  after[19] = String(row.starttime ?? 100);
   after[21] = String(row.rssPages);
   return `${row.pid} (my prog (x)) ${after.join(" ")}\n`;
 }
@@ -269,8 +276,24 @@ describe("the memory floor", () => {
   });
 
   it("reads a process name containing spaces and parentheses without shifting fields", () => {
-    expect(parseProcStat(procStatLine({ pid: 77, ppid: 5, rssPages: 12, utime: 300, stime: 100 })))
-      .toEqual({ pid: 77, ppid: 5, rssPages: 12, cpuTicks: 400 });
+    expect(parseProcStat(procStatLine({
+      pid: 77,
+      ppid: 5,
+      pgid: 70,
+      sid: 60,
+      starttime: 12_345,
+      rssPages: 12,
+      utime: 300,
+      stime: 100,
+    }))).toEqual({
+      pid: 77,
+      ppid: 5,
+      pgid: 70,
+      sid: 60,
+      starttime: "12345",
+      rssPages: 12,
+      cpuTicks: 400,
+    });
   });
 
   it("measures a host with no /proc from its own process table instead of giving up", () => {

@@ -12,12 +12,14 @@
 // stands on has nothing to read there; that boundary is stated in the app README
 // where an operator will meet it, and the last case in this file holds the
 // README to it.
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isPidAlive, UNIX_SOCKET_PATH_LIMIT } from "@reddb-io/shared/resident-core.js";
 import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
+import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { readRedskilledEvents } from "../src/event-lane.js";
 import { evaluateMemoryBudgets, sampleWorkerTrees } from "../src/memory-sampler.js";
 import {
   createRedskilledMachineClaimStore,
@@ -25,17 +27,73 @@ import {
   resolveMachineClaimPath,
 } from "../src/machine-scope.js";
 import { resolveRedskilledPaths, resolveSessionKey, REDSKILLED_SOCKET_FILE } from "../src/paths.js";
+import { censusRedskilledProcesses } from "../src/orphan-reaper.js";
 import { stopWorker } from "../src/reattach.js";
 import { launchWorker } from "../src/worker-launch.js";
 import { detectWorkerPlacementProbes, planWorkerPlacement } from "../src/worker-placement.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
 
 const roots: string[] = [];
+const daemons: RedskilledDaemon[] = [];
 const restoreEnv: Array<() => void> = [];
 
 afterEach(async () => {
+  for (const daemon of daemons.splice(0)) await daemon.stop().catch(() => undefined);
   for (const restore of restoreEnv.splice(0)) restore();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
+describe("WSL2 — the daemon reaps a stamped orphan from a synthetic /proc", () => {
+  it("adopts the census identity, group-kills it, then records orphan-reaped death", async () => {
+    const root = await scratch("redskilled-wsl-orphan-");
+    const procRoot = join(root, "proc");
+    const processDir = join(procRoot, "4242");
+    const cwd = join(root, "repo", ".red", "tmp", "workers", "wLOST", "3589", "worktree");
+    await mkdir(processDir, { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    const fields = Array.from({ length: 22 }, () => "0");
+    fields[0] = "S";
+    fields[1] = "1";
+    fields[2] = "4242";
+    fields[3] = "4242";
+    fields[19] = "900000";
+    await writeFile(join(procRoot, "uptime"), "10000.00 0.00\n", "utf8");
+    await writeFile(join(processDir, "stat"), `4242 (orphan tree) ${fields.join(" ")}\n`, "utf8");
+    await writeFile(
+      join(processDir, "environ"),
+      "RED_WORKER_ID=hLOST\0RED_WORKER_BORN_AT=2026-08-11T10:00:00.000Z\0",
+      "utf8",
+    );
+    await symlink(cwd, join(processDir, "cwd"));
+
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: root,
+    });
+    const killed: number[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      unitInventory: () => [],
+      orphanReaperMs: 0,
+      orphanCensus: () => censusRedskilledProcesses({ proc_root: procRoot }),
+      orphanStarttime: () => "900000",
+      orphanKillGroup: async (pgid) => {
+        killed.push(pgid);
+        return true;
+      },
+    });
+    daemons.push(daemon);
+
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 1, reaped: 1, suspects: 0 });
+    await daemon.flushEvents();
+
+    expect(killed).toEqual([4_242]);
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
+    expect(events[0]!.detail).toMatch(/adopted stamped orphan/);
+    expect(events[1]!.detail).toMatch(/orphan-reaped/);
+  });
 });
 
 async function scratch(prefix: string): Promise<string> {
