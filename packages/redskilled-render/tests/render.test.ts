@@ -351,6 +351,34 @@ describe("the coloured panel and dashboard (#3152)", () => {
     }
   });
 
+  it("lets a declared wait own the liveness cell in place of the heartbeat", () => {
+    // A gate child is a healthy silence: while the wait is declared (kind,
+    // subject, pid, start), its own clock replaces `hb=` on every density that
+    // states liveness (the panel row omits the cell by design), so a worker
+    // running its validation does not read as one that went quiet.
+    const doc = payload({
+      workers: [worker({
+        display: display({
+          wait_kind: "gate",
+          wait_subject: "pnpm test",
+          wait_pid: 4242,
+          wait_started_at: "2026-08-02T23:58:53.000Z",
+        }),
+      })],
+    });
+    const line = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]!;
+    const dashboard = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    }).rows[0]!.line;
+
+    for (const row of [line, dashboard]) {
+      expect(stripAnsi(row)).toContain("gate=pnpm test 3m12s");
+      expect(stripAnsi(row)).not.toContain("hb=");
+    }
+  });
+
   it("keeps dashboard columns aligned after colouring their cells", () => {
     const doc = payload({
       workers: [
