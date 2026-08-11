@@ -24,6 +24,7 @@ export interface RegistrationActivityPollInput {
   readonly registrations: Iterable<RedskilledProjectRegistration>;
   readonly resolveHostTransport: () => RedskilledActivityTransport | undefined;
   readonly now: string;
+  readonly previous?: RedskilledRepositoryActivity | null;
 }
 
 /** Fetch one cycle, or return honest absence when no registration can be polled. */
@@ -40,6 +41,7 @@ export async function pollRegistrationActivity(
     transport,
     ...(input.explicit?.closedWindowMs == null ? {} : { closedWindowMs: input.explicit.closedWindowMs }),
     now: input.now,
+    ...(input.previous === undefined ? {} : { previous: input.previous }),
   });
 }
 
