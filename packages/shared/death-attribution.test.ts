@@ -8,7 +8,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as laneRetention from "./lane-retention.js";
 import {
   attributeDeath,
   buildProcessPresence,
@@ -290,6 +291,23 @@ describe("the presence anchor", () => {
 });
 
 describe("the boot reaper", () => {
+  it("replaces attribution history through the shared temp+rename primitive", () => {
+    const stateRoot = scratch();
+    writeProcessPresence(deathPresenceDirIn(stateRoot), presence());
+    const replace = vi.spyOn(laneRetention, "replaceLaneAtomicallySync");
+
+    runBootDeathReaper({
+      stateRoot,
+      evidence: collectHostDeathEvidence({ procRoot: poseProc("boot-a", [1]), journalPaths: [] }),
+      now: () => "2026-08-01T11:00:00.000Z",
+    });
+
+    expect(replace).toHaveBeenCalledWith(
+      deathAttributionFileIn(stateRoot),
+      expect.stringContaining("wOLFU"),
+    );
+  });
+
   it("retains attribution history for fourteen days and one MiB, preserving unknown timestamps", () => {
     const stateRoot = scratch();
     const now = Date.parse("2026-08-15T20:00:00.000Z");

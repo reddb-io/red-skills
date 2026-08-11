@@ -247,7 +247,14 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-const LANE_TEMP_PID = /\.(?:rotate|retaining)-(\d+)(?:-|$)/;
+const LANE_REPLACEMENT_TEMP_PID = /\.(?:rotate|retaining)-(\d+)(?:-|$)/;
+const RSP_DRAIN_TEMP_PID = /rsp-telemetry\.spool\.(?:toonl|jsonl)\.(\d+)\.\d+\.drain$/;
+
+/** Return the owning pid for every temporary lane generation known to retention. */
+export function laneTempOwnerPid(path: string): number | null {
+  const match = LANE_REPLACEMENT_TEMP_PID.exec(path) ?? RSP_DRAIN_TEMP_PID.exec(path);
+  return match === null ? null : Number(match[1]);
+}
 
 /** Recursively remove only replacement temps whose owning pid is dead. */
 export async function sweepLaneTemps(
@@ -273,9 +280,8 @@ export async function sweepLaneTemps(
         continue;
       }
       if (!entry.isFile()) continue;
-      const match = LANE_TEMP_PID.exec(entry.name);
-      if (match === null) continue;
-      const pid = Number(match[1]);
+      const pid = laneTempOwnerPid(entry.name);
+      if (pid === null) continue;
       if (await isPidAlive(pid)) {
         preserved.push(path);
         continue;

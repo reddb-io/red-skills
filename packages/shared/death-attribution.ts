@@ -28,11 +28,11 @@
  * by posing its files, the way WSL2 support was proven, and the code an operator
  * runs is the code under test.
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import { deathAttributionFileIn, deathLaneFileIn, deathPresenceDirIn } from "./red-paths.js";
-import { LANE_RETENTION_REGISTRY } from "./lane-retention.js";
+import { LANE_RETENTION_REGISTRY, replaceLaneAtomicallySync } from "./lane-retention.js";
 import {
   compactProcessDeathLane,
   decodeProcessDeathRecords,
@@ -554,10 +554,7 @@ function appendAttributions(
     const existing = readOrEmpty(path);
     const combined = [...decodeDeathAttributions(existing), ...attributions];
     const retained = retainAttributions(combined, nowMs);
-    writeFileSync(path, encodeDeathAttributions(retained), {
-      encoding: "utf8",
-      mode: 0o600,
-    });
+    replaceLaneAtomicallySync(path, encodeDeathAttributions(retained));
   } catch {
     // Best effort by contract: a lane that cannot be written must not turn a
     // boot-time investigation into a boot-time failure.
