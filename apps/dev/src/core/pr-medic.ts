@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import type { EnginePaths } from "@reddb-io/red-castle/engine";
 
 /**
