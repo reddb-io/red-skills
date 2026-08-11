@@ -11,6 +11,7 @@ import {
   formatDeathAttributions,
   runBootDeathReaper,
 } from "@reddb-io/shared/death-attribution.js";
+import { sweepLaneTemps } from "@reddb-io/shared/lane-retention.js";
 import { stateDir } from "@reddb-io/shared/red-paths.js";
 import {
   afkPaths,
@@ -88,6 +89,7 @@ export function buildProjectBootSweeps(
     // deaths from the last boot are attributed while the evidence is freshest,
     // and a precheck failure below must not be what buries them. Local files
     // only, so it costs nothing and cannot throw.
+    await sweepLaneTemps(stateDir(root)).catch(() => undefined);
     log(formatDeathAttributions(runBootDeathReaper({ stateRoot: stateDir(root) })));
     const nowS = Math.floor(Date.now() / 1000);
     const facts = await collectBootPrecheckFacts(ctx, { log });

@@ -20,6 +20,7 @@
     "./github-batch.js": "./github-batch.ts",
     "./github-quota.js": "./github-quota.ts",
     "./github-webhook.js": "./github-webhook.ts",
+    "./lane-retention.js": "./lane-retention.ts",
     "./log.js": "./log.ts",
     "./outcome-event.js": "./outcome-event.ts",
     "./plugin-gate.js": "./plugin-gate.ts",
