@@ -19,6 +19,7 @@ export interface OperationalProbeContext {
   readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
   readonly baseFreshness?: BaseFreshnessProbeInput;
   readonly hostPrerequisites?: HostPrerequisiteProbeInput;
+  readonly laneCensus?: import("./lane-census.js").LaneCensusProbeInput;
 }
 
 export type HostPrerequisiteCommand = "bash" | "git" | "jq" | "gh" | "node" | "timeout" | "ps";
