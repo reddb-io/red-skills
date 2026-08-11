@@ -28,13 +28,24 @@ import {
 } from "./repository-activity.js";
 
 /**
- * How old counts may be before the payload calls them stale.
+ * How many poll windows old counts may be before the payload calls them stale.
  *
- * Two poll windows, for the same reason the memory sampler uses two of its own:
- * one missed interval is the jitter of a busy host or a slow API, and two is a
- * poller that stopped.
+ * Two, for the same reason the memory sampler uses two of its own: one missed
+ * interval is the jitter of a busy host or a slow API, and two is a poller that
+ * stopped.
+ *
+ * A factor rather than only a constant, because the cadence it multiplies is no
+ * longer one number: a presence-driven poll runs at two windows (ADR 0141), and
+ * a threshold pinned to the tight one would mark every counter on an idle host
+ * stale — reporting a poller that is working exactly as asked as one that broke.
+ * The daemon states the window in force; this is the default for a caller that
+ * states none.
  */
-export const REDSKILLED_ACTIVITY_STALENESS_MS = 2 * DEFAULT_REDSKILLED_ACTIVITY_MS;
+export const REDSKILLED_ACTIVITY_STALENESS_FACTOR = 2;
+
+/** The staleness window of an ATTENDED poll — the default when none is stated. */
+export const REDSKILLED_ACTIVITY_STALENESS_MS =
+  REDSKILLED_ACTIVITY_STALENESS_FACTOR * DEFAULT_REDSKILLED_ACTIVITY_MS;
 
 /** One project's counts, dated — the shape a consumer renders. */
 export interface RedskilledActivityView extends RedskilledProjectActivity {
