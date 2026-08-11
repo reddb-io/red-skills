@@ -318,14 +318,14 @@ describe("landPr (unlocked path)", () => {
     });
     expect(result.ok).toBe(true);
     const c = joined(calls);
-    expect(c.some((x) => x.includes("pr create"))).toBe(false);
-    expect(c.some((x) => x.includes("pr merge 42 --merge"))).toBe(true);
+    expect(c.some((x) => x.includes("api -X POST") && x.includes("/pulls"))).toBe(false);
+    expect(c.some((x) => x.includes("pulls/42/merge"))).toBe(true);
   });
 
   it("returns failure when the admin-merge fails", async () => {
     const { exec } = fakeExec([
       { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "5\n" } },
-      { match: (a) => a.join(" ").includes("pr merge"), result: { code: 1 } },
+      { match: (a) => a.join(" ").includes("/merge"), result: { code: 1 } },
     ]);
     const result = await landPr(exec, {
       repo: "reddb-io/red-skills",
@@ -372,7 +372,7 @@ describe("landPr (unlocked path)", () => {
     });
     expect(result.ok).toBe(true);
     const c = joined(calls);
-    expect(c.some((x) => x.includes("pr merge 42 --merge"))).toBe(true);
+    expect(c.some((x) => x.includes("pulls/42/merge"))).toBe(true);
     expect(c).toContain("git -C /repo update-ref refs/heads/red-trunk lock-tip");
     expect(c.some((x) => x.includes("symbolic-ref") || x.includes("status --porcelain"))).toBe(false);
     expect(c.some((x) => x.includes("git -C /repo merge --ff-only"))).toBe(false);
@@ -743,7 +743,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
     const review: Exec = async (argv) => {
       recorded.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr create")) prMade = true;
+      if (cmd.includes("api -X POST") && cmd.includes("/pulls")) prMade = true;
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr list")) return { code: 0, stdout: prMade ? "88\n" : "\n", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
@@ -758,10 +758,10 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
     });
     expect(result).toEqual({ ok: true, prNumber: 88 });
     const c = joined(recorded);
-    expect(c.some((x) => x.includes("pr create --base main --head afk/wBBBB/9-x"))).toBe(true);
+    expect(c.some((x) => x.includes("api -X POST") && x.includes("/pulls") && x.includes("base=main") && x.includes("head=afk/wBBBB/9-x"))).toBe(true);
     expect(c).toContain("gh -R reddb-io/red-skills pr edit 88 --add-label ready-for-review");
     // The whole point: the merge is held for the fresh-agent review.
-    expect(c.some((x) => x.includes("pr merge"))).toBe(false);
+    expect(c.some((x) => x.includes("/merge"))).toBe(false);
   });
 
   it("reuses an open PR and re-applies the label (idempotent)", async () => {
@@ -778,7 +778,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
     });
     expect(result).toEqual({ ok: true, prNumber: 42 });
     const c = joined(calls);
-    expect(c.some((x) => x.includes("pr create"))).toBe(false);
+    expect(c.some((x) => x.includes("api -X POST") && x.includes("/pulls"))).toBe(false);
     expect(c).toContain("gh -R reddb-io/red-skills pr edit 42 --add-label ready-for-review");
   });
 
@@ -959,7 +959,7 @@ describe("landPr wait_for_review wiring", () => {
         checksPolled = true;
         return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
       }
-      if (cmd.includes("pr merge")) {
+      if (cmd.includes("/merge")) {
         mergedAfterPoll = checksPolled; // merge must come AFTER the poll
         return { code: 0, stdout: "", stderr: "" };
       }
@@ -978,7 +978,7 @@ describe("landPr wait_for_review wiring", () => {
     expect(result.ok).toBe(true);
     expect(checksPolled).toBe(true);
     expect(mergedAfterPoll).toBe(true);
-    expect(calls.some((c) => c.join(" ").includes("pr merge 77 --merge"))).toBe(true);
+    expect(calls.some((c) => c.join(" ").includes("pulls/77/merge"))).toBe(true);
   });
 
   it("does NOT poll review checks by default (waitForReview absent)", async () => {
@@ -996,7 +996,7 @@ describe("landPr wait_for_review wiring", () => {
     });
     expect(result.ok).toBe(true);
     expect(joined(calls).some((c) => c.includes("pr checks"))).toBe(false);
-    expect(joined(calls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(calls).some((c) => c.includes("pulls/42/merge"))).toBe(true);
   });
 });
 
@@ -1356,7 +1356,7 @@ describe("landPr CI-aware wiring (#812)", () => {
         viewed = true;
         return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "CLEAN", statusCheckRollup: [] }), stderr: "" };
       }
-      if (cmd.includes("pr merge")) {
+      if (cmd.includes("/merge")) {
         mergedAfterView = viewed;
         return { code: 0, stdout: "", stderr: "" };
       }
@@ -1387,7 +1387,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       ciAwait: { github: githubFromExec(exec), sleep: async () => {}, maxPolls: 2 },
     });
     expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-failed" });
-    expect(calls.some((c) => c.join(" ").includes("pr merge"))).toBe(false);
+    expect(calls.some((c) => c.join(" ").includes("/merge"))).toBe(false);
   });
 
   it("returns ci-pending (no merge, no re-run) when checks stay pending", async () => {
@@ -1430,7 +1430,7 @@ describe("landPr CI-aware wiring (#812)", () => {
           };
         }
         // branch protection rejects a merge attempted before the checks report
-        if (cmd.includes("pr merge")) return { code: 1, stdout: "", stderr: "Protected branch update failed" };
+        if (cmd.includes("/merge")) return { code: 1, stdout: "", stderr: "Protected branch update failed" };
         return { code: 0, stdout: "", stderr: "" };
       };
       const r = await landPr(exec, {
@@ -1439,7 +1439,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       });
       // never `merge-failed` — that is the reason the landing parks as blocked:ci
       expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-pending" });
-      expect(calls.some((c) => c.join(" ").includes("pr merge"))).toBe(false);
+      expect(calls.some((c) => c.join(" ").includes("/merge"))).toBe(false);
     });
 
     it("keeps waiting inside the tail and lands once the checks report green", async () => {
@@ -1473,7 +1473,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       });
       expect(r.ok).toBe(true);
       expect(polls).toBe(2);
-      expect(calls.some((c) => c.join(" ").includes("pr merge 5 --merge"))).toBe(true);
+      expect(calls.some((c) => c.join(" ").includes("pulls/5/merge"))).toBe(true);
     });
   });
 
@@ -1531,7 +1531,7 @@ describe("landPr CI-aware wiring (#812)", () => {
           updated = true;
           return { code: 0, stdout: "", stderr: "" };
         }
-        if (cmd.includes("pr merge")) {
+        if (cmd.includes("/merge")) {
           merges += 1;
           // the base moved under the first merge; the second lands
           return updated ? { code: 0, stdout: "", stderr: "" } : { code: 1, stdout: "", stderr: "Protected branch update failed" };
@@ -1558,7 +1558,7 @@ describe("landPr CI-aware wiring (#812)", () => {
             stderr: "",
           };
         }
-        if (cmd.includes("pr merge")) return { code: 1, stdout: "", stderr: "Protected branch update failed" };
+        if (cmd.includes("/merge")) return { code: 1, stdout: "", stderr: "Protected branch update failed" };
         return { code: 0, stdout: "", stderr: "" };
       };
       const r = await landPr(exec, {
@@ -1588,7 +1588,7 @@ describe("landPr CI-aware wiring (#812)", () => {
           updates += 1;
           return { code: 0, stdout: "", stderr: "" };
         }
-        if (cmd.includes("pr merge")) {
+        if (cmd.includes("/merge")) {
           merges += 1;
           return { code: 1, stdout: "", stderr: "Protected branch update failed" };
         }
@@ -1616,7 +1616,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     // reads `mergeStateStatus` unconditionally since #3030 — that is one `gh pr
     // view` asking whether the merge happened, not a CI wait.
     expect(joined(calls).some((c) => c.includes("statusCheckRollup"))).toBe(false);
-    expect(joined(calls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(calls).some((c) => c.includes("pulls/42/merge"))).toBe(true);
   });
 });
 
@@ -2201,7 +2201,7 @@ describe("landPr on a merge-queue base (#2986)", () => {
       mergeQueueWait: { sleep: async () => {}, maxPolls: 2 },
     });
     expect(r).toEqual({ ok: false, prNumber: 42, reason: "queue-pending" });
-    expect(calls.some((c) => c.join(" ").includes("pr merge 42 --merge --auto"))).toBe(true);
+    expect(calls.some((c) => c.join(" ").includes("pulls/42/merge"))).toBe(true);
   });
 
   it("reports ok with the queue's merge commit once the PR reports merged=true", async () => {
@@ -2439,7 +2439,7 @@ describe("the merge confirmation on a dirty PR (#3030)", () => {
       calls.push(argv);
       const cmd = argv.join(" ");
       if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
-      if (cmd.includes("pr merge")) {
+      if (cmd.includes("/merge")) {
         opts.onMerge?.();
         return { code: 0, stdout: "", stderr: "" };
       }
