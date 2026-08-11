@@ -5,7 +5,7 @@
 // (#2679): the live lanes carry NO pid file at all, and the dead ones do. A
 // janitor keyed on pid files gets each of these exactly backwards.
 
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -58,6 +58,7 @@ const noDaemon: DaemonWorkerSetReader = async () => null;
 
 /** A Worker workspace with a git worktree and a log beside it, and no pid file. */
 async function workspace(tmp: string, worker: string, issue: number): Promise<{
+  issueDir: string;
   worktree: string;
   log: string;
 }> {
@@ -66,7 +67,7 @@ async function workspace(tmp: string, worker: string, issue: number): Promise<{
   await mkdir(join(worktree, "node_modules"), { recursive: true });
   const log = join(dirname(issueDir), "worker.log.toonl");
   await writeFile(log, "", "utf8");
-  return { worktree, log };
+  return { issueDir, worktree, log };
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -97,10 +98,13 @@ describe("the janitor reclaims on the daemon's process truth", () => {
     expect(await exists(worktree)).toBe(true);
   });
 
-  it("reclaims a dead Worker's workspace and keeps the evidence beside it", async () => {
+  it("strips a dead Worker's OPEN-issue worktree at 14 days and leaves a tombstone with its evidence", async () => {
     const root = await tempRoot();
     const tmp = join(root, ".red", "tmp");
-    const { worktree, log } = await workspace(tmp, "wDONE", 2789);
+    const { issueDir, worktree, log } = await workspace(tmp, "wDONE", 2789);
+    const threshold = NOW - 14 * 86_400;
+    await utimes(issueDir, threshold, threshold);
+    await utimes(dirname(issueDir), threshold, threshold);
 
     // Issue OPEN, so the whole-dir rule stays out of it: the workspace goes
     // because the daemon does not name its Worker, with nothing else to help.
@@ -112,6 +116,28 @@ describe("the janitor reclaims on the daemon's process truth", () => {
     expect(result.applied?.workerWorkspaces).toEqual([worktree]);
     expect(await exists(worktree)).toBe(false);
     expect(await exists(log)).toBe(true);
+    expect(await exists(issueDir)).toBe(true);
+    expect(await readFile(join(issueDir, "worktree.reclaimed"), "utf8")).toBe(
+      `worktree reclaimed at ${NOW_ISO}\n`,
+    );
+  });
+
+  it("reclaims a dead Worker's whole OPEN-issue directory at 45 days", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const { issueDir } = await workspace(tmp, "wEXPIRED", 3585);
+    const workerDir = dirname(issueDir);
+    const threshold = NOW - 45 * 86_400;
+    await utimes(issueDir, threshold, threshold);
+    await utimes(workerDir, threshold, threshold);
+
+    const result = await runTmpJanitor(tmp, NOW, () => "OPEN", {
+      fix: true,
+      daemon: daemonNaming(),
+    });
+
+    expect(result.applied?.staleWorkers).toEqual([workerDir]);
+    expect(await exists(workerDir)).toBe(false);
   });
 
   it("never reclaims through a pid file: an unanswered daemon spares everything", async () => {

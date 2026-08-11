@@ -167,6 +167,7 @@ describe("runBoot tmp janitor", () => {
             reclaim: [
               {
                 path: "/p/.red/tmp/workers/wOLD",
+                mtimeS: NOW,
                 liveness: "dead",
                 issues: [{ issue: 9, state: "CLOSED" }],
               },
@@ -284,6 +285,7 @@ describe("runBoot tmp janitor", () => {
             reclaim: [
               {
                 path: "/p/.red/tmp/workers/wLIVE",
+                mtimeS: NOW,
                 liveness: "dead",
                 issues: [{ issue: 9, state: "CLOSED" }],
               },

@@ -22,6 +22,13 @@ export const ORPHAN_TTL_SHORT_S = 1 * 86400;
 export const DEFAULT_ATTEMPT_TTL_S = 14 * 86400;
 export const DEFAULT_ATTEMPT_KEEP = 5;
 
+/** Dead Workers with an OPEN issue keep their evidence but shed the expensive
+ * worktree at this age. */
+export const DEAD_WORKER_WORKTREE_TTL_S = 14 * 86400;
+
+/** Dead Workers with an OPEN issue are fully reclaimed at this age. */
+export const DEAD_WORKER_DIR_TTL_S = 45 * 86400;
+
 // ---------- orphan fate (prune_orphans) ----------
 
 /** Issue open/closed state as reported by `gh issue view --json state`. Any
@@ -180,46 +187,63 @@ export interface LivenessReclaimInput {
    * unreachable or stale daemon — spares the dir, because a reader that could
    * not reach the authority must never report a running Worker as gone (#2679). */
   liveness: WorkerProcessVerdict;
-  /** Whether the issue is in a post-mortem preservation state (`blocked:*` /
-   * `ready-for-human`, existing #256/#257 policy) — its JSONL/handoff is kept. */
-  preserved: boolean;
+  /** Tracker state for the represented issue. UNKNOWN is retained. */
+  issueState: "OPEN" | "CLOSED" | "UNKNOWN";
+  /** Workspace-directory mtime in epoch seconds, injected by the collector. */
+  mtimeS: number;
 }
 
 /** The reclaim decision for one dead-worker attempt dir. */
 export interface LivenessReclaimAction {
   attemptDir: string;
   worktreePath: string;
-  /** Always true for an emitted action — the disposable `worktree/` of a dead
-   * worker is ALWAYS removed, even when the JSONL is preserved. */
+  /** Always true for an emitted action: stage 1 strips the worktree, while an
+   * immediate CLOSED or stage-2 reclaim removes it with the parent dir. */
   removeWorktree: boolean;
-  /** Reclaim the WHOLE attempt dir. False when the issue is preserved (keep the
-   * JSONL/handoff for post-mortem; only the worktree goes). */
+  /** Reclaim the whole issue dir: immediately for CLOSED, at 45 days for OPEN. */
   reclaimDir: boolean;
+  /** Leave a one-line record beside the retained evidence after stage 1. */
+  writeTombstone: boolean;
 }
 
 /**
  * Plan the read-time liveness-gated reclaim (issue #1219). PURE — no I/O; the
- * caller resolves `liveness` and `preserved`.
+ * caller resolves liveness, issue state, age anchor, and clock.
  *   - A dir whose Worker the daemon has not called dead is NEVER touched.
- *   - A dead worker's `worktree/` is ALWAYS removed (disposable heavy dir).
- *   - A dead worker's whole attempt dir is reclaimed UNLESS the issue is
- *     preserved (blocked:* / ready-for-human), in which case the JSONL/handoff
- *     stay and only the worktree is torn down.
- * This runs immediately at read time, not gated on the boot orphan/attempt-cap
- * TTLs, so a killed/crashed worker leaves no graveyard behind it.
+ *   - A dead Worker's CLOSED issue dir is reclaimed immediately.
+ *   - A dead Worker's OPEN issue keeps everything for 14 days, then loses only
+ *     `worktree/` with a tombstone, then is fully reclaimed at 45 days.
+ *   - UNKNOWN tracker state is retained because uncertainty is not permission.
  */
 export function planLivenessReclaim(
   inputs: readonly LivenessReclaimInput[],
+  nowS: number,
 ): LivenessReclaimAction[] {
   const out: LivenessReclaimAction[] = [];
   for (const i of inputs) {
     if (i.liveness !== "dead") continue;
-    out.push({
-      attemptDir: i.attemptDir,
-      worktreePath: i.worktreePath,
-      removeWorktree: true,
-      reclaimDir: !i.preserved,
-    });
+    if (i.issueState === "CLOSED") {
+      out.push({
+        attemptDir: i.attemptDir,
+        worktreePath: i.worktreePath,
+        removeWorktree: true,
+        reclaimDir: true,
+        writeTombstone: false,
+      });
+      continue;
+    }
+    if (i.issueState === "UNKNOWN") continue;
+    if (i.issueState === "OPEN") {
+      const ageS = nowS - i.mtimeS;
+      if (ageS < DEAD_WORKER_WORKTREE_TTL_S) continue;
+      out.push({
+        attemptDir: i.attemptDir,
+        worktreePath: i.worktreePath,
+        removeWorktree: true,
+        reclaimDir: ageS >= DEAD_WORKER_DIR_TTL_S,
+        writeTombstone: ageS < DEAD_WORKER_DIR_TTL_S,
+      });
+    }
   }
   return out;
 }

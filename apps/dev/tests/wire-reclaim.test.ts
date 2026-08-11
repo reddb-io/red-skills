@@ -43,7 +43,7 @@ function harness(over: Partial<DeadWorkerSweepDeps> = {}): {
   const deps: DeadWorkerSweepDeps = {
     // The daemon's verdict: dead unless a test overrides it.
     workerLiveness: async () => "dead",
-    isPreserved: async () => false,
+    issueState: async () => "CLOSED",
     exists: () => true,
     removeWorktree: async (p) => {
       removedWorktrees.push(p);
@@ -58,6 +58,7 @@ function harness(over: Partial<DeadWorkerSweepDeps> = {}): {
 
 describe("reclaimDeadWorkers (issue #1219)", () => {
   const ROOT = "/r";
+  const NOW = 2_000_000_000;
 
   it("reclaims a dead, non-preserved worker's worktree AND attempt dir", async () => {
     const { deps, removedWorktrees, removedDirs } = harness();
@@ -65,6 +66,25 @@ describe("reclaimDeadWorkers (issue #1219)", () => {
     expect(removedWorktrees).toEqual(["/r/.red/tmp/workers/wDEAD/5-a1/worktree"]);
     expect(removedDirs).toEqual(["/r/.red/tmp/workers/wDEAD/5-a1"]);
     expect(reclaimed).toEqual(["/r/.red/tmp/workers/wDEAD/5-a1"]);
+  });
+
+  it("leaves a freshly dead Worker's OPEN-issue workspace untouched", async () => {
+    const { deps, removedWorktrees, removedDirs } = harness({
+      issueState: async () => "OPEN",
+      dirMtimeS: () => NOW,
+      nowS: NOW,
+    });
+
+    const reclaimed = await reclaimDeadWorkers(
+      ROOT,
+      [record(ROOT, "wFRESH", 3585, false)],
+      "",
+      deps,
+    );
+
+    expect(removedWorktrees).toEqual([]);
+    expect(removedDirs).toEqual([]);
+    expect(reclaimed).toEqual([]);
   });
 
   it("NEVER touches a dir whose Worker the daemon names", async () => {
@@ -75,8 +95,12 @@ describe("reclaimDeadWorkers (issue #1219)", () => {
     expect(reclaimed).toEqual([]);
   });
 
-  it("removes ONLY the worktree of a dead but preserved worker (keeps the JSONL)", async () => {
-    const { deps, removedWorktrees, removedDirs } = harness({ isPreserved: async () => true });
+  it("removes only the worktree of a 14-day dead Worker with an OPEN issue", async () => {
+    const { deps, removedWorktrees, removedDirs } = harness({
+      issueState: async () => "OPEN",
+      dirMtimeS: () => NOW - 14 * 86_400,
+      nowS: NOW,
+    });
     const reclaimed = await reclaimDeadWorkers(ROOT, [record(ROOT, "wBLOCKED", 6, false)], "", deps);
     expect(removedWorktrees).toEqual(["/r/.red/tmp/workers/wBLOCKED/6-a1/worktree"]);
     expect(removedDirs).toEqual([]);
