@@ -10,7 +10,7 @@ import {
   replaceLaneAtomicallySync,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
-import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import {
   RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_DECISIONS_COLLECTION,
@@ -268,7 +268,7 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
 }
 
 function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
-  const spoolEmitter: ToonlLineEmitter = encodeLines();
+  const spoolEmitter = encodeToonlLines();
   return spoolEmitter.push(spoolEntryToToonlRow(row));
 }
 
@@ -319,7 +319,7 @@ function appendRetentionCorrection(
 }
 
 function formatCorrectionRow(correction: RspTelemetryCorrectionRow): string {
-  const correctionEmitter: ToonlLineEmitter = encodeLines();
+  const correctionEmitter = encodeToonlLines();
   return correctionEmitter.push({
     correction_id: correction.correction_id,
     target_spool_id: correction.target_spool_id,
