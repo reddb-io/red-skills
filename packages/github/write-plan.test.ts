@@ -84,6 +84,35 @@ describe("planGithubWrite — the client owns the write rail", () => {
     });
   });
 
+  it.each([
+    {
+      name: "issue creation",
+      argv: ["gh", "-R", "o/r", "issue", "create", "--title", "t", "--body", "b", "--label", "ready-for-agent"],
+      context: {},
+      expected: ["gh", "api", "-X", "POST", "repos/o/r/issues", "-f", "title=t", "-f", "body=b", "-F", "labels[]=ready-for-agent"],
+    },
+    {
+      name: "PR comment",
+      argv: ["gh", "pr", "comment", "42", "--repo", "o/r", "--body", "reviewed"],
+      context: {},
+      expected: ["gh", "api", "-X", "POST", "repos/o/r/issues/42/comments", "-f", "body=reviewed"],
+    },
+    {
+      name: "label creation",
+      argv: ["gh", "label", "create", "reviewed", "--repo", "o/r", "--color", "5319E7", "--description", "Review state"],
+      context: {},
+      expected: ["gh", "api", "-X", "POST", "repos/o/r/labels", "-f", "name=reviewed", "-f", "color=5319E7", "-f", "description=Review state"],
+    },
+    {
+      name: "PR label edit",
+      argv: ["gh", "pr", "edit", "42", "--repo", "o/r", "--remove-label", "old", "--add-label", "reviewed"],
+      context: { currentIssueLabels: ["old", "type:feature"] },
+      expected: ["gh", "api", "-X", "PATCH", "repos/o/r/issues/42", "-F", "labels[]=type:feature", "-F", "labels[]=reviewed"],
+    },
+  ])("realizes $name on REST", ({ argv, context, expected }) => {
+    expect(planGithubWrite(argv, context)).toEqual({ surface: "rest", args: expected });
+  });
+
   it("preserves an explicit REST API mutation on the REST rail", () => {
     const argv = [
       "gh", "api", "repos/o/r/issues/comments/99", "--method", "PATCH", "--field", "body=updated",

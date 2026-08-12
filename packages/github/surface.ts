@@ -192,7 +192,7 @@ export const GITHUB_OPERATIONS: readonly GithubOperation[] = [
   read("api rest", "single-object", "one-shot", "rest", noFallback("the caller explicitly chose REST"), "the caller supplies one explicit REST path rather than a routed poll"),
 
   // ── writes: the surface realized by the shared write plan
-  write("issue create", "graphql", "graphql", "gh files an issue with the createIssue mutation — an exhausted GraphQL pool blocks filing"),
+  write("issue create", "rest", "rest", "the write plan POSTs to `repos/{o}/{r}/issues` so filing shares the REST mutation rail"),
   write("issue edit", "rest", "rest", "the write plan PATCHes labels and body at `repos/{o}/{r}/issues/{n}`"),
   write("issue close", "rest", "rest", "the write plan PATCHes issue state and state reason at `repos/{o}/{r}/issues/{n}`"),
   write("issue reopen", "graphql", "graphql", "gh reopens with the reopenIssue mutation"),

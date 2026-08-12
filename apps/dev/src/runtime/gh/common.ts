@@ -4,6 +4,7 @@ import {
   createGithubAttributionLedger,
   createGithubClient,
   type GithubClient,
+  type GithubConditionalRestRequest,
 } from "@reddb-io/github";
 import { stateDir } from "@reddb-io/shared/red-paths.js";
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
@@ -42,6 +43,55 @@ export interface GithubRepoCoordinates {
 
 const routedClients = new WeakMap<GhContext, Pick<GithubClient, "conditionalRest" | "conditionalPaginate">>();
 
+function injectedReadClient(ctx: GhContext): Pick<GithubClient, "conditionalRest" | "conditionalPaginate"> {
+  const issueArgs = (number: unknown) => [
+    "issue", "view", String(number ?? ""), ...repoArgs(ctx), "--json", "number,state,labels",
+  ];
+  const request = async (route: string, parameters: Readonly<Record<string, unknown>> = {}) => {
+    let args: string[];
+    if (route === "GET /search/issues") {
+      args = [
+        "issue", "list", ...repoArgs(ctx), "--search", String(parameters.q ?? ""),
+        "--state", "all", "--limit", "10", "--json", "number,title,body,labels",
+      ];
+    } else if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}") {
+      const accept = (parameters.headers as { accept?: string } | undefined)?.accept ?? "";
+      args = accept.includes("diff")
+        ? ["pr", "diff", String(parameters.pull_number ?? ""), ...repoArgs(ctx)]
+        : ["pr", "view", String(parameters.pull_number ?? ""), ...repoArgs(ctx), "--json", "title,body,author,authorAssociation"];
+    } else {
+      args = issueArgs(parameters.issue_number);
+    }
+    const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
+    if (out.code !== 0) throw new Error(out.stderr || out.stdout);
+    if ((parameters.headers as { accept?: string } | undefined)?.accept?.includes("diff")) return out.stdout;
+    const parsed = JSON.parse(out.stdout || (route === "GET /search/issues" ? "[]" : "{}")) as Record<string, unknown> | unknown[];
+    if (route === "GET /search/issues") return { items: parsed };
+    if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}" && !Array.isArray(parsed)) {
+      const author = parsed.author as { login?: string; is_bot?: boolean } | undefined;
+      return {
+        ...parsed,
+        user: author ? { login: author.login, type: author.is_bot ? "Bot" : "User" } : undefined,
+        author_association: parsed.authorAssociation,
+      };
+    }
+    return parsed;
+  };
+  return {
+    async conditionalRest<T>(input: GithubConditionalRestRequest) {
+      return { data: await request(input.route, input.parameters) as T, headers: {}, quotaFree: false };
+    },
+    async conditionalPaginate<T>(input: GithubConditionalRestRequest) {
+      const issue = String(input.parameters?.issue_number ?? "");
+      const args = ["api", "--paginate", apiPath(ctx, `issues/${issue}/sub_issues`), "--jq", ".[] | {number}"];
+      const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
+      if (out.code !== 0) throw new Error(out.stderr || out.stdout);
+      const data = out.stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line) as T);
+      return { data, headers: {}, quotaFree: false, requestCount: 1 };
+    },
+  };
+}
+
 function trackerToken(): string {
   const env = (
     process.env.REDSKILLED_HOST_TOKEN ??
@@ -72,6 +122,7 @@ export function githubReadClient(
   ctx: GhContext,
 ): Pick<GithubClient, "conditionalRest" | "conditionalPaginate"> {
   if (ctx.github) return ctx.github;
+  if (ctx.exec) return injectedReadClient(ctx);
   const held = routedClients.get(ctx);
   if (held) return held;
   const token = trackerToken();

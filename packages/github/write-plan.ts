@@ -72,6 +72,8 @@ function commandPath(args: readonly string[]): string[] {
  * - `gh -R o/r issue edit <n> --body b [--add-label/--remove-label ...]`
  *   → REST `PATCH issues/{n}` (label edits require the current complete set)
  * - `gh -R o/r issue close <n> --reason completed` → REST `PATCH issues/{n}`
+ * - `gh -R o/r issue create --title t [--body b] [--label l ...]`
+ *   → REST `POST issues`
  * - `gh -R o/r pr merge <n> --merge [--subject t]` → REST `PUT pulls/{n}/merge`
  * - `gh -R o/r pr merge <n> --merge --auto [...]`  → unchanged (GraphQL enqueue)
  * - `gh -R o/r pr create --base b --head h --title t --body y [--draft]`
@@ -82,6 +84,9 @@ function commandPath(args: readonly string[]): string[] {
  * - `gh -R o/r pr update-branch <n>` → REST `PUT pulls/{n}/update-branch`
  * - `gh issue|pr comment <n> -R o/r --body y`
  *   → REST `POST issues/{n}/comments`
+ * - PR label edits → REST `PATCH issues/{n}` with the complete label set
+ * - `gh label create <name> -R o/r [--color c] [--description d]`
+ *   → REST `POST labels`
  * - `gh api <rest-path> --method <verb> ...`
  *   → unchanged on the explicitly selected REST rail
  *
@@ -95,7 +100,7 @@ export function planGithubWrite(
 ): GithubWritePlan {
   const repo = repoOf(args);
   const [group, verb] = commandPath(args);
-  if (repo && group === "issue" && verb === "edit") {
+  if (repo && (group === "issue" || group === "pr") && verb === "edit") {
     const editAt = args.indexOf("edit");
     const issueNumber = args[editAt + 1];
     const body = flagValue(args, "--body");
@@ -113,6 +118,7 @@ export function planGithubWrite(
       && issueNumber
       && /^\d+$/.test(issueNumber)
       && (!editsLabels || context.currentIssueLabels)
+      && (group === "issue" || editsLabels)
     ) {
       const labels = editsLabels
         ? [...new Set([
@@ -128,6 +134,26 @@ export function planGithubWrite(
           ...(labels ? labels.length > 0
             ? labels.flatMap((label) => ["-F", `labels[]=${label}`])
             : ["-F", "labels[]"] : []),
+        ],
+      };
+    }
+  }
+  if (repo && group === "issue" && verb === "create") {
+    const createAt = args.indexOf("create");
+    const title = flagValue(args, "--title");
+    const body = flagValue(args, "--body");
+    const labels = flagValues(args, "--label");
+    if (
+      title !== undefined
+      && usesOnlyValueFlags(args, createAt + 1, new Set(["-R", "--repo", "--title", "--body", "--label"]))
+    ) {
+      return {
+        surface: "rest",
+        args: [
+          "gh", "api", "-X", "POST", `repos/${repo}/issues`,
+          "-f", `title=${title}`,
+          ...(body !== undefined ? ["-f", `body=${body}`] : []),
+          ...labels.flatMap((label) => ["-F", `labels[]=${label}`]),
         ],
       };
     }
@@ -221,6 +247,22 @@ export function planGithubWrite(
         args: [
           "gh", "api", "-X", "POST", `repos/${repo}/issues/${issueNumber}/comments`,
           "-f", `body=${body}`,
+        ],
+      };
+    }
+  }
+  if (repo && group === "label" && verb === "create") {
+    const labelName = args[args.indexOf("create") + 1];
+    const color = flagValue(args, "--color");
+    const description = flagValue(args, "--description");
+    if (labelName) {
+      return {
+        surface: "rest",
+        args: [
+          "gh", "api", "-X", "POST", `repos/${repo}/labels`,
+          "-f", `name=${labelName}`,
+          ...(color !== undefined ? ["-f", `color=${color}`] : []),
+          ...(description !== undefined ? ["-f", `description=${description}`] : []),
         ],
       };
     }
