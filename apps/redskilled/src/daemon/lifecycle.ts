@@ -571,6 +571,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     detail?: string,
   ): void {
     const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
+    const observed = lastQueue?.projects.find(
+      (project) => project.project_label === registration.project_label,
+    );
     lapses.push({
       project_label: registration.project_label,
       registered_at: registration.registered_at,
@@ -578,6 +581,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       renew_by: registration.renew_by,
       renewals: registration.renewals,
       sustains: registration.sustains ?? 0,
+      ...(registration.standing === true ? { standing: true } : {}),
+      ...(observed?.outcome === "counted" && observed.depth != null
+        ? { queue_depth: observed.depth }
+        : {}),
       detail: detail ??
         `redskilled dropped the registration for project ${JSON.stringify(registration.project_label)}: it stood ` +
         `until ${registration.renew_by} and nothing renewed it — no session spoke for it, and no poll found it ` +
@@ -1478,8 +1485,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const released = releasedCurrent || releasedRecoverable;
     if (held != null) {
       const detail = `redskilled released the registration for project ${JSON.stringify(projectLabel)}`;
+      const observed = lastQueue?.projects.find((project) => project.project_label === projectLabel);
       removeRegistrationHistory(projectLabel);
-      stops.push({ project_label: projectLabel, registered_at: held.registered_at, at: clock(), detail });
+      stops.push({
+        project_label: projectLabel,
+        registered_at: held.registered_at,
+        at: clock(),
+        ...(held.standing === true ? { standing: true } : {}),
+        ...(observed?.outcome === "counted" && observed.depth != null
+          ? { queue_depth: observed.depth }
+          : {}),
+        detail,
+      });
       if (stops.length > REDSKILLED_LAPSE_MEMORY) stops.splice(0, stops.length - REDSKILLED_LAPSE_MEMORY);
     }
     if (released) persistRegistrationIntent();
