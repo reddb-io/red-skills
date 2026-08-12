@@ -11,9 +11,9 @@ import {
   GITHUB_REST_CONCURRENCY,
   parseAliasedRepositoryResponse,
 } from "@reddb-io/shared/github-batch.js";
-import { planGithubWrite } from "@reddb-io/github";
+import { planGithubWrite, type GithubClient } from "@reddb-io/github";
 import { scrubOutbound } from "../outbound-redaction.js";
-import { apiPath, githubClient, githubReadClient, repoArgs, runGh, type GhContext } from "./common.js";
+import { apiPath, githubReadClient, repoArgs, runGh, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
 
 async function runGithubWrite(ctx: GhContext, args: readonly string[]) {
@@ -42,6 +42,14 @@ async function conditionalPages<T>(
     actor: "dev",
   });
   return answer.data;
+}
+
+function githubGraphqlClient(ctx: GhContext): Pick<GithubClient, "graphql"> {
+  const client = (ctx.github ?? githubReadClient(ctx)) as Partial<GithubClient>;
+  if (typeof client.graphql !== "function") {
+    throw new Error("GitHub routed GraphQL reads require a full client");
+  }
+  return client as Pick<GithubClient, "graphql">;
 }
 
 async function readLabelsForEdit(
@@ -330,7 +338,7 @@ async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]
     const operation = buildAliasedRepositoryQuery("issue", chunk, ["subIssues"]);
     let payload: unknown;
     try {
-      const data = await githubClient(ctx).graphql<unknown>(operation.query, { owner, repo }, {
+      const data = await githubGraphqlClient(ctx).graphql<unknown>(operation.query, { owner, repo }, {
         operation: { key: "api graphql", budget: "graphql" },
         actor: "dev",
       });
