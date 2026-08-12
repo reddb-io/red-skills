@@ -15,7 +15,7 @@ export interface ProxyRunOptions {
   level?: ProxyLossLevel;
 }
 
-export type ProxyLossLevel = "lossless" | "brief" | "terse";
+export type ProxyLossLevel = "lossless" | "brief" | "terse" | "full";
 
 export interface ProxySegmentMatch {
   command: string;
