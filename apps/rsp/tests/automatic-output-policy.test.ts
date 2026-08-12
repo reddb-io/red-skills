@@ -158,6 +158,30 @@ describe("rsp automatic output policy", () => {
     expect(rgResult.stdout).toEqual(rgDocs);
     expect(store.mintCalls).toBe(0);
   });
+
+  it.each([
+    { level: "brief" as const, count: 30, threshold: 64, expectedKept: 12 },
+    { level: "terse" as const, count: 10, threshold: 64 * 1024, expectedKept: 5 },
+  ])("keeps explicit $level output deterministic and recoverable", async ({ level, count, threshold, expectedKept }) => {
+    const original = Buffer.from(JSON.stringify(Array.from({ length: count }, (_, id) => ({ id, state: "steady" }))));
+    const store = new MemoryStore();
+
+    const result = await renderAutomaticOutput(original, {
+      command: "state-report --json",
+      level,
+      store,
+      sizeThresholdBytes: threshold,
+      repetitionThresholdRows: 20,
+    });
+
+    expect(result.lossy).toBe(true);
+    expect(store.originals.get("el:automaticfixture")).toEqual(original);
+    expect(result.stdout.toString("utf8").match(/el:[a-z0-9]+/g)).toEqual(["el:automaticfixture"]);
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(valueAt(decoded, ["reduction", "rows_kept"])).toBe(expectedKept);
+    expect(valueAt(decoded, ["reduction", "rows_omitted"])).toBe(count - expectedKept);
+    expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:automaticfixture");
+  });
 });
 
 function valueAt(value: unknown, path: readonly (string | number)[]): unknown {
