@@ -908,10 +908,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   /**
    * One tick of the demand loop: what may be asked for, asked for.
    *
-   * The depths come from the last poll rather than from a fetch of this tick's
-   * own: one aliased request per interval is the whole point of Amendment 3, and
-   * a tick that fetched would spend the quota the batching saves. A depth nobody
-   * measured yet holds its project back rather than standing in for a zero.
+   * A last poll may decline a birth; a positive one is confirmed through the
+   * direct REST list and re-planned, so search is never the only birth witness.
    *
    * **A refusal ends the tick and arms the backoff.** The host refused on a
    * host-wide ceiling, so every further request this tick would meet the same
@@ -938,9 +936,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       for (const worker of workers.values()) {
         live[worker.project_label] = (live[worker.project_label] ?? 0) + 1;
       }
-      const queue: Record<string, number | null> = {};
-      for (const project of lastQueue?.projects ?? []) queue[project.project_label] = project.depth;
-
       const nowMs = Date.parse(at);
       const demandNowMs = Number.isFinite(nowMs) ? nowMs : 0;
       // A half-open Worker closes the latch only after proving it survived the
@@ -952,21 +947,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           birthHealth[projectLabel] = resetBirthHealth();
         }
       }
-      const plan = planHostDemand({
-        projects: [...registrations.values()].map((registration) => ({
-          project_label: registration.project_label,
-          selector: registration.selector,
-          argv: registration.argv,
-          workspace_path: registration.workspace_path,
-          target: registration.target,
-        })),
-        queue,
-        live,
-        nowMs: demandNowMs,
-        backoffUntilMs: demandBackoffUntilMs,
-        birthHealth,
-      });
-
+      const planCurrentDemand = () =>
+        planHostDemand({
+          projects: [...registrations.values()].map((registration) => ({
+            project_label: registration.project_label,
+            selector: registration.selector,
+            argv: registration.argv,
+            workspace_path: registration.workspace_path,
+            target: registration.target,
+          })),
+          queue: Object.fromEntries((lastQueue?.projects ?? []).map((project) => [project.project_label, project.depth])),
+          live,
+          nowMs: demandNowMs,
+          backoffUntilMs: demandBackoffUntilMs,
+          birthHealth,
+        });
+      let plan = planCurrentDemand();
+      if (plan.births.length > 0) {
+        await pollQueueDiscovery();
+        plan = planCurrentDemand();
+      }
       const granted: RedskilledDemandGrant[] = [];
       const burstForks = new Map<string, Promise<string>>();
       let refusal: string | null = null;
