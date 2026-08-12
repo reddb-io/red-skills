@@ -42,7 +42,11 @@ describe("red-toon-watch workflow contract", () => {
     expect(resolveRelease).toContain('echo "changed=false"');
     expect(bump).toContain("if: steps.release.outputs.changed == 'true'");
     expect(bump).toContain('pnpm -C apps/dev dev toon-bump "$TARGET_VERSION"');
-    expect(bump).toContain("pnpm install --lockfile-only");
+    // A full install, never `--lockfile-only`: under CI=true with only a
+    // catalog edit, pnpm 11 skips resolution for lockfile-only runs and the
+    // bumped version never reaches pnpm-lock.yaml.
+    expect(bump).toContain("pnpm install --no-frozen-lockfile");
+    expect(bump).not.toMatch(/pnpm install [^\n]*--lockfile-only/);
   });
 
   it("force-updates one rolling PR with trigger tag and sanitized release notes", async () => {
