@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { GithubClient } from "@reddb-io/github";
 import type { GhContext } from "../src/runtime/gh.js";
-// The reset is a test-only seam; the barrel keeps its published surface.
-import { actorTrustSignals, resetCodeownersCache } from "../src/runtime/gh/trust.js";
+import { actorTrustSignals, createActorTrustLookup } from "../src/runtime/gh/trust.js";
 
 /** A routed client that answers 404 for every CODEOWNERS location and counts
  * the asks, plus a permission read so the parallel signal resolves. */
@@ -27,22 +26,44 @@ function context(github: GithubClient): GhContext {
 }
 
 describe("CODEOWNERS resolution is a repository fact", () => {
-  beforeEach(() => {
-    resetCodeownersCache();
-  });
-
-  it("reads the recognised locations once, however many actors are judged", async () => {
+  it("reads the recognised locations once for all actors in one evaluation", async () => {
     const seen: string[] = [];
-    const ctx = context(countingClient(seen));
+    const lookup = createActorTrustLookup(context(countingClient(seen)));
 
     for (const actor of ["ana", "bruno", "carol", "dan"]) {
-      const signals = await actorTrustSignals(ctx, actor);
+      const signals = await lookup(actor);
       expect(signals.inCodeowners).toBe(false);
     }
 
     // Four actors, one repository: the trust gate asked per candidate and a
     // boot listing 14 of them paid three 404s each.
     expect(seen).toEqual([".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]);
+  });
+
+  it("observes changed owners in a later independent evaluation", async () => {
+    let content = "* @ana";
+    let codeownersReads = 0;
+    const github = {
+      conditionalRest: async (request: { parameters?: Record<string, unknown> }) => {
+        const path = String(request.parameters?.path ?? "");
+        if (path === "") return { data: { permission: "read" }, headers: {}, quotaFree: false, requestCount: 1 };
+        codeownersReads += 1;
+        return { data: content, headers: {}, quotaFree: false, requestCount: 1 };
+      },
+      conditionalPaginate: async () => { throw new Error("unexpected conditionalPaginate"); },
+      graphql: async () => { throw new Error("unexpected graphql"); },
+      singleObject: async () => { throw new Error("unexpected singleObject"); },
+    } as unknown as GithubClient;
+    const ctx = context(github);
+
+    const firstEvaluation = createActorTrustLookup(ctx);
+    expect((await firstEvaluation("ana")).inCodeowners).toBe(true);
+
+    content = "* @bruno";
+    const laterEvaluation = createActorTrustLookup(ctx);
+    expect((await laterEvaluation("ana")).inCodeowners).toBe(false);
+    expect((await laterEvaluation("bruno")).inCodeowners).toBe(true);
+    expect(codeownersReads).toBe(2);
   });
 
   it("never caches an unavailable signal, so one blip cannot poison the process", async () => {
