@@ -22,11 +22,15 @@ captures only the completed agent-facing streams; nonempty UTF-8 stdout lazily
 loads the core's `structured-boundary.ts`, while empty and binary stdout never
 pay that parser cost.
 
-The structured boundary sniffs JSON, YAML, TOON, and TOONL, emits canonical
-TOON only when decode/encode/decode preserves the original data model, and
-otherwise returns the original Buffer. Pipeline stages stay inside the native
-shell execution and therefore never cross this boundary; only final stdout may
-transform. Stderr, exit status, and termination signal are never transformed.
+The structured boundary sniffs JSON, YAML, XML, TOON, and TOONL. JSON, YAML,
+TOON, and TOONL emit canonical TOON only when decode/encode/decode preserves
+the original data model. XML is delegated to the pinned `tq` conversion
+surface and emits only after XML → TOON → XML → TOON preserves its canonical
+tree. A missing or failed conversion, malformed input, an unsupported XML
+construct, or a proof mismatch returns the original Buffer. Pipeline stages
+stay inside the native shell execution and therefore never cross this
+boundary; only final stdout may transform. Stderr, exit status, and termination
+signal are never transformed.
 
 Modeled and RSP-owned commands load `core-entry.ts`, whose `main()` parses the
 top-level command, resolves `.red/config.yaml`, contacts the resident only when
