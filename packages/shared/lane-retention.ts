@@ -68,6 +68,10 @@ export const LANE_RETENTION_REGISTRY = {
     maxBytes: 64 * 1024,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "github-balance-history": {
+    maxBytes: 2 * MIB,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
   "castle-singleton-events": {
     maxBytes: 2 * MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,

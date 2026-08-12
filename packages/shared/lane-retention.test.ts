@@ -36,6 +36,7 @@ describe("shared lane retention", () => {
     });
     expect(LANE_RETENTION_REGISTRY["github-spend"].maxBytes).toBe(8 * 1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["github-balance"].maxBytes).toBe(64 * 1024);
+    expect(LANE_RETENTION_REGISTRY["github-balance-history"].maxBytes).toBe(2 * 1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["castle-singleton-events"].maxBytes).toBe(2 * 1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["rsp-telemetry-corrections"].maxBytes).toBe(1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["death-attributions"].maxAgeMs).toBe(14 * 24 * 60 * 60 * 1_000);

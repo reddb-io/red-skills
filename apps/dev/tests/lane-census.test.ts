@@ -83,12 +83,14 @@ describe("lane census operational probe", () => {
         "rsp-telemetry.spool.toonl.42.1783958744462.drain",
       );
       const hostEvents = join(hostRoot, "redskilled.log.toonl");
+      const balanceHistory = join(hostRoot, "state", "github", "balance-history.toonl");
       await Promise.all([
         mkdir(join(projectRoot, ".red", "state", "deaths"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "tmp", "workers", "wTEST"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "state", "unknown"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "state", "rsp"), { recursive: true }),
         mkdir(hostRoot, { recursive: true }),
+        mkdir(join(hostRoot, "state", "github"), { recursive: true }),
       ]);
       await Promise.all([
         writeFile(projectDeaths, "header\nrecord\n"),
@@ -97,6 +99,7 @@ describe("lane census operational probe", () => {
         writeFile(deadTemp, "partial"),
         writeFile(deadDrain, "pending telemetry"),
         writeFile(hostEvents, "host-event\n"),
+        writeFile(balanceHistory, "[1]{pool}:\ngraphql\n"),
       ]);
 
       const input = await collectLaneCensusProbeInput({
@@ -124,6 +127,13 @@ describe("lane census operational probe", () => {
           id: "redskilled-events",
           tier: "host",
           path: "[host]/redskilled.log.toonl",
+          lines: 1,
+        }),
+        expect.objectContaining({
+          id: "github-balance-history",
+          tier: "host",
+          path: "[host]/state/github/balance-history.toonl",
+          maxBytes: 2 * 1024 * 1024,
           lines: 1,
         }),
       ]));

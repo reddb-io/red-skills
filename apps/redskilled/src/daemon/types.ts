@@ -47,6 +47,7 @@ import { type RedskilledProjectDeregistered,
   type RedskilledWorkerHeartbeatRequest,
 } from "../protocol.js";
 import { type GithubBalance,
+  type GithubBalanceHistory,
   type GithubBalanceStore,
   type GithubBalanceTransport,
 } from "@reddb-io/github";
@@ -292,6 +293,8 @@ export interface RedskilledBalanceRegistration {
   readonly transport: GithubBalanceTransport;
   /** Host-state snapshot shared with fresh and parallel local processes. */
   readonly store?: GithubBalanceStore;
+  /** Append-only forensic pool curve written from the same answers as the snapshot. */
+  readonly history?: GithubBalanceHistory;
   /**
    * A hard window, for a test that needs one. Production leaves this absent and
    * lets the balance decide — that is the whole decision.
