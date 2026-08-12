@@ -177,7 +177,6 @@ import {
   type RedskilledWorkerLogLine,
 } from "../worker-log.js";
 import {
-  completeRedskilledReplacement,
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isLocalRedskilledBuild,
   isRedskilledBornByReplacement,
@@ -185,15 +184,12 @@ import {
   localRedskilledPublishedEvidence,
   planRedskilledMajorHold,
   planRedskilledReplacement,
-  prepareRedskilledReplacement,
   probePublishedRedskilledVersion,
   readPublishedObservation,
-  stageRedskilledReplacementSuccessor,
   type RedskilledMajorHold,
   type RedskilledPublishedObservation,
   type RedskilledReplacementDecision,
   type RedskilledReplacementHoldReason,
-  type RedskilledSuccessorControl,
 } from "../self-replace.js";
 import {
   createRedskilledLeaseStore,
@@ -218,6 +214,7 @@ import {
   bootRefusalFromLog,
   observedWorkerDeath,
 } from "./tunables.js";
+import { replaceWithViableSuccessor } from "./takeover.js";
 import { createRemotePollDeadline } from "./remote-poll.js";
 import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
@@ -453,8 +450,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let publishedChecks = 0;
   let publishedHoldReason: RedskilledReplacementHoldReason | null = null;
   let replacementState: "none" | "pending" | "in-progress" = "none";
-  // A broken published entry must not be hammered on every overlapping timer or
-  // idle decision. The incumbent keeps serving during this one-minute hold.
+  // Do not hammer one broken successor from overlapping checks.
   let nextTakeoverAttemptAtMs = 0;
   // The world's newest version whatever its major, and the hold it implies. Kept
   // beside the in-major answer because that one is capped by construction: on its
@@ -1869,54 +1865,27 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return decision;
   }
 
-  /**
-   * Observe, then hand the session over when a newer version is published.
-   *
-   * The order is the contract: flush the lane, let go of the socket and the
-   * lease, and only then start the successor — a successor racing this process
-   * for the exclusive bind would die, and the machine would keep the old bundle.
-   */
+  /** Observe, prove a viable successor, then hand over the session. */
   async function checkForReplacement(): Promise<RedskilledReplacementDecision> {
     const decision = await observePublishedVersion();
     if (decision.act !== "replace" || replacementState === "in-progress") return decision;
     const nowMs = Date.parse(clock());
     if (Number.isFinite(nowMs) && nowMs < nextTakeoverAttemptAtMs) return decision;
-    // The successor is found FIRST. A published bundle this host cannot reach
-    // costs the upgrade and nothing else: the throw leaves this daemon serving,
-    // still holding every Worker, still reporting the version it actually runs.
-    const prepared = prepareRedskilledReplacement(decision, replacementIO, paths, idleMs);
     if (Number.isFinite(nowMs)) nextTakeoverAttemptAtMs = nowMs + 60_000;
-    let successor: RedskilledSuccessorControl | undefined;
-    try {
-      successor = await stageRedskilledReplacementSuccessor(prepared, paths, {
-        ...(idleMs == null ? {} : { idleMs }),
-        io: replacementIO,
-      });
-    } catch {
-      replacementState = "pending";
-      await eventLane.recordDaemonTakeoverFailed({
-        ts: clock(),
-        pid: owner.pid,
-        socketPath: paths.socketPath,
-        detail:
-          `redskilled ${decision.to} failed its takeover boot handshake; incumbent ${daemonVersion} remains live`,
-      });
-      return decision;
-    }
-    replacementState = "in-progress";
-    await eventLane.flush().catch(() => undefined);
-    await registrationIntentStore.flush().catch(() => undefined);
-    try {
-      await stop({ reason: "replaced" });
-    } catch (error) {
-      successor?.abort();
-      throw error;
-    }
-    completeRedskilledReplacement(prepared, paths, {
-      ...(idleMs == null ? {} : { idleMs }),
+    const replaced = await replaceWithViableSuccessor({
+      decision,
       io: replacementIO,
-      ...(successor == null ? {} : { successor }),
+      paths,
+      ...(idleMs == null ? {} : { idleMs }),
+      incumbentVersion: daemonVersion,
+      incumbentPid: owner.pid,
+      clock,
+      eventLane,
+      flushRegistration: () => registrationIntentStore.flush(),
+      stop: () => stop({ reason: "replaced" }),
+      onViable: () => { replacementState = "in-progress"; },
     });
+    if (!replaced) replacementState = "pending";
     return decision;
   }
 
