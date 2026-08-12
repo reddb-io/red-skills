@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { AgentEffort } from "./execution.js";
 import { isRunner, type Runner } from "../types/runner.js";
+export { readStandingDrain, type StandingDrainConfig } from "./standing-drain-config.js";
 
 /**
  * config.ts — TypeScript port of scripts/config.sh.
@@ -1357,25 +1358,6 @@ function readPositiveInt(values: ConfigValues, key: string): number | undefined 
   if (raw === "") return undefined;
   const n = Number.parseInt(raw, 10);
   return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
-/** A project-level policy that asks every MCP session and the daemon to keep draining. */
-export interface StandingDrainConfig {
-  readonly runner: Runner;
-  readonly target: number;
-}
-
-/**
- * Read the opt-in standing drain declaration.
- *
- * Both leaves are required. An incomplete declaration is inert rather than
- * borrowing the explicit drain defaults: persistence must never be enabled by
- * accident or by a typo in the policy that is meant to authorize it.
- */
-export function readStandingDrain(values: ConfigValues): StandingDrainConfig | null {
-  const runner = getConfig(values, "afk.standing.runner").trim();
-  const target = readPositiveInt(values, "afk.standing.target");
-  return isRunner(runner) && target !== undefined ? { runner, target } : null;
 }
 
 export function readValidationResourceBudget(values: ConfigValues): ValidationResourceBudget {
