@@ -24,6 +24,16 @@ const TOOLCHAIN_STEPS: readonly string[] = [
   "      - name: Enable the repository package manager",
   "        run: corepack enable",
   "      - name: Install workspace dependencies",
+  // A dependency's postinstall that DOWNLOADS a binary makes the release
+  // hostage to a host the release never uses: `@reddb-io/sdk` fetches the
+  // `red` binary from GitHub Releases, and one 503 there failed the publish of
+  // an already-merged Version PR — versions bumped on main, nothing on the
+  // registry, and no path back except a fresh version cycle. The release job
+  // builds and publishes packages; it runs no SDK. Skipping the download is
+  // the difference between a release that depends on our own artifacts and one
+  // that depends on someone else's uptime.
+  "        env:",
+  "          REDDB_SKIP_POSTINSTALL: \"1\"",
   "        run: pnpm install --frozen-lockfile",
 ];
 const RELEASE_BOT = "red-skills-release[bot]";
