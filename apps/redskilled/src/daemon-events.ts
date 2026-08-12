@@ -25,6 +25,13 @@ export interface RecordDaemonDeathInput {
   readonly reason?: "silent-death";
 }
 
+export interface RecordDaemonTakeoverFailedInput {
+  readonly ts: string;
+  readonly pid: number;
+  readonly socketPath: string;
+  readonly detail: string;
+}
+
 export const REDSKILLED_DAEMON_EVENT_PREFIX = "daemon:";
 
 export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHostEvent {
@@ -39,9 +46,19 @@ export function buildDaemonDeathEvent(input: RecordDaemonDeathInput): Redskilled
   return buildDaemonLifecycleEvent("daemon-death", input, input.reason ?? "silent-death", null);
 }
 
+export function buildDaemonTakeoverFailedEvent(
+  input: RecordDaemonTakeoverFailedInput,
+): RedskilledHostEvent {
+  return buildDaemonLifecycleEvent("daemon-takeover-failed", input, "successor-boot-failed", null);
+}
+
 function buildDaemonLifecycleEvent(
-  kind: "daemon-start" | "daemon-death" | "daemon-stop",
-  input: RecordDaemonStartInput | RecordDaemonDeathInput | RecordDaemonStopInput,
+  kind: "daemon-start" | "daemon-death" | "daemon-stop" | "daemon-takeover-failed",
+  input:
+    | RecordDaemonStartInput
+    | RecordDaemonDeathInput
+    | RecordDaemonStopInput
+    | RecordDaemonTakeoverFailedInput,
   reason: string,
   signal: string | null | undefined,
 ): RedskilledHostEvent {
