@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { startChildProcessTimer } from "./overhead-budget.js";
 import { runCompletedChild } from "./completed-boundary.js";
+import { renderAutomaticCommandOutput } from "./automatic-output-policy.js";
 import { commandFamily, isEnvAssignment, isGhJsonJqSelection } from "./command-classifier.js";
 import { resolveRspInvocationPrefix } from "./rsp-cli.js";
-import { renderStructuredBoundary } from "./structured-boundary.js";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION, RSP_TELEMETRY_INVOCATIONS_COLLECTION } from "./telemetry.js";
 
 function shellQuoteIfNeeded(value: string): string {
@@ -56,7 +56,7 @@ export async function runProxy(argv: readonly string[], options: ProxyRunOptions
   } catch (err) {
     if (commandLine) {
       await appendProxyFailedOpen(options.telemetryRoot, commandLine, err);
-      return await runShellVerbatim(commandLine);
+      return await runShellVerbatim(commandLine, options.level ?? "lossless");
     }
     throw err;
   }
@@ -64,7 +64,7 @@ export async function runProxy(argv: readonly string[], options: ProxyRunOptions
   for (const match of segmentMatches) {
     await appendProxySegmentDecision(options.telemetryRoot, match);
   }
-  const status = await runShellVerbatim(routedCommandLine || commandLine);
+  const status = await runShellVerbatim(routedCommandLine || commandLine, options.level ?? "lossless", commandLine);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   await appendTelemetryEvent(options.telemetryRoot, {
     collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -135,13 +135,13 @@ async function appendProxySegmentDecision(rootDir: string, match: ProxySegmentMa
   });
 }
 
-async function runShellVerbatim(commandLine: string): Promise<number> {
+async function runShellVerbatim(commandLine: string, level: ProxyLossLevel, displayCommand = commandLine): Promise<number> {
   const child = spawn(commandLine, { shell: true, stdio: ["inherit", "pipe", "pipe"] });
   // The wrapped command's own runtime is never rsp's overhead (#2746).
   const stopChildTimer = startChildProcessTimer();
   child.once("close", stopChildTimer);
   child.once("error", stopChildTimer);
-  return await runCompletedChild(child, renderStructuredBoundary);
+  return await runCompletedChild(child, (stdout) => renderAutomaticCommandOutput(stdout, displayCommand, level));
 }
 
 function rewriteProxySegment(segment: string, level: ProxyLossLevel, rspPrefix: string[]): { text: string; match: ProxySegmentMatch } | null {
