@@ -69,6 +69,8 @@ function commandPath(args: readonly string[]): string[] {
  * Realize one canonical gh write argv on its declared rail. PURE.
  *
  * Covered spellings — exactly the ones the engine's landing emits:
+ * - `gh -R o/r issue create --title t --body b [--label l ...]`
+ *   → REST `POST issues`
  * - `gh -R o/r issue edit <n> --body b [--add-label/--remove-label ...]`
  *   → REST `PATCH issues/{n}` (label edits require the current complete set)
  * - `gh -R o/r issue close <n> --reason completed` → REST `PATCH issues/{n}`
@@ -255,7 +257,7 @@ export function planGithubWrite(
     const labelName = args[args.indexOf("create") + 1];
     const color = flagValue(args, "--color");
     const description = flagValue(args, "--description");
-    if (labelName) {
+    if (labelName && !labelName.startsWith("-")) {
       return {
         surface: "rest",
         args: [
