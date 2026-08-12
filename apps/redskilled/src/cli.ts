@@ -25,7 +25,11 @@ import {
   type RedskilledClientConfig,
 } from "./client.js";
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
-import { readRedskilledHostConfig, resolveRedskilledHostSettings } from "./host-config.js";
+import {
+  readRedskilledHostConfig,
+  resolveRedskilledHostEventSinks,
+  resolveRedskilledHostSettings,
+} from "./host-config.js";
 import {
   auditRedskilledProvisioning,
   installRedskilledUserUnit,
@@ -451,6 +455,10 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       },
       config: hostConfig,
     });
+    const hostEventSinks = resolveRedskilledHostEventSinks(
+      hostConfig,
+      redskilledHomeDir(homedir()),
+    );
     // The daemon's own black box (Spec #3022, slice #3023). The event lane already
     // carries `daemon-stop` for the stop this process CHOSE; this record carries
     // the death it did not — a signal, an uncaught error — in the one shape every
@@ -494,6 +502,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     try {
       daemon = await startRedskilledDaemon({
         paths,
+        ...(hostEventSinks == null ? {} : { hostEventSinks }),
         idleMs: hostSettings.idleMs,
         ceiling: hostSettings.ceiling,
         // The artifact states what it IS. Absent, the daemon reports the version
