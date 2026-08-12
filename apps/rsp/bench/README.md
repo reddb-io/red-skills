@@ -9,7 +9,7 @@ The rsp benchmark measures two separate questions:
    command facts an agent needs, such as exit status, failure rows, commit ids,
    PR rows, and recovery handles.
 
-The headline used by the rsp docs is **99.8% decision-oracle capture** for rsp
+The headline used by the rsp docs is **99.2% decision-oracle capture** for rsp
 versus **RTK 4.9%** and **Headroom 0.6%**. The generated result artifacts live
 in [bench/results/rsp-two-axis.md](results/rsp-two-axis.md) and
 [bench/results/rsp-two-axis.toon](results/rsp-two-axis.toon).
@@ -62,6 +62,21 @@ The check command reads the current `--out` artifact as the baseline, reruns the
 benchmark, rewrites the artifacts, and fails when a current filter regresses by
 more than the configured token threshold or loses fidelity. The thresholds live
 in `src/two-axis-thresholds.ts`.
+
+## Command-Boundary Latency
+
+Build rsp, then measure the shipped launcher against a direct Node no-op:
+
+```sh
+pnpm --filter @reddb-io/rsp build
+pnpm --filter @reddb-io/rsp bench:boundary
+```
+
+The benchmark samples one cold invocation, 40 warm paired invocations, and 40
+in-process structured transformations of a nested reference fixture. Its
+reference budgets are at most 200 ms cold, at most 50 ms added p95 passthrough
+latency, and at most 100 ms p95 structured transformation. The checked-in
+reference is [bench/results/rsp-command-boundary.md](results/rsp-command-boundary.md).
 
 ## Corpus
 

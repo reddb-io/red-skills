@@ -154,6 +154,7 @@ export function extractFailureReason(priorAttemptContext: string | undefined): s
 // the gate did NOT pass — a full agent iteration is still required.
 const GATE_STAGE_REASONS = new Set([
   "feedback-failed",
+  "feedback-failed-infra",
   "no-sentinel",
   "stalled",
   // A wall-clock cap (#2701) stops the worker MID-GATE: the branch carries real

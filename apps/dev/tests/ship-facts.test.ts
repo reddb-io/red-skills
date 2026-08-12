@@ -27,8 +27,11 @@ vi.mock("../src/runtime/exec.js", () => ({
   execTool: vi.fn(),
   pnpm: vi.fn(),
 }));
+vi.mock("../src/runtime/github-merge-read.js", () => ({
+  createDevGithubMergeRead: vi.fn(),
+}));
 
-import { execTool } from "../src/runtime/exec.js";
+import { createDevGithubMergeRead } from "../src/runtime/github-merge-read.js";
 import { collectShipFacts } from "../src/commands/ship.js";
 
 // ---------------------------------------------------------------------------
@@ -69,15 +72,15 @@ function prViewPayload(rollup: unknown[], reviewDecision = ""): string {
   return JSON.stringify({ reviewDecision, reviews: [], statusCheckRollup: rollup });
 }
 
-// Wire up the two gh calls that collectShipFacts makes.
+// Wire up the two routed reads that collectShipFacts makes.
 function setupMocks(checksCode: number, checksStdout: string, viewPayload: string): void {
-  vi.mocked(execTool).mockImplementation(async (_cmd, args) => {
-    if (Array.isArray(args) && args[1] === "checks") {
-      return { code: checksCode, stdout: checksStdout, stderr: checksCode !== 0 ? "API error" : "" };
-    }
-    // gh pr view — must succeed for required() not to throw
-    return { code: 0, stdout: viewPayload, stderr: "" };
-  });
+  vi.mocked(createDevGithubMergeRead).mockReturnValue({
+    reviewChecks: async () => {
+      if (checksCode !== 0) throw new Error("API error");
+      return checksStdout;
+    },
+    shipPr: async () => viewPayload,
+  } as never);
 }
 
 // ---------------------------------------------------------------------------

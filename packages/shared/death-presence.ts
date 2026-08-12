@@ -18,8 +18,10 @@
  */
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import type { ProcessDeathKind } from "./death-record.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 export { DEATH_PRESENCE_DIR, deathPresenceDir, deathPresenceDirIn } from "./red-paths.js";
 
@@ -123,7 +125,7 @@ export function writeProcessPresence(dir: string, presence: ProcessPresence): st
   const path = join(dir, presenceFileName(presence));
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(path, encodeLines({ trailer: false }).push(toRow(presence)), {
+    writeFileSync(path, encodeToonlLines({ trailer: false }).push(toRow(presence)), {
       encoding: "utf8",
       mode: 0o600,
     });

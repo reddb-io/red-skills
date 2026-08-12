@@ -7,12 +7,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
 import { type JsonObject } from "@reddb-io/toon";
-import {
-  createGithubBalanceTransport,
-  fetchGithubBalance,
-  githubBalanceCadenceMs,
-  type GithubBalance,
-} from "@reddb-io/github";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
 import { serveWireSocket } from "@reddb-io/shared/resident-core.js";
@@ -21,6 +15,7 @@ import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
 import { createResidentBrainStore } from "./resident-brain.js";
 import {
+  createCachedGithubBalanceReader,
   createRspResidentGithubClient,
   type RspResidentGithubClient,
 } from "./resident-github.js";
@@ -177,7 +172,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     await writeFile(opts.pidPath, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
   }
   const residentVersion = opts.residentVersion ?? "0.0.0-dev";
-  const registryPath = opts.registryPath ?? join(rspStateDir(opts.rootDir ?? process.cwd()), "rsp-resident.pid.json");
+  const registryPath = opts.registryPath ?? join(rspStateDir(opts.rootDir ?? process.cwd()), "rsp-resident.pid.toon");
   try {
     await writeResidentRegistry(registryPath, {
       socket_path: opts.socketPath,
@@ -249,7 +244,7 @@ const IDLE_SHUTDOWN_WATCHDOG_MS = Math.max(
   1,
   Number(process.env.RSP_TEST_IDLE_SHUTDOWN_WATCHDOG_MS ?? "10000"),
 );
-const RSP_STATUS_SUMMARY_FILE = "rsp-status-summary.json";
+const RSP_STATUS_SUMMARY_FILE = "rsp-status-summary.toon";
 const TELEMETRY_KV_COLLECTIONS = [
   RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_DECISIONS_COLLECTION,
@@ -875,7 +870,7 @@ function createLazyResidentGithub(rootDir: string): RspResidentGithubClient {
         client = createRspResidentGithubClient({
           rootDir,
           token,
-          balance: residentGithubBalanceReader(token),
+          balance: createCachedGithubBalanceReader(token),
         });
       }
       return await client.read(input);
@@ -883,31 +878,6 @@ function createLazyResidentGithub(rootDir: string): RspResidentGithubClient {
   };
 }
 
-/**
- * Ask the token for its authoritative balance at the package-owned adaptive
- * cadence. The rsp resident deliberately remains independent from redskilled;
- * an unanswered ask never becomes evidence that either pool is empty or full.
- */
-function residentGithubBalanceReader(token: string): () => Promise<GithubBalance | null> {
-  const transport = createGithubBalanceTransport({ token });
-  let held: GithubBalance | null = null;
-  let freshUntil = 0;
-  let inFlight: Promise<GithubBalance | null> | null = null;
-  return async (): Promise<GithubBalance | null> => {
-    const now = Date.now();
-    if (now < freshUntil) return held;
-    if (inFlight !== null) return await inFlight;
-    const askedAt = new Date(now).toISOString();
-    inFlight = fetchGithubBalance({ transport, now: askedAt }).then((answer) => {
-      held = answer;
-      freshUntil = Date.now() + githubBalanceCadenceMs(answer, { now: new Date().toISOString() });
-      return held;
-    }).finally(() => {
-      inFlight = null;
-    });
-    return await inFlight;
-  };
-}
 
 async function handleBrainRequest(
   store: RspElisionStore,

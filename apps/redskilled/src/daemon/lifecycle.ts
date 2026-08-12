@@ -3,7 +3,9 @@ import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
+import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
+import { createWorkerTeardownLedger } from "./worker-teardown.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
   appendRedskilledMetricObservation,
@@ -69,6 +71,11 @@ import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-t
 import {
   createRedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
+import {
+  buildRegistrationLapse,
+  buildRegistrationStop,
+  mayRecoverRegistration,
+} from "../registration-recovery.js";
 import {
   buildProjectRegistration,
   renewProjectRegistration,
@@ -209,6 +216,8 @@ import {
   bootRefusalFromLog,
   observedWorkerDeath,
 } from "./tunables.js";
+import { createRemotePollDeadline } from "./remote-poll.js";
+import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
 export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
 
@@ -329,6 +338,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const liveness = options.liveness ?? detectWorkerLiveness;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
+  /** Exactly-once Worker teardown: a second ask joins the stop already in flight. */
+  const endWorkerOnce = createWorkerTeardownLedger(stopProbe);
   const unitInventory = options.unitInventory ??
     (() =>
       maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost)
@@ -343,6 +354,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
   const publishedProbeTimeoutMs = options.publishedProbeTimeoutMs ?? DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS;
+  const remotePoll = createRemotePollDeadline(options.remotePollTimeoutMs);
   const localEvidence = options.localPublishedEvidence ??
     ((running: string) => localRedskilledPublishedEvidence(running, options.replacementIO?.env ?? process.env));
   const bornByReplacement = options.bornByReplacement ?? isRedskilledBornByReplacement();
@@ -403,20 +415,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // snapshot preserves that opaque intent across daemon replacement; its lease
   // deadline still decides whether the successor may keep using it.
   const restoredRegistrations = await registrationIntentStore.read().catch(() => []);
-  const restoredAtMs = Date.parse(startedAt);
   const registrations = new Map<string, RedskilledProjectRegistration>();
   // A lapsed record is retained for one more window so the next queue poll can
   // prove that work still exists and restore it without a person restating the
   // selector and launch. Bounded: a drained or one-window-old record is dropped.
   const recoverableRegistrations = new Map<string, RedskilledProjectRegistration>();
-  for (const restored of restoredRegistrations) {
-    const renewByMs = Date.parse(restored.renew_by);
-    if (!Number.isFinite(restoredAtMs) || !Number.isFinite(renewByMs) || renewByMs >= restoredAtMs) {
-      registrations.set(restored.project_label, restored);
-    } else if (restoredAtMs - renewByMs <= restored.renew_within_ms) {
-      recoverableRegistrations.set(restored.project_label, restored);
-    }
-  }
   const projectHooks = createRedskilledProjectHookRuntime({
     registration: (label) => registrations.get(label),
     liveWorkerIds: () => workers.keys(),
@@ -456,11 +459,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // The last activity fetch, kept for the same reason the RSS reading is: a read
   // between two polls is dated by the poll it came from, never by the read.
   let lastActivity: RedskilledRepositoryActivity | null = null;
-  // The last balance the TOKEN answered with — the only copy on this host, and
-  // not a number this process maintains. It is `null` until something has been
-  // asked, because "nobody asked yet" and "the budget is full" are opposite facts
-  // and the second one admits every call (ADR 0132 Amendment 2).
-  let lastBalance: GithubBalance | null = null;
+  // The last TOKEN answer; null means unasked, never "full budget" (ADR 0132 Amendment 2).
+  let lastBalance: GithubBalance | null = null, balanceHydrated = false, balanceHydration: Promise<GithubBalance | null> | null = null;
   // The last queue fetch, held beside the activity one rather than merged into it:
   // two cadences produce two instants, and a document that carried one date for
   // both would age the fast half by the slow half's clock.
@@ -512,7 +512,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     attendedMs: activityMs,
     armed: queueRegistration != null || (activityRegistration != null && activityRegistration.projects.length > 0),
     stopping: () => stopping,
+    rateLimit: () => lastActivity?.rate_limit ?? null,
   });
+  const selfPingMonitor = createConfiguredRedskilledSelfPingMonitor(paths.socketPath, options);
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
@@ -571,20 +573,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * the absence into a stated fact with an instant and a reason on it. Bounded on
    * purpose: this is the tail an operator asks about, not a history.
    */
-  function rememberLapse(registration: RedskilledProjectRegistration, nowMs: number): void {
+  function rememberLapse(
+    registration: RedskilledProjectRegistration,
+    nowMs: number,
+    detail?: string,
+  ): void {
     const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
-    lapses.push({
-      project_label: registration.project_label,
-      registered_at: registration.registered_at,
-      at,
-      renew_by: registration.renew_by,
-      renewals: registration.renewals,
-      sustains: registration.sustains ?? 0,
-      detail:
-        `redskilled dropped the registration for project ${JSON.stringify(registration.project_label)}: it stood ` +
-        `until ${registration.renew_by} and nothing renewed it — no session spoke for it, and no poll found it ` +
-        `work or a Worker to hold it up`,
-    });
+    lapses.push(buildRegistrationLapse(registration, lastQueue, at, detail));
     if (lapses.length > REDSKILLED_LAPSE_MEMORY) lapses.splice(0, lapses.length - REDSKILLED_LAPSE_MEMORY);
   }
 
@@ -638,7 +633,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     for (const [label, lapsed] of [...recoverableRegistrations]) {
       // Recovery is a belt, not immortal intent. After one original window there
       // is no live statement left to restore, so the extra polling stops.
-      if (nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+      if (!mayRecoverRegistration(lapsed, nowMs)) {
         recoverableRegistrations.delete(label);
         changed = true;
         continue;
@@ -673,6 +668,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       ceiling,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
+      requestHealth: selfPingMonitor.health(),
       workers: [...workers.values()],
       registrations: [...registrations.values()],
       demand: lastDemand,
@@ -748,11 +744,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     void eventLane.recordWorker(appended.record).catch(() => undefined);
   }
 
-  /** Keep one Worker's ending, so the outcome rate rests on the same facts the lane does. */
-  function markWorkerOutcome(mark: RedskilledWorkerOutcomeMark): void {
-    outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
-  }
-
   /**
    * One interval's activity fetch: ONE request, however many projects.
    *
@@ -762,27 +753,32 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * to pass for current, because the failure is itself the fact a consumer needs.
    */
   async function pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null> {
-    return lastActivity = await pollRegistrationActivity({
-      ...(activityRegistration == null ? {} : { explicit: activityRegistration }),
-      registrations: registrations.values(),
-      resolveHostTransport: () => {
-        armQueueTransport();
-        return queueTransport;
-      },
-      now: clock(), previous: lastActivity,
-    });
+    return lastActivity = await remotePoll("repository activity poll", () => pollRegistrationActivity({
+        ...(activityRegistration == null ? {} : { explicit: activityRegistration }),
+        registrations: registrations.values(),
+        resolveHostTransport: () => {
+          armQueueTransport();
+          return queueTransport;
+        },
+        now: clock(), previous: lastActivity,
+      }));
   }
 
-  /**
-   * Ask the token what it has left. ONE request, and one poller host-wide.
-   *
-   * The answer replaces the stored one whatever it says, including when it says
-   * nothing: a refusal that left the last good balance standing would keep
-   * admitting convenience reads against a number the token stopped confirming.
-   */
+  /** Ask the token once host-wide; every answer replaces the stored observation. */
   async function pollGithubBalance(): Promise<GithubBalance | null> {
     if (balanceRegistration == null) return null;
-    lastBalance = await fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() });
+    if (!balanceHydrated && balanceRegistration.store) {
+      balanceHydration ??= balanceRegistration.store.read().then((stored) => {
+        balanceHydrated = true;
+        if (stored !== null) lastBalance = stored;
+        return stored;
+      }).finally(() => { balanceHydration = null; });
+      if ((await balanceHydration) !== null) return lastBalance;
+    }
+    lastBalance = await remotePoll("GitHub balance poll", () =>
+      fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() }));
+    await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
+    await balanceRegistration.history?.append(lastBalance).catch(() => undefined);
     return lastBalance;
   }
 
@@ -808,17 +804,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         .then(() => {
           if (stopping) return;
           const nextMs = balanceRegistration.intervalMsOverride ??
-            githubBalanceCadenceMs(lastBalance ?? unaskedBalance(), { now: clock() });
+            githubBalanceCadenceMs(lastBalance ?? unaskedGithubBalance(clock()), { now: clock() });
           balanceTimer = setTimeout(tick, nextMs);
           balanceTimer.unref();
         });
     };
     tick();
-  }
-
-  /** The balance a daemon that has asked nothing holds — never a full budget. */
-  function unaskedBalance(): GithubBalance {
-    return unaskedGithubBalance(clock());
   }
 
   /**
@@ -863,7 +854,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     expireLapsedRegistrations(now);
     const nowMs = Date.parse(now);
     for (const [label, lapsed] of [...recoverableRegistrations]) {
-      if (Number.isFinite(nowMs) && nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+      if (!mayRecoverRegistration(lapsed, nowMs)) {
         recoverableRegistrations.delete(label);
       }
     }
@@ -894,12 +885,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       lastQueue = unconfiguredQueueDiscovery(projects, now, queueUnconfiguredReason);
       return lastQueue;
     }
-    lastQueue = await fetchQueueDiscovery({
-      projects,
-      transport: queueTransport,
-      now,
-      ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
-    });
+    lastQueue = await remotePoll("queue poll", () => fetchQueueDiscovery({
+        projects,
+        transport: queueTransport!,
+        now,
+        ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
+      }));
     // The depth this poll just counted is the renewal a project with open work
     // gets (Amendment 7), applied here rather than at the next read so a deadline
     // is never judged against a poll the daemon had already superseded.
@@ -912,10 +903,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   /**
    * One tick of the demand loop: what may be asked for, asked for.
    *
-   * The depths come from the last poll rather than from a fetch of this tick's
-   * own: one aliased request per interval is the whole point of Amendment 3, and
-   * a tick that fetched would spend the quota the batching saves. A depth nobody
-   * measured yet holds its project back rather than standing in for a zero.
+   * A last poll may decline a birth; a positive one is confirmed through the
+   * direct REST list and re-planned, so search is never the only birth witness.
    *
    * **A refusal ends the tick and arms the backoff.** The host refused on a
    * host-wide ceiling, so every further request this tick would meet the same
@@ -942,9 +931,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       for (const worker of workers.values()) {
         live[worker.project_label] = (live[worker.project_label] ?? 0) + 1;
       }
-      const queue: Record<string, number | null> = {};
-      for (const project of lastQueue?.projects ?? []) queue[project.project_label] = project.depth;
-
       const nowMs = Date.parse(at);
       const demandNowMs = Number.isFinite(nowMs) ? nowMs : 0;
       // A half-open Worker closes the latch only after proving it survived the
@@ -956,21 +942,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           birthHealth[projectLabel] = resetBirthHealth();
         }
       }
-      const plan = planHostDemand({
-        projects: [...registrations.values()].map((registration) => ({
-          project_label: registration.project_label,
-          selector: registration.selector,
-          argv: registration.argv,
-          workspace_path: registration.workspace_path,
-          target: registration.target,
-        })),
-        queue,
-        live,
-        nowMs: demandNowMs,
-        backoffUntilMs: demandBackoffUntilMs,
-        birthHealth,
-      });
-
+      const planCurrentDemand = () =>
+        planHostDemand({
+          projects: [...registrations.values()].map((registration) => ({
+            project_label: registration.project_label,
+            selector: registration.selector,
+            argv: registration.argv,
+            workspace_path: registration.workspace_path,
+            target: registration.target,
+          })),
+          queue: Object.fromEntries((lastQueue?.projects ?? []).map((project) => [project.project_label, project.depth])),
+          live,
+          nowMs: demandNowMs,
+          backoffUntilMs: demandBackoffUntilMs,
+          birthHealth,
+        });
+      let plan = planCurrentDemand();
+      if (plan.births.length > 0) {
+        await pollQueueDiscovery();
+        plan = planCurrentDemand();
+      }
       const granted: RedskilledDemandGrant[] = [];
       const burstForks = new Map<string, Promise<string>>();
       let refusal: string | null = null;
@@ -1479,9 +1470,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const releasedRecoverable = recoverableRegistrations.delete(projectLabel);
     const released = releasedCurrent || releasedRecoverable;
     if (held != null) {
-      const detail = `redskilled released the registration for project ${JSON.stringify(projectLabel)}`;
       removeRegistrationHistory(projectLabel);
-      stops.push({ project_label: projectLabel, registered_at: held.registered_at, at: clock(), detail });
+      stops.push(buildRegistrationStop(held, lastQueue, clock()));
       if (stops.length > REDSKILLED_LAPSE_MEMORY) stops.splice(0, stops.length - REDSKILLED_LAPSE_MEMORY);
     }
     if (released) persistRegistrationIntent();
@@ -1510,15 +1500,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   /** Stop one Worker the daemon holds, and record its death. */
   async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
-    let confirmed = false;
-    // A refused stop still releases the daemon's claim; the event names that the
-    // process group may survive rather than forging host confirmation.
-    try { confirmed = (await stopProbe(worker)) === true; } catch {}
-    forgetWorker(worker.worker_id);
-    const pgid = worker.pgid ?? worker.pid;
-    record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
-      `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
-    armIdleTimer();
+    await endWorkerOnce(worker, (confirmed) => {
+      forgetWorker(worker.worker_id);
+      const pgid = worker.pgid ?? worker.pid;
+      record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
+        `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
+      armIdleTimer();
+    });
     return true;
   }
 
@@ -1661,7 +1649,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // describe the same ending at two different times.
     const input: RecordWorkerEventInput = { kind, worker, ts, detail, ...facts };
     if (kind === "worker-death" || kind === "worker-budget-kill") {
-      markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: kind });
+      const mark: RedskilledWorkerOutcomeMark = { worker_id: worker.worker_id, ts, outcome: kind };
+      outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
       rememberObservedDeath(
         buildHostEvent(input),
         { startedAt: worker.started_at, ...(facts.refusal == null ? {} : { refusal: facts.refusal }) },
@@ -1726,16 +1715,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   async function killWorkerOverBudget(workerId: string, detail: string): Promise<boolean> {
     const worker = workers.get(workerId);
     if (!worker) return false;
-    try {
-      await stopProbe(worker);
-    } catch {
-      // The kill is recorded either way: a stop the host refused still ends the
-      // daemon's claim on the budget, and a silent failure would leave the
-      // accounting holding room for a Worker nobody is tracking any more.
-    }
-    forgetWorker(workerId);
-    record("worker-budget-kill", worker, detail);
-    armIdleTimer();
+    // The kill is recorded either way: a stop the host refused still ends the
+    // daemon's claim on the budget, and a silent failure would leave the
+    // accounting holding room for a Worker nobody is tracking any more. It joins
+    // a teardown already in flight rather than starting a second one, so a floor
+    // tick that lands on a Worker a project is already stopping writes no second
+    // death and gives no second slot back.
+    await endWorkerOnce(worker, () => {
+      forgetWorker(workerId);
+      record("worker-budget-kill", worker, detail);
+      armIdleTimer();
+    });
     return true;
   }
 
@@ -2180,6 +2170,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     activityPoller.stop();
+    selfPingMonitor.stop();
     if (balanceTimer) clearTimeout(balanceTimer);
     if (queueTimer) clearTimeout(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
@@ -2236,7 +2227,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   );
   observations = replayRedskilledMetricObservations(laneEvents, clock());
   const replayed = rehydrateWorkers(laneEvents);
-  const reattachment = await reattachWorkers(replayed, liveness);
+  // Census active units before attributing deaths: an active unit is re-attachable, not dead.
+  const activeUnits = new Set(await Promise.resolve(unitInventory()).catch(() => []));
+  const reattachment = await reattachWorkers(replayed, (worker) =>
+    worker.unit != null && activeUnits.has(worker.unit) ? true : liveness(worker));
   for (const worker of reattachment.alive) {
     // Named, never dropped: a Worker whose owning project the lane no longer
     // carries is still a live process charged to this machine, and the label it
@@ -2251,13 +2245,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   for (const worker of reattachment.dead) {
     record("worker-death", worker, "the Worker ended while no daemon was watching");
   }
-  // The lane is this daemon's memory, not the machine's: a Worker whose birth was
-  // never written — or was written and then falsely retired — is invisible to the
-  // replay and very much alive to the host. So the host itself is asked, and a
-  // unit nobody accounts for is adopted rather than left outside the budget
-  // (#2917). Failing to ask costs the sweep and never the start.
+  // The lane is this daemon's memory, not the machine's: a birth never written —
+  // or falsely retired — is invisible to the replay and alive to the host. So the
+  // host is asked, and an unaccounted unit is adopted rather than left outside
+  // the budget (#2917). Failing to ask costs the sweep and never the start.
   const discovered = discoverUnownedWorkers({
-    units: await Promise.resolve(unitInventory()).catch(() => []),
+    units: [...activeUnits],
     held: [...workers.values()],
     mainPid: unitMainPid,
     now: startedAt,
@@ -2267,16 +2260,20 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     reattached.add(worker.worker_id);
     record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
   }
-  // A successor can prove an expired-but-recoverable intent immediately from a
-  // Worker the predecessor left running; no queue round-trip or human restart is
-  // needed before that project is registered again.
+  const bootRecovery = planRegistrationBootRecovery(restoredRegistrations, workers.values(), startedAt);
+  for (const held of bootRecovery.live) registrations.set(held.project_label, held);
+  for (const held of bootRecovery.recoverable) recoverableRegistrations.set(held.project_label, held);
+  for (const held of bootRecovery.abandoned) rememberLapse(held, Date.parse(startedAt),
+    `redskilled lapsed the recovered registration for project ${JSON.stringify(held.project_label)}: ` +
+      "no session renewed it on cadence and no attributed Worker is alive");
+  if (restoredRegistrations.length > 0) persistRegistrationIntent();
   recoverRegistrations(clock());
-  // The bounded exception. A daemon that has just come back holds Workers it has
-  // never heard a heartbeat from, so for those — and only those — it reads the log
-  // ONCE, from the path the client GAVE at spawn and carried on the event lane. A
-  // Worker whose client gave no path stays without a line until it publishes one;
-  // guessing a filename inside its workspace would be the derived layout ADR 0130
-  // rule 3 forbids. Recovery is not the normal path.
+  await recordDaemonBootRecovery({ eventLane, laneEvents, heldLease, ownerPid: owner.pid,
+    startedAt, socketPath: paths.socketPath, recovery: bootRecovery });
+  // The bounded exception: for reattached Workers only, read the log ONCE, from
+  // the path the client GAVE at spawn and carried on the event lane. No path →
+  // no line until the Worker publishes one; guessing a filename would be the
+  // derived layout ADR 0130 rule 3 forbids. Recovery is not the normal path.
   for (const worker of reattachment.alive) {
     if (worker.log_path == null || logLines.has(worker.worker_id)) continue;
     const recovered = await readLogTail(worker.log_path).catch(() => null);
@@ -2287,9 +2284,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   server.on("connection", (socket) => {
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
-    armIdleTimer();
     handleSocket(socket, async (request, reply) => {
-      armIdleTimer();
+      if (request.op !== "ping" || request.self !== true) armIdleTimer();
       const response = await respond(request);
       reply(response);
       // The report is written to the caller BEFORE the daemon leaves: a stop that
@@ -2430,6 +2426,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armBalanceTimer();
   armQueueTimer();
   armDemandTimer();
+  selfPingMonitor.arm();
 
   return {
     socketPath: paths.socketPath,

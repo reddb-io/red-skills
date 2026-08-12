@@ -4,7 +4,7 @@
 high-noise commands, emits compact decision-preserving output, and keeps the
 original bytes recoverable through `el:<id>` handles.
 
-Benchmark headline: `rsp` reaches **99.8% decision-oracle capture** versus
+Benchmark headline: `rsp` reaches **99.2% decision-oracle capture** versus
 **RTK 4.9%** and **Headroom 0.6%** on the two-axis benchmark. The checked-in
 summary is at [bench/results/rsp-two-axis.md](bench/results/rsp-two-axis.md),
 and the benchmark guide is at [bench/README.md](bench/README.md).
@@ -13,6 +13,16 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
 
 `rsp` is both an explicit CLI and a hook target:
 
+- `rsp <command> <args...>` accepts any non-interactive command. Unrecognized
+  simple argv launches through the fast boundary without loading configuration,
+  telemetry, the store, or the resident. After completion, JSON, YAML, XML,
+  TOON, or TOONL stdout becomes canonical TOON only after a lossless round-trip
+  proof; all other bytes pass through unchanged. XML conversion uses the pinned
+  `tq` canonical tree instead of an RSP-owned representation. Large repetitive
+  structured rows are
+  reduced only after deterministic size and repetition thresholds are crossed;
+  the TOON result declares its cap or sort, includes aggregates and next steps,
+  and carries one recovery handle whose original bytes were stored first.
 - `rsp git status`, `rsp git diff`, `rsp git log`, `rsp git show`,
   `rsp git blame`, `rsp git branch -av`, `rsp git commit`, and `rsp git push`
   render git output as compact TOON when that keeps the decision signal.
@@ -39,8 +49,9 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
 
 ## Provisioning
 
-`rsp` ships as a bundled Node.js entry point (`dist/rsp.bundle.min.mjs`) inside
-the RedSkills plugin distribution. No global `npm install -g` is required.
+`rsp` ships as a small Node.js boundary (`dist/rsp.bundle.min.mjs`) and a lazy
+modeled-command core (`dist/rsp-core.bundle.min.mjs`) inside the RedSkills
+plugin distribution. No global `npm install -g` is required.
 Supported agent hosts wire the hook command as:
 
 ```sh
@@ -108,9 +119,15 @@ changing upstream bytes:
 - simple `cat`, `head`, and `tail` file reads
 
 Pipeline producers are not rewritten, so bytes inside pipes remain untouched.
+Shell shapes it cannot model keep the original shell execution path, including
+its redirects, short-circuiting, exit status, and termination signal.
+Only completed agent-facing stdout crosses the lossless structured-data
+boundary. Stderr and exit status remain native, and any failed proof returns the
+original stdout byte-for-byte.
 GitHub commands using `--json` or `--jq` are a special lossless family: they are
-recorded as `lossless-gh-json-jq` passes and execute byte-identically rather
-than being summarized.
+recorded as `lossless-gh-json-jq` passes and keep their native protocol bytes
+inside the shell. Their completed stdout may still become canonical TOON at the
+final agent boundary.
 
 ## Contribution Metrics
 
@@ -161,6 +178,11 @@ Recover a handle with:
 ```sh
 rsp show el:<id>
 ```
+
+Universal output controls use an explicit separator so flags never leak into
+the wrapped argv: `rsp --brief -- <command> <args...>`, `rsp --terse -- ...`,
+and `rsp --full -- ...`. `--full` keeps the complete structured result and
+suppresses automatic reduction.
 
 Defaults are seven days of derivable/re-executable elision retention, six hours
 of ephemeral retention, and a 64 MiB physical cap; `.red/config.yaml` can

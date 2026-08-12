@@ -57,6 +57,12 @@ import {
   type RedskilledPublicHostEventKind,
 } from "./event-lane.js";
 import type { RedskilledQueueOutcome } from "./queue-discovery.js";
+import {
+  isQueuePollPlanShape,
+  requireQueuePollPlan,
+  type RedskilledQueuePollPlan,
+} from "./project-registration-queue.js";
+export type { RedskilledCounterLabels, RedskilledQueuePollPlan } from "./project-registration-queue.js";
 
 /** One project-owned notification, asynchronous unless it declares a bounded wait. */
 export type RedskilledProjectHook = RedskilledLaunchTemplate & {
@@ -101,22 +107,6 @@ export const REDSKILLED_RENEWAL_CADENCE = 0.5;
  * work nobody is watching, on a deadline it will actually lapse at.
  */
 export type RedskilledRenewalStatus = "renewing" | "self-renewing" | "running-on";
-
-/**
- * An ETag-capable repository list, authored by the project that understands the
- * selector and carried by the daemon without interpreting it.
- */
-export interface RedskilledQueuePollPlan {
-  readonly owner: string;
-  readonly repo: string;
-  readonly labels: readonly string[];
-  readonly creator?: string;
-  readonly counter_labels?: RedskilledCounterLabels;
-}
-
-export interface RedskilledCounterLabels {
-  readonly ready: string; readonly human: string;
-}
 
 /** The remote branch whose fetched commit becomes every admitted Worker's fork. */
 export interface RedskilledTrunk {
@@ -168,6 +158,8 @@ export interface RedskilledProjectRegistrationRequest {
   readonly hooks?: RedskilledProjectHooks;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
+  /** Whether project policy declares this drain should remain recoverable. */
+  readonly standing?: boolean;
   /** How long this registration stands without renewal; the default when absent. */
   readonly renew_within_ms?: number;
 }
@@ -187,6 +179,8 @@ export interface RedskilledProjectRegistration {
   /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
   readonly target: number;
+  /** True only when the project explicitly declared a standing drain policy. */
+  readonly standing?: boolean;
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
   readonly renew_within_ms: number;
@@ -305,6 +299,12 @@ export function buildProjectRegistration(
         `${JSON.stringify(request.target)}`,
     );
   }
+  if (request.standing !== undefined && typeof request.standing !== "boolean") {
+    throw new Error(
+      `redskilled needs standing intent for project ${JSON.stringify(projectLabel)} to be boolean, not ` +
+        `${JSON.stringify(request.standing)}`,
+    );
+  }
   const renewWithinMs = request.renew_within_ms ?? REDSKILLED_REGISTRATION_TTL_MS;
   if (!Number.isFinite(renewWithinMs) || renewWithinMs <= 0) {
     throw new Error(
@@ -329,6 +329,7 @@ export function buildProjectRegistration(
     ...(logPath == null ? {} : { log_path: logPath }),
     ...(hooks == null ? {} : { hooks }),
     target: request.target,
+    ...(request.standing === true ? { standing: true } : {}),
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
     renew_by: new Date(nowMs + renewWithinMs).toISOString(),
@@ -661,6 +662,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     typeof registration.workspace_path === "string" &&
     (registration.trunk === undefined || isTrunkShape(registration.trunk)) &&
     Number.isInteger(registration.target) &&
+    (registration.standing === undefined || typeof registration.standing === "boolean") &&
     typeof registration.registered_at === "string" &&
     typeof registration.renew_within_ms === "number" &&
     typeof registration.renew_by === "string" &&
@@ -760,30 +762,6 @@ function isTrunkShape(value: unknown): value is RedskilledTrunk {
   const trunk = value as Record<string, unknown>;
   return typeof trunk.remote === "string" && trunk.remote.trim() !== "" &&
     typeof trunk.branch === "string" && trunk.branch.trim() !== "";
-}
-
-function requireQueuePollPlan(value: unknown, projectLabel: string): RedskilledQueuePollPlan | undefined {
-  if (value === undefined) return undefined;
-  if (!isQueuePollPlanShape(value)) {
-    throw new Error(
-      `redskilled needs a complete queue poll plan for project ${JSON.stringify(projectLabel)} when one is stated`,
-    );
-  }
-  return value;
-}
-
-function isQueuePollPlanShape(value: unknown): value is RedskilledQueuePollPlan {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const plan = value as Record<string, unknown>;
-  return typeof plan.owner === "string" && plan.owner !== "" &&
-    typeof plan.repo === "string" && plan.repo !== "" &&
-    Array.isArray(plan.labels) &&
-    plan.labels.length > 0 &&
-    plan.labels.every((label) => typeof label === "string" && label !== "") &&
-    (plan.creator === undefined || typeof plan.creator === "string") && (plan.counter_labels === undefined ||
-      (typeof plan.counter_labels === "object" && plan.counter_labels !== null &&
-        typeof (plan.counter_labels as Record<string, unknown>).ready === "string" && (plan.counter_labels as Record<string, unknown>).ready !== "" &&
-        typeof (plan.counter_labels as Record<string, unknown>).human === "string" && (plan.counter_labels as Record<string, unknown>).human !== ""));
 }
 
 /** True when `value` is a map of strings to strings — a launch env's whole shape. */

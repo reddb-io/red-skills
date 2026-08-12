@@ -81,8 +81,11 @@ function scrubKeyValueSecrets(input: string): string {
 
 function scrubHomeIdentity(input: string, options: ScrubOutboundOptions): string {
   let out = input;
-  const home = options.homeDir || homedir();
-  if (home) out = replaceLiteral(out, home, "[REDACTED_HOME]");
+  // Both the stated home AND the process's real one: a caller that names a
+  // home is adding a target, not exempting the machine's own identity — and a
+  // pinned test HOME outside /home/<user> would otherwise sail through.
+  const homes = new Set([options.homeDir, homedir()].filter((h): h is string => !!h));
+  for (const home of homes) out = replaceLiteral(out, home, "[REDACTED_HOME]");
   out = out.replace(/\/home\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._-])/g, "/home/[REDACTED_USER]");
   out = out.replace(/\/Users\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._-])/g, "/Users/[REDACTED_USER]");
   return out;

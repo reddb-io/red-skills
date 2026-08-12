@@ -94,6 +94,15 @@ vi.mock("../src/core/operational-probes.js", () => ({
   terminateSupervisorPid: vi.fn(async () => undefined),
 }));
 
+// Command tests pose repository repairs, never mutate the host toolchain. The
+// host-toolchain doctor has its own focused suite; allowing --fix here to run
+// its real Cargo installer makes an unrelated config-merge assertion depend on
+// network/build latency and can leave a host installation behind.
+vi.mock("../src/core/host-toolchain-doctor.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/core/host-toolchain-doctor.js")>()),
+  applyHostToolchainFixes: vi.fn(async () => []),
+}));
+
 const deadendReport = {
   generatedAtMs: 1_700_000_000_000,
   total: 1,

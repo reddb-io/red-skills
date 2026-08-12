@@ -242,21 +242,28 @@ jobs:
       # the real binary against produced TOONL lane files), so the required host
       # binary must exist here exactly as it does on dev machines (/red-setup)
       # and in red-rsp-benchmark-ci.yml. Same pinned installer, no fallback.
+      #
+      # From the GitHub release, not crates.io. tq's crates publish runs on a
+      # token that can lapse independently of the release itself — it did, at
+      # 0.21.0, with a 403 nobody saw — and when it lapses `cargo install`
+      # takes every branch of this repository down with it. The release asset
+      # is published by the same tag that would have fed crates.io, carries a
+      # checksum, and skips a full cargo build besides.
       - name: Install pinned tq
         if: env.RUN_DEV == 'true'
         env:
-          TQ_VERSION: v0.13.0
-          GH_TOKEN: ${{ github.token }}
+          TQ_VERSION: v0.26.2
         run: |
           set -euo pipefail
-          installer="$RUNNER_TEMP/tq-install.sh"
-          scripts/ci-fetch-with-retry.sh \
-            "https://api.github.com/repos/reddb-io/toon/contents/install.sh?ref=${TQ_VERSION}" \
-            "$installer" \
-            -H "Accept: application/vnd.github.raw+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28"
-          sh "$installer"
+          tq_root="$RUNNER_TEMP/tq"
+          mkdir -p "$tq_root/bin"
+          base="https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static" "$tq_root/bin/tq"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static.sha256" "$tq_root/tq.sha256"
+          echo "$(cut -d' ' -f1 "$tq_root/tq.sha256")  $tq_root/bin/tq" | sha256sum -c -
+          chmod +x "$tq_root/bin/tq"
+          echo "$tq_root/bin" >> "$GITHUB_PATH"
+          "$tq_root/bin/tq" --version
 
       - name: Install workspace dependencies
         if: env.RUN_DEV == 'true'
@@ -278,6 +285,99 @@ jobs:
       - name: Report narrowed scope
         if: env.RUN_DEV != 'true'
         run: echo "apps/dev is not in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no shard to run."
+
+  # RSP owns the terminal boundary, so its fast fidelity suite and its heavier
+  # subprocess/resident integration suite are both merge requirements. Build
+  # first and smoke the same bundle shipped to users; integration tests then
+  # keep exercising that artifact across the real CLI and resident surfaces.
+  rsp:
+    runs-on: ubuntu-latest
+    needs: scope
+    env:
+      RUN_RSP: ${{ contains(fromJSON(needs.scope.outputs.test_packages), 'apps/rsp') }}
+    steps:
+      - name: Checkout
+        if: env.RUN_RSP == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - if: env.RUN_RSP == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+
+      - if: env.RUN_RSP == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      # The rsp integration suite exercises the XML command boundary through
+      # the real `tq` binary on PATH (structured-boundary.ts shells out to it,
+      # and command-boundary.test.ts asserts tq's canonical ordered tree), so
+      # the pinned binary must exist here exactly as it does on dev machines
+      # (/red-setup) and in the RUN_DEV jobs above. Same pinned installer,
+      # same GitHub-release source, no fallback.
+      - name: Install pinned tq
+        if: env.RUN_RSP == 'true'
+        env:
+          TQ_VERSION: v0.26.2
+        run: |
+          set -euo pipefail
+          tq_root="$RUNNER_TEMP/tq"
+          mkdir -p "$tq_root/bin"
+          base="https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static" "$tq_root/bin/tq"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static.sha256" "$tq_root/tq.sha256"
+          echo "$(cut -d' ' -f1 "$tq_root/tq.sha256")  $tq_root/bin/tq" | sha256sum -c -
+          chmod +x "$tq_root/bin/tq"
+          echo "$tq_root/bin" >> "$GITHUB_PATH"
+          "$tq_root/bin/tq" --version
+
+      # Unlike the other jobs, this one MUST let the @reddb-io/sdk postinstall
+      # download the `red` binary: the resident tests spawn the built bundle
+      # against the embedded RedDb elision store, and `rsp setup` provisions
+      # through the same binary. With REDDB_SKIP_POSTINSTALL=1 every
+      # built-bundle resident test dies with `reddb: binary "red" not found`.
+      - name: Install workspace dependencies
+        if: env.RUN_RSP == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build distributable RSP bundle
+        if: env.RUN_RSP == 'true'
+        run: pnpm -C apps/rsp build
+
+      - name: Exercise distributable RSP bundle
+        if: env.RUN_RSP == 'true'
+        run: node dist/rsp.bundle.min.mjs --help
+
+      # The resident tests spawn the built bundle, and the bundled sdk cannot
+      # resolve `bin/red` relative to its own package: the bundle lives in
+      # dist/, so the sdk's package-root fallback points at <repo>/bin/red,
+      # which never exists. Production hosts find the binary through the warm
+      # cache (~/.cache/red-skills/bundles/reddb/<version>/red) that
+      # /red-setup provisions; give the runner the same warm cache from the
+      # binary the sdk postinstall just downloaded.
+      - name: Seed RedDb warm cache for resident tests
+        if: env.RUN_RSP == 'true'
+        run: |
+          set -euo pipefail
+          sdk_dir=$(cd apps/rsp/node_modules/@reddb-io/sdk && pwd -P)
+          version=$(node -p "require('$sdk_dir/package.json').version")
+          dest="$HOME/.cache/red-skills/bundles/reddb/$version"
+          mkdir -p "$dest"
+          cp "$sdk_dir/bin/red" "$dest/red"
+          "$dest/red" --version
+
+      - name: Test RSP fidelity and units
+        if: env.RUN_RSP == 'true'
+        run: pnpm -C apps/rsp test
+
+      - name: Test RSP integration
+        if: env.RUN_RSP == 'true'
+        env:
+          NODE_OPTIONS: --unhandled-rejections=strict
+        run: pnpm -C apps/rsp test:integration
+
+      - name: Report narrowed scope
+        if: env.RUN_RSP != 'true'
+        run: echo "apps/rsp is not in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no RSP gate to run."
 
   # The remaining suites are seconds-cheap, so they stay in one job rather than
   # paying a runner's fixed cost each.
@@ -361,13 +461,14 @@ jobs:
     # and shrink their own steps, so a docs-only PR reaches this job green.
     if: always()
     runs-on: ubuntu-latest
-    needs: [scope, test-shard, test-packages]
+    needs: [scope, test-shard, rsp, test-packages]
     steps:
       - name: Fail when a test dependency failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
           echo "scope=${{ needs.scope.result }}"
           echo "test-shard=${{ needs['test-shard'].result }}"
+          echo "rsp=${{ needs.rsp.result }}"
           echo "test-packages=${{ needs['test-packages'].result }}"
           exit 1
 

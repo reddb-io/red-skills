@@ -12,9 +12,40 @@ block the command the operator asked to run.
 
 ## CLI and Wrappers
 
-`apps/rsp/src/cli.ts` is the entry point. It parses the top-level command,
-resolves `.red/config.yaml`, starts or contacts the resident when needed, and
-dispatches to wrapper modules:
+`apps/rsp/src/entry.ts` is the installed entry point. The release bundle uses
+the equivalent `bundle-entry.ts`: a small, independently parsed launcher beside
+`rsp-core.bundle.min.mjs`. `fast-boundary.ts` executes unknown simple commands
+with their original argv before configuration, telemetry, store, or resident
+modules load. Shell compounds that contain no modeled segment execute through
+their original shell string on the same fast path. `completed-boundary.ts`
+captures only the completed agent-facing streams; nonempty UTF-8 stdout lazily
+loads the core's `structured-boundary.ts`, while empty and binary stdout never
+pay that parser cost.
+
+The structured boundary sniffs JSON, YAML, XML, TOON, and TOONL. JSON, YAML,
+TOON, and TOONL emit canonical TOON only when decode/encode/decode preserves
+the original data model. XML is delegated to the pinned `tq` conversion
+surface and emits only after XML → TOON → XML → TOON preserves its canonical
+tree. A missing or failed conversion, malformed input, an unsupported XML
+construct, or a proof mismatch returns the original Buffer. Pipeline stages
+stay inside the native shell execution and therefore never cross this
+boundary; only final stdout may transform. Stderr, exit status, and termination
+signal are never transformed.
+
+`automatic-output-policy.ts` extends that completed boundary without taxing
+ordinary commands. Small structured output stays complete. Large structured
+arrays reduce only when their byte size and majority-shape row count cross
+pinned thresholds; explicit `--terse` uses the same deterministic renderer with
+a tighter cap, while `--full` suppresses reduction. The disk-census recognizer
+sorts Cargo `target` directory rows by KiB and emits a top-N TOON table. Every
+lossy result declares its row cap, omitted count, and any sorting, plus numeric
+aggregates, next steps, and exactly one recovery command. The mint is awaited
+before reduced stdout can be returned. If persistence is unavailable, the
+complete output wins and no unrecoverable summary is emitted.
+
+Modeled and RSP-owned commands load `core-entry.ts`, whose `main()` parses the
+top-level command, resolves `.red/config.yaml`, contacts the resident only when
+shared state is needed, and dispatches to wrapper modules:
 
 - `git-wrapper.ts` for git status, diff, log, show, blame, branch, commit, and
   push.
@@ -51,7 +82,8 @@ through commands that would make routing unsafe or recursive:
 
 `rsp proxy` executes the routed shell command verbatim after segment rewriting.
 It splits shell segments on `&&`, `||`, `;`, and `|`, but it never rewrites a
-segment whose next operator is a pipe. That keeps pipeline producer bytes raw.
+segment whose next operator is a pipe. That keeps pipeline producer bytes raw;
+the completed structured boundary runs only after the entire shell exits.
 For non-pipeline-tail segments, the proxy recognizes only families backed by
 shipped wrappers:
 
@@ -66,7 +98,15 @@ Recognized segments emit decision telemetry with hook `proxy`, decision
 `git:log` or `gh:pr:list`. GitHub commands containing `--json`, `--jq`,
 `--json=...`, or `--jq=...` are the lossless selector family. The proxy records
 them with decision `passed`, reason `lossless-gh-json-jq`, and leaves the exact
-segment text unchanged.
+segment text and its internal protocol bytes unchanged. Once the shell exits,
+its final stdout follows the same lossless structured-data boundary as every
+other proxied command.
+
+Redirections stay owned by the shell. A safely modeled segment keeps its raw
+redirect suffix when rsp prefixes the specialized executor; grouping, command
+substitution, malformed syntax, and other ambiguous shapes keep the original
+shell execution path. Native `&&` and `||` therefore retain their exact
+short-circuit behavior even in mixed modeled/unmodeled compounds.
 
 If proxy routing fails after parsing the original command, `rsp proxy` appends a
 `failed-open` decision with reason `proxy-internal-error` and runs the original
@@ -74,6 +114,12 @@ command line. If parsing fails before an original command is known, it surfaces
 the usage error instead of inventing a command to run.
 
 ## Resident Lifecycle
+
+The resident is the lazy control plane for shared state, not a prerequisite for
+the synchronous command data plane. Universal argv execution starts no resident,
+opens no store, and writes no telemetry or state file. Commands that transform,
+recover, coordinate, or account for output load the core and contact the
+resident as described below.
 
 The resident is started through `rsp server` or warmed by client calls through
 `ensureResidentServer()` and `warmResidentServer()`. Runtime paths come from the
@@ -191,7 +237,7 @@ The resident owns the drain:
 4. Bad lines or write failures become degradation events rather than blocking
    the drain.
 5. The telemetry index is pruned by telemetry TTL and byte budget.
-6. `writeStatusSummary()` writes `.red/tmp/rsp-status-summary.json` for the
+6. `writeStatusSummary()` writes `.red/state/rsp/rsp-status-summary.toon` for the
    statusline summary.
 
 Telemetry collections:
@@ -313,13 +359,16 @@ rather than an ambiguous success. Notify hooks receive the stable result through
 ### GitHub bounds
 
 Each GitHub probe is bounded by `--probe-timeout` (default 60s) in addition to
-the wait's own cancellation signal, and the `gh` process is killed when either
-fires. Without that second bound a hung `gh` call would outlive `--timeout`
-entirely, because the deadline is only checked between probes. A bounded-out
-probe is indeterminate, so the loop simply retries until the real deadline.
+the wait's own cancellation signal. Supported PR, run, job, and release reads
+use `@reddb-io/github` conditional requests, not a spawned `gh` polling loop.
+The resident owns that client when available. When rsp is disabled or the
+resident cannot start, the already-long-lived wait owns one in-process client
+for its lifetime, preserving ETags, adaptive rate-limit balance snapshots, and
+attribution without repeatedly retrying the unavailable resident.
 
-GitHub polling preserves its last observation on timeout or interruption. A
-conflicting PR is a failure even when checks pass. `run --branch <branch>
+GitHub polling preserves its last observation on timeout or interruption. REST
+`mergeable_state: dirty` is normalized to the GraphQL `CONFLICTING` vocabulary,
+so a conflicting PR is a failure even when checks pass. `run --branch <branch>
 --latest` resolves once and pins that run ID before polling, so a newer run
 cannot silently change the target. Registry entries are removed on every exit
 path after the result has been persisted.
@@ -387,8 +436,10 @@ Important fail-open paths:
 - `gh` auth/rate-limit and other fault outputs preserve the byte-level fault
   output.
 - `gh --json`/`--jq` selector commands are recorded as `lossless-gh-json-jq`
-  passes and execute byte-identically.
+  passes and retain native bytes until the final agent boundary.
 - Binary file reads pass through unchanged.
+- Invalid, ambiguous, prose, binary, or failed structured-data proofs return
+  the original stdout bytes while preserving stderr and command status.
 - An unreachable resident socket costs the elision, never the command: wrappers
   and the proxy hand back the raw stdout, stderr, and exit status, `stats` and
   the bare dashboard degrade to the empty snapshot, `wait` keeps its spooled

@@ -22,6 +22,11 @@ const ISSUE_BODY = JSON.stringify({
 });
 
 describe("planGithubRestRead — issues", () => {
+  it("projects the REST database id used by issue relationship endpoints", () => {
+    const read = plan(planGithubRestRead({ kind: "issue", number: 42, fields: ["databaseId"], repo: "acme/widgets" }));
+    expect(read.decode(JSON.stringify({ id: 12345 }))).toEqual({ databaseId: 12345 });
+  });
+
   it("issues one gh api request against the repository path", () => {
     const read = plan(planGithubRestRead({ kind: "issue", number: 42, fields: ["state", "labels"], repo: "acme/widgets" }));
     expect(read.args).toEqual(["api", "repos/acme/widgets/issues/42"]);
@@ -168,6 +173,34 @@ describe("planGithubRestRead — what REST cannot answer", () => {
   it("refuses a read that names no fields and one that names no object", () => {
     expect(planGithubRestRead({ kind: "issue", number: 42, fields: [] }).outcome).toBe("unavailable");
     expect(planGithubRestRead({ kind: "issue", number: 0, fields: ["state"] }).outcome).toBe("unavailable");
+  });
+});
+
+describe("planGithubRestRead — explicit REST endpoints", () => {
+  it("plans a read-only collection without admitting mutation flags (#3734)", () => {
+    expect(planGithubRestRead({
+      kind: "rest",
+      path: "repos/o/r/issues",
+      args: ["--paginate", "-f", "state=open"],
+    })).toMatchObject({
+      outcome: "plan",
+      path: "repos/o/r/issues",
+      args: ["api", "repos/o/r/issues", "--method", "GET", "--paginate", "-f", "state=open"],
+    });
+    expect(planGithubRestRead({ kind: "rest", path: "repos/o/r/issues", args: ["-X", "POST"] })).toMatchObject({
+      outcome: "unavailable",
+    });
+  });
+
+  it("plans an attributed GraphQL read without exposing a mutation door (#3734)", () => {
+    expect(planGithubRestRead({ kind: "graphql", query: "query Viewer { viewer { login } }" })).toMatchObject({
+      outcome: "plan",
+      path: "graphql",
+      args: ["api", "graphql", "-f", "query=query Viewer { viewer { login } }"],
+    });
+    expect(planGithubRestRead({ kind: "graphql", query: "mutation { deleteProjectV2(input: {}) { clientMutationId } }" })).toMatchObject({
+      outcome: "unavailable",
+    });
   });
 });
 

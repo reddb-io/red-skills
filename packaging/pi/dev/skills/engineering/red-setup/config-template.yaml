@@ -36,6 +36,10 @@ plugins:
   #                               # PR bodies/diffs as untrusted and never checks
   #                               # out, builds, tests, or executes PR code.
   #   afk:
+  #     standing:                 # optional persistent project drain
+  #       runner: codex           # both runner and target are required
+  #       target: 4               # MCP sessions auto-register; the daemon keeps
+  #                               # recoverable intent while queued work remains
   #     setup:                    # required repository-owned dependency setup
   #       - LEFTHOOK=0 pnpm install --frozen-lockfile
   #                               # /red-setup detects the package/hook managers,
@@ -108,7 +112,7 @@ rsp:
 # TOON/TOONL inspection; there is no jq fallback lane.
 host_binaries:
   tq:
-    version: 0.13.0
+    version: 0.26.2
 
 # Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
 # worktrees must live under a registered .red/tmp/ lane, and branch-changing

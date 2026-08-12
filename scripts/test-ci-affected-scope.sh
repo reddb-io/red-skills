@@ -63,7 +63,13 @@ assert_field "$shared" "s.mode" "cone" "shared-package change stays in cone mode
 assert_field "$shared" "s.testPackages.includes('packages/shared')" "true" "shared cone includes the touched package"
 assert_field "$shared" "s.testPackages.includes('apps/dev')" "true" "shared cone includes apps/dev (a dependent)"
 assert_field "$shared" "s.testPackages.includes('apps/opencode-host')" "true" "shared cone includes apps/opencode-host (a dependent)"
-assert_field "$shared" "s.testPackages.includes('apps/afk-container')" "false" "shared cone excludes an unrelated package"
+# red-browser, not afk-container: the "unrelated" example has to be a package
+# with no path to packages/shared in the workspace graph, and afk-container
+# stopped being one when packages/github (its dependency) took a dependency on
+# shared. red-browser's workspace deps are the browser-bridge/cdp-driver pair,
+# neither of which reaches shared. If this assertion trips, first check whether
+# the example rotted the same way before suspecting the cone computation.
+assert_field "$shared" "s.testPackages.includes('apps/red-browser')" "false" "shared cone excludes an unrelated package"
 
 # ---------- unclassifiable / global-blast-radius changes ----------
 

@@ -17,6 +17,8 @@ export interface RedskilledProcessCensusRow {
   readonly age_ms: number;
   readonly worker_id?: string;
   readonly born_at?: string;
+  /** Active init-system unit stated by the process's birth environment. */
+  readonly unit?: string;
   readonly cwd?: string;
   readonly under_workers_lane: boolean;
 }
@@ -79,6 +81,8 @@ export interface RedskilledProcessCensusOptions {
   readonly proc_root?: string;
   /** Host USER_HZ; injected only when the proc tree belongs to another kernel. */
   readonly clock_ticks_per_second?: number;
+  /** Active units whose stamped leaders must remain visible even while held by init. */
+  readonly active_worker_units?: readonly string[];
 }
 
 let cachedProcClockTicksPerSecond: number | null | undefined;
@@ -155,15 +159,17 @@ export async function readRedskilledProcessStarttime(
 /**
  * Take one process-table snapshot for the reaper.
  *
- * Stat is read for every process. Environment and cwd are deliberately deferred
- * until a row says it was reparented to pid 1: those are sensitive and more
- * expensive reads, and no other row can become an orphan candidate.
+ * Stat is read for every process. Environment and cwd are normally deferred
+ * until a row says it was reparented to pid 1. When active units need birth
+ * recovery, environments are also inspected until their stamped leaders are
+ * found; unrelated rows are still discarded before cwd is read.
  */
 export async function censusRedskilledProcesses(
   options: RedskilledProcessCensusOptions = {},
 ): Promise<RedskilledProcessCensusRow[]> {
   const root = options.proc_root ?? "/proc";
   try {
+    const activeWorkerUnits = new Set(options.active_worker_units ?? []);
     const clockTicksPerSecond = options.clock_ticks_per_second ?? hostProcClockTicksPerSecond();
     if (clockTicksPerSecond == null || !Number.isFinite(clockTicksPerSecond) || clockTicksPerSecond <= 0) return [];
     const uptimeSeconds = Number((await readFile(join(root, "uptime"), "utf8")).trim().split(/\s+/)[0]);
@@ -178,7 +184,7 @@ export async function censusRedskilledProcesses(
       } catch {
         continue;
       }
-      if (parsed == null || parsed.ppid !== 1) continue;
+      if (parsed == null || (parsed.ppid !== 1 && activeWorkerUnits.size === 0)) continue;
 
       let environment = new Map<string, string>();
       let cwd: string | undefined;
@@ -187,6 +193,9 @@ export async function censusRedskilledProcesses(
       } catch {
         // An unreadable stamp leaves the row unstamped; cwd can still identify a suspect.
       }
+      const unit = stated(environment.get("RED_WORKER_SCOPE"));
+      const isActiveWorkerUnit = unit != null && activeWorkerUnits.has(unit);
+      if (parsed.ppid !== 1 && !isActiveWorkerUnit) continue;
       try {
         cwd = await readlink(join(root, entry, "cwd"));
       } catch {
@@ -207,6 +216,7 @@ export async function censusRedskilledProcesses(
         ),
         ...(workerId == null ? {} : { worker_id: workerId }),
         ...(bornAt == null ? {} : { born_at: bornAt }),
+        ...(isActiveWorkerUnit ? { unit } : {}),
         ...(cwd == null ? {} : { cwd }),
         under_workers_lane: cwd != null && isWorkersLanePath(cwd),
       });
@@ -357,13 +367,52 @@ export interface RedskilledOrphanReaperRuntime {
 
 const EMPTY_ORPHAN_SWEEP: RedskilledOrphanSweepOutcome = { adopted: 0, reaped: 0, suspects: 0 };
 
+interface RecoveredActiveUnitBirths {
+  readonly births: readonly RedskilledProcessCensusRow[];
+  readonly complete: boolean;
+}
+
+/** Rebuild live-birth proof only when every active unit has one stamped leader. PURE. */
+function recoverActiveUnitBirths(
+  processes: readonly RedskilledProcessCensusRow[],
+  activeWorkerUnits: readonly string[],
+): RecoveredActiveUnitBirths {
+  const requiredUnits = new Set(activeWorkerUnits);
+  const birthsByUnit = new Map<string, RedskilledProcessCensusRow>();
+  const workerUnits = new Map<string, string>();
+  let ambiguous = false;
+  for (const process of processes) {
+    const workerId = stated(process.worker_id);
+    const bornAt = stated(process.born_at);
+    const unit = stated(process.unit);
+    if (
+      workerId == null || bornAt == null || unit == null ||
+      process.pid !== process.pgid || !requiredUnits.has(unit)
+    ) continue;
+    const priorBirth = birthsByUnit.get(unit);
+    const priorUnit = workerUnits.get(workerId);
+    if (
+      (priorBirth != null && (priorBirth.worker_id !== workerId || priorBirth.born_at !== bornAt)) ||
+      (priorUnit != null && priorUnit !== unit)
+    ) {
+      ambiguous = true;
+      continue;
+    }
+    birthsByUnit.set(unit, process);
+    workerUnits.set(workerId, unit);
+  }
+  return {
+    births: [...birthsByUnit.values()],
+    complete: !ambiguous && birthsByUnit.size === requiredUnits.size,
+  };
+}
+
 /** Own the daemon's orphan census, decisions, action ordering and interval. */
 export function createRedskilledOrphanReaperRuntime(
   options: RedskilledOrphanReaperRuntimeOptions,
 ): RedskilledOrphanReaperRuntime {
   const intervalMs = options.interval_ms ?? DEFAULT_REDSKILLED_ORPHAN_REAPER_MS;
   const mode = options.mode ?? redskilledOrphanReaperMode();
-  const census = options.census ?? censusRedskilledProcesses;
   const readStarttime = options.read_starttime ?? readRedskilledProcessStarttime;
   const killGroup = options.kill_group ?? killTreeAndWait;
   const report = options.report ?? ((detail: string) => process.stderr.write(`redskilled: ${detail}\n`));
@@ -373,30 +422,49 @@ export function createRedskilledOrphanReaperRuntime(
   async function inspect(): Promise<{
     readonly selected: SelectedRedskilledProcessCensus;
     readonly liveBirths: ReadonlyMap<string, RedskilledWorkerView>;
+    readonly recoveredBirthIds: ReadonlySet<string>;
     readonly safeToAct: boolean;
   }> {
+    let activeWorkerUnits: readonly string[] = [];
+    let activeUnitProofAvailable = true;
+    try {
+      activeWorkerUnits = await Promise.resolve(options.active_worker_units?.() ?? []);
+    } catch {
+      activeUnitProofAvailable = false;
+    }
+
     let processes: readonly RedskilledProcessCensusRow[];
     try {
-      processes = await census();
+      processes = options.census == null
+        ? await censusRedskilledProcesses({ active_worker_units: activeWorkerUnits })
+        : await options.census();
     } catch {
       processes = [];
     }
 
     let births: readonly RedskilledWorkerView[] = [];
+    const recoveredBirthIds = new Set<string>();
     let safeToAct = true;
     if (processes.length > 0) {
       try {
         births = await options.live_births();
       } catch {
-        safeToAct = false;
-        report("orphan census withheld: the event lane could not prove which stamped Workers still have live births");
+        const recovered = recoverActiveUnitBirths(processes, activeWorkerUnits);
+        safeToAct = activeUnitProofAvailable && recovered.complete;
+        if (safeToAct) {
+          births = recovered.births.map((process) => workerFromOrphanProcess(process, options.clock));
+          for (const birth of births) recoveredBirthIds.add(birth.worker_id);
+          report(
+            `orphan birth proof re-derived from ${births.length} active stamped Worker unit(s); ` +
+            "the event lane can be reseeded before orphan teardown",
+          );
+        } else {
+          report("orphan census withheld: the event lane and active unit census could not prove which stamped Workers still have live births");
+        }
       }
     }
     const liveBirths = new Map(births.map((worker) => [worker.worker_id, worker]));
-    const [activeWorkerUnits, dumpFiles] = await Promise.all([
-      Promise.resolve(options.active_worker_units?.() ?? []).catch(() => []),
-      Promise.resolve(options.dump_files?.() ?? []).catch(() => []),
-    ]);
+    const dumpFiles = await Promise.resolve(options.dump_files?.() ?? []).catch(() => []);
     return {
       selected: selectRedskilledProcessCensus({
         processes,
@@ -406,6 +474,7 @@ export function createRedskilledOrphanReaperRuntime(
         dump_files: dumpFiles,
       }),
       liveBirths,
+      recoveredBirthIds,
       safeToAct,
     };
   }
@@ -428,7 +497,7 @@ export function createRedskilledOrphanReaperRuntime(
     if (!options.authorized || mode === "off" || sweeping) return { ...EMPTY_ORPHAN_SWEEP };
     sweeping = true;
     try {
-      const { selected, liveBirths, safeToAct } = await inspect();
+      const { selected, liveBirths, recoveredBirthIds, safeToAct } = await inspect();
       if (!safeToAct) return { ...EMPTY_ORPHAN_SWEEP };
       const candidates = selected.candidates;
       const counts = { adopted: 0, reaped: 0, suspects: 0 };
@@ -445,10 +514,17 @@ export function createRedskilledOrphanReaperRuntime(
           continue;
         }
         if (candidate.kind === "adopt") {
+          const recoveredBirth = recoveredBirthIds.has(candidate.process.worker_id!);
           await options.adopt(
-            workerFromOrphanProcess(candidate.process, options.clock, liveBirths.get(candidate.process.worker_id!)),
-            false,
-            candidate.detail,
+            workerFromOrphanProcess(
+              candidate.process,
+              options.clock,
+              recoveredBirth ? undefined : liveBirths.get(candidate.process.worker_id!),
+            ),
+            recoveredBirth,
+            recoveredBirth
+              ? `adopted from an active unit after event-lane birth proof was unavailable: ${candidate.detail}`
+              : candidate.detail,
           );
           counts.adopted += 1;
           report(candidate.detail);
@@ -466,6 +542,12 @@ export function createRedskilledOrphanReaperRuntime(
           kill_group: killGroup,
         });
         if (!outcome.reaped || !verified) {
+          if (verified && outcome.reason === "group-survived") {
+            await options.record_reaped(
+              adopted,
+              `group-survived: process group ${candidate.process.pgid} survived orphan teardown; ${candidate.detail}`,
+            );
+          }
           report(`${candidate.detail}; ${outcome.reason}`);
           continue;
         }
@@ -527,7 +609,8 @@ function workerFromOrphanProcess(
     proc_start_time: processRow.starttime,
     started_at: birth?.started_at ?? processRow.born_at ?? inferredBirth,
     workspace_path: processRow.cwd ?? birth?.workspace_path ?? "",
-    isolated: false,
+    isolated: processRow.unit != null,
+    ...(processRow.unit == null ? {} : { unit: processRow.unit }),
     warnings: [
       ...(birth?.warnings ?? []),
       birth == null

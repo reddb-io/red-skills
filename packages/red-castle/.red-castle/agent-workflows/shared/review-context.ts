@@ -1,5 +1,6 @@
 import { gh, safeSh, sh } from "./common";
 import { parseDiffLines } from "./diff-lines";
+import { planGithubRestRead } from "@reddb-io/github";
 
 export interface ReviewThreadComment {
   readonly commentId: string;
@@ -25,9 +26,29 @@ export interface PullRequestContext {
 export const fetchPullRequestContext = (
   prNumber: string,
 ): PullRequestContext => {
-  const prView = JSON.parse(
-    gh(["pr", "view", prNumber, "--json", "title,body,comments"]),
-  ) as {
+  const repoSlug = process.env.GH_REPO || "{owner}/{repo}";
+  const rest = (path: string, args: readonly string[] = []): string => {
+    const plan = planGithubRestRead({ kind: "rest", path, args });
+    if (plan.outcome !== "plan") throw new Error(plan.reason);
+    return gh(plan.args);
+  };
+  const prPlan = planGithubRestRead({ kind: "pr", number: Number(prNumber), fields: ["title", "body"], ...(repoSlug.includes("{") ? {} : { repo: repoSlug }) });
+  if (prPlan.outcome !== "plan") throw new Error(prPlan.reason);
+  const pr = prPlan.decode(gh(prPlan.args));
+  const comments = JSON.parse(rest(`repos/${repoSlug}/issues/${prNumber}/comments`)) as Array<{
+    user?: { login?: string } | null;
+    body?: string;
+    created_at?: string;
+  }>;
+  const prView = {
+    title: String(pr.title ?? ""),
+    body: String(pr.body ?? ""),
+    comments: comments.map((comment) => ({
+      author: { login: comment.user?.login ?? "" },
+      body: comment.body ?? "",
+      createdAt: comment.created_at,
+    })),
+  } as {
     title: string;
     body?: string | null;
     comments: {
@@ -41,15 +62,15 @@ export const fetchPullRequestContext = (
     /(?:closes|fixes|resolves)\s+#(\d+)/i,
   );
   const issueNumber = issueMatch?.[1] ?? "";
-  const issueTitle = issueNumber
-    ? safeSh(`gh issue view ${issueNumber} --json title --jq .title`).trim()
-    : "";
+  const issuePlan = issueNumber ? planGithubRestRead({ kind: "issue", number: Number(issueNumber), fields: ["title", "body"], ...(repoSlug.includes("{") ? {} : { repo: repoSlug }) }) : null;
+  const issue = issuePlan?.outcome === "plan" ? issuePlan.decode(gh(issuePlan.args)) : {};
+  const issueTitle = String(issue.title ?? "");
   const linkedIssue = issueNumber
-    ? safeSh(`gh issue view ${issueNumber} --comments`)
+    ? JSON.stringify({ ...issue, comments: JSON.parse(rest(`repos/${repoSlug}/issues/${issueNumber}/comments`)) })
     : "(no linked issue found)";
 
   const reviews = JSON.parse(
-    gh(["api", `repos/{owner}/{repo}/pulls/${prNumber}/reviews`]),
+    rest(`repos/${repoSlug}/pulls/${prNumber}/reviews`),
   ) as {
     user?: { login: string } | null;
     body?: string | null;
@@ -83,20 +104,13 @@ query($owner:String!,$repo:String!,$number:Int!) {
   }
 }`;
 
-  const threadsParsed = JSON.parse(
-    gh([
-      "api",
-      "graphql",
-      "-F",
-      `owner=${owner}`,
-      "-F",
-      `repo=${repo}`,
-      "-F",
-      `number=${prNumber}`,
-      "-f",
-      `query=${query}`,
-    ]),
-  ) as {
+  const threadsPlan = planGithubRestRead({
+    kind: "graphql",
+    query,
+    variables: { owner: owner ?? "", repo: repo ?? "", number: Number(prNumber) },
+  });
+  if (threadsPlan.outcome !== "plan") throw new Error(threadsPlan.reason);
+  const threadsParsed = JSON.parse(gh(threadsPlan.args)) as {
     data?: {
       repository?: {
         pullRequest?: {

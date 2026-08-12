@@ -43,6 +43,17 @@ export const REDSKILLED_PLACEMENT_ENV = "REDSKILLED_PLACEMENT";
 /** The unit-name prefix when a client states none. */
 export const DEFAULT_WORKER_UNIT_PREFIX = "red-worker";
 
+/**
+ * How long the init system waits for a stopping Worker before SIGKILL.
+ *
+ * systemd's default is ninety seconds, which is a budget for a database
+ * flushing to disk and not for an agent runner that never installed a SIGTERM
+ * handler in the first place. Twenty seconds is more than any Worker has been
+ * seen to need to leave on its own and short enough that a `deactivating` unit
+ * is a moment rather than an outage.
+ */
+export const REDSKILLED_WORKER_STOP_TIMEOUT_SEC = 20;
+
 export interface WorkerPlacementProbes {
   /** `process.platform` — transient units are a Linux backend. */
   readonly platform: NodeJS.Platform;
@@ -402,6 +413,13 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     `--unit=${unit}`,
     `--working-directory=${opts.workspacePath}`,
     "--property=LimitCORE=0",
+    // A SIGTERM-deaf runner is the common case, not the exception, so the unit
+    // states its own escalation rather than inheriting the ninety-second default:
+    // whatever else is holding a stop — an operator's `systemctl stop`, a
+    // shutdown, a daemon that is gone — resolves it in twenty seconds. This is a
+    // floor under the host, not the daemon's own path: the daemon confirms a
+    // death on its own shorter grace and never waits on this timer.
+    `--property=TimeoutStopSec=${REDSKILLED_WORKER_STOP_TIMEOUT_SEC}`,
   ];
   // `--pipe` connects the unit's stdio to this process's, which is what makes an
   // inherited log fd reach the Worker at all. Without it a transient unit writes

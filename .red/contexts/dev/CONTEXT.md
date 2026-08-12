@@ -429,8 +429,8 @@ The append-only streaming extension of TOON (`github:reddb-io/toon`, spec v0.1):
 _Avoid_: TOON lines, JSONL replacement (it replaces JSONL here, but the term names the format, not the migration)
 
 **tq**:
-The jq-for-TOON CLI shipped by `github:reddb-io/toon`: query, convert (TOON/TOONL/JSON any-to-any), and stream. A required host binary — `/red-setup` installs it via the toon repo's checksum-verified, version-pinned `install.sh`, and `/red-doctor` red-flags absence or drift. Skills docs teach `tq` pipelines with no jq fallback lane.
-_Avoid_: jq (for TOON/TOONL files), the toon CLI
+The jq-for-TOON CLI published from `github:reddb-io/toon`: query, convert (TOON/TOONL/JSON any-to-any), and stream. A required host binary — `/red-setup`, CI and `/red-doctor` use the exact catalog version from the official `reddb-io-tq` crate on crates.io. The installed binary must come from an official package channel; sibling checkout paths, local `target/` builds and unpublished release installers are forbidden. Skills docs teach `tq` pipelines with no jq fallback lane.
+_Avoid_: jq (for TOON/TOONL files), the toon CLI, local tq build, sibling toon checkout
 
 **Release watcher**:
 The automation that observes upstream `github:reddb-io/toon` releases and opens the RedSkills auto-bump PR for the toon toolchain. It updates the pnpm catalog version and every derived or guard-checked `tq`/`@reddb-io/toon` pin site together; the catalog remains the single version truth, and the watcher PR is the normal route for routine upstream releases.
@@ -465,8 +465,12 @@ A workspace package whose source tree is committed directly in this monorepo whi
 _Avoid_: submodule, pointer bump, two-repo flow
 
 **Declared optimization**:
-The two-regime output contract every TOON/TOONL producer obeys (ADR 0089 Amendment 2): by default output is lossless (`decode(encode(x)) === x`; cell safety is encoder quoting, never pre-encode mutation); reduction — projection, capping, truncation — happens only behind an explicit opt-in flag and is marked in-band with what was reduced and how to recover it (an **Elision handle** where bytes are stored; re-run without the flag where re-derivable). Silent lossy normalization on the default path is the forbidden pattern.
+The output contract every TOON/TOONL producer obeys (ADR 0089 Amendments 2–3): explicitly lossless output preserves `decode(encode(x)) === x` (cell safety is encoder quoting, never pre-encode mutation); reduction — projection, capping, truncation — is marked in-band with what was reduced and how to recover it (an **Elision handle** where bytes are stored; `--full` or a lossless re-run where re-derivable). RSP's named **Automatic reduction** regime may activate only at deterministic size-and-repetition thresholds after original bytes are stored. Silent lossy normalization remains forbidden.
 _Avoid_: compact mode (names the flag, not the contract), lossy output
+
+**Automatic reduction**:
+RSP's completed-command output regime (ADR 0089 Amendment 3): small or non-repetitive structure stays complete, while fixture-pinned size and repetition thresholds may produce a declared, recoverable summary. This is distinct from the **lossless** level; every automatic lossy result stores the exact original first, emits exactly one **Elision handle**, and offers `--full` suppression.
+_Avoid_: lossless mode (when describing threshold-driven output), silent truncation
 
 **Adversarial Review**:
 The **Gate stage order**'s third stage: one or more reviewer agents inspect the WORKTREE diff against the merge base for defects and for conformance to the originating **Ticket** (was what the Ticket asked for actually implemented?), post their findings to the Ticket, and — when a finding is blocking — request a **Re-seed** back to the implementer with the diff and the critiques. It runs BEFORE any pull request exists and only once the earlier stages are green; a reviewer that crashes yields a skipped stage, which never blocks. Its verdict is binary — blocking or not-blocking — because the budget and the exhaustion rule live in the **Re-seed budget**, whose reserved review round gate churn cannot consume and whose exhaustion parks uniformly. One reviewer by default (any blocking finding triggers a Re-seed), configurable to a voting quorum; model, effort, and runner are configurable.

@@ -137,7 +137,7 @@ export function createSingletonLeaseStore(
     const temporary = `${path}.tmp-${lease.pid}-${crypto.randomUUID()}`;
     await fs.writeFile(
       temporary,
-      encode(lease as unknown as JsonValue, { keyedMapCollapse: true }),
+      encode(lease as unknown as JsonValue),
       { encoding: "utf8" },
     );
     await fs.rename(temporary, path);
@@ -164,7 +164,7 @@ export function createSingletonLeaseStore(
         try {
           await fs.writeFile(
             path,
-            encode(lease as unknown as JsonValue, { keyedMapCollapse: true }),
+            encode(lease as unknown as JsonValue),
             { encoding: "utf8", flag: "wx" },
           );
           return { acquired: true, reaped, lease };

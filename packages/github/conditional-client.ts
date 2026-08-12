@@ -17,7 +17,18 @@ import {
 } from "./aliased-query.js";
 import type { GithubAttributionLedger, GithubAttributedOperation } from "./attribution.js";
 import type { GithubBalance } from "./balance.js";
-import type { GithubApiSurface } from "./surface.js";
+import {
+  DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
+  createTimedGithubFetch,
+  githubRequestTimeoutMs,
+  withGithubDeadline,
+} from "./deadline.js";
+import {
+  githubBudgetGateEnabled,
+  githubBudgetGateFromEnv,
+  type GithubBudgetGateMode,
+} from "./budget-gate.js";
+import type { GithubApiSurface, GithubRateBudget } from "./surface.js";
 
 const Octokit = RestOctokit.plugin(retry, throttling);
 
@@ -28,6 +39,8 @@ export interface GithubEtagEntry {
   readonly etag: string;
   readonly data: unknown;
   readonly headers: GithubResponseHeaders;
+  /** When the held body was last confirmed by a 200 response. */
+  readonly storedAt?: string;
 }
 
 /** The ETag and answer are one entry: retaining only the validator makes 304 empty. */
@@ -66,6 +79,15 @@ export interface GithubRestAnswer<T> {
   readonly headers: GithubResponseHeaders;
   /** True when a 304 reused the held answer and consumed no REST request budget. */
   readonly quotaFree: boolean;
+  readonly degraded?: GithubCachedFallback;
+}
+
+export interface GithubCachedFallback {
+  readonly source: "cache";
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string;
+  readonly ageMs: number | null;
+  readonly reason: string;
 }
 
 export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly T[]> {
@@ -90,6 +112,8 @@ export interface GithubSingleObjectRequest extends GithubAliasedSingleObjectRead
   readonly cacheKey: string;
   readonly operation: GithubAttributedOperation;
   readonly actor?: string;
+  /** Force one API rail when it is available; an exhausted rail falls back to its declared equivalent. */
+  readonly rail?: GithubApiSurface;
   /** Project REST and GraphQL payloads into one caller-visible object shape. */
   readonly project?: (value: unknown, surface: GithubApiSurface) => unknown;
 }
@@ -99,6 +123,18 @@ export interface GithubSingleObjectAnswer<T> {
   readonly data: T;
   readonly surface: GithubApiSurface;
   readonly quotaFree: boolean;
+  /** Present for an explicit choice or a failover, so routing never becomes invisible. */
+  readonly routing?: GithubRailRouting;
+}
+
+export interface GithubRailRouting {
+  readonly requestedRail: GithubApiSurface;
+  readonly selectedRail: GithubApiSurface;
+  readonly rerouted: boolean;
+  /** The exhausted source pool when rerouted. */
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string | null;
+  readonly reason: string;
 }
 
 export interface GithubGraphqlAttribution {
@@ -114,10 +150,23 @@ export interface CreateGithubClientOptions {
   readonly attribution?: GithubAttributionLedger;
   /** The last authoritative token-wide balance; an unknown balance never diverts. */
   readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
+  readonly now?: () => string;
   /** Transient retries; the plugin default in production, overridable in tests. */
   readonly retryCount?: number;
   /** Disable plugin pacing only for a caller-supplied transport test. */
   readonly throttle?: boolean;
+  /**
+   * Whether the balance may REFUSE a call, or only describe one. Off by default:
+   * the quota is the operator's to spend (`budget-gate.ts`).
+   */
+  readonly budgetGate?: GithubBudgetGateMode;
+  /** Per-request deadline; the env-tunable process default when absent. */
+  readonly timeoutMs?: number;
+  /**
+   * Deadline for one balance read. Shorter than a request's, because an unknown
+   * balance is a legal answer and a known one is never worth a stall.
+   */
+  readonly balanceTimeoutMs?: number;
 }
 
 /**
@@ -156,6 +205,22 @@ export class GithubCredentialError extends Error {
   }
 }
 
+/** A primary pool cannot serve this request and no equivalent/cache can answer it. */
+export class GithubPoolUnavailableError extends Error {
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string;
+
+  constructor(pool: GithubRateBudget, resetAt: string, detail?: string, options?: { readonly cause?: unknown }) {
+    super(
+      `${pool} pool is exhausted; parked until ${resetAt}${detail ? ` (${detail})` : ""}`,
+      options,
+    );
+    this.name = "GithubPoolUnavailableError";
+    this.pool = pool;
+    this.resetAt = resetAt;
+  }
+}
+
 /**
  * Build the typed GitHub transport decided by ADR 0133.
  *
@@ -166,6 +231,16 @@ export class GithubCredentialError extends Error {
  */
 export function createGithubClient(options: CreateGithubClientOptions): GithubClient {
   const etags = options.etags ?? createMemoryGithubEtagStore();
+  const now = options.now ?? (() => new Date().toISOString());
+  // Bounded at the transport, so a route added later inherits the deadline
+  // instead of having to remember it (`deadline.ts`).
+  const timeoutMs = options.timeoutMs ?? githubRequestTimeoutMs();
+  const balanceTimeoutMs = options.balanceTimeoutMs ?? Math.min(timeoutMs || DEFAULT_GITHUB_BALANCE_TIMEOUT_MS, DEFAULT_GITHUB_BALANCE_TIMEOUT_MS);
+  const gated = githubBudgetGateEnabled(options.budgetGate ?? githubBudgetGateFromEnv());
+  const timedFetch = createTimedGithubFetch({
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl as unknown as typeof fetch } : {}),
+    timeoutMs,
+  });
   const octokit = new Octokit({
     auth: options.token,
     // REST.js logs every non-2xx before the caller can classify it, including
@@ -178,9 +253,17 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       error: () => undefined,
     },
     ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
-    ...(options.fetchImpl ? { request: { fetch: options.fetchImpl } } : {}),
+    request: { fetch: timedFetch as unknown as GithubRequestFetch },
     retry: {
-      doNotRetry: [304, 403, 429],
+      // A 404 is an ANSWER, not a failure: the resource is absent and asking
+      // again cannot change that. Retrying one cost 93s of exponential backoff
+      // per CODEOWNERS lookup in a repo that has no CODEOWNERS file, and the
+      // trust gate asks per candidate — a boot that froze for ~22 minutes with
+      // no child, no log and `live=true` on every surface. Issue point reads
+      // are strongly consistent by number, so nothing legitimate depends on
+      // re-asking a 404; a caller awaiting eventual consistency must say so
+      // with its own bounded loop rather than paying this on every read.
+      doNotRetry: [304, 403, 404, 429],
       ...(options.retryCount === undefined ? {} : { retries: options.retryCount }),
     },
     throttle: options.throttle === false
@@ -191,8 +274,36 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         },
   });
 
+  // A balance is an OPTIMIZATION here, never a precondition: it picks a rail and,
+  // when the gate is on, refuses a spent pool. So the read is bounded and a
+  // stalled provider degrades to `null` — unknown — rather than holding the call
+  // that asked for it. This is the joiner half of #3768: one wedged balance ask
+  // must not become every caller's wait.
+  const readBalance = async (): Promise<GithubBalance | null> => {
+    if (options.balance === undefined) return null;
+    try {
+      return await withGithubDeadline("balance read", balanceTimeoutMs, async () =>
+        await options.balance!() ?? null);
+    } catch {
+      return null;
+    }
+  };
+
+  const refuseSpentPool = (balance: GithubBalance | null, pool: GithubRateBudget): void => {
+    if (!gated) return;
+    const observed = balance?.pools[pool] ?? null;
+    if (observed !== null && observed.remaining <= 0) {
+      throw new GithubPoolUnavailableError(pool, observed.reset_at);
+    }
+  };
+
   const conditionalRest = async <T>(input: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>> => {
       const held = etags.get(input.cacheKey);
+      const observed = gated ? (await readBalance())?.pools[input.operation.budget] ?? null : null;
+      if (observed !== null && observed.remaining <= 0) {
+        if (held !== undefined) return cachedAnswer<T>(held, input.operation.budget, observed.reset_at, now());
+        throw new GithubPoolUnavailableError(input.operation.budget, observed.reset_at);
+      }
       const parameters = { ...(input.parameters ?? {}) } as Record<string, unknown>;
       const callerHeaders = isRecord(parameters.headers) ? parameters.headers : {};
       parameters.headers = {
@@ -204,7 +315,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         const response = await octokit.request(input.route, parameters);
         const headers = response.headers as GithubResponseHeaders;
         const etag = header(headers, "etag");
-        if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers });
+        if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers, storedAt: now() });
         await options.attribution?.record({ operation: input.operation, cost: 1, actor: input.actor });
         return { data: response.data as T, headers, quotaFree: false };
       } catch (error) {
@@ -218,11 +329,18 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
           const responseHeaders = errorHeaders(error);
           const headers = { ...held.headers, ...responseHeaders };
           const etag = header(headers, "etag") ?? held.etag;
-          etags.set(input.cacheKey, { etag, data: held.data, headers });
+          etags.set(input.cacheKey, { etag, data: held.data, headers, ...(held.storedAt ? { storedAt: held.storedAt } : {}) });
           await options.attribution?.record({ operation: input.operation, cost: 0, actor: input.actor });
           return { data: held.data as T, headers, quotaFree: true };
         }
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
+        if (isGithubRateLimitError(error)) {
+          if (held !== undefined) {
+            const unavailable = unavailableFromError(input.operation.budget, error);
+            return cachedAnswer<T>(held, input.operation.budget, unavailable.resetAt, now());
+          }
+          throw unavailableFromError(input.operation.budget, error);
+        }
         throw error;
       }
     };
@@ -233,11 +351,12 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     readonly reject: (error: unknown) => void;
   }
 
-  const pendingSingleObjects = new Map<GithubSingleObjectRequest["kind"], PendingSingleObjectRead[]>();
+  const pendingSingleObjects = new Map<string, PendingSingleObjectRead[]>();
   let singleObjectFlushScheduled = false;
 
   const readSingleObjectRest = async (
     pending: PendingSingleObjectRead,
+    routing?: GithubRailRouting,
   ): Promise<void> => {
     const input = pending.input;
     const pull = input.kind === "pr";
@@ -259,6 +378,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         data: input.project ? input.project(answer.data, "rest") : answer.data,
         surface: "rest",
         quotaFree: answer.quotaFree,
+        ...(routing ? { routing } : {}),
       });
     } catch (error) {
       pending.reject(error);
@@ -267,6 +387,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
 
   const readSingleObjectBatch = async (
     group: readonly PendingSingleObjectRead[],
+    routing?: GithubRailRouting,
   ): Promise<void> => {
     try {
       const aliased = buildSingleObjectReadsQuery(group.map(({ input }) => input));
@@ -292,6 +413,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
               : row.value,
             surface: "graphql",
             quotaFree: false,
+            ...(routing ? { routing } : {}),
           });
         }
       });
@@ -302,20 +424,82 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
   };
 
   const flushSingleObjects = async (): Promise<void> => {
-    let balance: GithubBalance | null = null;
+    // **THE FLUSH IS THE ONLY DRAIN, so it must always reach one.** A caller
+    // enqueued here holds a promise nothing else can settle, and while
+    // `singleObjectFlushScheduled` is true no second flush is scheduled — so a
+    // throw anywhere above the drain strands every waiting read forever, which
+    // is the shape #3768 wore. The balance read above is bounded (`readBalance`),
+    // and this frame guarantees the rest: the flag is cleared and every stranded
+    // read is REJECTED, because a loud failure is a caller that can retry and a
+    // pending promise is a caller that cannot.
     try {
-      balance = await options.balance?.() ?? null;
-    } catch {
-      // An unanswered ask is unknown, never a reason to strand the queue or
-      // infer pressure. Unknown keeps the original single-object REST route.
+      const balance = await readBalance();
+      const threshold = githubSingleObjectCoalescingThreshold(balance);
+      singleObjectFlushScheduled = false;
+      const groups = [...pendingSingleObjects.values()];
+      pendingSingleObjects.clear();
+      await drainSingleObjectGroups(groups, balance, threshold);
+    } catch (error) {
+      singleObjectFlushScheduled = false;
+      const stranded = [...pendingSingleObjects.values()];
+      pendingSingleObjects.clear();
+      for (const group of stranded) group.forEach((pending) => pending.reject(error));
     }
-    const threshold = githubSingleObjectCoalescingThreshold(balance);
-    singleObjectFlushScheduled = false;
-    const groups = [...pendingSingleObjects.values()];
-    pendingSingleObjects.clear();
+  };
+
+  const drainSingleObjectGroups = async (
+    groups: readonly PendingSingleObjectRead[][],
+    balance: GithubBalance | null,
+    threshold: number,
+  ): Promise<void> => {
     await Promise.all(groups.map(async (group) => {
-      if (group.length > threshold) await readSingleObjectBatch(group);
-      else await Promise.all(group.map(readSingleObjectRest));
+      const explicit = group[0]!.input.rail;
+      const requested = explicit ?? "rest";
+      // Rerouting off an exhausted rail is routing and stays on in both modes;
+      // REFUSING when no rail can answer is the gate's, and stays off by default.
+      const source = balance?.pools[requested] ?? null;
+      const fallback: GithubApiSurface = requested === "rest" ? "graphql" : "rest";
+      const destination = balance?.pools[fallback] ?? null;
+      const requestedCache = requested === "rest" && group.every(({ input }) => etags.get(input.cacheKey) !== undefined);
+      const fallbackCache = fallback === "rest" && group.every(({ input }) => etags.get(input.cacheKey) !== undefined);
+      let selected = requested;
+      let routing: GithubRailRouting | undefined;
+
+      if (source !== null && source.remaining <= 0) {
+        if ((destination !== null && destination.remaining > 0) || fallbackCache) {
+          selected = fallback;
+          routing = {
+            requestedRail: requested,
+            selectedRail: selected,
+            rerouted: true,
+            pool: requested,
+            resetAt: source.reset_at,
+            reason: `${requested} pool is exhausted until ${source.reset_at}; used the equivalent ${selected} rail`,
+          };
+        } else if (!requestedCache && gated) {
+          const error = new GithubPoolUnavailableError(requested, source.reset_at, "the equivalent rail has no known budget");
+          group.forEach((pending) => pending.reject(error));
+          return;
+        }
+      } else if (explicit !== undefined) {
+        routing = {
+          requestedRail: requested,
+          selectedRail: selected,
+          rerouted: false,
+          pool: requested,
+          resetAt: source?.reset_at ?? null,
+          reason: source === null
+            ? `${requested} pool balance is unknown, so the explicit rail is honored reactively`
+            : `${requested} pool has ${source.remaining} remaining, so the explicit rail is honored`,
+        };
+      }
+
+      const warm = group.some(({ input }) => etags.get(input.cacheKey) !== undefined);
+      if (selected === "graphql" || (explicit === undefined && !warm && group.length > threshold)) {
+        await readSingleObjectBatch(group, routing);
+      } else {
+        await Promise.all(group.map((pending) => readSingleObjectRest(pending, routing)));
+      }
     }));
   };
 
@@ -323,23 +507,15 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     // Rule 1 and its counter-rule stay together here: one object prefers REST,
     // while enough COLD peers may coalesce. A held validator can answer 304 for
     // zero primary quota, so it never gets traded for a charged GraphQL node.
-    if (etags.get(input.cacheKey) !== undefined) {
-      return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
-        void readSingleObjectRest({
-          input,
-          resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
-          reject,
-        });
-      });
-    }
     return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
-      const group = pendingSingleObjects.get(input.kind) ?? [];
+      const groupKey = `${input.kind}:${input.rail ?? "default"}`;
+      const group = pendingSingleObjects.get(groupKey) ?? [];
       group.push({
         input,
         resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
         reject,
       });
-      pendingSingleObjects.set(input.kind, group);
+      pendingSingleObjects.set(groupKey, group);
       if (!singleObjectFlushScheduled) {
         singleObjectFlushScheduled = true;
         // A zero-delay task collects reads started by adjacent promise jobs too;
@@ -385,6 +561,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       attribution?: GithubGraphqlAttribution,
     ): Promise<T> {
       try {
+        refuseSpentPool(await readBalance(), attribution?.operation.budget ?? "graphql");
         const answer = await octokit.graphql(query, variables) as T;
         if (attribution) {
           // Generic GraphQL does not expose the response's point cost. One is
@@ -399,10 +576,44 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         return answer;
       } catch (error) {
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
+        if (isGithubRateLimitError(error)) {
+          throw unavailableFromError(attribution?.operation.budget ?? "graphql", error);
+        }
         throw error;
       }
     },
   };
+}
+
+function cachedAnswer<T>(
+  held: GithubEtagEntry,
+  pool: GithubRateBudget,
+  resetAt: string,
+  now: string,
+): GithubRestAnswer<T> {
+  const current = Date.parse(now);
+  const stored = held.storedAt === undefined ? Number.NaN : Date.parse(held.storedAt);
+  return {
+    data: held.data as T,
+    headers: held.headers,
+    quotaFree: true,
+    degraded: {
+      source: "cache",
+      pool,
+      resetAt,
+      ageMs: Number.isFinite(current) && Number.isFinite(stored) ? Math.max(0, current - stored) : null,
+      reason: `${pool} pool is exhausted until ${resetAt}; serving the last-known answer instead of going dark`,
+    },
+  };
+}
+
+function unavailableFromError(pool: GithubRateBudget, error: unknown): GithubPoolUnavailableError {
+  const headers = errorHeaders(error);
+  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
+  const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0
+    ? new Date(resetSeconds * 1_000).toISOString()
+    : "an unknown reset instant";
+  return new GithubPoolUnavailableError(pool, resetAt, "GitHub refused the live request", { cause: error });
 }
 
 function hasNextPage(headers: GithubResponseHeaders): boolean {
@@ -412,11 +623,29 @@ function hasNextPage(headers: GithubResponseHeaders): boolean {
 
 /** Primary/secondary quota refusal, distinct from 304 and transport failure. */
 export function isGithubRateLimitError(error: unknown): boolean {
+  if (error instanceof GithubPoolUnavailableError) return true;
   const status = httpStatus(error);
   const headers = errorHeaders(error);
   return status === 429 ||
     (status === 403 && header(headers, "x-ratelimit-remaining") === "0") ||
     (error instanceof Error && /secondary rate|rate limit/i.test(error.message));
+}
+
+/** Reset instant carried by a primary or secondary rate-limit refusal. */
+export function githubRateLimitResetAt(error: unknown, nowMs = Date.now()): string | null {
+  const headers = errorHeaders(error);
+  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
+  if (Number.isFinite(resetSeconds) && resetSeconds >= 0) {
+    return new Date(resetSeconds * 1_000).toISOString();
+  }
+  const retryAfter = header(headers, "retry-after");
+  if (retryAfter == null) return null;
+  const delaySeconds = Number(retryAfter);
+  if (Number.isFinite(delaySeconds) && delaySeconds >= 0 && Number.isFinite(nowMs)) {
+    return new Date(nowMs + delaySeconds * 1_000).toISOString();
+  }
+  const retryAtMs = Date.parse(retryAfter);
+  return Number.isFinite(retryAtMs) ? new Date(retryAtMs).toISOString() : null;
 }
 
 function httpStatus(error: unknown): number | undefined {

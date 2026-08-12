@@ -44,7 +44,7 @@ export interface GithubRestReadUnavailable {
 
 export type GithubRestRead = GithubRestReadPlan | GithubRestReadUnavailable;
 
-export interface GithubRestReadRequest {
+export interface GithubSingleObjectRestReadRequest {
   readonly kind: GithubSingleObjectKind;
   readonly number: number;
   /** The `--json` field names the caller asked for. */
@@ -52,6 +52,22 @@ export interface GithubRestReadRequest {
   /** `owner/repo`; omitted uses gh's own `{owner}/{repo}` placeholders. */
   readonly repo?: string;
 }
+
+/** An explicit read-only REST endpoint whose exact response shape belongs to the caller. */
+export interface GithubRestEndpointReadRequest {
+  readonly kind: "rest";
+  readonly path: string;
+  /** Additional `gh api` read flags. Mutation methods and `--input` are refused. */
+  readonly args?: readonly string[];
+}
+
+export interface GithubGraphqlReadRequest {
+  readonly kind: "graphql";
+  readonly query: string;
+  readonly variables?: Readonly<Record<string, string | number | boolean>>;
+}
+
+export type GithubRestReadRequest = GithubSingleObjectRestReadRequest | GithubRestEndpointReadRequest | GithubGraphqlReadRequest;
 
 type Projection = (body: Record<string, unknown>) => unknown;
 
@@ -91,6 +107,7 @@ function labels(body: Record<string, unknown>): unknown {
 }
 
 const ISSUE_PROJECTIONS: Readonly<Record<string, Projection>> = {
+  databaseId: (body) => body.id,
   number: (body) => body.number,
   title: (body) => str(body.title),
   body: (body) => str(body.body),
@@ -183,6 +200,49 @@ export function githubJsonFields(spec: string): string[] {
  * none. PURE — it builds an argv and a decoder and issues nothing itself.
  */
 export function planGithubRestRead(request: GithubRestReadRequest): GithubRestRead {
+  if (request.kind === "graphql") {
+    const query = request.query.trim();
+    if (query === "" || /\bmutation\b/i.test(query)) {
+      return { outcome: "unavailable", fields: [], reason: "the GraphQL read planner refuses empty or mutating documents" };
+    }
+    const variables = Object.entries(request.variables ?? {}).flatMap(([key, value]) => ["-F", `${key}=${String(value)}`]);
+    return {
+      outcome: "plan",
+      path: "graphql",
+      args: ["api", "graphql", ...variables, "-f", `query=${query}`],
+      decode(stdout: string): Record<string, unknown> {
+        const body = record(JSON.parse(stdout.trim() === "" ? "null" : stdout));
+        if (!body) throw new Error("GraphQL read returned a non-object payload");
+        return body;
+      },
+    };
+  }
+  if (request.kind === "rest") {
+    const path = request.path.trim();
+    const args = [...(request.args ?? [])];
+    const methodAt = args.findIndex((arg) => arg === "-X" || arg === "--method");
+    const method = methodAt < 0 ? "" : String(args[methodAt + 1] ?? "").toUpperCase();
+    const mutation = method !== "" && method !== "GET" && method !== "HEAD";
+    if (path === "" || mutation || args.includes("--input")) {
+      return {
+        outcome: "unavailable",
+        fields: [],
+        reason: path === "" ? "a REST read needs a non-empty path" : "the REST read planner refuses mutation arguments",
+      };
+    }
+    const needsExplicitGet = methodAt < 0 && args.some((arg) => arg === "-f" || arg === "--raw-field" || arg === "-F" || arg === "--field");
+    const plannedArgs = ["api", path, ...(needsExplicitGet ? ["--method", "GET"] : []), ...args];
+    return {
+      outcome: "plan",
+      path,
+      args: plannedArgs,
+      decode(stdout: string): Record<string, unknown> {
+        const body = record(JSON.parse(stdout.trim() === "" ? "null" : stdout));
+        if (!body) throw new Error(`REST read of ${path} returned a non-object payload`);
+        return body;
+      },
+    };
+  }
   const fields = [...new Set(request.fields.map((field) => field.trim()).filter((f) => f !== ""))];
   if (fields.length === 0) {
     return { outcome: "unavailable", fields: [], reason: "the read names no fields" };

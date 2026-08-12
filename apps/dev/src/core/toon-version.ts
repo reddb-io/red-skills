@@ -51,28 +51,22 @@ export const TOON_PIN_SITES: readonly ToonPinSite[] = [
     pattern: /TQ_VERSION:\s+(v\d+\.\d+\.\d+)/,
   },
   {
-    name: "red-setup.interview.tq-install-env",
+    name: "red-setup.interview.tq-install-version",
     path: "plugins/dev/skills/engineering/red-setup/INTERVIEW.md",
-    form: "tag",
-    pattern: /TQ_VERSION=(v\d+\.\d+\.\d+)/,
-  },
-  {
-    name: "red-setup.interview.tq-install-url",
-    path: "plugins/dev/skills/engineering/red-setup/INTERVIEW.md",
-    form: "tag",
-    pattern: /raw\.githubusercontent\.com\/reddb-io\/toon\/(v\d+\.\d+\.\d+)\/install\.sh/,
+    form: "version",
+    pattern: /cargo install reddb-io-tq --version (\d+\.\d+\.\d+) --locked --force/,
   },
   {
     name: "red-setup.interview.installed-version",
     path: "plugins/dev/skills/engineering/red-setup/INTERVIEW.md",
     form: "version",
-    pattern: /The installed version must be `(\d+\.\d+\.\d+)`/,
+    pattern: /The installed version must be at least `(\d+\.\d+\.\d+)`/,
   },
   {
-    name: "red-setup.reference.tq-install-env",
+    name: "red-setup.reference.host-binary-install-floor",
     path: "plugins/dev/skills/engineering/red-setup/REFERENCE.md",
-    form: "tag",
-    pattern: /TQ_VERSION=(v\d+\.\d+\.\d+)/,
+    form: "version",
+    pattern: /install `tq` at or above `(\d+\.\d+\.\d+)`/,
   },
   {
     name: "red-setup.reference.host-binary-check",
@@ -89,16 +83,10 @@ export const TOON_PIN_SITES: readonly ToonPinSite[] = [
     pattern: /host_binaries\.tq\.version: (\d+\.\d+\.\d+)/,
   },
   {
-    name: "red-setup.write-contract.tq-install-env",
+    name: "red-setup.write-contract.tq-install-version",
     path: "plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md",
-    form: "tag",
-    pattern: /TQ_VERSION=(v\d+\.\d+\.\d+)/,
-  },
-  {
-    name: "red-setup.write-contract.tq-install-url",
-    path: "plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md",
-    form: "tag",
-    pattern: /raw\.githubusercontent\.com\/reddb-io\/toon\/(v\d+\.\d+\.\d+)\/install\.sh/,
+    form: "version",
+    pattern: /cargo install reddb-io-tq --version (\d+\.\d+\.\d+) --locked --force/,
   },
   {
     name: "red-setup.write-contract.verify-version",
@@ -125,16 +113,10 @@ export const TOON_PIN_SITES: readonly ToonPinSite[] = [
     pattern: /host_binaries\.tq\.version` \(floor `(\d+\.\d+\.\d+)`\)/,
   },
   {
-    name: "red-doctor.skill.remediation-env",
+    name: "red-doctor.skill.remediation-version",
     path: "plugins/dev/skills/engineering/red-doctor/SKILL.md",
-    form: "tag",
-    pattern: /TQ_VERSION=(v\d+\.\d+\.\d+)/,
-  },
-  {
-    name: "red-doctor.skill.remediation-url",
-    path: "plugins/dev/skills/engineering/red-doctor/SKILL.md",
-    form: "tag",
-    pattern: /raw\.githubusercontent\.com\/reddb-io\/toon\/(v\d+\.\d+\.\d+)\/install\.sh/,
+    form: "version",
+    pattern: /cargo install reddb-io-tq --version (\d+\.\d+\.\d+) --locked --force/,
   },
 ];
 

@@ -126,7 +126,7 @@ export function createFileMergeDriverStore(paths: EnginePaths): MergeDriverStore
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
       await writeFile(
         temporary,
-        encode(validateState(state) as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(validateState(state) as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

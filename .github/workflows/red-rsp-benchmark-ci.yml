@@ -27,20 +27,23 @@ jobs:
         with:
           node-version: 22
 
+      # From the GitHub release, not crates.io — same reasoning and same
+      # step shape as red-workspace-ci.yml, where the story of the lapsed
+      # crates token is told in full.
       - name: Install pinned tq
         env:
-          TQ_VERSION: v0.13.0
-          GH_TOKEN: ${{ github.token }}
+          TQ_VERSION: v0.26.2
         run: |
           set -euo pipefail
-          installer="$RUNNER_TEMP/tq-install.sh"
-          scripts/ci-fetch-with-retry.sh \
-            "https://api.github.com/repos/reddb-io/toon/contents/install.sh?ref=${TQ_VERSION}" \
-            "$installer" \
-            -H "Accept: application/vnd.github.raw+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28"
-          sh "$installer"
+          tq_root="$RUNNER_TEMP/tq"
+          mkdir -p "$tq_root/bin"
+          base="https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static" "$tq_root/bin/tq"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static.sha256" "$tq_root/tq.sha256"
+          echo "$(cut -d' ' -f1 "$tq_root/tq.sha256")  $tq_root/bin/tq" | sha256sum -c -
+          chmod +x "$tq_root/bin/tq"
+          echo "$tq_root/bin" >> "$GITHUB_PATH"
+          "$tq_root/bin/tq" --version
 
       - name: Install workspace dependencies
         env:

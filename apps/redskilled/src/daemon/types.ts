@@ -47,6 +47,8 @@ import { type RedskilledProjectDeregistered,
   type RedskilledWorkerHeartbeatRequest,
 } from "../protocol.js";
 import { type GithubBalance,
+  type GithubBalanceHistory,
+  type GithubBalanceStore,
   type GithubBalanceTransport,
 } from "@reddb-io/github";
 import { type RedskilledActivityTransport,
@@ -78,6 +80,16 @@ import { type RedskilledLease,
 } from "../session-lease.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
+  /** Hard deadline for each daemon-owned GitHub call; 0 or below disables it. */
+  readonly remotePollTimeoutMs?: number;
+  /** Self-request cadence; 0 or below disables request-lane monitoring. */
+  readonly selfPingIntervalMs?: number;
+  /** Wall-clock deadline for one self-request. */
+  readonly selfPingTimeoutMs?: number;
+  /** Consecutive misses that make host-state report the lane degraded. */
+  readonly selfPingMissThreshold?: number;
+  /** Test seam; production probes the daemon's own socket. */
+  readonly selfPing?: () => Promise<unknown>;
   readonly daemonVersion?: string;
   /**
    * The verdicts this host's boot reaper posed, carried into every surface.
@@ -279,6 +291,10 @@ export interface RedskilledActivityRegistration {
  */
 export interface RedskilledBalanceRegistration {
   readonly transport: GithubBalanceTransport;
+  /** Host-state snapshot shared with fresh and parallel local processes. */
+  readonly store?: GithubBalanceStore;
+  /** Append-only forensic pool curve written from the same answers as the snapshot. */
+  readonly history?: GithubBalanceHistory;
   /**
    * A hard window, for a test that needs one. Production leaves this absent and
    * lets the balance decide — that is the whole decision.

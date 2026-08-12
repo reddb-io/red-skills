@@ -31,6 +31,7 @@
  */
 
 import {
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type GithubAttributedOperation,
   type GithubResponseHeaders,
@@ -375,7 +376,7 @@ async function fetchConditionalQueueDiscovery(
       const rateLimited = isGithubRateLimitError(error);
       rateLimit = mergeRateLimit(rateLimit, {
         remaining: null,
-        reset_at: null,
+        reset_at: rateLimited ? githubRateLimitResetAt(error) : null,
         exhausted: rateLimited,
       });
       projects.push({

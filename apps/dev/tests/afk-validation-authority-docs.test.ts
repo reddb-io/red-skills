@@ -68,6 +68,18 @@ describe("afk validation-authority docs contract (#1334)", () => {
   });
 });
 
+describe("afk inner-agent GitHub read rail (#3724)", () => {
+  it("requires explicit REST forms instead of GraphQL-backed gh convenience reads", async () => {
+    const prompt = await readAgentPrompt();
+
+    expect(prompt).toContain("GitHub reads use `gh api` REST forms");
+    expect(prompt).toContain("| Issue by number | `gh api repos/{owner}/{repo}/issues/{number}` |");
+    expect(prompt).toContain("| Pull request by number | `gh api repos/{owner}/{repo}/pulls/{number}` |");
+    expect(prompt).toContain("| Check runs for a commit | `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` |");
+    expect(prompt).toContain("Never use `gh issue view`, `gh pr view`, or `gh pr checks`");
+  });
+});
+
 describe("afk primary-checkout safety contract (#2479)", () => {
   it("never snapshots a dirty primary before a worker reaches Landing", async () => {
     const [safety, operations] = await Promise.all([readAfkSafety(), readAfkOperations()]);

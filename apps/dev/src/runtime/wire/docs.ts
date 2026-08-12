@@ -1,10 +1,12 @@
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { planGithubWrite, type GithubClient } from "@reddb-io/github";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../../core/docs-sweep.js";
 import type { DocsInput } from "../../core/statusline.js";
 import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { execTool } from "../exec.js";
+import { githubReadClient, githubRepo } from "../gh/common.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 
 type GitExec = typeof execTool;
@@ -128,7 +130,25 @@ export async function collectDocsSweepInput(ctx: RepoContext, base: string) {
   return { base, files: [...byPath.values()], originReachable };
 }
 
-export async function landDocsSweep(ctx: RepoContext, plan: DocsSweepPlan) {
+function pullNumber(stdout: string): string | undefined {
+  const fromUrl = /\/pull\/([0-9]+)/.exec(stdout)?.[1];
+  if (fromUrl) return fromUrl;
+  const scalar = stdout.trim().match(/^[0-9]+$/)?.[0];
+  if (scalar) return scalar;
+  try {
+    const parsed = JSON.parse(stdout) as { number?: unknown };
+    const number = Number(parsed.number ?? 0);
+    return Number.isSafeInteger(number) && number > 0 ? String(number) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function landDocsSweep(
+  ctx: RepoContext,
+  plan: DocsSweepPlan,
+  github?: Pick<GithubClient, "conditionalRest" | "conditionalPaginate">,
+) {
   const paths = afkPaths(ctx.root);
   const stamp = `${Date.now().toString(36)}-${process.pid}`;
   const worktree = join(paths.tmpDir, "docs-sweep", stamp);
@@ -157,15 +177,32 @@ export async function landDocsSweep(ctx: RepoContext, plan: DocsSweepPlan) {
     if (commit.code !== 0) return { ok: false, reason: "commit-failed" };
     const push = await execTool("git", ["push", ctx.remote, `HEAD:refs/heads/${branch}`], { cwd: worktree });
     if (push.code !== 0) return { ok: false, reason: "push-failed" };
-    const create = await execTool("gh", ["-R", ctx.repo, "pr", "create", "--base", plan.base, "--head", branch, "--title", title, "--body", body], { cwd: ctx.root });
+    const createPlan = planGithubWrite(["gh", "-R", ctx.repo, "pr", "create", "--base", plan.base, "--head", branch, "--title", title, "--body", body]);
+    const create = await execTool(String(createPlan.args[0]), createPlan.args.slice(1), { cwd: ctx.root });
     if (create.code !== 0) return { ok: false, reason: "pr-create-failed" };
-    const prNumber = /\/pull\/([0-9]+)/.exec(create.stdout)?.[1] ?? create.stdout.trim().match(/^[0-9]+$/)?.[0];
-    const resolvedPr = prNumber
-      ? { code: 0, stdout: prNumber, stderr: "" }
-      : await execTool("gh", ["-R", ctx.repo, "pr", "view", branch, "--json", "number", "-q", ".number"], { cwd: ctx.root });
-    const number = resolvedPr.stdout.trim();
-    if (resolvedPr.code !== 0 || !number) return { ok: false, reason: "pr-resolve-failed" };
-    const merge = await execTool("gh", ["-R", ctx.repo, "pr", "merge", number, "--merge", "--delete-branch"], { cwd: ctx.root });
+    let number = pullNumber(create.stdout);
+    if (!number) {
+      const coords = githubRepo({ cwd: ctx.root, repo: ctx.repo });
+      if (coords) {
+        try {
+          const answer = await githubReadClient({ cwd: ctx.root, repo: ctx.repo, ...(github ? { github } : {}) })
+            .conditionalRest<Array<{ number?: number }>>({
+              cacheKey: `docs-sweep:${ctx.repo}:${branch}`,
+              route: "GET /repos/{owner}/{repo}/pulls",
+              parameters: { ...coords, state: "all", head: `${coords.owner}:${branch}`, per_page: 1 },
+              operation: { key: "pr list", budget: "rest" },
+              actor: "docs-sweep",
+            });
+          const candidate = Number(answer.data[0]?.number ?? 0);
+          if (Number.isSafeInteger(candidate) && candidate > 0) number = String(candidate);
+        } catch {
+          // Preserve the previous best-effort resolution contract.
+        }
+      }
+    }
+    if (!number) return { ok: false, reason: "pr-resolve-failed" };
+    const mergePlan = planGithubWrite(["gh", "-R", ctx.repo, "pr", "merge", number, "--merge", "--delete-branch"]);
+    const merge = await execTool(String(mergePlan.args[0]), mergePlan.args.slice(1), { cwd: ctx.root });
     if (merge.code !== 0) return { ok: false, reason: "merge-failed" };
     await execTool("git", ["fetch", ctx.remote, plan.base], { cwd: ctx.root });
     return { ok: true };

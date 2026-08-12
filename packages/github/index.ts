@@ -35,6 +35,28 @@ export {
 } from "./surface.js";
 
 export {
+  DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
+  DEFAULT_GITHUB_REQUEST_TIMEOUT_MS,
+  GITHUB_REQUEST_TIMEOUT_ENV,
+  GithubTimeoutError,
+  createTimedGithubFetch,
+  githubRequestTimeoutMs,
+  isGithubTimeoutError,
+  withGithubDeadline,
+  type CreateTimedGithubFetchOptions,
+} from "./deadline.js";
+
+export {
+  DEFAULT_GITHUB_BUDGET_GATE,
+  GITHUB_BUDGET_GATE_CONFIG_KEY,
+  GITHUB_BUDGET_GATE_ENV,
+  githubBudgetGate,
+  githubBudgetGateEnabled,
+  githubBudgetGateFromEnv,
+  type GithubBudgetGateMode,
+} from "./budget-gate.js";
+
+export {
   createGithubAttributionLedger,
   type GithubAttributedOperation,
   type CreateGithubAttributionLedgerOptions,
@@ -46,23 +68,40 @@ export {
 
 export {
   GithubCredentialError,
+  GithubPoolUnavailableError,
   createGithubClient,
   createMemoryGithubEtagStore,
   githubSingleObjectCoalescingThreshold,
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type CreateGithubClientOptions,
   type GithubClient,
+  type GithubCachedFallback,
   type GithubConditionalRestRequest,
   type GithubEtagEntry,
   type GithubEtagStore,
   type GithubGraphqlAttribution,
   type GithubRequestFetch,
+  type GithubRailRouting,
   type GithubPaginatedRestAnswer,
   type GithubResponseHeaders,
   type GithubRestAnswer,
   type GithubSingleObjectAnswer,
   type GithubSingleObjectRequest,
 } from "./conditional-client.js";
+
+export {
+  createGithubBalanceStore,
+  type CreateGithubBalanceStoreOptions,
+  type GithubBalanceStore,
+} from "./balance-store.js";
+
+export {
+  createGithubBalanceHistory,
+  type CreateGithubBalanceHistoryOptions,
+  type GithubBalanceHistory,
+  type GithubBalanceHistoryRow,
+} from "./balance-history.js";
 
 export {
   GITHUB_BALANCE_CADENCE,
@@ -123,6 +162,15 @@ export {
   type GithubRestRead,
   type GithubRestReadPlan,
   type GithubRestReadRequest,
+  type GithubRestEndpointReadRequest,
+  type GithubGraphqlReadRequest,
+  type GithubSingleObjectRestReadRequest,
   type GithubRestReadUnavailable,
   type GithubSingleObjectKind,
 } from "./rest-plan.js";
+
+export {
+  planGithubWrite,
+  type GithubWriteContext,
+  type GithubWritePlan,
+} from "./write-plan.js";

@@ -13,7 +13,7 @@ describe("rsp docs surface", () => {
   it("describes the shipped rsp surface with stable contract headings", async () => {
     const readme = await doc("README.md");
 
-    expect(readme).toContain("99.8% decision-oracle capture");
+    expect(readme).toContain("99.2% decision-oracle capture");
     expect(readme).toContain("RTK 4.9%");
     expect(readme).toContain("Headroom 0.6%");
     expect(readme).toContain("docs/ARCHITECTURE.md");
@@ -174,6 +174,8 @@ describe("rsp docs surface", () => {
 
     expect(bench).toContain("pnpm --filter @reddb-io/rsp bench:two-axis");
     expect(bench).toContain("pnpm --filter @reddb-io/rsp bench:two-axis:check");
+    expect(bench).toContain("pnpm --filter @reddb-io/rsp bench:boundary");
+    expect(bench).toContain("rsp-command-boundary.md");
     expect(bench).toContain("decision-oracle capture");
     expect(bench).toContain("fidelity-first score");
     expect(bench).toContain("bench/results/rsp-two-axis.md");

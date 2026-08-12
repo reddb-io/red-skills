@@ -27,7 +27,7 @@
  *
  * The probes are injected, so both branches are provable without systemd.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { killTreeAndWait } from "@reddb-io/shared/kill-tree.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -36,8 +36,17 @@ import { DEFAULT_WORKER_UNIT_PREFIX } from "./worker-placement.js";
 /** Answers "is this Worker still running?" for one Worker. */
 export type RedskilledLivenessProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
 
-/** Stops one Worker; returns whether the host accepted the stop. */
+/** Stops one Worker; returns whether the host confirmed its death. */
 export type RedskilledStopProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
+
+/** Injectable host operations for a deterministic unit-teardown proof. */
+export interface RedskilledStopWorkerIO {
+  /** Places the stop request; awaited, so a blocking implementation is refusable by type. */
+  readonly stopUnit: (unit: string) => void | Promise<void>;
+  readonly unitActive: (unit: string) => boolean;
+  readonly leaderAlive: (pid: number) => boolean;
+  readonly killTree: (pgid: number) => boolean | Promise<boolean>;
+}
 
 export interface ReattachOutcome {
   /** Workers the host still confirms; the restarted daemon adopts these. */
@@ -275,17 +284,76 @@ export function nameUnownedProject(worker: RedskilledWorkerView): RedskilledWork
 }
 
 /**
+ * How long the daemon lets a stopping Worker leave on its own terms.
+ *
+ * `killTreeAndWait`'s own default grace is 2s, which is a teardown budget and
+ * not a shutdown budget: a runner asked to stop mid-turn has a transcript and a
+ * lock file to flush. Five seconds is long enough for that and short enough that
+ * a stop is still an operation an operator waits through, rather than the
+ * ninety-second `TimeoutStopSec` escalation the init system would otherwise be
+ * the only thing ending.
+ */
+const REDSKILLED_UNIT_STOP_GRACE_TRIES = 50;
+
+/**
  * Stop one Worker: the unit by name, or the recorded process group.
  *
- * Stopping the unit rather than the pid is what makes the kill total — a Worker
- * that forked children would otherwise leave them behind, still charged to the
- * budget the daemon just decided to reclaim. Legacy records without `pgid` use
- * the detached leader pid, which is the group id by the launch contract.
+ * A successful `systemctl stop` is only a request receipt: death is confirmed by
+ * both the unit becoming inactive and its recorded leader disappearing. Anything
+ * less escalates through the same TERM→grace→KILL→confirm process-group teardown
+ * as an unisolated Worker. Legacy records without `pgid` use the detached leader
+ * pid, which is the group id by the launch contract.
+ *
+ * **The stop request is asked for, never waited on.** `systemctl --user stop`
+ * without `--no-block` does not return until the job finishes, and a job whose
+ * runner ignores SIGTERM does not finish until `TimeoutStopSec` escalates —
+ * ninety seconds by default. Spent inside the daemon that is the whole machine's
+ * only socket, that wait is the outage: the request is placed and the daemon
+ * then confirms the death itself, on its own grace, through the escalation it
+ * already owned. What replaced the init system's timeout is this function's, and
+ * it is measured in seconds.
  */
-export function stopWorker(worker: RedskilledWorkerView): boolean | Promise<boolean> {
+export async function stopWorker(
+  worker: RedskilledWorkerView,
+  io: RedskilledStopWorkerIO = DEFAULT_STOP_WORKER_IO,
+): Promise<boolean> {
   if (worker.unit != null && worker.unit !== "") {
-    const stop = spawnSync("systemctl", ["--user", "stop", worker.unit], { stdio: "ignore" });
-    return stop.error == null && stop.status === 0;
+    try {
+      await io.stopUnit(worker.unit);
+    } catch {
+      // A failed stop request still reaches the process-group escalation below.
+    }
+    if (!io.unitActive(worker.unit) && !io.leaderAlive(worker.pid)) return true;
   }
-  return killTreeAndWait(worker.pgid ?? worker.pid);
+  return await io.killTree(worker.pgid ?? worker.pid);
 }
+
+/**
+ * The stop request, as argv — and `--no-block` is the whole of the fix.
+ *
+ * Without it `systemctl stop` returns when the JOB finishes, which for a runner
+ * that ignores SIGTERM is `TimeoutStopSec` later. Named here rather than written
+ * inline so the flag is pinnable: it is the difference between a stop and an
+ * outage, and nothing else in the argv carries any weight.
+ */
+export function redskilledUnitStopArgv(unit: string): readonly string[] {
+  return ["--user", "stop", "--no-block", unit];
+}
+
+const DEFAULT_STOP_WORKER_IO: RedskilledStopWorkerIO = {
+  // `spawn` rather than `spawnSync` so that even placing the request cannot hold
+  // the event loop. Neither the exit code nor the output is read: a refused stop
+  // is indistinguishable here from one the init system accepted and could not
+  // finish, and the only thing that settles either is the liveness escalation
+  // the caller runs next.
+  stopUnit: async (unit) => {
+    await new Promise<void>((resolve) => {
+      const request = spawn("systemctl", [...redskilledUnitStopArgv(unit)], { stdio: "ignore" });
+      request.once("error", () => resolve());
+      request.once("close", () => resolve());
+    });
+  },
+  unitActive: isUnitActive,
+  leaderAlive: isPidAlive,
+  killTree: (pgid) => killTreeAndWait(pgid, { graceTries: REDSKILLED_UNIT_STOP_GRACE_TRIES }),
+};

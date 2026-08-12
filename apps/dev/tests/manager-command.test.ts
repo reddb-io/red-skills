@@ -201,12 +201,17 @@ describe("manager dispatch (slice #2295)", () => {
     issueState: "OPEN" | "CLOSED" = "OPEN",
   ): Parameters<typeof managerCommand>[1] {
     const exec: ExecFn = (_tool, args) => {
-      const isCreate = args[0] === "issue" && args[1] === "create";
-      const isView = args[0] === "issue" && args[1] === "view";
+      // Issue creation and the reconcile read both ride REST now (#3663/#3729):
+      // `gh api -X POST repos/{o}/{r}/issues ...` and `gh api repos/{o}/{r}/issues/{n}`.
+      const isCreate = args.includes("POST") && args.some((a) => /repos\/.+\/issues$/.test(a));
+      const isView = args[0] === "api" && args.some((a) => /repos\/.+\/issues\/\d+$/.test(a));
       if (isCreate) {
         return Promise.resolve({
           code: 0,
-          stdout: `https://github.com/acme/widgets/issues/${issueNumber}`,
+          stdout: JSON.stringify({
+            number: issueNumber,
+            html_url: `https://github.com/acme/widgets/issues/${issueNumber}`,
+          }),
           stderr: "",
         });
       }
@@ -215,7 +220,7 @@ describe("manager dispatch (slice #2295)", () => {
           code: 0,
           stdout: JSON.stringify({
             number: issueNumber,
-            state: issueState,
+            state: issueState.toLowerCase(),
             labels: [{ name: "ready-for-agent" }],
           }),
           stderr: "",

@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { evaluateAdmission, runAdmittedFixture } from "../src/admission.js";
 import { discoverFidelityFixtures, runFidelityFixture } from "../src/fidelity.js";
 import { RspElisionStore } from "../src/elision-store.js";
-import { renderGhContract } from "../src/gh-wrapper.js";
+import { runGhApiRead } from "../src/gh-api-wrapper.js";
+import { parseGhApiRead, renderGhContract } from "../src/gh-wrapper.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures", "gh");
@@ -178,6 +179,31 @@ describe("rsp gh admission harness", () => {
 });
 
 describe("rsp gh token levers", () => {
+  it("parses safe REST GETs for the resident and rejects writes or caller-owned projections", () => {
+    expect(parseGhApiRead(["gh", "api", "repos/reddb-io/red-dev/actions/runs/31533509761", "-F", "per_page=20"])).toEqual({
+      path: "repos/reddb-io/red-dev/actions/runs/31533509761",
+      params: { per_page: 20 },
+    });
+    expect(parseGhApiRead(["gh", "api", "--method", "PUT", "repos/reddb-io/red-dev/pulls/108/merge"])).toBeNull();
+    expect(parseGhApiRead(["gh", "api", "repos/reddb-io/red-dev/actions/runs", "--jq", ".workflow_runs"])).toBeNull();
+  });
+
+  it("renders a resident GitHub REST answer as canonical TOON", async () => {
+    const result = await runGhApiRead(
+      ["gh", "api", "repos/reddb-io/red-dev/actions/runs/31533509761"],
+      async () => ({
+        status: 0,
+        stdout: JSON.stringify({ id: 31533509761, status: "in_progress", conclusion: null }),
+        stderr: "",
+        quotaFree: true,
+      }),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.toString("utf8")).not.toContain("{");
+    expect(decode(result.stdout.toString("utf8"))).toEqual({ id: 31533509761, status: "in_progress", conclusion: null });
+  });
+
   it("filters list rows with --query and appends next-step help", async () => {
     const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "pr-list-default")!;
     const result = await renderGhContract(["gh", "pr", "list", "--query", "Draft"], fixture.recorded, { level: "lossless" });

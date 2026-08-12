@@ -14,8 +14,10 @@ import {
   trimLaneKeepLast,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 export interface SingletonEventRecord {
   readonly at: string;
@@ -109,7 +111,7 @@ function assertTail(tail: number | undefined): void {
 
 function encodeRows(rows: readonly ToonlRecord[]): string {
   if (rows.length === 0) return "";
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return rows.map((row) => writer.push(row)).join("");
 }
 
@@ -154,7 +156,7 @@ export function createSingletonEventLane(
 
     async append(input) {
       const event = validateEvent({ at: input.at ?? clock(), ...input });
-      const encoded = encodeLines().push(toRow(event));
+      const encoded = encodeToonlLines().push(toRow(event));
       const incomingBytes = Buffer.byteLength(encoded);
       await fs.mkdir(dirname(path), { recursive: true });
       if (await laneOverCeiling(path, incomingBytes, retentionPolicy)) {

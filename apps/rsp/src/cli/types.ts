@@ -9,7 +9,7 @@ export interface ParsedArgs {
   handle?: string;
   storeUri?: string;
   query?: string;
-  level: "lossless" | "brief" | "terse";
+  level: "lossless" | "brief" | "terse" | "full";
   positional: string[];
 }
 

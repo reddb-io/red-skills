@@ -230,19 +230,21 @@ download_release_asset_if_available() {
     fi
   fi
 
-  local rsp_asset="rsp.bundle.min.mjs"
-  local rsp_out="$source/packaging/npm/dist/$rsp_asset"
-  local rsp_url="https://github.com/$REPO/releases/download/$tag/$rsp_asset"
+  local rsp_asset rsp_out rsp_url
   mkdir -p "$source/packaging/npm/dist"
-  if [[ "$REFRESH" == "true" || ! -f "$rsp_out" ]]; then
-    if curl_file "$rsp_url" "$rsp_out.tmp"; then
-      mv "$rsp_out.tmp" "$rsp_out"
-      log "downloaded optional release asset $rsp_asset"
-    else
-      rm -f "$rsp_out.tmp"
-      warn "optional release asset $rsp_asset is unavailable for $tag; RSP may build from source"
+  for rsp_asset in rsp.bundle.min.mjs rsp-core.bundle.min.mjs; do
+    rsp_out="$source/packaging/npm/dist/$rsp_asset"
+    rsp_url="https://github.com/$REPO/releases/download/$tag/$rsp_asset"
+    if [[ "$REFRESH" == "true" || ! -f "$rsp_out" ]]; then
+      if curl_file "$rsp_url" "$rsp_out.tmp"; then
+        mv "$rsp_out.tmp" "$rsp_out"
+        log "downloaded optional release asset $rsp_asset"
+      else
+        rm -f "$rsp_out.tmp"
+        warn "optional release asset $rsp_asset is unavailable for $tag; RSP may build from source"
+      fi
     fi
-  fi
+  done
 }
 
 prepare_source() {

@@ -78,7 +78,9 @@ describe("hitl-card command runaway guards", () => {
     const posted: string[] = [];
     const exec: HitlCardExec = async (args) => {
       const bodyIndex = args.indexOf("--body");
+      const restBody = args.find((arg) => arg.startsWith("body="));
       if (bodyIndex !== -1) posted.push(args[bodyIndex + 1] ?? "");
+      else if (restBody !== undefined) posted.push(restBody.slice("body=".length));
       return { code: 0, stdout: "", stderr: "" };
     };
     const output = capture();

@@ -28,7 +28,7 @@ import {
 } from "@reddb-io/github";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
-import type { RedskilledHostState, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledHostState, RedskilledRegistrationLapse, RedskilledRegistrationStop, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
 import { isRedskilledStatuslineMetrics, type RedskilledStatuslineMetrics } from "./live-metrics.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
 import {
@@ -134,6 +134,8 @@ export interface RedskilledStatuslineVitals {
   readonly rss_source?: RedskilledRssSource | null;
 }
 
+export type RedskilledStatuslineLapse = Pick<RedskilledRegistrationLapse, "project_label" | "at" | "registered_at" | "standing" | "queue_depth"> & { readonly reason: string };
+export type RedskilledStatuslineStop = Pick<RedskilledRegistrationStop, "project_label" | "at" | "standing" | "queue_depth">;
 /** What this Worker was promised, and how much of it the daemon has seen it take. */
 export interface RedskilledStatuslineWorkerBudget {
   /** The budget the floor enforces, by its own name; `null` when there is none. */
@@ -315,17 +317,9 @@ export interface RedskilledStatuslinePayload {
    * block lets the shared renderer say `lapsed` rather than the less actionable
    * `unregistered`, and lets a re-registration outrank an older lapse record.
    */
-  readonly lapsed_projects?: readonly {
-    readonly project_label: string;
-    readonly at: string;
-    readonly registered_at?: string;
-    readonly reason: string;
-  }[];
+  readonly lapsed_projects?: readonly RedskilledStatuslineLapse[];
   /** Registrations deliberately released through `project_stop`. */
-  readonly stopped_projects?: readonly {
-    readonly project_label: string;
-    readonly at: string;
-  }[];
+  readonly stopped_projects?: readonly RedskilledStatuslineStop[];
   /** Registrations held by a live daemon beyond the socket that answered. */
   readonly orphaned_projects?: readonly string[];
   readonly workers: readonly RedskilledStatuslineWorker[];
@@ -553,10 +547,14 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       at: lapse.at,
       ...(lapse.registered_at == null ? {} : { registered_at: lapse.registered_at }),
       reason: lapse.detail,
+      ...(lapse.standing === true ? { standing: true } : {}),
+      ...(lapse.queue_depth == null ? {} : { queue_depth: lapse.queue_depth }),
     })),
     stopped_projects: (input.hostState.stopped_registrations ?? []).map((stopped) => ({
       project_label: stopped.project_label,
       at: stopped.at,
+      ...(stopped.standing === true ? { standing: true } : {}),
+      ...(stopped.queue_depth == null ? {} : { queue_depth: stopped.queue_depth }),
     })),
     orphaned_projects: (input.hostState.orphaned_registrations ?? []).map((record) => record.project_label),
     workers,
@@ -844,13 +842,18 @@ function isStatuslineLapse(value: unknown): boolean {
   return typeof lapse.project_label === "string" &&
     typeof lapse.at === "string" &&
     (lapse.registered_at === undefined || typeof lapse.registered_at === "string") &&
+    (lapse.standing === undefined || typeof lapse.standing === "boolean") &&
+    (lapse.queue_depth === undefined || Number.isInteger(lapse.queue_depth)) &&
     typeof lapse.reason === "string";
 }
 
 function isStatuslineStop(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const stopped = value as Record<string, unknown>;
-  return typeof stopped.project_label === "string" && typeof stopped.at === "string";
+  return typeof stopped.project_label === "string" &&
+    typeof stopped.at === "string" &&
+    (stopped.standing === undefined || typeof stopped.standing === "boolean") &&
+    (stopped.queue_depth === undefined || Number.isInteger(stopped.queue_depth));
 }
 
 function isStatuslineEngine(value: unknown): boolean {

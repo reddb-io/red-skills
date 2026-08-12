@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import {
+  DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
+  createTimedGithubFetch,
+  withGithubDeadline,
+  createGithubBalanceTransport,
   createGithubAttributionLedger,
   createGithubClient,
+  fetchGithubBalance,
+  githubBalanceCadenceMs,
   isGithubRateLimitError,
   routeGithubArgs,
   type GithubBalance,
@@ -40,6 +46,56 @@ export interface CreateRspResidentGithubClientOptions {
   readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
   readonly retryCount?: number;
   readonly throttle?: boolean;
+}
+
+/** One adaptive balance reader shared by resident and long-lived wait clients. */
+export function createCachedGithubBalanceReader(
+  token: string,
+  origin?: string,
+): () => Promise<GithubBalance | null> {
+  // Bounded at the transport: a balance ask that never settles is the shape that
+  // wedged every reader joined to it (#3768).
+  const transport = createGithubBalanceTransport({
+    token,
+    ...(origin ? { origin } : {}),
+    fetchImpl: createTimedGithubFetch({ timeoutMs: DEFAULT_GITHUB_BALANCE_TIMEOUT_MS }),
+  });
+  let held: GithubBalance | null = null;
+  let freshUntil = 0;
+  let inFlight: Promise<GithubBalance | null> | null = null;
+  return async (): Promise<GithubBalance | null> => {
+    const now = Date.now();
+    if (now < freshUntil) return held;
+    // A JOINER INHERITS THE DEADLINE, never the leader's patience. Awaiting the
+    // shared promise bare is what turned one stalled ask into every later
+    // caller's stall: the joiner had issued nothing and could not give up.
+    if (inFlight !== null) return await joinBalance(inFlight);
+    const askedAt = new Date(now).toISOString();
+    inFlight = fetchGithubBalance({ transport, now: askedAt }).then((answer) => {
+      held = answer;
+      freshUntil = Date.now() + githubBalanceCadenceMs(answer, { now: new Date().toISOString() });
+      return held;
+    }).finally(() => {
+      inFlight = null;
+    });
+    return await joinBalance(inFlight);
+  };
+}
+
+/**
+ * Await a balance ask under a deadline; an unanswered one is `null`.
+ *
+ * `null` is unknown, and unknown OPENS the gate — the same degradation an absent
+ * daemon or an absent credential produces. A balance nobody could read is a
+ * reporting failure, and turning a reporting failure into a refusal is how one
+ * slow endpoint becomes an outage.
+ */
+async function joinBalance(pending: Promise<GithubBalance | null>): Promise<GithubBalance | null> {
+  try {
+    return await withGithubDeadline("balance ask", DEFAULT_GITHUB_BALANCE_TIMEOUT_MS, () => pending);
+  } catch {
+    return null;
+  }
 }
 
 /**

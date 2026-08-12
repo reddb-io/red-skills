@@ -1,0 +1,8 @@
+# oracle: deterministic disk census top-N summary with exact recovery.
+content: disk-census
+rows_total: 24
+rows_kept: 5
+rows_omitted: 19
+total_size_kib: 1854464
+largest_path: ./packages/compiler-fixtures/alpha/target
+recovery: full original stdout behind one elision handle

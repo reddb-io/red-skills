@@ -182,25 +182,38 @@ export async function calibratedTelemetryTiming(root: string): Promise<Telemetry
 export async function waitForResident(socketPath: string, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
+  // The resident answers every request with ok:false while its store is
+  // opening or after the open failed, so the last refusal is the diagnosis
+  // (e.g. "store failed to open: reddb binary not found"). Carry it.
+  let lastError = "no ping response (socket never answered)";
   while (Date.now() < deadline) {
     try {
       const response = await sendResidentRequest({ socketPath, timeoutMs: 200 }, { id: `wait-${attempt++}`, op: "ping" });
       if (response.ok) return;
-    } catch {}
+      if (typeof response.error === "string" && response.error) lastError = response.error;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error("resident did not start");
+  throw new Error(`resident did not start: ${lastError}`);
 }
 
 export async function waitForResidentTelemetry(socketPath: string, command: string, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
+  let lastError = "no telemetry-stats response (socket never answered)";
   while (Date.now() < deadline) {
     const response = await sendResidentRequest({ socketPath, timeoutMs: 200 }, {
       id: `telemetry-${attempt++}`,
       op: "telemetry-stats",
       sinceDays: 7,
-    }).catch(() => null);
+    }).catch((err: unknown) => {
+      lastError = err instanceof Error ? err.message : String(err);
+      return null;
+    });
+    if (response && !response.ok && typeof response.error === "string" && response.error) lastError = response.error;
+    if (response?.ok) lastError = `stats answered without ${command} in top_commands`;
     if (
       response?.ok &&
       isRecord(response.value) &&
@@ -210,7 +223,7 @@ export async function waitForResidentTelemetry(socketPath: string, command: stri
     ) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`telemetry ${command} did not drain`);
+  throw new Error(`telemetry ${command} did not drain: ${lastError}`);
 }
 
 export async function waitForStatusSummary(summaryPath: string, minMtimeMs = 0, timeoutMs = 5_000): Promise<void> {

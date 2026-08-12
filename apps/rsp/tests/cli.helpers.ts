@@ -184,7 +184,7 @@ function normalizedDeadlineMs(durationMs = 5_000): number {
 }
 
 const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(TEST_NODE_NOOP_BASELINE_MS, 250, 2_000);
-const TEST_RESIDENT_READY_TIMEOUT_MS = normalizedDurationMs(10_000);
+export const TEST_RESIDENT_READY_TIMEOUT_MS = normalizedDurationMs(10_000);
 
 function testChildEnv(env: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
@@ -271,7 +271,7 @@ async function installRspShim(root: string): Promise<string> {
   return `${binDir}:${process.env.PATH ?? ""}`;
 }
 
-async function fakeGhPath(root: string, responses: Array<Record<string, unknown>>): Promise<{ path: string; responsesDir: string; countFile: string }> {
+async function fakeGhPath(root: string, responses: unknown[]): Promise<{ path: string; responsesDir: string; countFile: string }> {
   const bin = join(root, "bin");
   const responsesDir = join(root, "gh-responses");
   await mkdir(bin, { recursive: true });
@@ -577,6 +577,7 @@ function handleHungOldResidentSocket(socket: Socket, version: string): void {
     buffer += chunk;
     const newline = buffer.indexOf("\n");
     if (newline < 0) return;
+    if (!buffer.slice(0, newline).trimStart().startsWith("{")) return void socket.end(`${JSON.stringify({ id: randomUUID(), ok: false, error: "JSON expected" })}\n`);
     const request = JSON.parse(buffer.slice(0, newline)) as { id?: string; op?: string };
     if (request.op === "ping") {
       socket.write(`${JSON.stringify({ id: request.id, ok: true, value: { pong: true, version } })}\n`, () => {});
@@ -584,7 +585,6 @@ function handleHungOldResidentSocket(socket: Socket, version: string): void {
     }
   });
 }
-
 async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
   const db = await connect(storeUri);
   try {

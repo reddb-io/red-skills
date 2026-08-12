@@ -80,19 +80,26 @@ describe("manager S7 acceptance journey harness", () => {
 
   function makeGhExec(issueNumber: number, state: "OPEN" | "CLOSED" = "OPEN"): ExecFn {
     return (_tool, args) => {
-      if (args[0] === "issue" && args[1] === "create") {
-        return Promise.resolve({
-          code: 0,
-          stdout: `https://github.com/reddb-io/red-skills/issues/${issueNumber}`,
-          stderr: "",
-        });
-      }
-      if (args[0] === "issue" && args[1] === "view") {
+      // Issue creation and the reconcile read both ride REST now (#3663/#3729):
+      // `gh api -X POST repos/{o}/{r}/issues ...` and `gh api repos/{o}/{r}/issues/{n}`.
+      const isCreate = args.includes("POST") && args.some((a) => /repos\/.+\/issues$/.test(a));
+      const isView = args[0] === "api" && args.some((a) => /repos\/.+\/issues\/\d+$/.test(a));
+      if (isCreate) {
         return Promise.resolve({
           code: 0,
           stdout: JSON.stringify({
             number: issueNumber,
-            state,
+            html_url: `https://github.com/reddb-io/red-skills/issues/${issueNumber}`,
+          }),
+          stderr: "",
+        });
+      }
+      if (isView) {
+        return Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify({
+            number: issueNumber,
+            state: state.toLowerCase(),
             labels: [{ name: "ready-for-agent" }],
           }),
           stderr: "",

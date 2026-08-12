@@ -5,7 +5,7 @@
 // `requeue --adopt-branch BRANCH` action into the no-agent landing lane
 // (ADR 0055). `collectShipFacts` survives as the PR-facts reader.
 
-import { execTool, type ExecOutput } from "../runtime/exec.js";
+import { createDevGithubMergeRead } from "../runtime/github-merge-read.js";
 import {
   advisoryReviewPending,
   normalizeRollupEntry,
@@ -13,24 +13,12 @@ import {
   type ShipCheck,
 } from "../core/ship.js";
 
-async function run(cmd: string, args: readonly string[], cwd: string): Promise<ExecOutput> {
-  return execTool(cmd, args, { cwd });
-}
-
 function parseJson<T>(stdout: string, fallback: T): T {
   try {
     return JSON.parse(stdout || "") as T;
   } catch {
     return fallback;
   }
-}
-
-async function required(cmd: string, args: readonly string[], cwd: string, label: string): Promise<ExecOutput> {
-  const r = await run(cmd, args, cwd);
-  if (r.code !== 0) {
-    throw new Error(`${label} failed: ${r.stderr.trim() || r.stdout.trim() || `${cmd} ${args.join(" ")}`}`);
-  }
-  return r;
 }
 
 interface ShipFacts {
@@ -49,27 +37,23 @@ interface PrView {
 }
 
 export async function collectShipFacts(cwd: string, repo: string, pr: number, reviewCheck: string): Promise<ShipFacts> {
-  const checksRes = await run("gh", ["pr", "checks", String(pr), "--repo", repo, "--json", "name,state,conclusion,bucket"], cwd);
+  const github = createDevGithubMergeRead(cwd, "ship-facts");
   let checksGreen = false;
   let checkSummary = "checks unavailable";
   let reviewPending = false;
-  if (checksRes.code === 0) {
-    const checks = parseJson<ShipCheck[]>(checksRes.stdout, []);
+  try {
+    const checks = parseJson<ShipCheck[]>(await github.reviewChecks(repo, pr), []);
     checksGreen = shipChecksAreGreen(checks);
     reviewPending = advisoryReviewPending(checks, reviewCheck);
     checkSummary = checks.length === 0 ? "no checks configured" : `${checks.filter((c) => shipChecksAreGreen([c])).length}/${checks.length} green`;
-  } else if (/no checks/i.test(`${checksRes.stdout}\n${checksRes.stderr}`)) {
-    checksGreen = true;
-    checkSummary = "no checks configured";
+  } catch (error) {
+    if (/no checks/i.test(error instanceof Error ? error.message : String(error))) {
+      checksGreen = true;
+      checkSummary = "no checks configured";
+    }
   }
 
-  const viewRes = await required(
-    "gh",
-    ["pr", "view", String(pr), "--repo", repo, "--json", "reviewDecision,reviews,statusCheckRollup"],
-    cwd,
-    "read PR reviews",
-  );
-  const view = parseJson<PrView>(viewRes.stdout, {});
+  const view = parseJson<PrView>(await github.shipPr(repo, pr), {});
 
   // When gh pr checks failed but gh pr view returned a populated statusCheckRollup,
   // use that rollup as the check source.

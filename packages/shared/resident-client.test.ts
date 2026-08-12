@@ -22,6 +22,15 @@ afterEach(async () => {
 const originalRspDebug = process.env.RSP_DEBUG;
 
 describe("resident client startup diagnostics", () => {
+  it("uses TOON filenames for every durable rsp snapshot", async () => {
+    const paths = resolveResidentPaths(await tempRoot());
+
+    expect(paths.summaryPath).toMatch(/rsp-status-summary\.toon$/);
+    expect(paths.registryPath).toMatch(/rsp-resident\.pid\.toon$/);
+    expect(paths.summaryPath).not.toMatch(/\.jsonl?$/);
+    expect(paths.registryPath).not.toMatch(/\.jsonl?$/);
+  });
+
   it("includes exit code and stderr tail when a debug resident child exits before ready", async () => {
     const root = await tempRoot();
     const paths = resolveResidentPaths(root);

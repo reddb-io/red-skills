@@ -114,7 +114,10 @@ describe("host-side and project-side worker ids", () => {
 });
 
 describe("attributing live Workers to this project", () => {
-  const worker = (id: string) => ({ state: { worker_id: id } });
+  const worker = (id: string, pid = process.pid, pidLive = true) => ({
+    state: { worker_id: id, pid },
+    pidLive,
+  });
 
   it("lists a Worker born from a registration as this project's own", () => {
     const hostWorkerId = "2aa48bea-81a5-409d-9310-ab0a9805";
@@ -160,12 +163,45 @@ describe("attributing live Workers to this project", () => {
     const attribution = attributeProjectWorkers({
       workers: [worker("wS807"), worker("wVHHH")],
       hostWorkerIds: ["2aa48bea-81a5-409d-9310-ab0a9805", "8c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f"],
+      workerIdEnvDeclared: false,
     });
 
     expect(attribution.live).toEqual([]);
     expect(attribution.warnings).toHaveLength(1);
     expect(attribution.warnings[0]).toContain("disjoint");
     expect(attribution.warnings[0]).toContain("#3081");
+  });
+
+  it("does not blame a declared launch env for disjoint live ids", () => {
+    const attribution = attributeProjectWorkers({
+      workers: [worker("project-id")],
+      hostWorkerIds: ["host-id"],
+      workerIdEnvDeclared: true,
+    });
+
+    expect(attribution.live).toEqual([]);
+    expect(attribution.warnings).toEqual([]);
+  });
+
+  it("bars pid-zero and dead-pid rows from the live claim, but keeps them visible", () => {
+    const attribution = attributeProjectWorkers({
+      workers: [
+        worker("pid-zero", 0, false),
+        worker("dead-pid", 919_191, false),
+      ],
+      hostWorkerIds: ["host-id"],
+      workerIdEnvDeclared: true,
+    });
+
+    // Disproof bars LIVE; it never shrinks the report. A dead row rendered as
+    // live was the #3660 bug — a dead row vanishing entirely would be the
+    // opposite lie, so both land in unattributed.
+    expect(attribution.live).toEqual([]);
+    expect(attribution.unattributed.map((w) => w.state.worker_id)).toEqual([
+      "pid-zero",
+      "dead-pid",
+    ]);
+    expect(attribution.warnings).toEqual([]);
   });
 
   it("says the host did not answer rather than calling every Worker foreign", () => {

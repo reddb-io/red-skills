@@ -1,5 +1,15 @@
 import { randomUUID, createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  writeSync,
+} from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
@@ -10,7 +20,7 @@ import {
   replaceLaneAtomicallySync,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
-import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import {
   RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_DECISIONS_COLLECTION,
@@ -82,10 +92,16 @@ export async function appendTelemetryEvent(
   appendTelemetryEventSync(rootDir, event, retention);
 }
 
+export interface AppendTelemetryEventSyncOptions {
+  /** Test seam for posing a drain rename immediately after an append. */
+  readonly afterWrite?: (path: string, attempt: number) => void;
+}
+
 export function appendTelemetryEventSync(
   rootDir: string,
   event: RspTelemetryEvent,
   retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+  options: AppendTelemetryEventSyncOptions = {},
 ): void {
   try {
     const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
@@ -103,9 +119,37 @@ export function appendTelemetryEventSync(
       parseSpoolEntries,
       formatSpoolRow,
     );
-    appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
+    appendSpoolLineSync(path, line, options);
     if (droppedBytes > 0) appendRetentionCorrection(resolvedRoot, "telemetry spool retention", droppedBytes);
   } catch {}
+}
+
+/**
+ * Append to the active inode, then prove it is still the inode at the active
+ * path. A drainer can rename between open and write; retrying the same spool id
+ * makes that race at-least-once rather than silently lossy.
+ */
+function appendSpoolLineSync(
+  path: string,
+  line: string,
+  options: AppendTelemetryEventSyncOptions,
+): void {
+  let attempt = 0;
+  while (true) {
+    const descriptor = openSync(path, "a", 0o600);
+    try {
+      writeSync(descriptor, line, undefined, "utf8");
+      attempt += 1;
+      options.afterWrite?.(path, attempt);
+      const opened = fstatSync(descriptor);
+      const active = statSync(path);
+      if (opened.dev === active.dev && opened.ino === active.ino) return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      closeSync(descriptor);
+    }
+  }
 }
 
 function compactTelemetryEventForSpool(event: RspTelemetryEvent): RspTelemetryEvent {
@@ -268,7 +312,7 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
 }
 
 function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
-  const spoolEmitter: ToonlLineEmitter = encodeLines();
+  const spoolEmitter = encodeToonlLines();
   return spoolEmitter.push(spoolEntryToToonlRow(row));
 }
 
@@ -319,7 +363,7 @@ function appendRetentionCorrection(
 }
 
 function formatCorrectionRow(correction: RspTelemetryCorrectionRow): string {
-  const correctionEmitter: ToonlLineEmitter = encodeLines();
+  const correctionEmitter = encodeToonlLines();
   return correctionEmitter.push({
     correction_id: correction.correction_id,
     target_spool_id: correction.target_spool_id,
@@ -369,13 +413,17 @@ function trimLaneBeforeAppend<Row>(
 }
 
 async function renameActiveSpools(rootDir: string): Promise<string[]> {
-  const paths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const activePath = telemetrySpoolPath(rootDir);
+  const paths = [activePath, telemetryLegacySpoolPath(rootDir)];
   const renamed: string[] = [];
   for (const path of paths) {
     const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
     try {
       await rename(path, drainingPath);
-      await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+      // The JSONL path is a read-once migration input, never an active lane.
+      // Recreating it after ingestion made an obsolete internal format look
+      // canonical and left an empty `.jsonl` behind on every drain.
+      if (path === activePath) await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
       renamed.push(drainingPath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
@@ -385,10 +433,7 @@ async function renameActiveSpools(rootDir: string): Promise<string[]> {
 }
 
 async function ensureActiveSpoolFiles(rootDir: string): Promise<void> {
-  await Promise.all([
-    writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }),
-    writeFile(telemetryLegacySpoolPath(rootDir), "", { flag: "a" }),
-  ]).catch(() => undefined);
+  await writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }).catch(() => undefined);
 }
 
 async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetrySpoolEntry[]> {

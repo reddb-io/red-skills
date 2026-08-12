@@ -117,6 +117,29 @@ export function nextActivityPollMs(input: RedskilledActivityCadenceInput): numbe
   return input.attended ? attendedMs : Math.max(attendedMs, unattendedMs);
 }
 
+/** The longest blind retry hold when GitHub supplied no usable reset instant. */
+export const REDSKILLED_ACTIVITY_RATE_LIMIT_MAX_BACKOFF_MS = REDSKILLED_AMORTIZED_MIN_MS;
+
+/**
+ * Turn an exhausted remote answer into the poller's next sleep.
+ *
+ * The reset is the next instant at which another answer can differ. A malformed
+ * or absent reset still slows the loop by four ordinary windows, while the cap
+ * prevents a corrupt timestamp from retiring the poller indefinitely.
+ */
+export function activityRateLimitBackoffMs(
+  limit: { readonly exhausted: boolean; readonly reset_at: string | null } | null,
+  baseMs: number,
+  nowMs: number,
+): number {
+  if (limit?.exhausted !== true) return baseMs;
+  const resetAtMs = limit.reset_at == null ? Number.NaN : Date.parse(limit.reset_at);
+  const waitMs = Number.isFinite(resetAtMs) && Number.isFinite(nowMs)
+    ? resetAtMs - nowMs + 1_000
+    : baseMs * 4;
+  return Math.min(REDSKILLED_ACTIVITY_RATE_LIMIT_MAX_BACKOFF_MS, Math.max(baseMs, waitMs));
+}
+
 export interface RedskilledActivityForwardInput {
   /** The window the pending poll was armed with; `null` when none is armed. */
   readonly pendingWindowMs: number | null;

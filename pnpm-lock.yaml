@@ -10,8 +10,8 @@ catalogs:
       specifier: ^1.0.0
       version: 1.29.0
     '@reddb-io/toon':
-      specifier: 0.13.0
-      version: 0.13.0
+      specifier: 0.26.2
+      version: 0.26.2
     '@types/node':
       specifier: ^22.0.0
       version: 22.20.1
@@ -46,6 +46,10 @@ importers:
         version: 5.9.3
 
   apps/afk-container:
+    dependencies:
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
     devDependencies:
       vitest:
         specifier: 'catalog:'
@@ -61,7 +65,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -120,7 +124,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -203,7 +207,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -237,7 +241,7 @@ importers:
         version: link:../../packages/build-info
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
     devDependencies:
       esbuild:
         specifier: 'catalog:'
@@ -251,6 +255,9 @@ importers:
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@reddb-io/sdk':
         specifier: 1.23.1
         version: 1.23.1
@@ -259,7 +266,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
@@ -352,7 +359,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       tuiuiu.js:
         specifier: 1.0.75
         version: 1.0.75
@@ -386,7 +393,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -426,10 +433,13 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -497,7 +507,7 @@ importers:
     dependencies:
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -542,7 +552,7 @@ importers:
         version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
 
   packages/red-castle:
     dependencies:
@@ -566,7 +576,7 @@ importers:
         version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.1.0
@@ -609,7 +619,7 @@ importers:
         version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -625,7 +635,7 @@ importers:
     dependencies:
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.13.0
+        version: 0.26.2
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
@@ -1686,8 +1696,8 @@ packages:
     resolution: {integrity: sha512-aPXh8WeP5SSu17SBU8e2kOgZMuKnrTW/qYviD3zu7LLoAP5cOP6rDRl7C/6LreixHepNc+vwkyVILfK0RTJtLQ==}
     engines: {node: '>=18'}
 
-  '@reddb-io/toon@0.13.0':
-    resolution: {integrity: sha512-MvJ4slczdd0V6CgDVsSGxbEkTc0Pz0ahTMOAHxPJtRyGikcyQhdm63itPCYxmmKTUCygy3QHqEyGGXv1ujMjzg==}
+  '@reddb-io/toon@0.26.2':
+    resolution: {integrity: sha512-XXcBkLcwVVhy2A+BQvv+Ds1KD8YqQ+Bu0/ETbJT2TnnaIRcEIHNT98DHUV1qSlijpF8aGH1VgLqEv3Q7TOxZsA==}
     engines: {node: '>=18'}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
@@ -3711,7 +3721,7 @@ snapshots:
 
   '@reddb-io/sdk@1.23.1': {}
 
-  '@reddb-io/toon@0.13.0': {}
+  '@reddb-io/toon@0.26.2': {}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true

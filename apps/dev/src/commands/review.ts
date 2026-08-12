@@ -10,7 +10,6 @@
 
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { Output } from "@reddb-io/red-castle";
-import { execTool } from "../runtime/exec.js";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { defaultSandcastleDeps, type AgentRunner } from "../core/execution.js";
@@ -19,6 +18,7 @@ import { makeExtractReview, reviewFindingsSchema } from "../core/review-extract.
 import { buildReviewGh } from "../runtime/review-gh.js";
 import { actorTrustSignals, type GhContext } from "../runtime/gh.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
+import { inferGitHubRepoSlug } from "../runtime/wire/github-slug.js";
 
 const REVIEW_FLAG_SCHEMA = {
   pr: { kind: "value", coerce: (raw: string): number => Number(raw) },
@@ -33,8 +33,7 @@ function isRunner(value: string): value is AgentRunner {
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   if (explicit?.trim()) return explicit.trim();
-  const r = await execTool("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], { cwd });
-  return r.code === 0 ? r.stdout.trim() : "";
+  return inferGitHubRepoSlug(cwd);
 }
 
 /**

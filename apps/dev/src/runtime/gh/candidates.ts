@@ -9,7 +9,7 @@ import type {
   QueueVisibilityTransportFailure,
   QueueVisibilityTransportSurface,
 } from "../../core/operational-probes.js";
-import { isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
+import { githubReadClient, githubRepo, isRecord, runRsp, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
 
 const TARGET_POINT_READ_BACKOFF_MS = [250, 750, 1_500] as const;
@@ -46,6 +46,52 @@ interface RspIssueListItem {
   body: string;
   labels: string[];
   author: string;
+}
+
+interface GithubIssueListItem {
+  readonly number?: number;
+  readonly title?: string;
+  readonly body?: string | null;
+  readonly state?: string;
+  readonly created_at?: string | null;
+  readonly closed_at?: string | null;
+  readonly labels?: ReadonlyArray<string | { readonly name?: string }>;
+  readonly user?: { readonly login?: string } | null;
+  readonly pull_request?: unknown;
+}
+
+async function listIssuesViaClient(
+  ctx: GhContext,
+  cacheKey: string,
+  parameters: Readonly<Record<string, unknown>>,
+  limit: number,
+): Promise<readonly GithubIssueListItem[]> {
+  const repo = githubRepo(ctx);
+  if (!repo) throw new Error("GitHub candidate listing needs an owner/repository slug");
+  const answer = await githubReadClient(ctx).conditionalPaginate<GithubIssueListItem>({
+    cacheKey: `gh:candidates:${repo.owner}/${repo.repo}:${cacheKey}`,
+    route: "GET /repos/{owner}/{repo}/issues",
+    parameters: { ...repo, per_page: 100, ...parameters },
+    operation: { key: "issue list", budget: "rest" },
+    actor: "dev:candidates",
+  });
+  return answer.data.filter((issue) => issue.pull_request == null).slice(0, limit);
+}
+
+function labelNames(labels: GithubIssueListItem["labels"]): string[] {
+  if (!Array.isArray(labels)) return [];
+  return labels.map((label) => typeof label === "string" ? label : String(label.name ?? ""));
+}
+
+function githubFailure(error: unknown): ExecOutput {
+  const value = typeof error === "object" && error !== null
+    ? error as { status?: unknown; message?: unknown }
+    : {};
+  return {
+    code: Number(value.status ?? 1),
+    stdout: "",
+    stderr: String(value.message ?? error ?? "GitHub request failed"),
+  };
 }
 
 async function listIssuesViaRsp(ctx: GhContext, label: string, limit: string): Promise<RspIssueListItem[] | null> {
@@ -109,50 +155,20 @@ export async function listCandidates(
     labels: item.labels,
     author: item.author || undefined,
   }));
-  const r = await runGh(ctx,
-    [
-      "issue",
-      "list",
-      ...repoArgs(ctx),
-      "--label",
-      label,
-      "--state",
-      "open",
-      "--limit",
-      "200",
-      "--json",
-      "number,title,labels,body,author",
-    ],
-  );
-  if (r.code !== 0) {
-    emitTransportFailure(diagnostics, "graphql", r, "gh issue list failed");
-    return [];
-  }
-  let raw: unknown;
+  let raw: readonly GithubIssueListItem[];
   try {
-    raw = JSON.parse(r.stdout || "[]");
-  } catch {
-    emitTransportFailure(diagnostics, "graphql", r, "gh issue list returned malformed JSON");
-    return [];
-  }
-  if (!Array.isArray(raw)) {
-    emitTransportFailure(diagnostics, "graphql", r, "gh issue list returned a non-array payload");
+    raw = await listIssuesViaClient(ctx, `open:${label}:dispatch`, { state: "open", labels: label }, 200);
+  } catch (error) {
+    emitTransportFailure(diagnostics, "rest", githubFailure(error), "GitHub issue list failed");
     return [];
   }
   return raw.map((row): IssueCandidate => {
-    const item = row as {
-      number?: number;
-      title?: string;
-      body?: string;
-      labels?: Array<{ name?: string }>;
-      author?: { login?: string } | null;
-    };
-    const author = item.author?.login ? String(item.author.login) : undefined;
+    const author = row.user?.login ? String(row.user.login) : undefined;
     return {
-      number: Number(item.number ?? 0),
-      title: String(item.title ?? ""),
-      body: String(item.body ?? ""),
-      labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
+      number: Number(row.number ?? 0),
+      title: String(row.title ?? ""),
+      body: String(row.body ?? ""),
+      labels: labelNames(row.labels),
       author,
     };
   });
@@ -204,43 +220,22 @@ export async function resolveDispatchCandidates(
  * Routing (selectHitlQueue) uses only labels/number/createdAt — body is not
  * fetched here; callers that need it use viewIssueFull for the selected issue. */
 export async function listHitlCandidates(ctx: GhContext): Promise<HitlCandidate[]> {
-  const r = await runGh(ctx,
-    [
-      "issue",
-      "list",
-      ...repoArgs(ctx),
-      "--label",
-      LABEL_HUMAN,
-      "--state",
-      "open",
-      "--limit",
-      "200",
-      "--json",
-      "number,title,labels,createdAt",
-    ],
-  );
-  if (r.code !== 0) return [];
-  let raw: unknown;
   try {
-    raw = JSON.parse(r.stdout || "[]");
+    const rows = await listIssuesViaClient(
+      ctx,
+      `open:${LABEL_HUMAN}:hitl`,
+      { state: "open", labels: LABEL_HUMAN },
+      200,
+    );
+    return rows.map((row): HitlCandidate => ({
+      number: Number(row.number ?? 0),
+      title: String(row.title ?? ""),
+      createdAt: row.created_at ?? null,
+      labels: labelNames(row.labels),
+    }));
   } catch {
     return [];
   }
-  if (!Array.isArray(raw)) return [];
-  return raw.map((row): HitlCandidate => {
-    const item = row as {
-      number?: number;
-      title?: string;
-      createdAt?: string | null;
-      labels?: Array<{ name?: string }>;
-    };
-    return {
-      number: Number(item.number ?? 0),
-      title: String(item.title ?? ""),
-      createdAt: item.createdAt ?? null,
-      labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
-    };
-  });
 }
 
 /** A single issue's batched state slice: open/closed state, its label-name
@@ -265,41 +260,19 @@ export interface IssueStateRow {
  */
 export async function listIssueStates(ctx: GhContext): Promise<Map<number, IssueStateRow>> {
   const map = new Map<number, IssueStateRow>();
-  const r = await runGh(ctx,
-    [
-      "issue",
-      "list",
-      ...repoArgs(ctx),
-      "--state",
-      "all",
-      "--limit",
-      "500",
-      "--json",
-      "number,state,labels,closedAt",
-    ],
-  );
-  if (r.code !== 0) return map;
-  let raw: unknown;
   try {
-    raw = JSON.parse(r.stdout || "[]");
+    const rows = await listIssuesViaClient(ctx, "all:states", { state: "all" }, 500);
+    for (const row of rows) {
+      const n = Number(row.number ?? 0);
+      if (!n) continue;
+      map.set(n, {
+        state: String(row.state ?? "open").toUpperCase(),
+        labels: labelNames(row.labels),
+        closedAt: row.closed_at ?? null,
+      });
+    }
   } catch {
     return map;
-  }
-  if (!Array.isArray(raw)) return map;
-  for (const row of raw) {
-    const item = row as {
-      number?: number;
-      state?: string;
-      labels?: Array<{ name?: string }>;
-      closedAt?: string | null;
-    };
-    const n = Number(item.number ?? 0);
-    if (!n) continue;
-    map.set(n, {
-      state: String(item.state ?? "OPEN"),
-      labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
-      closedAt: item.closedAt ?? null,
-    });
   }
   return map;
 }
