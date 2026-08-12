@@ -53,11 +53,20 @@ export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvoca
   if (first === "proxy") {
     if (process.env.RSP_PROXY_FAIL_INTERNAL === "1") return null;
     const separator = argv.indexOf("--");
+    const proxyFlags = separator >= 0 ? argv.slice(1, separator) : [];
+    if (proxyFlags.some((flag) => flag !== "--full" && flag !== "--brief" && flag !== "--terse")) return null;
     const commandParts = separator >= 0 ? argv.slice(separator + 1) : argv.slice(1);
     if (commandParts.length !== 1 || !commandParts[0]?.trim()) return null;
     const commandLine = commandParts[0];
     if (mayUseSpecializedProxyExecutor(commandLine)) return null;
-    return { kind: "shell", commandLine, level: "lossless" };
+    const level = proxyFlags.includes("--terse")
+      ? "terse"
+      : proxyFlags.includes("--brief")
+        ? "brief"
+        : proxyFlags.includes("--full")
+          ? "full"
+          : "lossless";
+    return { kind: "shell", commandLine, level };
   }
   if (RSP_COMMANDS.has(first)) return null;
   return { kind: "argv", argv: [...argv], level: "lossless" };
