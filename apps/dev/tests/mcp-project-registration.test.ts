@@ -245,12 +245,17 @@ describe("starting work registers the project", () => {
     const daemon = await liveHost();
     const root = await project();
 
-    await createCastleMcpDependencies(root).projectStart({ runner: "codex", target: 1 });
+    await createCastleMcpDependencies(root).projectStart({
+      runner: "codex",
+      target: 1,
+      selector: { issues: [3774] },
+    });
 
     const hook = daemon.registrations()[0]?.hooks?.["worker-death"];
     expect(hook).toMatchObject({ mode: "sync" });
     expect(hook?.deadline_ms).toBeGreaterThan(0);
     expect(hook?.argv).toEqual(expect.arrayContaining(["run", "--boot-only"]));
+    expect(hook?.argv).not.toContain("--selector");
     expect(hook?.env).toMatchObject({ RED_AFK_RUNNER: "codex" });
   });
 
