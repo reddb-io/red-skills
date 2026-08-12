@@ -17,9 +17,33 @@ export interface GithubWritePlan {
   readonly surface: "rest" | "graphql";
 }
 
+export interface GithubWriteContext {
+  /** Complete labels currently on an issue, needed to preserve add/remove semantics. */
+  readonly currentIssueLabels?: readonly string[];
+}
+
 function flagValue(args: readonly string[], flag: string): string | undefined {
   const at = args.indexOf(flag);
   return at >= 0 ? args[at + 1] : undefined;
+}
+
+function flagValues(args: readonly string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === flag && args[i + 1] !== undefined) values.push(args[i + 1]!);
+  }
+  return values;
+}
+
+function usesOnlyValueFlags(
+  args: readonly string[],
+  start: number,
+  allowed: ReadonlySet<string>,
+): boolean {
+  for (let i = start; i < args.length; i += 2) {
+    if (!allowed.has(args[i]!) || args[i + 1] === undefined) return false;
+  }
+  return true;
 }
 
 function repoOf(args: readonly string[]): string | undefined {
@@ -45,6 +69,9 @@ function commandPath(args: readonly string[]): string[] {
  * Realize one canonical gh write argv on its declared rail. PURE.
  *
  * Covered spellings — exactly the ones the engine's landing emits:
+ * - `gh -R o/r issue edit <n> --body b [--add-label/--remove-label ...]`
+ *   → REST `PATCH issues/{n}` (label edits require the current complete set)
+ * - `gh -R o/r issue close <n> --reason completed` → REST `PATCH issues/{n}`
  * - `gh -R o/r pr merge <n> --merge [--subject t]` → REST `PUT pulls/{n}/merge`
  * - `gh -R o/r pr merge <n> --merge --auto [...]`  → unchanged (GraphQL enqueue)
  * - `gh -R o/r pr create --base b --head h --title t --body y [--draft]`
@@ -54,9 +81,63 @@ function commandPath(args: readonly string[]): string[] {
  * defaults to — an unrouted write is the caller's existing behavior, never a
  * silent rewrite.
  */
-export function planGithubWrite(args: readonly string[]): GithubWritePlan {
+export function planGithubWrite(
+  args: readonly string[],
+  context: GithubWriteContext = {},
+): GithubWritePlan {
   const repo = repoOf(args);
   const [group, verb] = commandPath(args);
+  if (repo && group === "issue" && verb === "edit") {
+    const editAt = args.indexOf("edit");
+    const issueNumber = args[editAt + 1];
+    const body = flagValue(args, "--body");
+    const removeLabels = flagValues(args, "--remove-label");
+    const addLabels = flagValues(args, "--add-label");
+    const editsLabels = removeLabels.length > 0 || addLabels.length > 0;
+    const supported = usesOnlyValueFlags(
+      args,
+      editAt + 2,
+      new Set(["-R", "--repo", "--body", "--remove-label", "--add-label"]),
+    );
+    if (
+      supported
+      && (body !== undefined || editsLabels)
+      && issueNumber
+      && /^\d+$/.test(issueNumber)
+      && (!editsLabels || context.currentIssueLabels)
+    ) {
+      const labels = editsLabels
+        ? [...new Set([
+            ...context.currentIssueLabels!.filter((label) => !removeLabels.includes(label)),
+            ...addLabels,
+          ])]
+        : undefined;
+      return {
+        surface: "rest",
+        args: [
+          "gh", "api", "-X", "PATCH", `repos/${repo}/issues/${issueNumber}`,
+          ...(body !== undefined ? ["-f", `body=${body}`] : []),
+          ...(labels ? labels.length > 0
+            ? labels.flatMap((label) => ["-F", `labels[]=${label}`])
+            : ["-F", "labels[]"] : []),
+        ],
+      };
+    }
+  }
+  if (repo && group === "issue" && verb === "close") {
+    const issueNumber = args[args.indexOf("close") + 1];
+    if (issueNumber && /^\d+$/.test(issueNumber)) {
+      const reason = flagValue(args, "--reason");
+      return {
+        surface: "rest",
+        args: [
+          "gh", "api", "-X", "PATCH", `repos/${repo}/issues/${issueNumber}`,
+          "-f", "state=closed",
+          ...(reason ? ["-f", `state_reason=${reason}`] : []),
+        ],
+      };
+    }
+  }
   if (repo && group === "pr" && verb === "merge") {
     if (args.includes("--auto")) return { args, surface: "graphql" };
     const prNumber = args[args.indexOf("merge") + 1];
