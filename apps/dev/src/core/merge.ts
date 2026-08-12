@@ -2642,7 +2642,7 @@ export async function resolveMergeConflict(
 }
 
 /** Resolve the open PR number for `<branch>` → `<target>`, or undefined. */
-async function listOpenPr(
+export async function listOpenPr(
   exec: Exec,
   repo: string,
   branch: string,

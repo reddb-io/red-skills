@@ -65,6 +65,7 @@ import {
   type WaitForReviewInput,
   type CiAwaitInput,
 } from "../merge.js";
+import { ensureResumeRoute } from "./resume-route.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding, type LandingPhase, type LandingPostMergeValidation } from "../landing.js";
 import { markProcessSafetyStep } from "../process-safety.js";
@@ -476,18 +477,16 @@ export async function processIssue(
     );
   }
 
-  // Branch-resume logic (issue #2397): discover a prior pushed branch so re-claim
-  // can continue instead of rebuilding from scratch. Explicit restart overrides a
-  // branch-only resume, but never silently supersedes an existing open PR.
+  // Branch resume (#2397): continue a prior pushed branch instead of rebuilding.
+  // Explicit restart overrides branch-only resume, never an existing open PR.
   const allBranches = await deps.lookups.discoverBranches?.() ?? [];
   const humanGuidanceForResume = buildHumanGuidance(comments);
   const explicitRestart = isExplicitRestartRequested(humanGuidanceForResume);
   const candidateBranch = discoverResumableBranch(allBranches, issue);
   // Issue #2865 — ask git what the branch HOLDS before deciding its fate. The
-  // ref name is not evidence: worktree creation pushes `afk/<issue>-<slug>`
-  // before the agent writes a line, so a dead Worker's nine committed slices and
-  // an empty placeholder read identically by name. Whatever this Worker declines
-  // to adopt, `prepareFreshWorkerBranch` deletes from origin.
+  // A ref name is not evidence: worktree creation pushes `afk/<issue>-<slug>`
+  // before the agent writes, so committed work and an empty placeholder look
+  // identical. Anything declined is deleted by `prepareFreshWorkerBranch`.
   const candidateCommitsAhead = candidateBranch
     ? await deps.lookups.branchCommitsAhead?.(candidateBranch.branch, base).catch(() => undefined)
     : undefined;
@@ -510,6 +509,7 @@ export async function processIssue(
     : adoption.kind === "adopt"
       ? candidateBranch
       : null;
+  await ensureResumeRoute(deps.mergeExec, { adoption, repo: input.repo, target: trunk, issue });
   const failureReason = extractFailureReason(prevFailureContext);
   const carriedValidationSignature = parseValidationFailureSignature(failureReason);
   const usesDeclaredValidationMoments = deps.validationMoments !== undefined;
