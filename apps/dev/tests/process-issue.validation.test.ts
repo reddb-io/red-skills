@@ -14,6 +14,7 @@ import {
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
 import { failureSignature } from "../src/core/failure-signature.js";
+import { blockerForFailure } from "../src/core/process-issue/terminal.js";
 import type { BranchReversionGeometry } from "../src/core/branch-reversion.js";
 
 function addedFilePatch(file: string, lines: number): string {
@@ -199,6 +200,62 @@ describe("processIssue — feedback fail", () => {
       "post_feedback",
     ]);
     expect(trace.pushedAttempt).toEqual([]);
+  });
+
+  it("REGRESSION: DONE plus all-green post_done evidence lands instead of parking", async () => {
+    const { deps, input, trace } = harness({ outcome: "done" });
+    deps.validationMoments = { post_done: ["pnpm test", "pnpm typecheck"] };
+    let typecheckCodeReads = 0;
+    deps.backpressure = async ({ command }) => {
+      if (command === "pnpm test") return { code: 0, stdout: "", stderr: "" };
+      // Pose the field incident at the lifecycle seam: the aggregate observed a
+      // failure, but the durable command record (the evidence authority) carries
+      // exitCode 0. A validation park must refuse this contradiction.
+      return Object.defineProperty(
+        { stdout: "", stderr: "" },
+        "code",
+        { enumerable: true, get: () => (typecheckCodeReads++ === 0 ? 1 : 0) },
+      ) as { code: number; stdout: string; stderr: string };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.pushedAttempt.length).toBeGreaterThan(0);
+    expect(trace.labelEdits.some((edit) => edit.add.includes("blocked:validation"))).toBe(false);
+    expect(trace.iterLogs.some((line) => line.includes("all-green validation evidence"))).toBe(true);
+  });
+
+  it("records the exact non-zero command when earlier validation checks passed", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackFailures: [["build"]],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    const blocker = parseCurrentBlocker(trace.bodyEdits.at(-1)?.body ?? "");
+    expect(blocker).toMatchObject({
+      kind: "validation",
+      summary: expect.stringContaining("build"),
+    });
+    expect(blocker?.summary).toContain("exitCode 1");
+    expect(blocker?.summary).not.toContain('"name":"test:root"');
+  });
+
+  it("rejects a validation blocker record carrying exitCode 0", () => {
+    const greenRecord = JSON.stringify({
+      schema: "red.afk.validation.v1",
+      name: "validation:post_done",
+      status: "failed",
+      command: "pnpm test",
+      exitCode: 0,
+    });
+
+    expect(() => blockerForFailure("feedback-failed", { validation: greenRecord }))
+      .toThrow(/exitCode 0/);
   });
 
   it("treats an unbuildable baseline as free infra that cannot charge the branch", async () => {
