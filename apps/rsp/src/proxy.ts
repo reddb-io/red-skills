@@ -141,7 +141,8 @@ async function runShellVerbatim(commandLine: string, level: ProxyLossLevel, disp
   const stopChildTimer = startChildProcessTimer();
   child.once("close", stopChildTimer);
   child.once("error", stopChildTimer);
-  return await runCompletedChild(child, (stdout) => renderAutomaticCommandOutput(stdout, displayCommand, level));
+  const automaticLevel = level === "lossless" ? "automatic" : level;
+  return await runCompletedChild(child, (stdout) => renderAutomaticCommandOutput(stdout, displayCommand, automaticLevel));
 }
 
 function rewriteProxySegment(segment: string, level: ProxyLossLevel, rspPrefix: string[]): { text: string; match: ProxySegmentMatch } | null {
