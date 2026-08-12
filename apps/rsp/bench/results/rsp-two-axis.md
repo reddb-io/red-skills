@@ -8,7 +8,7 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 
 | Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | Headroom tokens | oracle tokens | rsp capture | RTK capture | Headroom capture | brief shipped delta | brief fidelity-first score | terse shipped delta | terse fidelity-first score | RTK fidelity-first score | Headroom fidelity-first score |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| automatic:output | active | 1 | 266 | 241 | rtk: not-covered | headroom: not-covered | 62 | 12.3% | rtk: not-covered | headroom: not-covered | 9.4/9.4% | 100% | 10.5/10.5% | 100% | rtk: not-covered | headroom: not-covered |
+| automatic:output | active | 1 | 266 | 218 | rtk: not-covered | headroom: not-covered | 62 | 23.5% | rtk: not-covered | headroom: not-covered | 18/18% | 100% | 19.2/19.2% | 100% | rtk: not-covered | headroom: not-covered |
 | cargo:test | active | 3 | 478 | 202 | 132 | 468 | 203 | 99.5% | 65% | 3.6% | 61.9/84.2% | 100% | 57.7/84.2% | 100% | 100% | 100% |
 | cat:file | active | 1 | 1489 | 332 | rtk: not-covered | headroom: not-covered | 166 | 87.5% | rtk: not-covered | headroom: not-covered | 77.7/77.7% | 100% | 87.1/87.1% | 100% | rtk: not-covered | headroom: not-covered |
 | exec:-- | active | 3 | 33149 | 851 | rtk: not-covered | headroom: not-covered | 345 | 98.5% | rtk: not-covered | headroom: not-covered | 31.6/99.3% | 100% | 31.6/99.3% | 100% | rtk: not-covered | headroom: not-covered |
@@ -25,11 +25,11 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | git:status | passthrough | 2 | 153 | 153 | 54 | 153 | 122 | 0% | 44.3% | 0% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
 | vitest:run | active | 6 | 51368 | 607 | 208 | 51060 | 442 | 99.7% | 47.1% | 0.6% | 58.8/100% | 100% | 70/100% | 100% | 100% | 83.3% |
 
-Aggregate oracle ceiling: raw 99598 tokens (0% capture), rsp 15081 tokens (99.2% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14408 tokens.
+Aggregate oracle ceiling: raw 99598 tokens (0% capture), rsp 15058 tokens (99.2% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14408 tokens.
 
 | Corpus | Fixtures | Filters | raw tokens | rsp tokens | Headroom tokens | oracle tokens | rsp capture | Headroom capture |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| pre-existing-quality | 32 | automatic:output, cargo:test, cat:file, gh:issue, gh:pr, gh:run, git:blame, git:branch, git:commit, git:diff, git:log, git:push, git:show, git:status, vitest:run | 66449 | 14230 | 64367 | 14063 | 99.7% | 0.6% |
+| pre-existing-quality | 32 | automatic:output, cargo:test, cat:file, gh:issue, gh:pr, gh:run, git:blame, git:branch, git:commit, git:diff, git:log, git:push, git:show, git:status, vitest:run | 66449 | 14207 | 64367 | 14063 | 99.7% | 0.6% |
 | anomaly | 1 | exec:-- | 32686 | 235 | headroom: not-covered | 96 | 99.6% | headroom: not-covered |
 | mixed-content | 1 | exec:-- | 166 | 413 | headroom: not-covered | 79 | 0% | headroom: not-covered |
 | json-outlier | 1 | exec:-- | 297 | 203 | headroom: not-covered | 170 | 74% | headroom: not-covered |
