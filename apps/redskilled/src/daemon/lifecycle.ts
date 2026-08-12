@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
+import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
@@ -403,20 +404,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // snapshot preserves that opaque intent across daemon replacement; its lease
   // deadline still decides whether the successor may keep using it.
   const restoredRegistrations = await registrationIntentStore.read().catch(() => []);
-  const restoredAtMs = Date.parse(startedAt);
   const registrations = new Map<string, RedskilledProjectRegistration>();
   // A lapsed record is retained for one more window so the next queue poll can
   // prove that work still exists and restore it without a person restating the
   // selector and launch. Bounded: a drained or one-window-old record is dropped.
   const recoverableRegistrations = new Map<string, RedskilledProjectRegistration>();
-  for (const restored of restoredRegistrations) {
-    const renewByMs = Date.parse(restored.renew_by);
-    if (!Number.isFinite(restoredAtMs) || !Number.isFinite(renewByMs) || renewByMs >= restoredAtMs) {
-      registrations.set(restored.project_label, restored);
-    } else if (restoredAtMs - renewByMs <= restored.renew_within_ms) {
-      recoverableRegistrations.set(restored.project_label, restored);
-    }
-  }
   const projectHooks = createRedskilledProjectHookRuntime({
     registration: (label) => registrations.get(label),
     liveWorkerIds: () => workers.keys(),
@@ -571,7 +563,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * the absence into a stated fact with an instant and a reason on it. Bounded on
    * purpose: this is the tail an operator asks about, not a history.
    */
-  function rememberLapse(registration: RedskilledProjectRegistration, nowMs: number): void {
+  function rememberLapse(
+    registration: RedskilledProjectRegistration,
+    nowMs: number,
+    detail?: string,
+  ): void {
     const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
     lapses.push({
       project_label: registration.project_label,
@@ -580,7 +576,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       renew_by: registration.renew_by,
       renewals: registration.renewals,
       sustains: registration.sustains ?? 0,
-      detail:
+      detail: detail ??
         `redskilled dropped the registration for project ${JSON.stringify(registration.project_label)}: it stood ` +
         `until ${registration.renew_by} and nothing renewed it — no session spoke for it, and no poll found it ` +
         `work or a Worker to hold it up`,
@@ -2269,10 +2265,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     reattached.add(worker.worker_id);
     record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
   }
-  // A successor can prove an expired-but-recoverable intent immediately from a
-  // Worker the predecessor left running; no queue round-trip or human restart is
-  // needed before that project is registered again.
+  const bootRecovery = planRegistrationBootRecovery(restoredRegistrations, workers.values(), startedAt);
+  for (const held of bootRecovery.live) registrations.set(held.project_label, held);
+  for (const held of bootRecovery.recoverable) recoverableRegistrations.set(held.project_label, held);
+  for (const held of bootRecovery.abandoned) rememberLapse(held, Date.parse(startedAt),
+    `redskilled lapsed the recovered registration for project ${JSON.stringify(held.project_label)}: ` +
+      "no session renewed it on cadence and no attributed Worker is alive");
+  if (restoredRegistrations.length > 0) persistRegistrationIntent();
   recoverRegistrations(clock());
+  await recordDaemonBootRecovery({ eventLane, laneEvents, heldLease, ownerPid: owner.pid,
+    startedAt, socketPath: paths.socketPath, recovery: bootRecovery });
   // The bounded exception. A daemon that has just come back holds Workers it has
   // never heard a heartbeat from, so for those — and only those — it reads the log
   // ONCE, from the path the client GAVE at spawn and carried on the event lane. A

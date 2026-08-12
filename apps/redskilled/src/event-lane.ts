@@ -30,6 +30,23 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeToonlLines } from "@reddb-io/toon";
+import {
+  buildDaemonDeathEvent,
+  buildDaemonStartEvent,
+  buildDaemonStopEvent,
+  type RecordDaemonDeathInput,
+  type RecordDaemonStartInput,
+  type RecordDaemonStopInput,
+} from "./daemon-events.js";
+export {
+  buildDaemonDeathEvent,
+  buildDaemonStartEvent,
+  buildDaemonStopEvent,
+  REDSKILLED_DAEMON_EVENT_PREFIX,
+  type RecordDaemonDeathInput,
+  type RecordDaemonStartInput,
+  type RecordDaemonStopInput,
+} from "./daemon-events.js";
 import { decodeLaneRows } from "./event-lane-decode.js";
 import {
   readPositionedEventLane,
@@ -72,7 +89,16 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-heal",
   "worker-death",
   "worker-budget-kill",
-] & { includes(searchElement: RedskilledWorkerEventKind | "demand-refusal" | "daemon-stop"): boolean };
+] & {
+  includes(
+    searchElement:
+      | RedskilledWorkerEventKind
+      | "demand-refusal"
+      | "daemon-start"
+      | "daemon-death"
+      | "daemon-stop",
+  ): boolean;
+};
 
 /**
  * The host-event kinds external consumers may rely on (ADR 0140).
@@ -89,7 +115,12 @@ export const REDSKILLED_PUBLIC_HOST_EVENT_KINDS = [
 export type RedskilledPublicHostEventKind = typeof REDSKILLED_PUBLIC_HOST_EVENT_KINDS[number];
 
 /** The daemon-owned records that deliberately name no Worker. */
-export const REDSKILLED_DAEMON_EVENT_KINDS = ["demand-refusal", "daemon-stop"] as const;
+export const REDSKILLED_DAEMON_EVENT_KINDS = [
+  "demand-refusal",
+  "daemon-start",
+  "daemon-death",
+  "daemon-stop",
+] as const;
 
 export type RedskilledDaemonEventKind = typeof REDSKILLED_DAEMON_EVENT_KINDS[number];
 
@@ -227,23 +258,6 @@ export interface RecordWorkerEventInput {
   readonly healKind?: string | null;
 }
 
-/**
- * One daemon leaving the session, and what it was holding when it did.
- *
- * The identity fields the flat shape insists on are answered about the daemon
- * itself — its pid, the socket it was serving — rather than left blank. Only the
- * project is empty, and truthfully so: a daemon's own life belongs to no project.
- */
-export interface RecordDaemonStopInput {
-  readonly ts: string;
-  readonly pid: number;
-  readonly socketPath: string;
-  readonly reason: string;
-  readonly detail: string;
-  /** The signal that asked for the stop, when one did. */
-  readonly signal?: string | null;
-}
-
 /** One positive-depth project the demand loop deliberately did not birth for. */
 export interface RecordDemandRefusalInput {
   readonly ts: string;
@@ -289,44 +303,6 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     exit_code: input.exitCode ?? null,
     signal: input.signal ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
-  };
-}
-
-/** The prefix a `daemon-stop` names itself with, so no reader mistakes it for a Worker. */
-export const REDSKILLED_DAEMON_EVENT_PREFIX = "daemon:";
-
-/** Build the daemon's own stop event. PURE. */
-export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHostEvent {
-  return {
-    version: 1,
-    ts: input.ts,
-    kind: "daemon-stop",
-    event: "daemon-stop",
-    worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
-    project_label: "",
-    pid: input.pid,
-    workspace_path: input.socketPath,
-    fork_sha: null,
-    log_path: null,
-    isolated: false,
-    unit: null,
-    memory_high: null,
-    memory_max: null,
-    cpu_weight: null,
-    admission_verdict: null,
-    phase: null,
-    step: null,
-    tokens: null,
-    tools: null,
-    runner: null,
-    model: null,
-    base_head_sha: null,
-    base_commits_ahead: null,
-    heal_kind: null,
-    detail: input.detail,
-    exit_code: null,
-    signal: input.signal ?? null,
-    reason: input.reason,
   };
 }
 
@@ -382,6 +358,10 @@ export interface RedskilledEventLane {
   recordWorker(input: RecordWorkerEventInput): Promise<RedskilledHostEvent>;
   /** Append one demand decision that refused an otherwise birth-eligible project. */
   recordDemandRefusal(input: RecordDemandRefusalInput): Promise<RedskilledHostEvent>;
+  /** Append the daemon's boot after durable intent and Worker reality agree. */
+  recordDaemonStart(input: RecordDaemonStartInput): Promise<RedskilledHostEvent>;
+  /** Append a successor's retroactive account of an unrecorded predecessor death. */
+  recordDaemonDeath(input: RecordDaemonDeathInput): Promise<RedskilledHostEvent>;
   /**
    * Append the daemon's own stop; resolves once the bytes are on the lane.
    *
@@ -436,6 +416,8 @@ export function createRedskilledEventLane(
     record: (input) => append(buildHostEvent(input)),
     recordWorker: (input) => append(buildHostEvent(input)),
     recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
+    recordDaemonStart: (input) => append(buildDaemonStartEvent(input)),
+    recordDaemonDeath: (input) => append(buildDaemonDeathEvent(input)),
     recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
     flush: async () => {
@@ -684,7 +666,7 @@ export function rehydrateWorkers(events: readonly RedskilledHostEvent[]): Redski
   for (const event of events) {
     // A daemon's own stop retires nothing: the daemon left and every Worker it
     // held is still running, which is exactly what the successor replays to find.
-    if (event.kind === "daemon-stop" || event.kind === "demand-refusal") continue;
+    if ((REDSKILLED_DAEMON_EVENT_KINDS as readonly RedskilledEventKind[]).includes(event.kind)) continue;
     if (event.kind === "worker-birth") alive.set(event.worker_id, toWorkerView(event));
     else if (event.kind === "worker-death" || event.kind === "worker-budget-kill") alive.delete(event.worker_id);
   }
