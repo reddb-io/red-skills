@@ -4,7 +4,7 @@ import { answerFrontDoor } from "./front-door.js";
 
 interface RspCore {
   main(argv: string[]): Promise<number>;
-  renderAutomaticCommandOutput(stdout: Buffer, command: string, level?: "lossless" | "brief" | "terse" | "full"): Promise<Buffer>;
+  renderAutomaticCommandOutput(stdout: Buffer, command: string, level?: "automatic" | "lossless" | "brief" | "terse" | "full"): Promise<Buffer>;
   renderCliFailure(err: unknown): { output: Buffer; status: number };
 }
 
