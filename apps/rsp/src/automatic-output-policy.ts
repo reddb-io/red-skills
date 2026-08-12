@@ -1,8 +1,5 @@
 import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
-import { resolveRspConfig } from "./config.js";
 import type { RspLossLevel, RspMintMeta } from "./elision-store.js";
-import type { ResidentRspElisionStore } from "./resident-client.js";
-import { residentElisionStore } from "./resident-store.js";
 import { renderStructuredBoundary } from "./structured-boundary.js";
 
 export interface AutomaticOutputOptions {
@@ -31,22 +28,24 @@ export async function renderAutomaticCommandOutput(
   command: string,
   level: RspLossLevel = "lossless",
 ): Promise<Buffer> {
-  const config = resolveRspConfig(process.cwd(), process.env);
-  let resident: ResidentRspElisionStore | undefined;
-  const store = config.enabled
-    ? {
-      mint: async (bytes: Uint8Array | Buffer, meta: RspMintMeta) => {
-        resident ??= residentElisionStore(process.cwd(), config);
-        return await resident.mint(bytes, meta);
-      },
-    }
-    : undefined;
+  let resident: import("./resident-client.js").ResidentRspElisionStore | undefined;
+  const store = {
+    mint: async (bytes: Uint8Array | Buffer, meta: RspMintMeta) => {
+      const [{ resolveRspConfig }, { residentElisionStore }] = await Promise.all([
+        import("./config.js"),
+        import("./resident-store.js"),
+      ]);
+      const config = resolveRspConfig(process.cwd(), process.env);
+      if (!config.enabled) return "";
+      resident ??= residentElisionStore(process.cwd(), config);
+      return await resident.mint(bytes, meta);
+    },
+  };
   try {
     return (await renderAutomaticOutput(original, {
       command,
       level,
       store,
-      sizeThresholdBytes: config.heavyGitByteThreshold,
     })).stdout;
   } finally {
     await resident?.close();
