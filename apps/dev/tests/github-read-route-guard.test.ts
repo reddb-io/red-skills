@@ -20,7 +20,13 @@ import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
 describe("GitHub reads route through @reddb-io/github (#3451)", () => {
-  it("holds the live tree to the declared shrink-only baseline", () => {
+  it("has no amnesty for raw GitHub shell-outs anywhere in apps or packages (#3734)", () => {
+    expect(GITHUB_ROUTE_SCAN_ROOTS).toEqual(["apps", "packages"]);
+    expect(GITHUB_READ_SHELLOUT_BASELINE).toEqual([]);
+    expect(GITHUB_WRITE_SHELLOUT_BASELINE).toEqual([]);
+  });
+
+  it("rejects every raw GitHub read in the live tree", () => {
     const report = collectGithubReadRouteReport(ROOT);
     const violations = githubReadRouteViolations(report);
 
@@ -29,7 +35,7 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
       GITHUB_READ_SHELLOUT_BASELINE.reduce((sum, entry) => sum + entry.count, 0),
     );
     expect(formatGithubReadRouteFailure(report, ["probe"])).toContain(
-      `${report.findings.length} GitHub read shell-out(s) remain`,
+      `${report.findings.length} raw GitHub read shell-out(s) found`,
     );
   });
 
@@ -70,7 +76,8 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     expect(violations).toHaveLength(1);
     expect(failure).toContain("apps/dev/src/new-poller.ts:3");
     expect(failure).toContain("createGithubClient");
-    expect(failure).toContain("conditionalRest / singleObject");
+    expect(failure).toContain("planGithubRestRead");
+    expect(failure).toContain("planGithubWrite");
   });
 
   it("does not classify authentication or a mutation as a read", () => {
@@ -86,7 +93,7 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     ])).toEqual([]);
   });
 
-  it("holds raw GitHub writes to their own shrink-only baseline", () => {
+  it("rejects every raw GitHub write in the live tree", () => {
     const report = collectGithubWriteRouteReport(ROOT);
     const violations = githubWriteRouteViolations(report);
 
@@ -95,7 +102,7 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
       GITHUB_WRITE_SHELLOUT_BASELINE.reduce((sum, entry) => sum + entry.count, 0),
     );
     expect(formatGithubWriteRouteFailure(report, ["probe"])).toContain(
-      `${report.findings.length} GitHub write shell-out(s) remain`,
+      `${report.findings.length} raw GitHub write shell-out(s) found`,
     );
     const issuesPath = "apps/dev/src/runtime/gh/issues.ts";
     expect(GITHUB_READ_SHELLOUT_BASELINE.some((entry) => entry.path === issuesPath)).toBe(false);
@@ -172,14 +179,6 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     expect(violations).toHaveLength(1);
     expect(failure).toContain("packages/red-castle/src/engine/new-writer.ts:3");
     expect(failure).toContain("createGithubClient");
-  });
-
-  it("sweeps red-castle alongside both daemon applications", () => {
-    expect(GITHUB_ROUTE_SCAN_ROOTS).toEqual([
-      "apps/dev/src",
-      "apps/redskilled/src",
-      "packages/red-castle/src",
-    ]);
   });
 
   it("runs in every validation cone", () => {
