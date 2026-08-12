@@ -9,7 +9,7 @@ export const ALL_GREEN_VALIDATION_INCONSISTENCY =
 export function reconcileValidationEvidence<T extends ClassifiableCheck>(
   reportedFailed: boolean,
   checks: readonly T[],
-): { ok: boolean; checks: T[]; sidecar: string[]; inconsistency?: string } {
+): { ok: boolean; checks: T[]; sidecar: string[]; evidenceInconsistency?: string } {
   if (!reportedFailed || blockingValidationChecks(checks).length > 0 || checks.length === 0) {
     return {
       ok: !reportedFailed,
@@ -42,6 +42,22 @@ export function reconcileValidationEvidence<T extends ClassifiableCheck>(
     ok: true,
     checks: reconciled,
     sidecar: reconciled.map((check) => JSON.stringify(check.record)),
-    inconsistency: ALL_GREEN_VALIDATION_INCONSISTENCY,
+    evidenceInconsistency: ALL_GREEN_VALIDATION_INCONSISTENCY,
+  };
+}
+
+export function applyValidationEvidence<T extends ClassifiableCheck>(
+  reportedFailed: boolean,
+  checks: T[],
+  sidecar: string[],
+): { failed: boolean; evidenceInconsistency?: string } {
+  const reconciled = reconcileValidationEvidence(reportedFailed, checks);
+  checks.splice(0, checks.length, ...reconciled.checks);
+  sidecar.splice(0, sidecar.length, ...reconciled.sidecar);
+  return {
+    failed: !reconciled.ok,
+    ...(reconciled.evidenceInconsistency
+      ? { evidenceInconsistency: reconciled.evidenceInconsistency }
+      : {}),
   };
 }
