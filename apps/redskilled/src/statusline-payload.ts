@@ -320,11 +320,15 @@ export interface RedskilledStatuslinePayload {
     readonly at: string;
     readonly registered_at?: string;
     readonly reason: string;
+    readonly standing?: boolean;
+    readonly queue_depth?: number;
   }[];
   /** Registrations deliberately released through `project_stop`. */
   readonly stopped_projects?: readonly {
     readonly project_label: string;
     readonly at: string;
+    readonly standing?: boolean;
+    readonly queue_depth?: number;
   }[];
   /** Registrations held by a live daemon beyond the socket that answered. */
   readonly orphaned_projects?: readonly string[];
@@ -553,10 +557,14 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       at: lapse.at,
       ...(lapse.registered_at == null ? {} : { registered_at: lapse.registered_at }),
       reason: lapse.detail,
+      ...(lapse.standing === true ? { standing: true } : {}),
+      ...(lapse.queue_depth == null ? {} : { queue_depth: lapse.queue_depth }),
     })),
     stopped_projects: (input.hostState.stopped_registrations ?? []).map((stopped) => ({
       project_label: stopped.project_label,
       at: stopped.at,
+      ...(stopped.standing === true ? { standing: true } : {}),
+      ...(stopped.queue_depth == null ? {} : { queue_depth: stopped.queue_depth }),
     })),
     orphaned_projects: (input.hostState.orphaned_registrations ?? []).map((record) => record.project_label),
     workers,
@@ -844,13 +852,18 @@ function isStatuslineLapse(value: unknown): boolean {
   return typeof lapse.project_label === "string" &&
     typeof lapse.at === "string" &&
     (lapse.registered_at === undefined || typeof lapse.registered_at === "string") &&
+    (lapse.standing === undefined || typeof lapse.standing === "boolean") &&
+    (lapse.queue_depth === undefined || Number.isInteger(lapse.queue_depth)) &&
     typeof lapse.reason === "string";
 }
 
 function isStatuslineStop(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const stopped = value as Record<string, unknown>;
-  return typeof stopped.project_label === "string" && typeof stopped.at === "string";
+  return typeof stopped.project_label === "string" &&
+    typeof stopped.at === "string" &&
+    (stopped.standing === undefined || typeof stopped.standing === "boolean") &&
+    (stopped.queue_depth === undefined || Number.isInteger(stopped.queue_depth));
 }
 
 function isStatuslineEngine(value: unknown): boolean {
