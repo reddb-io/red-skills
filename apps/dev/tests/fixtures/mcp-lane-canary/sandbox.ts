@@ -211,7 +211,8 @@ export async function createCanarySandbox(
   });
   const mcpEntry = join(dist, "redskilled-mcp.bundle.min.mjs");
   await copyFile(built.mcp, mcpEntry);
-  await copyFile(built.redskilled, join(dist, "redskilled.bundle.min.mjs"));
+  const daemonSibling = join(dist, "redskilled.bundle.min.mjs");
+  await copyFile(built.redskilled, daemonSibling);
   await copyFile(built.dev[variant], join(dist, "dev.bundle.min.mjs"));
 
   // A session key nothing else on the host shares, so "no daemon" is a fact
@@ -257,6 +258,20 @@ export async function createCanarySandbox(
   trackers.push(tracker);
   env.REDSKILLED_HOST_TOKEN = "canary-token";
   env.GITHUB_GRAPHQL_URL = tracker.endpoint;
+  // The isolation pin points REDSKILLED_BIN at a named non-path so no operator
+  // bundle can answer for the sandbox. The DOWN walk wants exactly that cold
+  // start, so there — and only there — the pin is re-aimed at the sandbox's own
+  // daemon, as an executable shim because the env override is spawned directly
+  // as a command (#3652). The UP walk keeps the poison pin: its daemon is
+  // already running, and a spawnable override would hand every transient socket
+  // hiccup a second competing daemon.
+  if (daemon === "down") {
+    const daemonBin = join(dist, "redskilled-bin");
+    await writeFile(daemonBin, `#!/bin/sh\nexec "${process.execPath}" "${daemonSibling}" "$@"\n`, {
+      mode: 0o755,
+    });
+    env.REDSKILLED_BIN = daemonBin;
+  }
 
   daemonPaths.push(resolveRedskilledPaths({ env }));
 
