@@ -168,6 +168,8 @@ export interface RedskilledProjectRegistrationRequest {
   readonly hooks?: RedskilledProjectHooks;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
+  /** Whether project policy declares this drain should remain recoverable. */
+  readonly standing?: boolean;
   /** How long this registration stands without renewal; the default when absent. */
   readonly renew_within_ms?: number;
 }
@@ -187,6 +189,8 @@ export interface RedskilledProjectRegistration {
   /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
   readonly target: number;
+  /** True only when the project explicitly declared a standing drain policy. */
+  readonly standing?: boolean;
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
   readonly renew_within_ms: number;
@@ -305,6 +309,12 @@ export function buildProjectRegistration(
         `${JSON.stringify(request.target)}`,
     );
   }
+  if (request.standing !== undefined && typeof request.standing !== "boolean") {
+    throw new Error(
+      `redskilled needs standing intent for project ${JSON.stringify(projectLabel)} to be boolean, not ` +
+        `${JSON.stringify(request.standing)}`,
+    );
+  }
   const renewWithinMs = request.renew_within_ms ?? REDSKILLED_REGISTRATION_TTL_MS;
   if (!Number.isFinite(renewWithinMs) || renewWithinMs <= 0) {
     throw new Error(
@@ -329,6 +339,7 @@ export function buildProjectRegistration(
     ...(logPath == null ? {} : { log_path: logPath }),
     ...(hooks == null ? {} : { hooks }),
     target: request.target,
+    ...(request.standing === true ? { standing: true } : {}),
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
     renew_by: new Date(nowMs + renewWithinMs).toISOString(),
@@ -661,6 +672,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     typeof registration.workspace_path === "string" &&
     (registration.trunk === undefined || isTrunkShape(registration.trunk)) &&
     Number.isInteger(registration.target) &&
+    (registration.standing === undefined || typeof registration.standing === "boolean") &&
     typeof registration.registered_at === "string" &&
     typeof registration.renew_within_ms === "number" &&
     typeof registration.renew_by === "string" &&
