@@ -79,6 +79,13 @@ the selector, the runner, the base branch — is registered by the project tools
 `drain` is the ensure-style front door; `project_start` and `project_resize`
 remain available for specialized lifecycle operations during consolidation.
 
+When `.red/config.yaml` declares both
+`plugins.dev.afk.standing.runner` and `plugins.dev.afk.standing.target`, MCP
+startup calls the same ensure-style drain automatically and renews it for the
+session lifetime. The standing marker travels in the registration, allowing the
+daemon to retain its recoverable intent while a counted backlog remains. Without
+that block, startup preserves the explicit-only `drain`/`project_start` behavior.
+
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `drain` | mutating | Ensure the daemon is reachable and this project is registered at the requested runner and target. Repeated calls succeed with a four-dimension difference report; a runner change is refused with the explicit stop-then-drain repair. |
