@@ -43,6 +43,7 @@ import {
 } from "./daemon.js";
 import {
   createGithubAttributionLedger,
+  createGithubBalanceStore,
   createGithubBalanceTransport,
   type GithubAttributionLedger,
   type GithubRateBudget,
@@ -455,7 +456,13 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       readTrackerCliToken,
       githubAttribution,
     );
-    const githubBalance = resolveServeGithubBalance(values);
+    const resolvedGithubBalance = resolveServeGithubBalance(values);
+    const githubBalance = resolvedGithubBalance == null
+      ? null
+      : {
+          ...resolvedGithubBalance,
+          store: createGithubBalanceStore({ path: join(hostStateRoot, "github", "balance.toon") }),
+        };
     // Before this daemon anchors itself, it speaks for whatever the last one
     // could not (slice #3028). The host singleton is the only process guaranteed
     // to boot after a machine freeze, so an un-trap-able death on this lane has

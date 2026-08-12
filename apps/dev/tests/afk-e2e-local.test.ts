@@ -12,6 +12,12 @@ import { classifyMergeState } from "../src/core/merge.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
+const isRestCreatePullCall = (args: readonly string[]): boolean =>
+  args.includes("POST") && args.some((arg) => /\/pulls$/.test(arg));
+
+const isRestMergePullCall = (args: readonly string[]): boolean =>
+  args.includes("PUT") && args.some((arg) => /\/pulls\/\d+\/merge$/.test(arg));
+
 // AFK end-to-end lifecycle harness against a REAL local git repo.
 //
 // process-issue.test.ts drives the SAME `processIssue(deps, input)` orchestrator
@@ -179,7 +185,7 @@ async function setup(opts: {
       // Reuse-or-create: empty until `pr create` mints a number.
       return { code: 0, stdout: state.prNumber ? `${state.prNumber}\n` : "", stderr: "" };
     }
-    if (sub === "create") {
+    if (sub === "create" || isRestCreatePullCall(argv)) {
       state.prNumber = 101;
       return { code: 0, stdout: "", stderr: "" };
     }
@@ -238,7 +244,7 @@ async function setup(opts: {
         stderr: "",
       };
     }
-    if (sub === "merge") {
+    if (sub === "merge" || isRestMergePullCall(argv)) {
       // A real land: fast-forward origin/main to the worker branch tip so the
       // "merge" is observable in the temp repo. Never lands in the conflict scenario.
       if (opts.conflict || !state.workerBranchRef) {

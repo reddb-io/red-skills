@@ -6,6 +6,12 @@ export { doLanding, createFileLandLock, type LandLock, type LandLockDeps, type L
 import type { ExecResult } from "../src/core/merge.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
+const isRestCreatePullCall = (args: readonly string[]): boolean =>
+  args.includes("POST") && args.some((arg) => /\/pulls$/.test(arg));
+
+const isRestMergePullCall = (args: readonly string[]): boolean =>
+  args.includes("PUT") && args.some((arg) => /\/pulls\/\d+\/merge$/.test(arg));
+
 // doLanding owns the flag-toggled landing (ADR 0030 amended by #842 / 0031):
 // push → pre_merge → integrate → land → (direct conflict self-resolve) →
 // post_merge. Before this extraction the sequence was only exercised through
@@ -261,7 +267,7 @@ export function harness(opts: Opts = {}): Harness {
         if (opts.createPr && !prCreated) return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "42\n", stderr: "" };
       }
-      if (argv.includes("pr") && argv.includes("create")) {
+      if (isRestCreatePullCall(argv)) {
         prCreated = true;
         return { code: 0, stdout: "", stderr: "" };
       }
@@ -359,7 +365,7 @@ export function harness(opts: Opts = {}): Harness {
       if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
         return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
       }
-      if (j.includes("pr merge")) {
+      if (isRestMergePullCall(argv)) {
         return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
       return { code: 0, stdout: "", stderr: "" };

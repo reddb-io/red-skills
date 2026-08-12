@@ -46,23 +46,32 @@ export {
 
 export {
   GithubCredentialError,
+  GithubPoolUnavailableError,
   createGithubClient,
   createMemoryGithubEtagStore,
   githubSingleObjectCoalescingThreshold,
   isGithubRateLimitError,
   type CreateGithubClientOptions,
   type GithubClient,
+  type GithubCachedFallback,
   type GithubConditionalRestRequest,
   type GithubEtagEntry,
   type GithubEtagStore,
   type GithubGraphqlAttribution,
   type GithubRequestFetch,
+  type GithubRailRouting,
   type GithubPaginatedRestAnswer,
   type GithubResponseHeaders,
   type GithubRestAnswer,
   type GithubSingleObjectAnswer,
   type GithubSingleObjectRequest,
 } from "./conditional-client.js";
+
+export {
+  createGithubBalanceStore,
+  type CreateGithubBalanceStoreOptions,
+  type GithubBalanceStore,
+} from "./balance-store.js";
 
 export {
   GITHUB_BALANCE_CADENCE,

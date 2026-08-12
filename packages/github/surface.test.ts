@@ -57,7 +57,7 @@ const PINNED: ReadonlyArray<
   ["issue develop", "write", "single-object", undefined, "graphql", "graphql", null],
   ["pr create", "write", "single-object", undefined, "rest", "rest", null],
   ["pr comment", "write", "single-object", undefined, "rest", "rest", null],
-  ["pr merge", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr merge", "write", "single-object", undefined, "rest", "rest", null],
   ["pr close", "write", "single-object", undefined, "graphql", "graphql", null],
   ["pr edit", "write", "single-object", undefined, "graphql", "graphql", null],
   ["pr ready", "write", "single-object", undefined, "graphql", "graphql", null],
@@ -263,6 +263,7 @@ describe("the router", () => {
     expect(routeGithubArgs(["issue", "comment", "42", "--body", "x"]).surface).toBe("rest");
     expect(routeGithubArgs(["issue", "create", "--title", "x"]).surface).toBe("graphql");
     expect(routeGithubArgs(["pr", "create", "--title", "x"]).surface).toBe("rest");
+    expect(routeGithubArgs(["pr", "merge", "42", "--merge"]).surface).toBe("rest");
     expect(routeGithubArgs(["issue", "edit", "42", "--add-label", "x"]).surface).toBe("graphql");
   });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { RWT, doLanding, harness, joined, type LandLock } from "./landing.test-support.js";
 
+const isRestMergeCall = (args: readonly string[]): boolean =>
+  args.includes("PUT") && args.some((arg) => /\/pulls\/\d+\/merge$/.test(arg));
+
 describe("doLanding — first-attempt mechanical conflict resolution (#2072)", () => {
   it("PR rebase conflict resolved mechanically → revalidates inside the land-lock before merging", async () => {
     const trace: string[] = [];
@@ -33,7 +36,7 @@ describe("doLanding — first-attempt mechanical conflict resolution (#2072)", (
     };
     const exec = h.deps.mergeExec;
     h.deps.mergeExec = async (args) => {
-      if (args.join(" ").includes("pr merge")) trace.push("merge");
+      if (isRestMergeCall(args)) trace.push("merge");
       return exec(args);
     };
 
@@ -72,7 +75,7 @@ describe("doLanding — first-attempt mechanical conflict resolution (#2072)", (
     expect(h.postMergeGateDirs).toEqual([]);
     const j = joined(h.mergeCalls);
     expect(j).toContain(`git -C ${RWT} rebase --abort`);
-    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(h.mergeCalls.some(isRestMergeCall)).toBe(false);
   });
 });
 
@@ -114,7 +117,7 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
     };
     const exec = h.deps.mergeExec;
     h.deps.mergeExec = async (args) => {
-      if (args.join(" ").includes("pr merge")) trace.push("merge");
+      if (isRestMergeCall(args)) trace.push("merge");
       return exec(args);
     };
 
@@ -154,7 +157,7 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.agentResolverDirs).toEqual([RWT]);
     expect(h.postMergeGateDirs).toEqual([RWT]);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+    expect(h.mergeCalls.some(isRestMergeCall)).toBe(false);
   });
 
   it("agent tier exhaustion aborts and parks as pr-conflict", async () => {
@@ -175,6 +178,6 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
     expect(h.postMergeGateDirs).toEqual([]);
     const j = joined(h.mergeCalls);
     expect(j).toContain(`git -C ${RWT} rebase --abort`);
-    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(h.mergeCalls.some(isRestMergeCall)).toBe(false);
   });
 });

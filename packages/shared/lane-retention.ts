@@ -62,6 +62,12 @@ export const LANE_RETENTION_REGISTRY = {
     maxBytes: 8 * MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "github-balance": {
+    // One current three-pool TOON snapshot. A small hard ceiling makes schema
+    // growth visible instead of letting a singleton state file drift unbounded.
+    maxBytes: 64 * 1024,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
   "castle-singleton-events": {
     maxBytes: 2 * MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,

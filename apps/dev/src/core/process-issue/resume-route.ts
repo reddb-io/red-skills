@@ -1,9 +1,8 @@
 // Resume routing — repair custody for preserved Worker commits before the next
 // Worker starts. The exit-time orphan refusal still owns newly-pushed work.
 
-import { scrubOutbound } from "../../runtime/outbound-redaction.js";
 import type { BranchAdoption } from "../branch-resume.js";
-import { listOpenPr, type Exec } from "../merge.js";
+import { openDraftPr, type Exec } from "../merge.js";
 
 export interface ResumeRouteInput {
   readonly adoption: BranchAdoption;
@@ -31,24 +30,13 @@ export async function ensureResumeRoute(
     return undefined;
   }
 
-  const existing = await listOpenPr(exec, repo, adoption.branch, target);
-  if (existing !== undefined) return existing;
-  const create = await exec([
-    "gh",
-    "-R",
+  return await openDraftPr(exec, {
     repo,
-    "pr",
-    "create",
-    "--draft",
-    "--base",
+    branch: adoption.branch,
     target,
-    "--head",
-    adoption.branch,
-    "--title",
-    scrubOutbound(`resume: #${issue}`),
-    "--body",
-    scrubOutbound(`Resuming preserved Worker commits for #${issue}.\n\nCloses #${issue}`),
-  ]);
-  if (create.code !== 0) return undefined;
-  return await listOpenPr(exec, repo, adoption.branch, target);
+    n: issue,
+    title: "",
+    prTitle: `resume: #${issue}`,
+    body: `Resuming preserved Worker commits for #${issue}.\n\nCloses #${issue}`,
+  });
 }

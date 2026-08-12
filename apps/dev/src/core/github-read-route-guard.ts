@@ -1,4 +1,4 @@
-// github-read-route-guard — a shrink-only migration ratchet for raw `gh` reads.
+// github-read-route-guard — shrink-only migration ratchets for raw `gh` I/O.
 //
 // The destination is cardinal: every GitHub read crosses @reddb-io/github. The
 // baseline records unfinished source files, not permission for new call sites;
@@ -25,7 +25,7 @@ export const GITHUB_READ_EXEMPTIONS: readonly GithubReadRouteExemption[] = [
   },
   {
     id: "unsupported-mutation",
-    reason: "writes remain on gh until @reddb-io/github exposes their mutation; this ratchet constrains reads only",
+    reason: "writes are excluded from the read inventory and constrained independently by the write ratchet",
   },
   {
     id: "shared-client",
@@ -66,6 +66,19 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
   { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 2, reason: "the castle adapter still has two REST response reads awaiting client injection" },
 ];
 
+/** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
+export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
+  { path: "apps/dev/src/commands/hitl-card.ts", count: 15, reason: "HITL actions still write comments, labels, issue state, and PR dispositions through gh" },
+  { path: "apps/dev/src/core/merge.ts", count: 7, reason: "landing uses REST for create and merge, while draft readiness, labels, and update-branch still await routed mutations" },
+  { path: "apps/dev/src/runtime/gh/issues.ts", count: 9, reason: "issue, comment, and label mutations still use the legacy CLI adapter" },
+  { path: "apps/dev/src/runtime/gh/manager-map.ts", count: 3, reason: "manager-map issue creation still awaits the shared mutation surface" },
+  { path: "apps/dev/src/runtime/merge-driver-io.ts", count: 2, reason: "the compatibility merge driver still shells out for update and merge" },
+  { path: "apps/dev/src/runtime/review-gh.ts", count: 3, reason: "review comments and labels still await routed mutations" },
+  { path: "apps/dev/src/runtime/wire/docs.ts", count: 2, reason: "the docs wire still creates and merges its PR through gh" },
+  { path: "packages/red-castle/src/cli.ts", count: 1, reason: "castle bootstrap still creates one label through gh" },
+  { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 1, reason: "the castle tracker still writes one issue comment through gh" },
+];
+
 export interface GithubReadSourceFile {
   readonly relativePath: string;
   readonly sourceText: string;
@@ -86,7 +99,7 @@ export interface GithubReadRouteReport {
 }
 
 const SOURCE_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".tsx"]);
-const SCAN_ROOTS = ["apps/dev/src", "apps/redskilled/src", "packages/red-castle/src"] as const;
+export const GITHUB_ROUTE_SCAN_ROOTS = ["apps/dev/src", "apps/redskilled/src", "packages/red-castle/src"] as const;
 const SKIP_DIRS = new Set(["dist", "generated", "node_modules", "test", "tests", "__tests__", "fixtures"]);
 const GUARD_PATH = "apps/dev/src/core/github-read-route-guard.ts";
 
@@ -160,6 +173,10 @@ function exempt(words: readonly string[], path: readonly string[]): boolean {
   return path[0] === "api" && apiMutation(words);
 }
 
+function writeCommand(words: readonly string[], path: readonly string[]): boolean {
+  return WRITE_COMMANDS.has(path.join(" ")) || (path[0] === "api" && apiMutation(words));
+}
+
 function replacement(path: readonly string[]): string {
   const key = path.join(" ") || "GitHub read";
   if (["issue view", "pr view", "repo view", "run view", "release view"].includes(key)) {
@@ -168,7 +185,7 @@ function replacement(path: readonly string[]): string {
   return "createGithubClient(...).conditionalRest / singleObject through @reddb-io/github";
 }
 
-function collectFile(file: GithubReadSourceFile): GithubReadShelloutFinding[] {
+function collectFile(file: GithubReadSourceFile, kind: "read" | "write"): GithubReadShelloutFinding[] {
   if (file.relativePath === GUARD_PATH) return [];
   const source = ts.createSourceFile(file.relativePath, file.sourceText, ts.ScriptTarget.Latest, true);
   const findings: GithubReadShelloutFinding[] = [];
@@ -177,13 +194,17 @@ function collectFile(file: GithubReadSourceFile): GithubReadShelloutFinding[] {
       const words = candidateWords(node);
       if (words) {
         const path = commandPath(words);
-        if (path.length > 0 && !exempt(words, path)) {
+        const isWrite = writeCommand(words, path);
+        const selected = kind === "write" ? isWrite : !isWrite && !exempt(words, path);
+        if (path.length > 0 && selected) {
           const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
           findings.push({
             path: file.relativePath,
             line,
             command: path.join(" "),
-            route: replacement(path),
+            route: kind === "write"
+              ? "createGithubClient(...).mutation through @reddb-io/github"
+              : replacement(path),
             snippet: node.getText(source).replace(/\s+/g, " ").slice(0, 180),
           });
         }
@@ -198,7 +219,13 @@ function collectFile(file: GithubReadSourceFile): GithubReadShelloutFinding[] {
 export function collectGithubReadShelloutsFromFiles(
   files: readonly GithubReadSourceFile[],
 ): GithubReadShelloutFinding[] {
-  return files.flatMap(collectFile).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+  return files.flatMap((file) => collectFile(file, "read")).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+}
+
+export function collectGithubWriteShelloutsFromFiles(
+  files: readonly GithubReadSourceFile[],
+): GithubReadShelloutFinding[] {
+  return files.flatMap((file) => collectFile(file, "write")).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 }
 
 function readTree(root: string): GithubReadSourceFile[] {
@@ -214,7 +241,7 @@ function readTree(root: string): GithubReadSourceFile[] {
       files.push({ relativePath: relative(root, path).replaceAll("\\", "/"), sourceText: readFileSync(path, "utf8") });
     }
   };
-  for (const scanRoot of SCAN_ROOTS) walk(join(root, scanRoot));
+  for (const scanRoot of GITHUB_ROUTE_SCAN_ROOTS) walk(join(root, scanRoot));
   return files;
 }
 
@@ -222,6 +249,14 @@ export function collectGithubReadRouteReport(root: string): GithubReadRouteRepor
   return {
     findings: collectGithubReadShelloutsFromFiles(readTree(root)),
     baseline: GITHUB_READ_SHELLOUT_BASELINE,
+    exemptions: GITHUB_READ_EXEMPTIONS,
+  };
+}
+
+export function collectGithubWriteRouteReport(root: string): GithubReadRouteReport {
+  return {
+    findings: collectGithubWriteShelloutsFromFiles(readTree(root)),
+    baseline: GITHUB_WRITE_SHELLOUT_BASELINE,
     exemptions: GITHUB_READ_EXEMPTIONS,
   };
 }
@@ -243,6 +278,8 @@ export function githubReadRouteViolations(report: GithubReadRouteReport): string
   return violations;
 }
 
+export const githubWriteRouteViolations = githubReadRouteViolations;
+
 export function formatGithubReadRouteFailure(
   report: GithubReadRouteReport,
   violations: readonly string[],
@@ -254,5 +291,19 @@ export function formatGithubReadRouteFailure(
     "Route reads through createGithubClient(...).conditionalRest / singleObject in @reddb-io/github.",
     ...violations.map((violation) => `  - ${violation}`),
     "Baseline: apps/dev/src/core/github-read-route-guard.ts (GITHUB_READ_SHELLOUT_BASELINE); lower only.",
+  ].join("\n");
+}
+
+export function formatGithubWriteRouteFailure(
+  report: GithubReadRouteReport,
+  violations: readonly string[],
+): string {
+  if (violations.length === 0) return "";
+  return [
+    `github-write-routing ratchet: ${report.findings.length} GitHub write shell-out(s) remain; ` +
+      `${violations.length} exceed the shrink-only baseline.`,
+    "Route writes through createGithubClient(...) in @reddb-io/github.",
+    ...violations.map((violation) => `  - ${violation}`),
+    "Baseline: apps/dev/src/core/github-read-route-guard.ts (GITHUB_WRITE_SHELLOUT_BASELINE); lower only.",
   ].join("\n");
 }
