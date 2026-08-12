@@ -242,6 +242,13 @@ jobs:
       # the real binary against produced TOONL lane files), so the required host
       # binary must exist here exactly as it does on dev machines (/red-setup)
       # and in red-rsp-benchmark-ci.yml. Same pinned installer, no fallback.
+      #
+      # From the GitHub release, not crates.io. tq's crates publish runs on a
+      # token that can lapse independently of the release itself — it did, at
+      # 0.21.0, with a 403 nobody saw — and when it lapses `cargo install`
+      # takes every branch of this repository down with it. The release asset
+      # is published by the same tag that would have fed crates.io, carries a
+      # checksum, and skips a full cargo build besides.
       - name: Install pinned tq
         if: env.RUN_DEV == 'true'
         env:
@@ -249,7 +256,12 @@ jobs:
         run: |
           set -euo pipefail
           tq_root="$RUNNER_TEMP/tq"
-          cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked --root "$tq_root"
+          mkdir -p "$tq_root/bin"
+          base="https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}"
+          curl -fsSL --retry 3 -o "$tq_root/bin/tq" "$base/tq-linux-x86_64-static"
+          curl -fsSL --retry 3 -o "$tq_root/tq.sha256" "$base/tq-linux-x86_64-static.sha256"
+          echo "$(cut -d' ' -f1 "$tq_root/tq.sha256")  $tq_root/bin/tq" | sha256sum -c -
+          chmod +x "$tq_root/bin/tq"
           echo "$tq_root/bin" >> "$GITHUB_PATH"
           "$tq_root/bin/tq" --version
 

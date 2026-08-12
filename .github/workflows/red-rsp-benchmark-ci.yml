@@ -27,13 +27,21 @@ jobs:
         with:
           node-version: 22
 
+      # From the GitHub release, not crates.io — same reasoning and same
+      # step shape as red-workspace-ci.yml, where the story of the lapsed
+      # crates token is told in full.
       - name: Install pinned tq
         env:
           TQ_VERSION: v0.22.0
         run: |
           set -euo pipefail
           tq_root="$RUNNER_TEMP/tq"
-          cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked --root "$tq_root"
+          mkdir -p "$tq_root/bin"
+          base="https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}"
+          curl -fsSL --retry 3 -o "$tq_root/bin/tq" "$base/tq-linux-x86_64-static"
+          curl -fsSL --retry 3 -o "$tq_root/tq.sha256" "$base/tq-linux-x86_64-static.sha256"
+          echo "$(cut -d' ' -f1 "$tq_root/tq.sha256")  $tq_root/bin/tq" | sha256sum -c -
+          chmod +x "$tq_root/bin/tq"
           echo "$tq_root/bin" >> "$GITHUB_PATH"
           "$tq_root/bin/tq" --version
 
