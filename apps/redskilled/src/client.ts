@@ -37,7 +37,6 @@ import { redskilledDashboardRequest } from "./dashboard-request.js";
 import { socketAnswers } from "./daemon.js";
 import {
   describeRedskilledPresence,
-  redskilledPresenceAdvice,
   type RedskilledPresence,
 } from "./daemon-presence.js";
 import { readRedskilledLeaseFile } from "./session-lease.js";
@@ -96,6 +95,13 @@ import { clampPublishedWorkerDisplay } from "./worker-display.js";
 import { clampPublishedLogLine } from "./worker-log.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 import { refuseWhenMachineIsHeld, resolveRedskilledClientEndpoint, startThroughInstalledSupervisor } from "./client-rendezvous.js";
+import {
+  reconnectRedskilled,
+  redskilledReconnectExhausted,
+  RedskilledDaemonHeldError,
+  RedskilledUnreachableError,
+  type RedskilledReconnectConfig,
+} from "./client-reconnect.js";
 
 // The entry resolver is re-exported here because reaching the daemon and
 // resolving what to spawn are one story for a caller, and a second import path
@@ -135,54 +141,15 @@ export {
   type RedskilledPresenceKind,
 } from "./daemon-presence.js";
 
+export {
+  DEFAULT_REDSKILLED_RECONNECT_BACKOFF_MS,
+  DEFAULT_REDSKILLED_RECONNECT_TIMEOUT_MS,
+  RedskilledDaemonHeldError,
+  RedskilledUnreachableError,
+} from "./client-reconnect.js";
+
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
 export const DEFAULT_REDSKILLED_READY_TIMEOUT_MS = 10_000;
-
-/**
- * Raised when no daemon could be reached, so nothing was born.
- *
- * A distinct type because the two refusals a caller can get mean opposite
- * things: an admission refusal is the host saying "not this Worker, not now",
- * while this one is the host saying nothing at all. Both end in no Worker — the
- * fail-closed rule (ADR 0130 rule 6) — and only one of them is a fault.
- */
-export class RedskilledUnreachableError extends Error {
-  constructor(
-    readonly socketPath: string,
-    override readonly cause: unknown,
-    /**
-     * Which of the three silences this was, when it could be established.
-     *
-     * Carried on the error rather than left to each surface to re-derive: a
-     * consumer that re-probed would be asking a second time, a second later, and
-     * could print an answer the failure it is reporting never had (#3092).
-     */
-    readonly presence?: RedskilledPresence,
-  ) {
-    super(
-      `redskilled daemon is unreachable on ${JSON.stringify(socketPath)}, so no Worker was started: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }${presence != null && presence.kind === "held-unresponsive" ? `. ${redskilledPresenceAdvice(presence)}` : ""}`,
-    );
-    this.name = "RedskilledUnreachableError";
-  }
-}
-
-/**
- * Raised when the daemon IS there — a live pid holds this socket's lease — and
- * still did not answer.
- *
- * A subclass rather than a sibling, so every consumer that already fails closed
- * on {@link RedskilledUnreachableError} keeps doing so, while a surface that
- * renders operator advice can tell the two apart and stop telling an operator to
- * install a daemon that is running (#3092).
- */
-export class RedskilledDaemonHeldError extends RedskilledUnreachableError {
-  constructor(socketPath: string, override readonly presence: RedskilledPresence, cause: unknown) {
-    super(socketPath, cause, presence);
-    this.name = "RedskilledDaemonHeldError";
-  }
-}
 
 /**
  * Raised when the daemon answered a request with an application-level refusal.
@@ -220,7 +187,7 @@ export async function probeRedskilledPresence(
   });
 }
 
-export interface RedskilledClientConfig {
+export interface RedskilledClientConfig extends RedskilledReconnectConfig {
   /** The command that runs the daemon; defaults to the resolved published bundle. */
   readonly serverCommand?: string;
   readonly serverArgs?: readonly string[];
@@ -274,6 +241,21 @@ export interface RedskilledClientConfig {
 export async function ensureRedskilledDaemon(
   paths: RedskilledPaths,
   config: RedskilledClientConfig = {},
+): Promise<"already-running" | "spawned" | "joined"> {
+  return await reconnectRedskilled({
+    socketPath: paths.socketPath,
+    config,
+    attempt: () => ensureRedskilledDaemonOnce(paths, config),
+    retryable: (error, established) =>
+      error instanceof RedskilledDaemonHeldError ||
+      (error instanceof RedskilledUnreachableError && established),
+    exhausted: redskilledReconnectExhausted,
+  });
+}
+
+async function ensureRedskilledDaemonOnce(
+  paths: RedskilledPaths,
+  config: RedskilledClientConfig,
 ): Promise<"already-running" | "spawned" | "joined"> {
   const endpoint = await resolveRedskilledClientEndpoint(paths);
   try {
@@ -418,28 +400,37 @@ export async function requestRedskilled(
   request: RedskilledRequestBody,
   config: RedskilledClientConfig = {},
 ): Promise<unknown> {
-  await ensureRedskilledDaemon(paths, config);
-  // A supervised cold start may publish its rendezvous only after systemd
-  // starts it, so resolve again before sending the actual request.
-  const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
-  let response;
-  try {
-    response = await sendRedskilledRequest(
-      { socketPath: endpoint.socketPath, timeoutMs: config.requestTimeoutMs ?? 2_000 },
-      { ...request, id: randomUUID() } as RedskilledRequest,
-    );
-  } catch (err) {
-    // A socket that answered a ping and then died mid-request is still the host
-    // saying nothing; only an `ok: false` answer is the host refusing something.
-    // Which of the three silences it became is read now, while it is true.
-    throw new RedskilledUnreachableError(
-      endpoint.socketPath,
-      err,
-      await probeRedskilledPresence(endpoint).catch(() => undefined),
-    );
-  }
-  if (!response.ok) throw new RedskilledRequestRefusedError(response.error);
-  return response.value;
+  // One logical call keeps one id across transport retries. Besides making the
+  // wire trace honest, this lets a daemon-side dedupe remain possible without a
+  // future client change for mutating requests.
+  const id = randomUUID();
+  return await reconnectRedskilled({
+    socketPath: paths.socketPath,
+    config,
+    attempt: async (remainingMs) => {
+      await ensureRedskilledDaemon(paths, { ...config, reconnectTimeoutMs: remainingMs });
+      // A supervised cold start may publish its rendezvous only after systemd
+      // starts it, so resolve again before every send, including reconnects.
+      const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
+      let response;
+      try {
+        response = await sendRedskilledRequest(
+          { socketPath: endpoint.socketPath, timeoutMs: config.requestTimeoutMs ?? 2_000 },
+          { ...request, id } as RedskilledRequest,
+        );
+      } catch (error) {
+        throw new RedskilledUnreachableError(
+          endpoint.socketPath,
+          error,
+          await probeRedskilledPresence(endpoint).catch(() => undefined),
+        );
+      }
+      if (!response.ok) throw new RedskilledRequestRefusedError(response.error);
+      return response.value;
+    },
+    retryable: (error, established) => error instanceof RedskilledUnreachableError && established,
+    exhausted: redskilledReconnectExhausted,
+  });
 }
 
 /**
