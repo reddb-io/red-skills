@@ -492,6 +492,7 @@ export async function buildBootDeps(
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);
   const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
+  const trunk = options.branches.trunk ?? options.precheck.configuredTrunk ?? DEFAULT_BRANCH;
   const liveBranchCommitByIssue = new Map<number, number>();
   const liveBranchesByIssue = new Map<number, string[]>();
   for (const ref of options.branches.remoteLiveRefs) {
@@ -646,7 +647,7 @@ export async function buildBootDeps(
                   const commitsAhead = await gitx.branchCommitsAhead(
                     gitCtx,
                     branch,
-                    options.branches.trunk,
+                    trunk,
                   );
                   return {
                     branch,
