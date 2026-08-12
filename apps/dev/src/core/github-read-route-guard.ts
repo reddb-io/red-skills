@@ -133,6 +133,9 @@ function shellWords(value: string): string[] {
 
 function candidateWords(call: ts.CallExpression): string[] | null {
   const name = calleeName(call.expression);
+  // An argv handed to the client's write planner IS the required route: the
+  // canonical spelling exists so @reddb-io/github decides the rail (#3663).
+  if (name === "planGithubWrite") return null;
   const arrays = call.arguments.filter(ts.isArrayLiteralExpression);
   for (const array of arrays) {
     const words = arrayWords(array);

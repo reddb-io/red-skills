@@ -135,3 +135,5 @@ export {
   type GithubRestReadUnavailable,
   type GithubSingleObjectKind,
 } from "./rest-plan.js";
+
+export { planGithubWrite, type GithubWritePlan } from "./write-plan.js";

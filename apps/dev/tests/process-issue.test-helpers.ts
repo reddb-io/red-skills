@@ -522,12 +522,7 @@ export function harness(opts: HarnessOptions = {}): {
       // `gh pr list` is the ONE reuse probe every PR path shares (#2731): it
       // answers empty until a PR has actually been created, so a test can tell
       // a lazily-minted draft from a landing that opened its own.
-      // Both rails: the legacy `gh pr create` argv and the two-rails REST form
-      // `gh api -X POST repos/{o}/{r}/pulls` (#3663) mint the same PR here.
-      if (
-        (argv.includes("pr") && argv.includes("create")) ||
-        (argv.includes("api") && argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a)))
-      ) {
+      if ((argv.includes("pr") && argv.includes("create")) || (argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a)))) {
         prOpen = true;
         return { code: 0, stdout: JSON.stringify({ number: 42 }), stderr: "" };
       }
@@ -616,7 +611,6 @@ export function harness(opts: HarnessOptions = {}): {
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
-      // Both rails: legacy `gh pr merge` and the REST `PUT repos/{o}/{r}/pulls/{n}/merge` (#3663).
       if (j.includes("pr merge") || /pulls\/\d+\/merge/.test(j)) {
         return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
