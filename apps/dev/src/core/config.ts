@@ -1359,6 +1359,25 @@ function readPositiveInt(values: ConfigValues, key: string): number | undefined 
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
+/** A project-level policy that asks every MCP session and the daemon to keep draining. */
+export interface StandingDrainConfig {
+  readonly runner: Runner;
+  readonly target: number;
+}
+
+/**
+ * Read the opt-in standing drain declaration.
+ *
+ * Both leaves are required. An incomplete declaration is inert rather than
+ * borrowing the explicit drain defaults: persistence must never be enabled by
+ * accident or by a typo in the policy that is meant to authorize it.
+ */
+export function readStandingDrain(values: ConfigValues): StandingDrainConfig | null {
+  const runner = getConfig(values, "afk.standing.runner").trim();
+  const target = readPositiveInt(values, "afk.standing.target");
+  return isRunner(runner) && target !== undefined ? { runner, target } : null;
+}
+
 export function readValidationResourceBudget(values: ConfigValues): ValidationResourceBudget {
   return {
     nodeMaxOldSpaceMb: readPositiveInt(values, "afk.validation.node_max_old_space_mb"),
