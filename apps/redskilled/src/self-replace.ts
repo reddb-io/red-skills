@@ -418,7 +418,7 @@ export interface RedskilledReplacementIO {
   readonly spawnSuccessor?: (
     entry: ResolvedRedskilledReplacementEntry,
     argv: readonly string[],
-  ) => void | RedskilledSuccessorControl | Promise<void | RedskilledSuccessorControl>;
+  ) => unknown;
   /** Repoints a supervising unit before the old daemon releases its socket. */
   readonly repointSupervisor?: (
     entry: ResolvedRedskilledReplacementEntry,
@@ -499,7 +499,13 @@ export async function stageRedskilledReplacementSuccessor(
     ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
   ];
   const successor = await (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
-  return successor ?? { commit() {}, abort() {} };
+  return isSuccessorControl(successor) ? successor : { commit() {}, abort() {} };
+}
+
+function isSuccessorControl(value: unknown): value is RedskilledSuccessorControl {
+  if (value == null || typeof value !== "object") return false;
+  const candidate = value as Partial<RedskilledSuccessorControl>;
+  return typeof candidate.commit === "function" && typeof candidate.abort === "function";
 }
 
 /**
