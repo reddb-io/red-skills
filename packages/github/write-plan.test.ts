@@ -74,6 +74,16 @@ describe("planGithubWrite — the client owns the write rail", () => {
     });
   });
 
+  it("realizes a pull request comment on the shared REST issue-comment endpoint", () => {
+    const plan = planGithubWrite([
+      "gh", "pr", "comment", "42", "--repo", "o/r", "--body", "resolved",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: ["gh", "api", "-X", "POST", "repos/o/r/issues/42/comments", "-f", "body=resolved"],
+    });
+  });
+
   it("preserves an explicit REST API mutation on the REST rail", () => {
     const argv = [
       "gh", "api", "repos/o/r/issues/comments/99", "--method", "PATCH", "--field", "body=updated",

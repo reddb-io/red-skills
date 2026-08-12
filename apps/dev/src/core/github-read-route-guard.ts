@@ -45,11 +45,8 @@ export interface GithubReadShelloutBaselineEntry {
  */
 export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
   { path: "apps/dev/src/commands/requeue.ts", count: 2, reason: "requeue still resolves repository and issue state through the CLI" },
-  { path: "apps/dev/src/commands/respond.ts", count: 2, reason: "respond still resolves repository and comment state through the CLI" },
   { path: "apps/dev/src/commands/review.ts", count: 1, reason: "review still resolves repository identity through the CLI" },
-  { path: "apps/dev/src/commands/ship.ts", count: 2, reason: "ship still reads PR checks and PR state through the CLI" },
   { path: "apps/dev/src/core/merge.ts", count: 2, reason: "one-shot merge rejection diagnosis and queued-PR discovery remain after the two hot waits moved" },
-  { path: "apps/dev/src/runtime/doctor-classifiers.ts", count: 1, reason: "doctor still probes one GitHub REST resource through gh api" },
   { path: "apps/dev/src/runtime/etag-transport.ts", count: 1, reason: "the legacy ETag transport still resolves one PR head through the CLI" },
   { path: "apps/dev/src/runtime/gh/comments.ts", count: 4, reason: "comment reads still need shared conditional REST projections" },
   { path: "apps/dev/src/runtime/gh/issues.ts", count: 10, reason: "issue list, view, and REST helper reads remain the largest dev migration cluster" },

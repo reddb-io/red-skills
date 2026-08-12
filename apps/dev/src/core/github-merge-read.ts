@@ -24,6 +24,11 @@ export interface GithubMergeRead {
   requiredCheckContexts(repo: string, branch: string): Promise<string>;
 }
 
+export interface GithubShipRead extends GithubMergeRead {
+  /** Retired ship reader's `gh pr view` compatible review and rollup facts. */
+  shipPr(repo: string, prNumber: number): Promise<string>;
+}
+
 type JsonObject = Record<string, unknown>;
 
 interface PullObservation {
@@ -37,6 +42,15 @@ interface CheckRunList {
 
 interface CommitStatusList {
   readonly statuses?: unknown;
+}
+
+interface PullReview {
+  readonly state?: string | null;
+  readonly user?: { readonly login?: string | null } | null;
+}
+
+interface RequiredPullRequestReviews {
+  readonly required_approving_review_count?: number | null;
 }
 
 const PR_VIEW_OPERATION = routeGithubArgs(["pr", "view"]);
@@ -78,6 +92,12 @@ function rows(value: unknown): JsonObject[] {
   return Array.isArray(value) ? value.map(object).filter((row): row is JsonObject => row !== null) : [];
 }
 
+function httpStatus(error: unknown): number | null {
+  return typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status) || null
+    : null;
+}
+
 function checkRunState(run: JsonObject): string {
   const status = text(run.status).toUpperCase();
   const conclusion = text(run.conclusion).toUpperCase();
@@ -100,7 +120,7 @@ function rollup(checkRuns: unknown, statuses: unknown): JsonObject[] {
 }
 
 /** Build the merge reader over one resident/Worker-lifetime conditional client. */
-export function createGithubMergeRead(client: GithubClient, actor: string): GithubMergeRead {
+export function createGithubMergeRead(client: GithubClient, actor: string): GithubShipRead {
   if (actor.trim() === "") throw new Error("GitHub merge reads require a non-empty attribution actor");
 
   const readPull = async (
@@ -155,6 +175,37 @@ export function createGithubMergeRead(client: GithubClient, actor: string): Gith
     return { ...pull.projected, statusCheckRollup: await readRollup(slug, pull.headRefOid) };
   };
 
+  const readReviews = async (slug: string, prNumber: number): Promise<PullReview[]> => {
+    const repo = repoParts(slug);
+    const answer = await client.conditionalRest<PullReview[]>({
+      cacheKey: `merge:reviews:${slug}:${prNumber}`,
+      route: "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      parameters: { ...repo, pull_number: prNumber, per_page: 100 },
+      operation: PR_VIEW_OPERATION,
+      actor,
+    });
+    return Array.isArray(answer.data) ? answer.data : [];
+  };
+
+  const requiredApprovalCount = async (slug: string, branch: string): Promise<number> => {
+    if (branch === "") return 0;
+    const repo = repoParts(slug);
+    try {
+      const answer = await client.conditionalRest<RequiredPullRequestReviews>({
+        cacheKey: `merge:required-reviews:${slug}:${branch}`,
+        route: "GET /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews",
+        parameters: { ...repo, branch },
+        operation: API_REST_OPERATION,
+        actor,
+      });
+      const count = Number(answer.data?.required_approving_review_count ?? 0);
+      return Number.isSafeInteger(count) && count > 0 ? count : 0;
+    } catch (error) {
+      if (httpStatus(error) === 404) return 0;
+      throw error;
+    }
+  };
+
   return {
     async reviewChecks(slug, prNumber) {
       const pull = await readPull(slug, prNumber, ["headRefOid"]);
@@ -176,6 +227,27 @@ export function createGithubMergeRead(client: GithubClient, actor: string): Gith
 
     async driverPr(slug, prNumber) {
       return JSON.stringify(await composite(slug, prNumber, ["state", "mergeStateStatus", "headRefOid"]));
+    },
+
+    async shipPr(slug, prNumber) {
+      const pull = await readPull(slug, prNumber, ["headRefOid", "baseRefName"]);
+      const baseRefName = text(pull.projected.baseRefName);
+      const [statusCheckRollup, reviews, requiredApprovals] = await Promise.all([
+        readRollup(slug, pull.headRefOid),
+        readReviews(slug, prNumber),
+        requiredApprovalCount(slug, baseRefName),
+      ]);
+      const latestReviewByActor = new Map<string, string>();
+      for (const review of reviews) {
+        const login = text(review.user?.login);
+        if (login !== "") latestReviewByActor.set(login, text(review.state).toUpperCase());
+      }
+      const approvals = [...latestReviewByActor.values()].filter((state) => state === "APPROVED").length;
+      const changesRequested = reviews.some((review) => text(review.state).toUpperCase() === "CHANGES_REQUESTED");
+      const reviewDecision = changesRequested
+        ? "CHANGES_REQUESTED"
+        : approvals < requiredApprovals ? "REVIEW_REQUIRED" : approvals > 0 ? "APPROVED" : "";
+      return JSON.stringify({ reviewDecision, reviews, statusCheckRollup });
     },
 
     async requiredCheckContexts(slug, branch) {

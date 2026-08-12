@@ -111,6 +111,23 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     expect(GITHUB_WRITE_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
   });
 
+  it("routes respond, ship, and doctor classifier GitHub I/O through packages/github (#3730)", () => {
+    const paths = [
+      "apps/dev/src/commands/respond.ts",
+      "apps/dev/src/commands/ship.ts",
+      "apps/dev/src/runtime/doctor-classifiers.ts",
+    ];
+    const readReport = collectGithubReadRouteReport(ROOT);
+    const writeReport = collectGithubWriteRouteReport(ROOT);
+
+    for (const path of paths) {
+      expect(readReport.findings.filter((finding) => finding.path === path)).toEqual([]);
+      expect(writeReport.findings.filter((finding) => finding.path === path)).toEqual([]);
+      expect(GITHUB_READ_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
+      expect(GITHUB_WRITE_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
+    }
+  });
+
   it("rejects a new gh write and points it at the shared client", () => {
     const findings = collectGithubWriteShelloutsFromFiles([
       {
