@@ -423,11 +423,16 @@ export interface RedskilledRenderPayload {
     /** When the registration began; absent on payloads from older daemons. */
     readonly registered_at?: string;
     readonly reason: string;
+    /** Policy and last counted depth, absent on payloads from older daemons. */
+    readonly standing?: boolean;
+    readonly queue_depth?: number;
   }[];
   /** Registrations deliberately released through `project_stop`, newest last. */
   readonly stopped_projects?: readonly {
     readonly project_label: string;
     readonly at: string;
+    readonly standing?: boolean;
+    readonly queue_depth?: number;
   }[];
   /** Registrations held by a live daemon other than the one this socket reached. */
   readonly orphaned_projects?: readonly string[];
