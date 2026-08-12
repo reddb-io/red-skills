@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { planGithubRestRead } from "@reddb-io/github";
 import { git, gh, pnpm } from "./exec.js";
 import type { MedicIo } from "../core/pr-medic.js";
-import { inferGithubRepoSlug } from "./wire/github-slug.js";
+import { inferGitHubRepoSlug } from "./wire/github-slug.js";
 
 const MEDIC_LOG_TAIL_CHARS = 4000;
 
@@ -12,7 +12,7 @@ const MEDIC_LOG_TAIL_CHARS = 4000;
  * (`.red/tmp/worktrees/feedback/medic-<pr>`), created on first use and removed
  * by `cleanup` whatever the outcome. */
 export function createMedicIo(root: string, log?: (line: string) => void): MedicIo {
-  const repo = inferGithubRepoSlug(root);
+  const repo = inferGitHubRepoSlug(root);
   const restPath = (suffix: string): string => `repos/${repo}/${suffix}`;
   const worktreeDir = (pr: number): string =>
     join(root, ".red", "tmp", "worktrees", "feedback", `medic-${pr}`);
