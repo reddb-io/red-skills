@@ -93,8 +93,8 @@ plugins:
         - worker-budget-kill
 ```
 
-Each hook is asynchronous and receives the complete JSON document printed by
-`redskilled host-state` on standard input. `REDSKILLED_HOST_EVENT` names the
+Each hook is asynchronous and receives the complete host-state
+JSON document on standard input. `REDSKILLED_HOST_EVENT` names the
 triggering kind. The snapshot is taken after the triggering lifecycle change
 and before the sink itself is born, so a Worker-count consumer never counts its
 own refresh process.
