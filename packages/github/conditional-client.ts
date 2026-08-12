@@ -255,7 +255,15 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
     request: { fetch: timedFetch as unknown as GithubRequestFetch },
     retry: {
-      doNotRetry: [304, 403, 429],
+      // A 404 is an ANSWER, not a failure: the resource is absent and asking
+      // again cannot change that. Retrying one cost 93s of exponential backoff
+      // per CODEOWNERS lookup in a repo that has no CODEOWNERS file, and the
+      // trust gate asks per candidate — a boot that froze for ~22 minutes with
+      // no child, no log and `live=true` on every surface. Issue point reads
+      // are strongly consistent by number, so nothing legitimate depends on
+      // re-asking a 404; a caller awaiting eventual consistency must say so
+      // with its own bounded loop rather than paying this on every read.
+      doNotRetry: [304, 403, 404, 429],
       ...(options.retryCount === undefined ? {} : { retries: options.retryCount }),
     },
     throttle: options.throttle === false
