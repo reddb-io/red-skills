@@ -216,15 +216,13 @@ const ADMISSION_THRESHOLD_PCT = 60;
 const DEFAULT_FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures");
 const DEFAULT_ARTIFACT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.toon");
 const DEFAULT_SUMMARY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.md");
-const REQUIRED_LARGE_OUTPUT_FIXTURES = [
-  "automatic-disk-census",
+const REQUIRED_LARGE_OUTPUT_FIXTURES = ["automatic-disk-census",
   "diff-large-numstat",
   "exec-midstream-anomaly",
   "log-large-history",
   "vitest-large-green",
   "vitest-many-failures",
 ] as const;
-
 export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptions = {}): Promise<TwoAxisBenchmarkReport> {
   const fixtureRoot = options.fixtureRoot ?? DEFAULT_FIXTURE_ROOT;
   const fixtures = await discoverBenchmarkFixtures(fixtureRoot);
@@ -545,8 +543,7 @@ function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppr
 
 function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "audited" | "note"> {
   switch (filter) {
-    case "automatic:output":
-      return { audited: "ok", note: "large repetitive output declares deterministic caps and aggregates, keeps one recovery handle, and round-trips original bytes" };
+    case "automatic:output": return { audited: "ok", note: "large repetitive output declares deterministic caps and aggregates, keeps one recovery handle, and round-trips original bytes" };
     case "exec:--":
       return { audited: "ok", note: "generic exec summaries route structured content to TOON shapes, fall back to head/tail with deterministic outliers, and retain a recovery handle" };
     case "cat:file":
