@@ -308,10 +308,13 @@ jobs:
         with:
           node-version: 22
 
+      # Unlike the other jobs, this one MUST let the @reddb-io/sdk postinstall
+      # download the `red` binary: the resident tests spawn the built bundle
+      # against the embedded RedDb elision store, and `rsp setup` provisions
+      # through the same binary. With REDDB_SKIP_POSTINSTALL=1 every
+      # built-bundle resident test dies with `reddb: binary "red" not found`.
       - name: Install workspace dependencies
         if: env.RUN_RSP == 'true'
-        env:
-          REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
       - name: Build distributable RSP bundle
