@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { measureStructuredBoundary } from "../src/command-boundary-benchmark.js";
 import { buildBundleOnce, bundle } from "./cli.helpers.js";
 
 const roots: string[] = [];
@@ -28,6 +29,53 @@ function shell(cwd: string, command: string) {
 }
 
 describe("rsp universal command boundary", () => {
+  it("transcodes only completed agent-facing stdout while pipelines receive native bytes", async () => {
+    const root = await tempRoot();
+    const direct = rsp(root, [process.execPath, "-e", "process.stdout.write(JSON.stringify({service:'api',nested:{ok:true}}))"]);
+
+    expect(direct.status).toBe(0);
+    expect((await import("@reddb-io/toon")).decode(direct.stdout.toString("utf8"))).toEqual({
+      service: "api",
+      nested: { ok: true },
+    });
+
+    const pipeline = [
+      `printf '%s' '{"stage":"native"}'`,
+      `${process.execPath} -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>process.stdout.write(JSON.stringify({received:JSON.parse(input),stage:"agent"})))'`,
+    ].join(" | ");
+    const proxied = rsp(root, ["proxy", "--", pipeline]);
+
+    expect(proxied.status).toBe(0);
+    expect((await import("@reddb-io/toon")).decode(proxied.stdout.toString("utf8"))).toEqual({
+      received: { stage: "native" },
+      stage: "agent",
+    });
+
+    await mkdir(join(root, ".red"));
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await writeFile(join(root, "native.json"), '{"source":"cat"}', "utf8");
+    const specializedPipeline = [
+      "cat native.json",
+      `${process.execPath} -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>process.stdout.write(JSON.stringify({received:JSON.parse(input),stage:"agent"})))'`,
+    ].join(" | ");
+    const specialized = rsp(root, ["proxy", "--", specializedPipeline]);
+
+    expect(specialized.status).toBe(0);
+    expect((await import("@reddb-io/toon")).decode(specialized.stdout.toString("utf8"))).toEqual({
+      received: { source: "cat" },
+      stage: "agent",
+    });
+  });
+
+  it("preserves stderr and non-zero exit status when structured stdout is transformed", async () => {
+    const root = await tempRoot();
+    const result = rsp(root, [process.execPath, "-e", "process.stdout.write('{\"ok\":false}');process.stderr.write('native error\\n');process.exit(29)"]);
+
+    expect((await import("@reddb-io/toon")).decode(result.stdout.toString("utf8"))).toEqual({ ok: false });
+    expect(result.stderr).toEqual(Buffer.from("native error\n"));
+    expect(result.status).toBe(29);
+  });
+
   it("preserves direct argv, Unicode, stream bytes, empty output, binary output, and non-zero exits", async () => {
     const root = await tempRoot();
     const script = [
@@ -154,6 +202,13 @@ describe("rsp universal command boundary", () => {
     );
     expect(p95Overhead).toBeLessThanOrEqual(50);
   }, 30_000);
+
+  it("keeps p95 structured transformation at or below 100ms on the reference boundary", () => {
+    const measurement = measureStructuredBoundary(40);
+
+    expect(measurement.samples).toBe(40);
+    expect(measurement.p95_ms).toBeLessThanOrEqual(100);
+  });
 
   it("keeps explicit wrappers on the same boundary", async () => {
     const root = await tempRoot();

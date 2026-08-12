@@ -1,6 +1,7 @@
 import { isStructuredUsageRenderable } from "./cli/args.js";
 import { main } from "./cli/main.js";
 import { renderStructuredError } from "./structured-error.js";
+export { renderStructuredBoundary } from "./structured-boundary.js";
 
 export { main };
 

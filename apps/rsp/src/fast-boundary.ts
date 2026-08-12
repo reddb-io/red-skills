@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { runCompletedChild, type CompletedStdoutTransform } from "./completed-boundary.js";
 
 const RSP_COMMANDS = new Set([
   "dashboard",
@@ -56,24 +57,14 @@ export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvoca
   return { kind: "argv", argv: [...argv] };
 }
 
-export async function runFastBoundary(invocation: FastBoundaryInvocation): Promise<number> {
+export async function runFastBoundary(
+  invocation: FastBoundaryInvocation,
+  transform?: CompletedStdoutTransform,
+): Promise<number> {
   const child = invocation.kind === "argv"
-    ? spawn(invocation.argv[0]!, invocation.argv.slice(1), { stdio: "inherit" })
-    : spawn(invocation.commandLine, { shell: true, stdio: "inherit" });
-  return await new Promise((resolve) => {
-    child.once("error", (err) => {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      resolve(127);
-    });
-    child.once("close", (status, signal) => {
-      if (signal) {
-        process.kill(process.pid, signal);
-        resolve(128);
-        return;
-      }
-      resolve(status ?? 0);
-    });
-  });
+    ? spawn(invocation.argv[0]!, invocation.argv.slice(1), { stdio: ["inherit", "pipe", "pipe"] })
+    : spawn(invocation.commandLine, { shell: true, stdio: ["inherit", "pipe", "pipe"] });
+  return await runCompletedChild(child, transform);
 }
 
 export async function tryRunFastBoundary(argv: readonly string[]): Promise<number | null> {

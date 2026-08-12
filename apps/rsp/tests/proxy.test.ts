@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { parseRecords } from "@reddb-io/toon";
+import { decode, parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_RSP_BYTE_BUDGET,
@@ -161,7 +161,7 @@ describe("rsp proxy segment recognition", () => {
     }
   }, 30_000);
 
-  it("executes gh json/jq selector segments byte-identically and records a lossless pass", async () => {
+  it("keeps gh json/jq native inside the shell, then applies the final structured boundary", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
     const setup = spawnSync(process.execPath, [bundle, "setup"], { cwd: root, encoding: "utf8" });
@@ -180,7 +180,7 @@ describe("rsp proxy segment recognition", () => {
     ], { cwd: root, env, encoding: "utf8" });
 
     expect(proxied.status, `${proxied.stdout}${proxied.stderr}`).toBe(0);
-    expect(proxied.stdout).toBe("[{\"number\":1747,\"title\":\"lossless\"}]\n");
+    expect(decode(proxied.stdout)).toEqual([{ number: 1747, title: "lossless" }]);
     await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
         hook: "proxy",

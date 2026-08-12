@@ -4,6 +4,7 @@ import { answerFrontDoor } from "./front-door.js";
 
 interface RspCore {
   main(argv: string[]): Promise<number>;
+  renderStructuredBoundary(stdout: Buffer): Buffer;
   renderCliFailure(err: unknown): { output: Buffer; status: number };
 }
 
@@ -24,7 +25,7 @@ async function run(argv: readonly string[]): Promise<number> {
   const answered = answerFrontDoor(argv);
   if (answered !== null) return answered;
   const fast = resolveFastBoundary(argv);
-  if (fast) return await runFastBoundary(fast);
+  if (fast) return await runFastBoundary(fast, async (stdout) => (await loadCore()).renderStructuredBoundary(stdout));
   return await (await loadCore()).main([...argv]);
 }
 
