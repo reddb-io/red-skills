@@ -1559,6 +1559,14 @@ export async function processIssue(
           : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
       });
     }
+    if (feedback.evidenceInconsistency) {
+      const note = `🤖 ${reseedLane}: INCONSISTENT Validation result — ${feedback.evidenceInconsistency}.`;
+      deps.appendIterLog(note);
+      deps.recordWorkerEvent?.("worker.validation_evidence_inconsistency", {
+        stage: "feedback",
+        reason: feedback.evidenceInconsistency,
+      });
+    }
     markProcessSafetyStep("post-agent:feedback-done");
     const baseMergeGeometry = deps.baseMergeReversionGeometry?.(workerBranch);
     if (baseMergeGeometry) {
