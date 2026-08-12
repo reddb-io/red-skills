@@ -49,7 +49,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
       expect(result).toMatchObject({ outcome: "done", swept: true });
       expect(observed).toBe(false);
-      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(true);
+      expect(calls.some((call) => call.includes("pulls/42/merge"))).toBe(true);
       expect(trace.closed).toEqual([9]);
       expect(trace.released).toEqual([9]);
     });
@@ -85,14 +85,14 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
       // than `gh pr view --json mergeStateStatus` — so the assertion pins the
       // observation, not the transport the branch deliberately replaced.
       expect(calls.some((call) => call.includes("--json mergeStateStatus"))).toBe(true);
-      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(false);
+      expect(calls.some((call) => call.includes("pulls/42/merge"))).toBe(false);
       expect(trace.closed).toEqual([]);
       expect(trace.released).toEqual([9]);
 
       releaseTail();
       await completion;
       await vi.waitFor(() => expect(trace.closed).toEqual([9]));
-      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(true);
+      expect(calls.some((call) => call.includes("pulls/42/merge"))).toBe(true);
     });
 
     it("landing.wait=none releases as soon as the PR resolves and the observer waits, merges, and closes", async () => {
@@ -123,14 +123,14 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
       expect(result).toMatchObject({ outcome: "done", swept: false });
       expect(tail).toMatchObject({ prNumber: 42, waitForCi: true });
       expect(calls.some((call) => call.includes("--json mergeStateStatus"))).toBe(false);
-      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(false);
+      expect(calls.some((call) => call.includes("pulls/42/merge"))).toBe(false);
       expect(trace.closed).toEqual([]);
       expect(trace.released).toEqual([9]);
 
       releaseTail();
       await completion;
       await vi.waitFor(() => expect(trace.closed).toEqual([9]));
-      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(true);
+      expect(calls.some((call) => call.includes("pulls/42/merge"))).toBe(true);
     });
   });
 
@@ -533,7 +533,7 @@ describe("processIssue — per-issue manual-landing mode (landing:manual, #1049)
     expect(trace.runAgentCalls.length).toBe(1);
     expect(trace.pushedAttempt.length).toBeGreaterThan(0);
     // ...but NO merge call was ever made (the seam assertion).
-    expect(joined.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(joined.some((c) => (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
     // No review label either — this is a human-merge hold, not a fresh-agent review.
     expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
 
@@ -585,7 +585,7 @@ describe("processIssue — per-issue manual-landing mode (landing:manual, #1049)
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("manual-landing");
-    expect(joined.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(joined.some((c) => (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
     // No direct `git merge --no-ff` into the base either — nothing lands.
     expect(joined.some((c) => c.includes("merge --no-ff"))).toBe(false);
     expect(trace.closed).not.toContain(9);
@@ -603,7 +603,7 @@ describe("processIssue — per-issue manual-landing mode (landing:manual, #1049)
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("done");
-    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
     expect(trace.closed).toContain(9);
   });
 });
@@ -626,7 +626,7 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     const joined = calls.map((c) => c.join(" "));
     expect(joined.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     // No PR list/create/merge on the locked path.
-    expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
+    expect(joined.some((c) => c.includes("pr list") || (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
   });
 
   it("unlocked → landPr (admin-merged PR into the pinned target)", async () => {
@@ -644,7 +644,7 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     const joined = calls.map((c) => c.join(" "));
     // landPr reuses the open PR (#42) and admin-merges it.
     expect(joined.some((c) => c.includes("pr list"))).toBe(true);
-    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
     // No direct `merge --no-ff` of the attempt branch into the locked target.
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
   });
@@ -670,7 +670,7 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     // result.locked still echoes the lock state (observational), not the mode.
     expect(result.locked).toBe(true);
     const joined = calls.map((c) => c.join(" "));
-    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
   });
 
@@ -696,7 +696,7 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     const joined = calls.map((c) => c.join(" "));
     // Direct merge of the validated attempt tip; no PR list/merge anywhere.
     expect(joined.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
-    expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
+    expect(joined.some((c) => c.includes("pr list") || (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
   });
 });
 
@@ -730,7 +730,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     // The PR is opened/reused and labelled — firing the advisory review.
     expect(joined.some((c) => c.includes("pr edit 42 --add-label ready-for-review"))).toBe(true);
     // The merge is HELD for the fresh-agent review.
-    expect(joined.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(joined.some((c) => (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
     // The issue is parked to ready-for-human (running dropped) and NOT closed.
     expect(
       trace.labelEdits.some((e) => e.remove.includes("running") && e.add.includes("ready-for-human")),
@@ -755,7 +755,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("done");
-    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
     expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
     expect(trace.closed).toContain(9);
   });
@@ -779,7 +779,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     expect(result.outcome).toBe("review-requested");
     const integrated = joined.findIndex((c) => c === "git -C /rwt merge --no-edit origin/main");
     const published = joined.findIndex((c) => c.startsWith("git -C /rwt push origin HEAD:refs/heads/"));
-    const prCreated = joined.findIndex((c) => c.includes("pr create"));
+    const prCreated = joined.findIndex((c) => (c.includes("pr create") || c.includes("POST repos/o/r/pulls")));
     expect(joined).toContain("git -C /rwt fetch origin main --quiet");
     expect(integrated).toBeGreaterThan(-1);
     expect(published).toBeGreaterThan(integrated);
@@ -826,7 +826,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("done");
-    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
     expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
     expect(trace.closed).toContain(9);
   });
@@ -1205,7 +1205,12 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     };
     const mergeExec = deps.mergeExec;
     deps.mergeExec = async (argv) => {
-      if (argv.includes("pr") && argv.includes("create")) events.push("pr:create");
+      if (
+        (argv.includes("pr") && argv.includes("create")) ||
+        (argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a)))
+      ) {
+        events.push("pr:create");
+      }
       return mergeExec(argv);
     };
 
@@ -1987,9 +1992,9 @@ describe("processIssue — pre_merge hook abort (primary checkout untouched, #26
     // branch, then the idempotent PR open) — committed work that reached origin
     // is never parked out of sight — but nothing integrates or merges.
     const mergeJoined = trace.mergeCalls.map((c) => c.join(" "));
-    expect(mergeJoined.some((c) => /\bgit .*\bmerge\b|\bpr merge\b/.test(c))).toBe(false);
+    expect(mergeJoined.some((c) => /\bgit .*\bmerge\b|\bpr merge\b|pulls\/\d+\/merge/.test(c))).toBe(false);
     expect(mergeJoined.some((c) => c.includes("rev-list --count"))).toBe(true);
-    expect(mergeJoined.some((c) => c.includes("pr create"))).toBe(true);
+    expect(mergeJoined.some((c) => (c.includes("pr create") || c.includes("POST repos/o/r/pulls")))).toBe(true);
     // pre_merge fired; post_merge did not — no integration ran.
     expect(result.hooksFired).toContain("pre_merge");
     expect(result.hooksFired).not.toContain("post_merge");
@@ -2029,8 +2034,13 @@ describe("processIssue — land-lock timeout self-requeue (#2596)", () => {
 });
 
 describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", () => {
+  // Both rails: legacy `gh pr create` and the two-rails REST POST (#3663).
   const prCreates = (trace: { mergeCalls: string[][] }): string[][] =>
-    trace.mergeCalls.filter((argv) => argv.includes("pr") && argv.includes("create"));
+    trace.mergeCalls.filter(
+      (argv) =>
+        (argv.includes("pr") && argv.includes("create")) ||
+        (argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a))),
+    );
 
   it("opens NO pull request before landing when the attempt never re-seeds", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
@@ -2039,7 +2049,7 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
     expect(result.outcome).toBe("done");
     // Exactly one create, and it is the landing's own — no draft, no trail.
     expect(prCreates(trace)).toHaveLength(1);
-    expect(prCreates(trace)[0]).not.toContain("--draft");
+    expect(prCreates(trace)[0]).not.toEqual(expect.arrayContaining(["draft=true"]));
     expect(trace.trailComments).toEqual([]);
     expect(trace.trailCommentEdits).toEqual([]);
   });
@@ -2057,9 +2067,13 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
     expect(trace.runAgentCalls).toHaveLength(2);
     const creates = prCreates(trace);
     expect(creates).toHaveLength(1);
-    expect(creates[0]).toContain("--draft");
+    expect(creates[0]).toEqual(expect.arrayContaining(["draft=true"]));
     // The draft body mirrors the trail and keeps the auto-close link.
-    const body = creates[0]![creates[0]!.indexOf("--body") + 1] ?? "";
+    // Two-rails create carries the body as `-f body=...` (#3663).
+    const body =
+      creates[0]!.find((a) => a.startsWith("body=")) ??
+      creates[0]![creates[0]!.indexOf("--body") + 1] ??
+      "";
     expect(body).toContain("Re-seed trail");
     expect(body).toContain("Closes #9");
   });
@@ -2076,7 +2090,7 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
     expect(prCreates(trace)).toHaveLength(1);
     const joined = trace.mergeCalls.map((argv) => argv.join(" "));
     expect(joined.some((c) => c.includes("pr ready 42"))).toBe(true);
-    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
   });
 
   it("edits ONE Issue comment across repeated rounds instead of appending new ones", async () => {
@@ -2104,7 +2118,12 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
 
 describe("processIssue — an exhausted Re-seed budget parks with the draft open (#2732)", () => {
   const prCalls = (trace: { mergeCalls: string[][] }, verb: string): string[][] =>
-    trace.mergeCalls.filter((argv) => argv.includes("pr") && argv.includes(verb));
+    trace.mergeCalls.filter(
+      (argv) =>
+        (argv.includes("pr") && argv.includes(verb)) ||
+        // Two-rails REST create (#3663); edit/close still ride the gh CLI.
+        (verb === "create" && argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a))),
+    );
   /** Every `gh pr edit --add-label` applied to the draft. */
   const prLabels = (trace: { mergeCalls: string[][] }): string[] =>
     prCalls(trace, "edit")
