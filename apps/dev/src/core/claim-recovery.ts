@@ -37,8 +37,8 @@ export function planClaimRecovery(
   const transition = parked || isolatedLane ? undefined : planTransition(currentLabels, { kind: "queue" });
   const refused = transition && isRefused(transition) ? transition : undefined;
   const destination = isolatedLane ?? LABEL_READY;
-  const remove = refused || !transition ? [LABEL_RUNNING] : [...transition.remove];
-  const add = refused || !transition ? [] : [...transition.add];
+  const remove = !transition || isRefused(transition) ? [LABEL_RUNNING] : [...transition.remove];
+  const add = !transition || isRefused(transition) ? [] : [...transition.add];
 
   const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
   const concededOwners = release.concededOwners ?? [];
