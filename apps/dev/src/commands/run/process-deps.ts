@@ -738,15 +738,10 @@ export function buildProcessDeps({
             }
           },
         });
-        // A volume transition is real work progress even before a commit. Keep
-        // its own timestamp so the operator-facing idle clock cannot be reset by
-        // oscillating tool/activity labels (#3676).
         const locChanged = added !== lastHeartbeatDiff.added || removed !== lastHeartbeatDiff.removed;
-        // Remember the volume for the on_heartbeat vitals provider (#832).
         lastHeartbeatDiff = { added, removed };
         // Update the per-attempt peak diff (only grows; never decreases).
-        if (added > peakLocAdded) peakLocAdded = added;
-        if (removed > peakLocRemoved) peakLocRemoved = removed;
+        if (added > peakLocAdded) peakLocAdded = added; if (removed > peakLocRemoved) peakLocRemoved = removed;
         // Close this heartbeat window on the meter — derives the waiting count
         // (a window with no new stream events) and snapshots the cumulative
         // tool/text counts to fold into the record + state.
