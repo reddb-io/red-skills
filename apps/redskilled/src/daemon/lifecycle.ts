@@ -2236,9 +2236,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   );
   observations = replayRedskilledMetricObservations(laneEvents, clock());
   const replayed = rehydrateWorkers(laneEvents);
-  // Take the active-unit census before attributing any replayed birth as dead.
-  // A per-Worker probe can miss during a watch gap; an independently active unit
-  // is still a Worker the successor can re-attach, never evidence of a death.
+  // Census active units before attributing deaths: an active unit is re-attachable, not dead.
   const activeUnits = new Set(await Promise.resolve(unitInventory()).catch(() => []));
   const reattachment = await reattachWorkers(replayed, (worker) =>
     worker.unit != null && activeUnits.has(worker.unit) ? true : liveness(worker));
@@ -2256,11 +2254,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   for (const worker of reattachment.dead) {
     record("worker-death", worker, "the Worker ended while no daemon was watching");
   }
-  // The lane is this daemon's memory, not the machine's: a Worker whose birth was
-  // never written — or was written and then falsely retired — is invisible to the
-  // replay and very much alive to the host. So the host itself is asked, and a
-  // unit nobody accounts for is adopted rather than left outside the budget
-  // (#2917). Failing to ask costs the sweep and never the start.
+  // The lane is this daemon's memory, not the machine's: a birth never written —
+  // or falsely retired — is invisible to the replay and alive to the host. So the
+  // host is asked, and an unaccounted unit is adopted rather than left outside
+  // the budget (#2917). Failing to ask costs the sweep and never the start.
   const discovered = discoverUnownedWorkers({
     units: [...activeUnits],
     held: [...workers.values()],
