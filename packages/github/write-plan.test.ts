@@ -92,9 +92,52 @@ describe("planGithubWrite — the client owns the write rail", () => {
     expect(plan).toEqual({ surface: "rest", args: argv });
   });
 
-  it("passes an unrouted write through unchanged", () => {
+  it("realizes a pull-request label addition on REST", () => {
+    const plan = planGithubWrite([
+      "gh", "-R", "o/r", "pr", "edit", "42", "--add-label", "ready-for-review",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: [
+        "gh", "api", "-X", "POST", "repos/o/r/issues/42/labels",
+        "-F", "labels[]=ready-for-review",
+      ],
+    });
+  });
+
+  it("realizes a pull-request body edit on REST", () => {
+    const plan = planGithubWrite([
+      "gh", "-R", "o/r", "pr", "edit", "42", "--body", "updated trail",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: [
+        "gh", "api", "-X", "PATCH", "repos/o/r/pulls/42",
+        "-f", "body=updated trail",
+      ],
+    });
+  });
+
+  it("does not partially realize a combined pull-request edit", () => {
+    const argv = [
+      "gh", "-R", "o/r", "pr", "edit", "42",
+      "--body", "updated trail", "--add-label", "ready-for-review",
+    ];
+    expect(planGithubWrite(argv)).toEqual({ surface: "graphql", args: argv });
+  });
+
+  it("realizes pull-request update-branch on REST", () => {
+    const plan = planGithubWrite([
+      "gh", "-R", "o/r", "pr", "update-branch", "42",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: ["gh", "api", "-X", "PUT", "repos/o/r/pulls/42/update-branch"],
+    });
+  });
+
+  it("declares pull-request readiness as GraphQL-only", () => {
     const argv = ["gh", "-R", "o/r", "pr", "ready", "42"];
-    const plan = planGithubWrite(argv);
-    expect(plan.args).toBe(argv);
+    expect(planGithubWrite(argv)).toEqual({ surface: "graphql", args: argv });
   });
 });

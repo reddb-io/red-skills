@@ -1623,7 +1623,9 @@ async function mergeWithStaleBranchRecovery(
     if (!diagnosis.retryable || round >= STALE_BRANCH_MERGE_ROUNDS) {
       return { ok: false, prNumber, reason: "merge-failed", mergeFailure: diagnosis };
     }
-    const updated = await exec(["gh", "-R", repo, "pr", "update-branch", String(prNumber)]);
+    const updated = await exec([
+      ...planGithubWrite(["gh", "-R", repo, "pr", "update-branch", String(prNumber)]).args,
+    ]);
     if (updated.code !== 0) {
       return {
         ok: false,
@@ -2352,7 +2354,9 @@ async function ensurePr(
     // is a no-op on a PR that is already ready, so mark unconditionally rather
     // than paying a state read to decide. Best-effort: a forge that refuses the
     // flip must not abort a landing that is otherwise green.
-    await exec(["gh", "-R", repo, "pr", "ready", String(existing)]);
+    await exec([
+      ...planGithubWrite(["gh", "-R", repo, "pr", "ready", String(existing)]).args,
+    ]);
     return existing;
   }
   // Canonical argv in, rail out: the client realizes the create on REST (#3663).
@@ -2419,7 +2423,9 @@ export async function openDraftPr(exec: Exec, input: OpenDraftPrInput): Promise<
  * and the Attempt record already carry the trail, so a failed mirror costs
  * fidelity on a projection, never the round. */
 export async function editPrBody(exec: Exec, repo: string, prNumber: number, body: string): Promise<boolean> {
-  const r = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--body", scrubOutbound(body)]);
+  const r = await exec([
+    ...planGithubWrite(["gh", "-R", repo, "pr", "edit", String(prNumber), "--body", scrubOutbound(body)]).args,
+  ]);
   return r.code === 0;
 }
 
@@ -2428,7 +2434,9 @@ export async function editPrBody(exec: Exec, repo: string, prNumber: number, bod
  * Issue answer the same query, and a forge that refuses it costs that query a
  * row, never the park. */
 export async function labelPr(exec: Exec, repo: string, prNumber: number, label: string): Promise<boolean> {
-  const r = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", label]);
+  const r = await exec([
+    ...planGithubWrite(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", label]).args,
+  ]);
   return r.code === 0;
 }
 
@@ -2472,7 +2480,9 @@ export async function openReviewPr(exec: Exec, input: OpenReviewPrInput): Promis
   const prNumber = await ensurePr(exec, { repo, branch, target, n, title });
   if (prNumber === undefined) return { ok: false };
 
-  const label = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", reviewLabel]);
+  const label = await exec([
+    ...planGithubWrite(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", reviewLabel]).args,
+  ]);
   if (label.code !== 0) return { ok: false, prNumber };
 
   return { ok: true, prNumber };

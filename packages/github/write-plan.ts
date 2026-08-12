@@ -76,6 +76,10 @@ function commandPath(args: readonly string[]): string[] {
  * - `gh -R o/r pr merge <n> --merge --auto [...]`  → unchanged (GraphQL enqueue)
  * - `gh -R o/r pr create --base b --head h --title t --body y [--draft]`
  *   → REST `POST pulls`
+ * - `gh -R o/r pr edit <n> --body b` → REST `PATCH pulls/{n}`
+ * - `gh -R o/r pr edit <n> --add-label l` → REST `POST issues/{n}/labels`
+ * - `gh -R o/r pr ready <n>` → unchanged (GraphQL-only mutation)
+ * - `gh -R o/r pr update-branch <n>` → REST `PUT pulls/{n}/update-branch`
  * - `gh issue|pr comment <n> -R o/r --body y`
  *   → REST `POST issues/{n}/comments`
  * - `gh api <rest-path> --method <verb> ...`
@@ -173,6 +177,38 @@ export function planGithubWrite(
           "-f", `title=${title}`,
           ...(body !== undefined ? ["-f", `body=${body}`] : []),
         ],
+      };
+    }
+  }
+  if (repo && group === "pr" && verb === "ready") return { args, surface: "graphql" };
+  if (repo && group === "pr" && verb === "edit") {
+    const editAt = args.indexOf("edit");
+    const prNumber = args[editAt + 1];
+    const body = flagValue(args, "--body");
+    const addLabels = flagValues(args, "--add-label");
+    const supported = usesOnlyValueFlags(args, editAt + 2, new Set(["-R", "--repo", "--body", "--add-label"]));
+    if (supported && prNumber && /^\d+$/.test(prNumber) && body !== undefined && addLabels.length === 0) {
+      return {
+        surface: "rest",
+        args: ["gh", "api", "-X", "PATCH", `repos/${repo}/pulls/${prNumber}`, "-f", `body=${body}`],
+      };
+    }
+    if (supported && prNumber && /^\d+$/.test(prNumber) && body === undefined && addLabels.length > 0) {
+      return {
+        surface: "rest",
+        args: [
+          "gh", "api", "-X", "POST", `repos/${repo}/issues/${prNumber}/labels`,
+          ...addLabels.flatMap((label) => ["-F", `labels[]=${label}`]),
+        ],
+      };
+    }
+  }
+  if (repo && group === "pr" && verb === "update-branch") {
+    const prNumber = args[args.indexOf("update-branch") + 1];
+    if (prNumber && /^\d+$/.test(prNumber)) {
+      return {
+        surface: "rest",
+        args: ["gh", "api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`],
       };
     }
   }
