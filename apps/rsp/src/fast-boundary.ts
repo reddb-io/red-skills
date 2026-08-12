@@ -26,8 +26,10 @@ const RSP_COMMANDS = new Set([
 ]);
 
 export type FastBoundaryInvocation =
-  | { kind: "argv"; argv: string[] }
-  | { kind: "shell"; commandLine: string };
+  | { kind: "argv"; argv: string[]; level: FastBoundaryLossLevel }
+  | { kind: "shell"; commandLine: string; level: FastBoundaryLossLevel };
+
+export type FastBoundaryLossLevel = "lossless" | "brief" | "terse" | "full";
 
 /**
  * Resolve only the paths that require no RSP-owned work.
@@ -40,9 +42,13 @@ export type FastBoundaryInvocation =
  */
 export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvocation | null {
   const first = argv[0];
+  if (first === "--full" || first === "--brief" || first === "--terse") {
+    if (argv[1] !== "--" || !argv[2]) return null;
+    return { kind: "argv", argv: [...argv.slice(2)], level: first.slice(2) as FastBoundaryLossLevel };
+  }
   if (!first || first.startsWith("-")) {
     if (first !== "--" || !argv[1]) return null;
-    return { kind: "argv", argv: [...argv.slice(1)] };
+    return { kind: "argv", argv: [...argv.slice(1)], level: "lossless" };
   }
   if (first === "proxy") {
     if (process.env.RSP_PROXY_FAIL_INTERNAL === "1") return null;
@@ -51,10 +57,10 @@ export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvoca
     if (commandParts.length !== 1 || !commandParts[0]?.trim()) return null;
     const commandLine = commandParts[0];
     if (mayUseSpecializedProxyExecutor(commandLine)) return null;
-    return { kind: "shell", commandLine };
+    return { kind: "shell", commandLine, level: "lossless" };
   }
   if (RSP_COMMANDS.has(first)) return null;
-  return { kind: "argv", argv: [...argv] };
+  return { kind: "argv", argv: [...argv], level: "lossless" };
 }
 
 export async function runFastBoundary(
