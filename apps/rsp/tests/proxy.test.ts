@@ -64,6 +64,14 @@ describe("rsp proxy segment recognition", () => {
         }),
       ],
     });
+    expect(rewriteProxyCommandLine(
+      "git show --format=%s --no-patch HEAD > release.txt && git fetch origin && git switch main && git merge topic && git branch -d topic",
+      "brief",
+      ["rsp"],
+    )).toMatchObject({
+      commandLine: "rsp --brief git show --format=%s --no-patch HEAD > release.txt && git fetch origin && git switch main && git merge topic && git branch -d topic",
+      matches: [expect.objectContaining({ capabilityId: "git:show", command: "git show --format=%s --no-patch HEAD > release.txt" })],
+    });
   });
 
   it("rewrites proxy segments via bundled entrypoint when rsp is not on PATH", () => {

@@ -34,6 +34,7 @@ const BUNDLES = [
   { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },
   { dest: "release.bundle.min.mjs", sources: ["release.bundle.min.mjs"] },
   { dest: "rsp.bundle.min.mjs", sources: ["rsp.bundle.min.mjs"] },
+  { dest: "rsp-core.bundle.min.mjs", sources: ["rsp-core.bundle.min.mjs"] },
   { dest: "redskilled.bundle.min.mjs", sources: ["redskilled.bundle.min.mjs"] },
 ];
 

@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "rsp": "dist/cli.js"
+    "rsp": "dist/entry.js"
   },
   "files": [
     "dist",
@@ -15,8 +15,11 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json && pnpm bundle",
-    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/rsp.bundle.min.mjs --asset rsp.bundle.min.mjs --minify --reddb-from-package",
+    "bundle": "pnpm bundle:core && pnpm bundle:entry",
+    "bundle:core": "node ../../scripts/bundle-app.mjs --entry src/core-entry.ts --outfile ../../dist/rsp-core.bundle.min.mjs --asset rsp-core.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:entry": "node ../../scripts/bundle-app.mjs --entry src/bundle-entry.ts --outfile ../../dist/rsp.bundle.min.mjs --asset rsp.bundle.min.mjs --minify --reddb-from-package",
     "bench:two-axis": "node --import tsx src/two-axis-benchmark-cli.ts",
+    "bench:boundary": "node --import tsx src/command-boundary-benchmark.ts",
     "bench:two-axis:neutral": "node --import tsx src/two-axis-benchmark-cli.ts --fixture-root tests/fixtures-neutral --corpus-label neutral-third-party --corpus-provenance \"Public run metadata from vitest-dev/vitest Actions run 29274168273 and rust-lang/cargo Actions run 29195830177.\" --corpus-provenance \"Git machine output from public nodejs/node and rust-lang/rust repository history captured on 2026-07-13.\" --corpus-provenance \"Cargo JSON message output follows the published --message-format=json contract with third-party crate-style test names.\" --out bench/results/rsp-two-axis-neutral.toon --summary bench/results/rsp-two-axis-neutral.md --no-require-large-output-fixtures",
     "bench:two-axis:check": "node --import tsx src/two-axis-benchmark-cli.ts --check --out bench/results/rsp-two-axis.toon --summary bench/results/rsp-two-axis.md",
     "gen:ambient-skill": "node --import tsx scripts/gen-ambient-skill.mjs",

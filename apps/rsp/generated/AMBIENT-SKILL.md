@@ -18,13 +18,14 @@ Troubleshooting recipes for hook silence, resident/store splits, and store growt
 
 ## Core model
 
-The resident is the core. The CLI, the wrappers, the pre-exec hook, the
-proxy, and the MCP server are peer clients of one resident process behind a
-unix socket; no surface is a privileged or canonical contact point. The
-resident is the sole owner of the elision store and the telemetry lanes under
-`.red/state/rsp`, auto-spawns on first use, and exits on idle, so a host with
-no MCP server connected is fully supported — summaries, `el:<id>` handles,
-and recovery all work in headless and cron lanes.
+The command boundary is the synchronous data plane. Unknown simple argv runs
+through exact passthrough before configuration, telemetry, store, or resident
+code loads. The resident is the lazy control plane and sole owner of shared
+elision and telemetry state under `.red/state/rsp`; specialized wrappers, the
+CLI, hooks, proxy, and MCP clients contact it only when shared state is needed.
+No surface is a privileged or canonical contact point. A host with no MCP
+server connected is fully supported — summaries, `el:<id>` handles, and
+recovery all work in headless and cron lanes.
 
 ## Permanent Proxy Model
 
@@ -52,6 +53,8 @@ decision means rsp inserted a wrapper; `passed` means it deliberately left the
 command or segment raw; `failed-open` means rsp ran the original command after
 an internal proxy failure. Read `rsp stats` contribution metrics as measured
 routing evidence, not a promise that every command family was compressed.
+Unknown simple commands use argv-preserving passthrough with their stdout,
+stderr, exit status, and termination signal intact, and create no rsp state.
 
 ## Wrapped commands
 
@@ -110,14 +113,17 @@ When you would run one of these commands, run it through `rsp` instead:
 - For `vitest run`, prefer `rsp vitest run` when the summarized output is enough.
 - For `cargo test`, prefer `rsp cargo test` when the summarized output is enough.
 
-For arbitrary shell pipelines or compound commands where only final stdout
-should enter the agent context, call `rsp exec -- "<command line>"` directly.
+For an unlisted simple command, call `rsp <command> <args...>`; rsp preserves
+the argv exactly and stays off the resident and state paths. For shell syntax
+such as redirects, pipelines, and compounds, call `rsp proxy -- "<command
+line>"`; unsupported shapes execute through the original shell. When only
+final stdout should enter the agent context, call `rsp exec -- "<command line>"`.
 Bytes inside pipes remain untouched; stderr and exit status follow the raw
 shell command.
 
-Use raw commands when exact stdout/stderr is the behavior under test, when
-a wrapper does not support the command shape, or when resolving low-level
-git conflicts where every byte matters.
+Use the argv passthrough or explicit proxy path when exact command behavior
+is the contract under test. Resolve low-level git conflicts with raw git when
+every byte of interactive intent belongs to the operator.
 
 ## Standardized Waiting
 

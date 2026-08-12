@@ -344,7 +344,11 @@ function parseShellWords(segment: string): ShellWord[] | null {
       push();
       continue;
     }
-    if (/[()<>`]/.test(char)) return null;
+    // Redirections remain raw shell tokens in the rewritten segment. The shell
+    // continues to own their byte flow; rsp only prefixes the command argv.
+    // Grouping and command substitution are not safely modeled here and keep
+    // the original shell path unchanged.
+    if (/[()`]/.test(char)) return null;
     raw += char;
     value += char;
     inWord = true;

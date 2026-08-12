@@ -282,10 +282,11 @@ awk '
   in_step && /^      - name:/ && $0 != "      - name: GitHub Release" { exit }
   in_step { print }
 ' "$WORKFLOW" >"$github_release_step"
-if grep -qF 'dist/rsp.bundle.min.mjs' "$github_release_step"; then
-  pass "GitHub Release publishes the RSP bundle consumed by the installer"
+if grep -qF 'dist/rsp.bundle.min.mjs' "$github_release_step" &&
+   grep -qF 'dist/rsp-core.bundle.min.mjs' "$github_release_step"; then
+  pass "GitHub Release publishes the RSP launcher and core consumed by the installer"
 else
-  fail "GitHub Release must upload dist/rsp.bundle.min.mjs for standalone installs"
+  fail "GitHub Release must upload both RSP boundary assets for standalone installs"
 fi
 
 # The fleet-activity deferral was REMOVED (2026-07-22): red-publish never

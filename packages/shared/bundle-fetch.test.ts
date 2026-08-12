@@ -160,7 +160,7 @@ describe("cache filename", () => {
   });
 
   it("treats rsp and redskilled as companions of the dev warm path", () => {
-    expect(companionBundlePlugins("dev")).toEqual(["rsp", "redskilled"]);
+    expect(companionBundlePlugins("dev")).toEqual(["rsp", "rsp-core", "redskilled"]);
     expect(companionBundlePlugins("memory")).toEqual([]);
   });
 
