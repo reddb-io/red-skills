@@ -97,9 +97,9 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     expect(formatGithubWriteRouteFailure(report, ["probe"])).toContain(
       `${report.findings.length} GitHub write shell-out(s) remain`,
     );
-    expect(GITHUB_WRITE_SHELLOUT_BASELINE.find(
-      (entry) => entry.path === "apps/dev/src/runtime/gh/issues.ts",
-    )?.count).toBe(7);
+    const issuesPath = "apps/dev/src/runtime/gh/issues.ts";
+    expect(GITHUB_READ_SHELLOUT_BASELINE.some((entry) => entry.path === issuesPath)).toBe(false);
+    expect(GITHUB_WRITE_SHELLOUT_BASELINE.some((entry) => entry.path === issuesPath)).toBe(false);
   });
 
   it("routes every HITL card read and write through packages/github (#3727)", () => {
