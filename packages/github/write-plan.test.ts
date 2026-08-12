@@ -32,6 +32,38 @@ describe("planGithubWrite — the client owns the write rail", () => {
     ]);
   });
 
+  it("realizes issue label and body edits as one REST PATCH", () => {
+    const plan = planGithubWrite([
+      "gh", "-R", "o/r", "issue", "edit", "42",
+      "--remove-label", "running", "--add-label", "ready-for-human", "--body", "next",
+    ], { currentIssueLabels: ["type:bug", "running"] });
+    expect(plan.surface).toBe("rest");
+    expect(plan.args).toEqual([
+      "gh", "api", "-X", "PATCH", "repos/o/r/issues/42",
+      "-f", "body=next",
+      "-F", "labels[]=type:bug",
+      "-F", "labels[]=ready-for-human",
+    ]);
+  });
+
+  it("realizes issue closure as a REST PATCH", () => {
+    const plan = planGithubWrite([
+      "gh", "-R", "o/r", "issue", "close", "42", "--reason", "completed",
+    ]);
+    expect(plan.surface).toBe("rest");
+    expect(plan.args).toEqual([
+      "gh", "api", "-X", "PATCH", "repos/o/r/issues/42",
+      "-f", "state=closed", "-f", "state_reason=completed",
+    ]);
+  });
+
+  it("passes an unsupported issue edit through unchanged", () => {
+    const argv = ["gh", "-R", "o/r", "issue", "edit", "42", "--title", "renamed"];
+    const plan = planGithubWrite(argv);
+    expect(plan.surface).toBe("graphql");
+    expect(plan.args).toBe(argv);
+  });
+
   it("passes an unrouted write through unchanged", () => {
     const argv = ["gh", "-R", "o/r", "pr", "ready", "42"];
     const plan = planGithubWrite(argv);
