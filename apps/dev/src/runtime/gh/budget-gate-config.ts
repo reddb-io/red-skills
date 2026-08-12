@@ -19,7 +19,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import yaml from "js-yaml";
 import {
-  DEFAULT_GITHUB_BUDGET_GATE,
   GITHUB_BUDGET_GATE_ENV,
   githubBudgetGate,
   type GithubBudgetGateMode,
@@ -74,4 +73,4 @@ function readDeclaredGate(path: string): unknown {
   return declared === undefined ? undefined : declared;
 }
 
-export { DEFAULT_GITHUB_BUDGET_GATE };
+export { DEFAULT_GITHUB_BUDGET_GATE } from "@reddb-io/github";
