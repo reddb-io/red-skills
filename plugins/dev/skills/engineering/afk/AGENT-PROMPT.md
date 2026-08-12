@@ -10,6 +10,18 @@ You are an AFK agent invoked by `/afk`. You are running inside an isolated git w
 
 The handoff file's `<issue-body>` element wraps the issue body verbatim, which carries the `## Agent brief` markdown section written by `/triage`. Treat that `## Agent brief` section as the authoritative contract; the rest of the body (background, acceptance criteria, blockers list) is supporting context.
 
+## GitHub Read Rail (binding)
+
+GitHub reads use `gh api` REST forms. Never use `gh issue view`, `gh pr view`, or `gh pr checks`; those convenience commands spend the GraphQL pool outside the Worker's instrumented GitHub client. Use these equivalents directly so the read surface is explicit and attributable:
+
+| Read | Required REST form |
+| --- | --- |
+| Issue by number | `gh api repos/{owner}/{repo}/issues/{number}` |
+| Pull request by number | `gh api repos/{owner}/{repo}/pulls/{number}` |
+| Check runs for a commit | `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` |
+
+For any other GitHub read, use its `gh api repos/{owner}/{repo}/...` REST endpoint. Do not use a `gh issue`, `gh pr`, or `gh search` convenience read as a substitute.
+
 ## Handoff Anatomy (read this carefully — it changes how you read the file)
 
 The handoff is rebuilt **fresh on every worker invocation** from the live issue. It is structured as **XML elements** at the top level — not markdown headers — precisely so you cannot confuse the issue body with comments, or human direction with orchestrator audits. The seven repository-orientation and conversational elements appear in this relative order (gate, resume, repair, and output-shaping sections may also appear at their documented seams):
