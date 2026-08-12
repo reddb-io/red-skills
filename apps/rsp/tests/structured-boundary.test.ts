@@ -94,4 +94,21 @@ describe("rsp lossless structured-data boundary", () => {
 
     expect(renderStructuredContract(contract, dependencies)).toEqual(contract);
   });
+
+  it("keeps XML byte-identical when tq cannot complete the round-trip proof", () => {
+    const original = Buffer.from("<root/>");
+
+    expect(renderStructuredBoundary(original, { runTq: () => undefined })).toEqual(original);
+  });
+
+  it("keeps XML byte-identical when tq's round-trip changes the canonical tree", () => {
+    const original = Buffer.from("<root/>");
+    const conversions = [
+      "xml:\n  declaration: null\n  children[1]:\n    - type: element\n      name: root\n      attributes: []\n      children: []\n      empty: true\n",
+      "<root></root>\n",
+      "xml:\n  declaration: null\n  children[1]:\n    - type: element\n      name: root\n      attributes: []\n      children: []\n      empty: false\n",
+    ];
+
+    expect(renderStructuredBoundary(original, { runTq: () => conversions.shift() })).toEqual(original);
+  });
 });
