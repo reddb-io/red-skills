@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/red-skills-brain",
-  "version": "3.17.4",
+  "version": "3.17.5",
   "description": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/reddb-io/red-skills",
