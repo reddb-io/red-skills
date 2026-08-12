@@ -1,7 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { planGithubRestRead } from "@reddb-io/github";
 import { git, gh, pnpm } from "./exec.js";
 import type { MedicIo } from "../core/pr-medic.js";
+import { inferGithubRepoSlug } from "./wire/github-slug.js";
 
 const MEDIC_LOG_TAIL_CHARS = 4000;
 
@@ -10,12 +12,16 @@ const MEDIC_LOG_TAIL_CHARS = 4000;
  * (`.red/tmp/worktrees/feedback/medic-<pr>`), created on first use and removed
  * by `cleanup` whatever the outcome. */
 export function createMedicIo(root: string, log?: (line: string) => void): MedicIo {
+  const repo = inferGithubRepoSlug(root);
+  const restPath = (suffix: string): string => `repos/${repo}/${suffix}`;
   const worktreeDir = (pr: number): string =>
     join(root, ".red", "tmp", "worktrees", "feedback", `medic-${pr}`);
   const branchOf = async (pr: number): Promise<string> => {
-    const r = await gh(["pr", "view", String(pr), "--json", "headRefName", "--jq", ".headRefName"], { cwd: root });
+    const plan = planGithubRestRead({ kind: "pr", number: pr, fields: ["headRefName"], repo });
+    if (plan.outcome !== "plan") throw new Error(plan.reason);
+    const r = await gh(plan.args, { cwd: root });
     if (r.code !== 0) throw new Error(`gh pr view #${pr} failed: ${r.stderr.trim()}`);
-    return r.stdout.trim();
+    return String(plan.decode(r.stdout).headRefName ?? "");
   };
   const ensureWorktree = async (pr: number): Promise<string> => {
     const dir = worktreeDir(pr);
@@ -35,13 +41,18 @@ export function createMedicIo(root: string, log?: (line: string) => void): Medic
       // Failing-log tail from the newest failed run on the PR branch.
       let logTail = "";
       const branch = await branchOf(pr);
-      const runs = await gh(
-        ["run", "list", "--branch", branch, "--limit", "5", "--json", "databaseId,conclusion", "--jq", '.[]|select(.conclusion=="failure")|.databaseId'],
-        { cwd: root },
-      );
+      const runsPlan = planGithubRestRead({
+        kind: "rest",
+        path: restPath("actions/runs"),
+        args: ["-f", `branch=${branch}`, "-f", "status=failure", "-f", "per_page=5", "--jq", ".workflow_runs[].id"],
+      });
+      if (runsPlan.outcome !== "plan") throw new Error(runsPlan.reason);
+      const runs = await gh(runsPlan.args, { cwd: root });
       const failedRun = runs.stdout.trim().split("\n").filter(Boolean)[0];
       if (failedRun) {
-        const logs = await gh(["run", "view", failedRun, "--log-failed"], { cwd: root });
+        const logsPlan = planGithubRestRead({ kind: "rest", path: restPath(`actions/runs/${failedRun}/logs`) });
+        if (logsPlan.outcome !== "plan") throw new Error(logsPlan.reason);
+        const logs = await gh(logsPlan.args, { cwd: root });
         logTail = logs.stdout.slice(-MEDIC_LOG_TAIL_CHARS);
       }
       // Conflicts: attempt the merge from main; collect conflicted contents.
