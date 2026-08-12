@@ -77,7 +77,7 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
         warn: () => undefined,
       })),
       registration: () => port.registration(),
-      register: (standing) => drain(root, standing),
+      register: (standing) => drain(root, standing, { standing: true }),
       renew: () => renewRegistrationDelivery({
         port,
         publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
