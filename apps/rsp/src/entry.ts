@@ -6,7 +6,7 @@ import type { renderCliFailure as RenderCliFailure } from "./core-entry.js";
 
 interface RspCore {
   main: typeof CoreMain;
-  renderAutomaticCommandOutput(stdout: Buffer, command: string, level?: "lossless" | "brief" | "terse" | "full"): Promise<Buffer>;
+  renderAutomaticCommandOutput(stdout: Buffer, command: string, level?: "automatic" | "lossless" | "brief" | "terse" | "full"): Promise<Buffer>;
   renderCliFailure: typeof RenderCliFailure;
 }
 
