@@ -332,6 +332,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const liveness = options.liveness ?? detectWorkerLiveness;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
+  /**
+   * The teardown each Worker is currently inside, keyed by its Worker id.
+   *
+   * A stop now yields to the event loop for as long as the host takes to
+   * confirm the death — which is the point — so two asks for the SAME Worker
+   * can overlap where a blocking stop accidentally serialised them. The map is
+   * what keeps the death bookkeeping exactly-once: the second ask joins the
+   * first's teardown instead of sending a second one, so one Worker is one
+   * death on the lane and one slot given back. Bounded by the live Worker set:
+   * an entry exists only while a teardown is in flight, and stops for DIFFERENT
+   * Workers still run at the same time.
+   */
+  const workerStops = new Map<string, Promise<boolean>>();
   const unitInventory = options.unitInventory ??
     (() =>
       maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost)
@@ -1502,17 +1515,44 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     orphanedRegistrations.delete(projectLabel);
   }
 
+  /**
+   * Tear one Worker down at most once, whoever asks and however often.
+   *
+   * `settle` is the daemon's own bookkeeping — forget the Worker, write its
+   * death, re-arm the idle gate — and it runs on the ONE teardown that actually
+   * happened, in the order it happened, never on a caller that merely joined.
+   * Every ask still gets the same truthful answer: the awaited promise resolves
+   * when the host has confirmed the death, not when the request was placed.
+   */
+  function endWorkerOnce(
+    worker: RedskilledWorkerView,
+    settle: (confirmed: boolean) => void,
+  ): Promise<boolean> {
+    const joined = workerStops.get(worker.worker_id);
+    if (joined != null) return joined;
+    const teardown = (async () => {
+      let confirmed = false;
+      // A refused stop still releases the daemon's claim; the caller's own event
+      // names what survived rather than forging host confirmation.
+      try { confirmed = (await stopProbe(worker)) === true; } catch {}
+      settle(confirmed);
+      return confirmed;
+    })().finally(() => {
+      if (workerStops.get(worker.worker_id) === teardown) workerStops.delete(worker.worker_id);
+    });
+    workerStops.set(worker.worker_id, teardown);
+    return teardown;
+  }
+
   /** Stop one Worker the daemon holds, and record its death. */
   async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
-    let confirmed = false;
-    // A refused stop still releases the daemon's claim; the event names that the
-    // process group may survive rather than forging host confirmation.
-    try { confirmed = (await stopProbe(worker)) === true; } catch {}
-    forgetWorker(worker.worker_id);
-    const pgid = worker.pgid ?? worker.pid;
-    record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
-      `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
-    armIdleTimer();
+    await endWorkerOnce(worker, (confirmed) => {
+      forgetWorker(worker.worker_id);
+      const pgid = worker.pgid ?? worker.pid;
+      record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
+        `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
+      armIdleTimer();
+    });
     return true;
   }
 
@@ -1721,16 +1761,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   async function killWorkerOverBudget(workerId: string, detail: string): Promise<boolean> {
     const worker = workers.get(workerId);
     if (!worker) return false;
-    try {
-      await stopProbe(worker);
-    } catch {
-      // The kill is recorded either way: a stop the host refused still ends the
-      // daemon's claim on the budget, and a silent failure would leave the
-      // accounting holding room for a Worker nobody is tracking any more.
-    }
-    forgetWorker(workerId);
-    record("worker-budget-kill", worker, detail);
-    armIdleTimer();
+    // The kill is recorded either way: a stop the host refused still ends the
+    // daemon's claim on the budget, and a silent failure would leave the
+    // accounting holding room for a Worker nobody is tracking any more. It joins
+    // a teardown already in flight rather than starting a second one, so a floor
+    // tick that lands on a Worker a project is already stopping writes no second
+    // death and gives no second slot back.
+    await endWorkerOnce(worker, () => {
+      forgetWorker(workerId);
+      record("worker-budget-kill", worker, detail);
+      armIdleTimer();
+    });
     return true;
   }
 
