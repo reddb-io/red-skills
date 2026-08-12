@@ -3,7 +3,7 @@ import type { StandingDrainConfig } from "../core/config.js";
 /** The session-local operations needed to maintain one project's drain policy. */
 export interface StandingDrainMaintenance {
   standing(): StandingDrainConfig | null;
-  registration(): Promise<unknown | null>;
+  registration(): Promise<{ readonly standing?: boolean } | null>;
   register(config: StandingDrainConfig): Promise<unknown>;
   renew(): Promise<unknown>;
 }
@@ -21,8 +21,9 @@ export async function maintainStandingDrain(
   maintenance: StandingDrainMaintenance,
 ): Promise<unknown> {
   const standing = maintenance.standing();
-  if (standing !== null && await maintenance.registration() === null) {
-    await maintenance.register(standing);
+  if (standing !== null) {
+    const held = await maintenance.registration();
+    if (held === null || held.standing !== true) await maintenance.register(standing);
   }
   return maintenance.renew();
 }
