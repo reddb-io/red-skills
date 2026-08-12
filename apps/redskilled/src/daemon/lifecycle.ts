@@ -2275,12 +2275,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   recoverRegistrations(clock());
   await recordDaemonBootRecovery({ eventLane, laneEvents, heldLease, ownerPid: owner.pid,
     startedAt, socketPath: paths.socketPath, recovery: bootRecovery });
-  // The bounded exception. A daemon that has just come back holds Workers it has
-  // never heard a heartbeat from, so for those — and only those — it reads the log
-  // ONCE, from the path the client GAVE at spawn and carried on the event lane. A
-  // Worker whose client gave no path stays without a line until it publishes one;
-  // guessing a filename inside its workspace would be the derived layout ADR 0130
-  // rule 3 forbids. Recovery is not the normal path.
+  // The bounded exception: for reattached Workers only, read the log ONCE, from
+  // the path the client GAVE at spawn and carried on the event lane. No path →
+  // no line until the Worker publishes one; guessing a filename would be the
+  // derived layout ADR 0130 rule 3 forbids. Recovery is not the normal path.
   for (const worker of reattachment.alive) {
     if (worker.log_path == null || logLines.has(worker.worker_id)) continue;
     const recovered = await readLogTail(worker.log_path).catch(() => null);
