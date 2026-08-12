@@ -1,9 +1,9 @@
 benchmark: rsp-two-axis
 corpus:
   label: home
-  fixture_count: 34
-  filters[15]: "cargo:test","cat:file","exec:--","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
-  large_output_filters[5]: "cat:file","exec:--","git:diff","git:log","vitest:run"
+  fixture_count: 35
+  filters[16]: "automatic:output","cargo:test","cat:file","exec:--","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
+  large_output_filters[6]: "automatic:output","cat:file","exec:--","git:diff","git:log","vitest:run"
   provenance[1]: Repo-authored rsp benchmark fixtures under apps/rsp/tests/fixtures.
 method:
   tokenizer: "js-tiktoken:gpt-4o"
@@ -20,7 +20,61 @@ method:
     captured_at: "2026-07-13T11:39:15.140Z"
   external_claims[1]{layer,claim,status,measured_locally,note}:
     external-context-optimization,Host/provider conversation-history optimization and cache-prefix alignment can reduce repeated context spend.,cited_unverified,false,The rsp benchmark measures shell-output fixtures only; external history-layer claims are not reproduced here.
-filters[15]:
+filters[16]:
+  - filter: "automatic:output"
+    mode: active
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    brief:
+      median_delta_pct: 9.4
+      p90_delta_pct: 9.4
+      fidelity_pass_rate_pct: 100
+      source: measured
+    terse:
+      median_delta_pct: 10.5
+      p90_delta_pct: 10.5
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      coverage: not-covered
+      label: "rtk: not-covered"
+      source: not-covered
+    headroom:
+      coverage: not-covered
+      label: "headroom: not-covered"
+      source: not-covered
+    oracle_capture:
+      raw:
+        token_count: 266
+        capture_pct: 0
+        source: recorded
+      rsp:
+        token_count: 241
+        capture_pct: 12.3
+        source: measured
+      terse:
+        token_count: 238
+        capture_pct: 13.7
+        source: measured
+      rtk:
+        coverage: not-covered
+        label: "rtk: not-covered"
+        source: not-covered
+      headroom:
+        coverage: not-covered
+        label: "headroom: not-covered"
+        source: not-covered
+      oracle_ceiling:
+        token_count: 62
+        capture_pct: 100
+        source: fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 9.4,9.4,100,measured
+      terse: 10.5,10.5,100,measured
   - filter: "cargo:test"
     mode: active
     fixture_count: 3
@@ -726,18 +780,18 @@ filters[15]:
       brief: 58.8,100,100,measured
       terse: 70,100,100,measured
 aggregate:
-  fixture_count: 34
+  fixture_count: 35
   raw:
-    token_count: 99332
+    token_count: 99598
     capture_pct: 0
     source: recorded
   rsp:
-    token_count: 14840
-    capture_pct: 99.4
+    token_count: 15081
+    capture_pct: 99.2
     source: measured
   terse:
-    token_count: 14490
-    capture_pct: 99.8
+    token_count: 14728
+    capture_pct: 99.6
     source: measured
   rtk:
     token_count: 646
@@ -748,20 +802,20 @@ aggregate:
     capture_pct: 0.6
     source: recorded
   oracle_ceiling:
-    token_count: 14346
+    token_count: 14408
     capture_pct: 100
     source: fixture-oracle
 quality_corpora[4]:
   - corpus: pre-existing-quality
-    fixture_count: 31
-    filters[14]: "cargo:test","cat:file","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
+    fixture_count: 32
+    filters[15]: "automatic:output","cargo:test","cat:file","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
     oracle_capture[6:]{token_count,capture_pct,source}:
-      raw: 66183,0,recorded
-      rsp: 13989,99.9,measured
-      terse: 13665,97.6,measured
+      raw: 66449,0,recorded
+      rsp: 14230,99.7,measured
+      terse: 13903,98.9,measured
       rtk: 646,4.9,recorded
       headroom: 64367,0.6,recorded
-      oracle_ceiling: 14001,100,fixture-oracle
+      oracle_ceiling: 14063,100,fixture-oracle
   - corpus: anomaly
     fixture_count: 1
     filters[1]: "exec:--"
@@ -856,7 +910,9 @@ end_task_parity[6]{task,fixture,raw_answer,rsp_answer,same_answer}:
   router degrades mixed ambiguous content to untyped fallback,exec-router-mixed-content,untyped,untyped,true
   which PR is first?,pr-list-default,42,42,true
   how many failed?,vitest-many-failures,5/8 failed · 2 suites · 3.2s,5/8 failed · 2 suites · 3.2s,true
-anti_suppression_audit[30]{filter,level,audited,note}:
+anti_suppression_audit[32]{filter,level,audited,note}:
+  "automatic:output",brief,ok,"large repetitive output declares deterministic caps and aggregates, keeps one recovery handle, and round-trips original bytes"
+  "automatic:output",terse,ok,"large repetitive output declares deterministic caps and aggregates, keeps one recovery handle, and round-trips original bytes"
   "cargo:test",brief,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
   "cargo:test",terse,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
   "cat:file",brief,ok,file reads keep code outlines or bounded text plus an elision handle for original bytes; binary output passes through
@@ -887,4 +943,4 @@ anti_suppression_audit[30]{filter,level,audited,note}:
   "git:status",terse,justified,clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON
   "vitest:run",brief,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
   "vitest:run",terse,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
-summary: "34 fixtures, 15 filters; shipped modes apply admission threshold 60%"
+summary: "35 fixtures, 16 filters; shipped modes apply admission threshold 60%"
