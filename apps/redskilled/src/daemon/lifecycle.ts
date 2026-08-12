@@ -636,7 +636,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     for (const [label, lapsed] of [...recoverableRegistrations]) {
       // Recovery is a belt, not immortal intent. After one original window there
       // is no live statement left to restore, so the extra polling stops.
-      if (nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+      if (lapsed.standing !== true && nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
         recoverableRegistrations.delete(label);
         changed = true;
         continue;
@@ -857,7 +857,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     expireLapsedRegistrations(now);
     const nowMs = Date.parse(now);
     for (const [label, lapsed] of [...recoverableRegistrations]) {
-      if (Number.isFinite(nowMs) && nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+      if (
+        lapsed.standing !== true &&
+        Number.isFinite(nowMs) &&
+        nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms
+      ) {
         recoverableRegistrations.delete(label);
       }
     }
