@@ -1,3 +1,11 @@
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+import {
+  createGithubAttributionLedger,
+  createGithubClient,
+  type GithubClient,
+} from "@reddb-io/github";
+import { stateDir } from "@reddb-io/shared/red-paths.js";
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
 import { resolveGhQuotaBackoff, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
 
@@ -14,6 +22,8 @@ export interface GhContext {
    * closure assembly can be driven without touching the OS. See exec.ts::ExecFn.
    */
   exec?: ExecFn;
+  /** Shared routed GitHub reads; tests inject this instead of opening a socket. */
+  github?: Pick<GithubClient, "conditionalRest" | "conditionalPaginate">;
   /**
    * Overrides the quota-backoff options this context's gh calls run with.
    * ABSENT MEANS DEFAULT, NOT DISABLED (issue #2800): rate-limit responses
@@ -23,6 +33,57 @@ export interface GhContext {
    * response is returned so the caller can park with an explicit quota reason.
    */
   quotaBackoff?: GhQuotaBackoffOpts;
+}
+
+export interface GithubRepoCoordinates {
+  readonly owner: string;
+  readonly repo: string;
+}
+
+const routedClients = new WeakMap<GhContext, Pick<GithubClient, "conditionalRest" | "conditionalPaginate">>();
+
+function trackerToken(): string {
+  const env = (
+    process.env.REDSKILLED_HOST_TOKEN ??
+    process.env.GITHUB_TOKEN ??
+    process.env.GH_TOKEN ??
+    ""
+  ).trim();
+  if (env !== "") return env;
+  try {
+    return execFileSync("gh", ["auth", "token"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Resolve the owner/repository pair required by Octokit's typed REST routes. */
+export function githubRepo(ctx: GhContext): GithubRepoCoordinates | null {
+  const [owner, repo, ...extra] = ctx.repo.trim().split("/");
+  return owner && repo && extra.length === 0 ? { owner, repo } : null;
+}
+
+/** One context-lifetime routed client, preserving conditional validators across polls. */
+export function githubReadClient(
+  ctx: GhContext,
+): Pick<GithubClient, "conditionalRest" | "conditionalPaginate"> {
+  if (ctx.github) return ctx.github;
+  const held = routedClients.get(ctx);
+  if (held) return held;
+  const token = trackerToken();
+  if (token === "") throw new Error("GitHub reads require an authenticated tracker credential");
+  const client = createGithubClient({
+    token,
+    attribution: createGithubAttributionLedger({
+      path: join(stateDir(ctx.cwd), "github", "spend.toonl"),
+    }),
+  });
+  routedClients.set(ctx, client);
+  return client;
 }
 
 /** Per-call quota policy. Omitted → the context default (backoff ON). */
