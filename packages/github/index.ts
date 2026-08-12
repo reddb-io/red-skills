@@ -140,6 +140,9 @@ export {
   type GithubRestRead,
   type GithubRestReadPlan,
   type GithubRestReadRequest,
+  type GithubRestEndpointReadRequest,
+  type GithubGraphqlReadRequest,
+  type GithubSingleObjectRestReadRequest,
   type GithubRestReadUnavailable,
   type GithubSingleObjectKind,
 } from "./rest-plan.js";
