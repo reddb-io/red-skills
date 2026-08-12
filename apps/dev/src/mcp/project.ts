@@ -103,9 +103,9 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
   ]);
   const held = registrationState?.held;
   const lapse = registrationState?.lapse;
-  const allLiveWorkers = monitor.workers.filter(
-    (worker) => worker.pidLive === true || worker.live,
-  );
+  // No pre-filter: attribution owns the liveness qualification, and a worker
+  // liveness cannot prove must land in unattributed, not vanish (#3660).
+  const allLiveWorkers = monitor.workers;
   // Attribution is the HOST's, never a pid map of our own: a Worker is ours when
   // the daemon says its project is ours. A stamp for another project — or none
   // at all — lands in the unattributed bucket even when the pid looks familiar.
