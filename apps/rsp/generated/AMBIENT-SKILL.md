@@ -59,8 +59,9 @@ decision means rsp inserted a wrapper; `passed` means it deliberately left the
 command or segment raw; `failed-open` means rsp ran the original command after
 an internal proxy failure. Read `rsp stats` contribution metrics as measured
 routing evidence, not a promise that every command family was compressed.
-Unknown simple commands preserve argv, stderr, exit status, and termination signal
-and create no rsp state. Pipeline stages receive native bytes; only completed final
+Unknown simple commands preserve argv, stderr, exit status, and termination signal.
+Ordinary passthrough creates no rsp state; only a qualifying lossy summary lazily
+mints recovery state. Pipeline stages receive native bytes; only completed final
 stdout may cross the lossless structured-data boundary.
 
 ## Wrapped commands
