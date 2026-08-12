@@ -176,9 +176,10 @@ export function resolveBundle(input: ResolveBundleInput): string {
  * host resolves from the shared cache must be warmed by the plugin it ships
  * beside or it never lands there at all.
  *
- * `rsp` is part of the dev plugin surface: the PATH shim and shell hooks resolve
- * it from the shared bundle cache, but no SessionStart hook invokes
- * `red-fetch.mjs rsp <version>` directly.
+ * `rsp` and its lazy `rsp-core` asset are part of the dev plugin surface: the
+ * PATH shim and shell hooks resolve the launcher from the shared bundle cache,
+ * and modeled commands import the same-version core beside it. No SessionStart
+ * hook invokes either companion directly.
  *
  * `redskilled` is the same shape and the failure was worse (#3074). The
  * documented Claude Code `statusLine` globs
@@ -192,7 +193,7 @@ export function resolveBundle(input: ResolveBundleInput): string {
  * the artifact the render command needs is already on disk when it looks.
  */
 export function companionBundlePlugins(plugin: string): readonly string[] {
-  return plugin === "dev" ? ["rsp", "redskilled"] : [];
+  return plugin === "dev" ? ["rsp", "rsp-core", "redskilled"] : [];
 }
 
 /** Bundle filename inside the npm package tarball's `dist/`. */

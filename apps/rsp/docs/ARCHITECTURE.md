@@ -12,9 +12,16 @@ block the command the operator asked to run.
 
 ## CLI and Wrappers
 
-`apps/rsp/src/cli.ts` is the entry point. It parses the top-level command,
-resolves `.red/config.yaml`, starts or contacts the resident when needed, and
-dispatches to wrapper modules:
+`apps/rsp/src/entry.ts` is the installed entry point. The release bundle uses
+the equivalent `bundle-entry.ts`: a small, independently parsed launcher beside
+`rsp-core.bundle.min.mjs`. `fast-boundary.ts` executes unknown simple commands
+with their original argv and inherited streams before configuration, telemetry,
+store, or resident modules load. Shell compounds that contain no modeled
+segment execute through their original shell string on the same fast path.
+
+Modeled and RSP-owned commands load `core-entry.ts`, whose `main()` parses the
+top-level command, resolves `.red/config.yaml`, contacts the resident only when
+shared state is needed, and dispatches to wrapper modules:
 
 - `git-wrapper.ts` for git status, diff, log, show, blame, branch, commit, and
   push.
@@ -68,12 +75,24 @@ Recognized segments emit decision telemetry with hook `proxy`, decision
 them with decision `passed`, reason `lossless-gh-json-jq`, and leaves the exact
 segment text unchanged.
 
+Redirections stay owned by the shell. A safely modeled segment keeps its raw
+redirect suffix when rsp prefixes the specialized executor; grouping, command
+substitution, malformed syntax, and other ambiguous shapes keep the original
+shell execution path. Native `&&` and `||` therefore retain their exact
+short-circuit behavior even in mixed modeled/unmodeled compounds.
+
 If proxy routing fails after parsing the original command, `rsp proxy` appends a
 `failed-open` decision with reason `proxy-internal-error` and runs the original
 command line. If parsing fails before an original command is known, it surfaces
 the usage error instead of inventing a command to run.
 
 ## Resident Lifecycle
+
+The resident is the lazy control plane for shared state, not a prerequisite for
+the synchronous command data plane. Exact argv passthrough starts no resident,
+opens no store, and writes no telemetry or state file. Commands that transform,
+recover, coordinate, or account for output load the core and contact the
+resident as described below.
 
 The resident is started through `rsp server` or warmed by client calls through
 `ensureResidentServer()` and `warmResidentServer()`. Runtime paths come from the
