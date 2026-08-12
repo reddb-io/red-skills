@@ -56,6 +56,8 @@ import { collectActivityReview } from "../commands/activity-review.js";
 import { executeTriage } from "../commands/triage.js";
 import { executeRespond } from "../commands/respond.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
+import { createRedskilledBirthPort } from "../runtime/redskilled-birth.js";
+import { hostFingerprintPrefix } from "../core/host-identity.js";
 
 import type { DevAfkMcpOperations, DevAfkMcpRuntime } from "./operations.js";
 import { dispatchArgs, buildWaitArgs, defaultMcpRuntime, resolveConfiguredBase, latestClaimPerWorker } from "./operations.js";
@@ -480,24 +482,34 @@ export function createDefaultDevAfkMcpOperations(
     async claimStatus(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
+      const deadWorkerIds = new Set(
+        await createRedskilledBirthPort({ root }).recordedDeadWorkerIds().catch(() => []),
+      );
+      const localPrefix = hostFingerprintPrefix();
+      const daemonRecordedDead = (worker: string): boolean =>
+        worker.startsWith(localPrefix) && deadWorkerIds.has(worker.slice(localPrefix.length));
       const statusOf = async (issue: number) => {
         const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
         const latest = latestClaimPerWorker(records);
         const holders = [...latest.values()].filter((record) => record.kind === "claim");
+        const deadHolders = holders.filter((record) => daemonRecordedDead(record.worker));
         return {
           issue,
+          daemon_recorded_dead: deadHolders.map((record) => record.worker),
           records: records.map((record) => ({
             comment_id: record.commentId,
             worker: record.worker,
             kind: record.kind,
             runner: record.runner ?? "",
             created_at: record.createdAt ?? "",
+            daemon_liveness: daemonRecordedDead(record.worker) ? "dead" : "unknown",
           })),
           holders: holders.map((record) => ({
             worker: record.worker,
             comment_id: record.commentId,
             runner: record.runner ?? "",
             created_at: record.createdAt ?? "",
+            daemon_liveness: daemonRecordedDead(record.worker) ? "dead" : "unknown",
           })),
         };
       };
