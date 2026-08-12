@@ -196,8 +196,8 @@ describe("planGithubWrite — the client owns the write rail", () => {
       args: [
         "gh", "api", "-X", "POST", "repos/o/r/labels",
         "-f", "name=Sandcastle",
-        "-f", "description=Issues for Sandcastle to work on",
         "-f", "color=F9A825",
+        "-f", "description=Issues for Sandcastle to work on",
       ],
     });
   });
