@@ -30,13 +30,13 @@ filters[16]:
       fidelity_pass_rate_pct: 100
       source: recorded
     brief:
-      median_delta_pct: 9.4
-      p90_delta_pct: 9.4
+      median_delta_pct: 18
+      p90_delta_pct: 18
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
-      median_delta_pct: 10.5
-      p90_delta_pct: 10.5
+      median_delta_pct: 19.2
+      p90_delta_pct: 19.2
       fidelity_pass_rate_pct: 100
       source: measured
     rtk:
@@ -53,12 +53,12 @@ filters[16]:
         capture_pct: 0
         source: recorded
       rsp:
-        token_count: 241
-        capture_pct: 12.3
+        token_count: 218
+        capture_pct: 23.5
         source: measured
       terse:
-        token_count: 238
-        capture_pct: 13.7
+        token_count: 215
+        capture_pct: 25
         source: measured
       rtk:
         coverage: not-covered
@@ -73,8 +73,8 @@ filters[16]:
         capture_pct: 100
         source: fixture-oracle
     hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
-      brief: 9.4,9.4,100,measured
-      terse: 10.5,10.5,100,measured
+      brief: 18,18,100,measured
+      terse: 19.2,19.2,100,measured
   - filter: "cargo:test"
     mode: active
     fixture_count: 3
@@ -786,12 +786,12 @@ aggregate:
     capture_pct: 0
     source: recorded
   rsp:
-    token_count: 15081
+    token_count: 15058
     capture_pct: 99.2
     source: measured
   terse:
-    token_count: 14728
-    capture_pct: 99.6
+    token_count: 14705
+    capture_pct: 99.7
     source: measured
   rtk:
     token_count: 646
@@ -811,8 +811,8 @@ quality_corpora[4]:
     filters[15]: "automatic:output","cargo:test","cat:file","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
     oracle_capture[6:]{token_count,capture_pct,source}:
       raw: 66449,0,recorded
-      rsp: 14230,99.7,measured
-      terse: 13903,98.9,measured
+      rsp: 14207,99.7,measured
+      terse: 13880,98.7,measured
       rtk: 646,4.9,recorded
       headroom: 64367,0.6,recorded
       oracle_ceiling: 14063,100,fixture-oracle
