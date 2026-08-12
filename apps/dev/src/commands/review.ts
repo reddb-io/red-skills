@@ -19,7 +19,7 @@ import { makeExtractReview, reviewFindingsSchema } from "../core/review-extract.
 import { buildReviewGh } from "../runtime/review-gh.js";
 import { actorTrustSignals, type GhContext } from "../runtime/gh.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
-import { inferGithubRepoSlug } from "../runtime/wire/github-slug.js";
+import { inferGitHubRepoSlug } from "../runtime/wire/github-slug.js";
 
 const REVIEW_FLAG_SCHEMA = {
   pr: { kind: "value", coerce: (raw: string): number => Number(raw) },
@@ -34,7 +34,7 @@ function isRunner(value: string): value is AgentRunner {
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   if (explicit?.trim()) return explicit.trim();
-  return inferGithubRepoSlug(cwd);
+  return inferGitHubRepoSlug(cwd);
 }
 
 /**
