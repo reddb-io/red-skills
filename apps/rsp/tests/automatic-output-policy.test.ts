@@ -119,6 +119,45 @@ describe("rsp automatic output policy", () => {
     expect(valueAt(decoded, ["rows", 0, "path"])).toBe("./packages/compiler-fixtures/alpha/target");
     expect(valueAt(decoded, ["rows", 4, "size_kib"])).toBe(138_240);
   });
+
+  it("keeps large non-repetitive structure and command documentation complete", async () => {
+    const store = new MemoryStore();
+    const uniqueRows = Array.from({ length: 30 }, (_, index) => Object.fromEntries([
+      [`field_${index}`, `unique-${index}`],
+      ["description", "non-repetitive structured fixture".repeat(8)],
+    ]));
+    const structured = Buffer.from(JSON.stringify(uniqueRows));
+    const cargoHelp = Buffer.from("Usage: cargo [+toolchain] [OPTIONS] [COMMAND]\n\nCommands:\n    build    Compile the current package\n    test     Execute tests\n");
+    const rgDocs = Buffer.from("ripgrep recursively searches directories for a regex pattern.\nUse -g to include or exclude paths and --type-list to inspect known file types.\n");
+
+    const structuredResult = await renderAutomaticOutput(structured, {
+      command: "unique-report --json",
+      level: "lossless",
+      store,
+      sizeThresholdBytes: 64,
+      repetitionThresholdRows: 20,
+    });
+    const cargoResult = await renderAutomaticOutput(cargoHelp, {
+      command: "cargo --help",
+      level: "lossless",
+      store,
+      sizeThresholdBytes: 64,
+      repetitionThresholdRows: 2,
+    });
+    const rgResult = await renderAutomaticOutput(rgDocs, {
+      command: "rg --help",
+      level: "lossless",
+      store,
+      sizeThresholdBytes: 64,
+      repetitionThresholdRows: 2,
+    });
+
+    expect(structuredResult.lossy).toBe(false);
+    expect(decode(structuredResult.stdout.toString("utf8"))).toEqual(uniqueRows);
+    expect(cargoResult.stdout).toEqual(cargoHelp);
+    expect(rgResult.stdout).toEqual(rgDocs);
+    expect(store.mintCalls).toBe(0);
+  });
 });
 
 function valueAt(value: unknown, path: readonly (string | number)[]): unknown {
