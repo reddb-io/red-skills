@@ -41,7 +41,11 @@ import {
   type RedskilledPresence,
 } from "./daemon-presence.js";
 import { readRedskilledLeaseFile } from "./session-lease.js";
-import { buildRedskilledNotRunningStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
+import {
+  buildRedskilledNotRunningStop,
+  type RedskilledDaemonStopped,
+} from "./daemon-stop.js";
+import { stopUnreachableRedskilledHolder, waitForRedskilledShutdown } from "./daemon-termination.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import { RedskilledMachineHeldError } from "./machine-scope.js";
 import type { RedskilledLaunchTemplate } from "./launch-template.js";
@@ -443,8 +447,9 @@ export async function requestRedskilled(
  *
  * **Never auto-spawns.** Every other client call starts a daemon that is not
  * there, and doing that here would mean a stop first births the very process it
- * was asked to remove — so the socket is probed directly and a silent one is a
- * success with a stated reason (#2919).
+ * was asked to remove — so the socket is probed directly. A genuinely absent
+ * daemon is a success with a stated reason; a live holder that cannot answer is
+ * signalled directly because stop is the recovery verb (#2919, #3658).
  *
  * The report is read BEFORE the daemon lets go, so it states what was being held
  * rather than what is left. The wait afterwards is what makes the answer safe to
@@ -462,7 +467,14 @@ export async function stopRedskilledDaemon(
   config: RedskilledClientConfig = {},
 ): Promise<RedskilledDaemonStopped> {
   const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
-  if (!(await socketAnswers(endpoint.socketPath))) return buildRedskilledNotRunningStop(endpoint.socketPath);
+  if (!(await socketAnswers(endpoint.socketPath))) {
+    const presence = await probeRedskilledPresence(endpoint, { answers: false }).catch(() => undefined);
+    if (presence?.kind !== "held-unresponsive" || presence.holder == null) {
+      return buildRedskilledNotRunningStop(endpoint.socketPath);
+    }
+
+    return await stopUnreachableRedskilledHolder(endpoint, presence.holder.pid, options.settleTimeoutMs ?? 5_000);
+  }
 
   let response;
   try {
@@ -479,7 +491,7 @@ export async function stopRedskilledDaemon(
   if (!isRedskilledDaemonStopped(response.value)) throw new Error("redskilled daemon returned a malformed stop report");
   const report = response.value;
 
-  const settled = await waitForShutdown(
+  const settled = await waitForRedskilledShutdown(
     endpoint,
     report.pid,
     options.settleTimeoutMs ?? 5_000,
@@ -492,33 +504,6 @@ export async function stopRedskilledDaemon(
       detail: `${report.detail}; the daemon accepted the stop but did not finish its bounded drain by ` +
         `${settled.deadline}: ${settled.pending.join(", ")}`,
     };
-}
-
-/** Wait for every daemon-owned anchor to be gone, not merely a quiet socket. */
-async function waitForShutdown(
-  paths: RedskilledPaths,
-  pid: number | null,
-  timeoutMs: number,
-): Promise<{ readonly complete: boolean; readonly deadline: string; readonly pending: readonly string[] }> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const pending: string[] = [];
-    if (await socketAnswers(paths.socketPath)) pending.push(`the socket ${JSON.stringify(paths.socketPath)} still answers`);
-    if (await readRedskilledLeaseFile(paths.leasePath).catch(() => undefined)) {
-      pending.push("the session lease is still held");
-    }
-    // In-process callers use their own pid for a test daemon; that process cannot
-    // exit underneath the caller. The released lease and socket are the complete
-    // lifecycle boundary there. A CLI caller always observes another process.
-    if (pid != null && pid !== process.pid && isPidAlive(pid)) pending.push(`daemon pid ${pid} is still alive`);
-    if (pending.length === 0) {
-      return { complete: true, deadline: new Date(deadline).toISOString(), pending };
-    }
-    if (Date.now() >= deadline) {
-      return { complete: false, deadline: new Date(deadline).toISOString(), pending };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
 }
 
 /** The host-wide read. A malformed answer throws — a client never guesses the shape. */

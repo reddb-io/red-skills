@@ -699,7 +699,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a 25ms local socket rendezvous whose typed terminal result is the report" },
   },
   {
-    path: "apps/redskilled/src/client.ts",
+    path: "apps/redskilled/src/daemon-termination.ts",
     fn: "<module>",
     subject: "the stopping daemon releasing its socket, lease and external pid",
     deadline: "the caller's `settleTimeoutMs`, default 5 seconds",

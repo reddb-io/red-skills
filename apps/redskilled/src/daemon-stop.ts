@@ -24,7 +24,13 @@ import type { RedskilledWorkerView } from "./host-state.js";
  * `not-running` is a verdict about the request rather than about a process: it is
  * how "there was nothing to stop" arrives as an answer instead of as an error.
  */
-export type RedskilledStopReason = "requested" | "signal" | "idle" | "replaced" | "not-running";
+export type RedskilledStopReason =
+  | "requested"
+  | "signal"
+  | "idle"
+  | "replaced"
+  | "unreachable"
+  | "not-running";
 
 /** One Worker the daemon is holding at the moment it is asked to stop. */
 export interface RedskilledStopWorkerView {
@@ -50,13 +56,13 @@ export interface RedskilledStopWorkerView {
  */
 export interface RedskilledDaemonStopped {
   readonly version: 1;
-  /** True when a daemon was answering when the stop was asked for. */
+  /** True when a daemon was answering or a live holder owned the socket. */
   readonly running: boolean;
   /** True when that daemon accepted the stop. */
   readonly stopped: boolean;
   readonly reason: RedskilledStopReason;
   readonly socket_path: string;
-  /** The stopping daemon's version; `null` when none was running. */
+  /** The stopping daemon's version; `null` when absent or unreachable. */
   readonly daemon_version: string | null;
   /** The stopping daemon's pid; `null` when none was running. */
   readonly pid: number | null;
@@ -132,6 +138,40 @@ export function buildRedskilledNotRunningStop(socketPath: string): RedskilledDae
   };
 }
 
+/**
+ * The report for a live socket holder that could not answer its own stop verb.
+ *
+ * The holder cannot describe its Workers or version, so those facts stay empty
+ * rather than being guessed. `running` still records the process fact that
+ * licensed the signal, while `stopped` records the independent settle check.
+ */
+export function buildRedskilledUnreachableStop(input: {
+  readonly socketPath: string;
+  readonly pid: number;
+  readonly stopped: boolean;
+  readonly pending?: readonly string[];
+}): RedskilledDaemonStopped {
+  const outcome = input.stopped
+    ? "SIGTERM stopped that holder and released the socket"
+    : `SIGTERM was sent, but the holder did not finish stopping${
+      input.pending == null || input.pending.length === 0 ? "" : `: ${input.pending.join(", ")}`
+    }`;
+  return {
+    version: 1,
+    running: true,
+    stopped: input.stopped,
+    reason: "unreachable",
+    socket_path: input.socketPath,
+    daemon_version: null,
+    pid: input.pid,
+    holding: { workers: [], projects: [] },
+    surviving: [],
+    detail:
+      `redskilled pid ${input.pid} was alive and held ${JSON.stringify(input.socketPath)}, but it did not answer ` +
+      `a ping, so stop signalled it directly; ${outcome}. Its held Workers and version could not be read`,
+  };
+}
+
 /** The Worker as a stop reports it. PURE. */
 function toStopWorkerView(worker: RedskilledWorkerView): RedskilledStopWorkerView {
   return {
@@ -153,6 +193,7 @@ export function describeRedskilledStopReason(reason: RedskilledStopReason): stri
   if (reason === "signal") return "the daemon was signalled";
   if (reason === "idle") return "the daemon was idle and held nothing";
   if (reason === "replaced") return "a newer published bundle is taking the session over";
+  if (reason === "unreachable") return "the daemon held the socket but could not be reached";
   return "no daemon was running";
 }
 
