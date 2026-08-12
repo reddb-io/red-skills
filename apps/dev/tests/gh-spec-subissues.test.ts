@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { GithubClient, GithubConditionalRestRequest } from "@reddb-io/github";
 import {
   attachSubIssue,
   listSpecSubIssueCandidates,
@@ -20,97 +21,80 @@ function makeRecorder(respond: (args: readonly string[]) => ExecOutput): Recorde
   return { exec, calls };
 }
 
+function routedClient(input: {
+  paginate: (request: GithubConditionalRestRequest) => Promise<readonly unknown[]> | readonly unknown[];
+  graphql: (query: string, variables: Readonly<Record<string, unknown>>) => Promise<unknown> | unknown;
+}): GithubClient {
+  return {
+    conditionalPaginate: async (request) => ({
+      data: await input.paginate(request), headers: {}, quotaFree: false, requestCount: 1,
+    }),
+    graphql: input.graphql,
+    conditionalRest: async () => { throw new Error("unexpected conditionalRest"); },
+    singleObject: async () => { throw new Error("unexpected singleObject"); },
+  } as GithubClient;
+}
+
 describe("listSpecSubIssueCandidates", () => {
   it("walks open and recently closed Specs, label children, and native sub-issues", async () => {
-    const rec = makeRecorder((args) => {
-      const joined = args.join(" ");
-      if (joined.includes("issue list") && joined.includes("--label type:spec")) {
-        return {
-          code: 0,
-          stdout: JSON.stringify([
+    const github = routedClient({
+      paginate: (request) => {
+        if (request.parameters?.labels === "type:spec") {
+          return [
             { number: 42, state: "OPEN", closedAt: null, labels: [{ name: "type:spec" }, { name: "needs-slicing" }] },
             { number: 43, state: "CLOSED", closedAt: "2026-01-01T00:00:00Z", labels: [{ name: "type:spec" }] },
-          ]),
-          stderr: "",
-        };
-      }
-      if (joined.includes("issue list") && joined.includes("--label spec:42")) {
-        return {
-          code: 0,
-          stdout: JSON.stringify([{ number: 7, labels: [{ name: "spec:42" }] }]),
-          stderr: "",
-        };
-      }
-      if (joined.includes("issue list") && joined.includes("--label spec:43")) {
-        return { code: 0, stdout: JSON.stringify([]), stderr: "" };
-      }
-      if (joined.includes("api graphql")) {
-        return {
-          code: 0,
-          stdout: JSON.stringify({ data: { repository: {
+          ];
+        }
+        if (request.parameters?.labels === "spec:42") return [{ number: 7, labels: [{ name: "spec:42" }] }];
+        if (request.parameters?.labels === "spec:43") return [];
+        throw new Error("unexpected paginate");
+      },
+      graphql: () => ({ repository: {
             i0: { number: 42, subIssues: { nodes: [{ number: 8 }] } },
             i1: { number: 43, subIssues: { nodes: [] } },
-          } } }),
-          stderr: "",
-        };
-      }
-      return { code: 1, stdout: "", stderr: "unexpected" };
+          } }),
     });
 
-    const ctx: GhContext = { cwd: "/r", repo: "acme/widgets", exec: rec.exec };
+    const ctx: GhContext = { cwd: "/r", repo: "acme/widgets", github };
     const candidates = await listSpecSubIssueCandidates(ctx, Date.parse("2026-01-15T00:00:00Z") / 1000);
 
     expect(candidates).toEqual([
       { number: 42, labels: ["type:spec", "needs-slicing"], labelChildren: [7], nativeSubIssues: [8] },
       { number: 43, labels: ["type:spec"], labelChildren: [], nativeSubIssues: [] },
     ]);
-    expect(rec.calls.filter((call) => call.args[0] === "api" && call.args[1] === "graphql")).toHaveLength(1);
-    expect(rec.calls.some((call) => call.args.join(" ").includes("/sub_issues"))).toBe(false);
   });
 
   it("retries alias failures through bounded REST without caching empty relationships", async () => {
-    const calls: { cmd: string; args: string[] }[] = [];
+    const calls: GithubConditionalRestRequest[] = [];
     let activeFallbacks = 0;
     let maxFallbacks = 0;
     const specs = Array.from({ length: 9 }, (_, index) => index + 40);
-    const exec: ExecFn = async (cmd, args) => {
-      calls.push({ cmd, args: [...args] });
-      const joined = args.join(" ");
-      if (joined.includes("issue list") && joined.includes("--label type:spec")) {
-        return {
-          code: 0,
-          stdout: JSON.stringify(specs.map((number) => ({ number, state: "OPEN", closedAt: null, labels: [{ name: "type:spec" }] }))),
-          stderr: "",
-        };
-      }
-      if (joined.includes("issue list") && joined.includes("--label spec:")) {
-        return { code: 0, stdout: "[]", stderr: "" };
-      }
-      if (joined.includes("api graphql")) {
-        return {
-          code: 0,
-          stdout: JSON.stringify({
-            data: { repository: Object.fromEntries(specs.map((_, index) => [`i${index}`, null])) },
-            errors: specs.map((number, index) => ({ message: `failed ${number}`, path: ["repository", `i${index}`] })),
-          }),
-          stderr: "",
-        };
-      }
-      if (joined.includes("/sub_issues")) {
+    const github = routedClient({
+      paginate: async (request) => {
+        calls.push(request);
+        if (request.parameters?.labels === "type:spec") {
+          return specs.map((number) => ({ number, state: "OPEN", closedAt: null, labels: [{ name: "type:spec" }] }));
+        }
+        if (String(request.parameters?.labels ?? "").startsWith("spec:")) return [];
+        if (request.route.includes("/sub_issues")) {
         activeFallbacks += 1;
         maxFallbacks = Math.max(maxFallbacks, activeFallbacks);
         await new Promise((resolve) => setTimeout(resolve, 2));
         activeFallbacks -= 1;
-        const spec = Number(joined.match(/issues\/(\d+)\/sub_issues/)?.[1]);
-        return { code: 0, stdout: `${JSON.stringify({ number: spec + 100 })}\n`, stderr: "" };
+          const spec = Number(request.parameters?.issue_number);
+          return [{ number: spec + 100 }];
+        }
+        throw new Error("unexpected paginate");
+      },
+      graphql: () => {
+        throw new Error("alias failure");
       }
-      return { code: 1, stdout: "", stderr: "unexpected" };
-    };
+    });
 
-    const candidates = await listSpecSubIssueCandidates({ cwd: "/r", repo: "acme/widgets", exec });
+    const candidates = await listSpecSubIssueCandidates({ cwd: "/r", repo: "acme/widgets", github });
 
     expect(candidates.map((candidate) => candidate.nativeSubIssues)).toEqual(specs.map((spec) => [spec + 100]));
-    expect(calls.filter((call) => call.args.join(" ").includes("/sub_issues"))).toHaveLength(9);
+    expect(calls.filter((call) => call.route.includes("/sub_issues"))).toHaveLength(9);
     expect(maxFallbacks).toBeGreaterThan(1);
     expect(maxFallbacks).toBeLessThanOrEqual(4);
   });
@@ -120,8 +104,8 @@ describe("attachSubIssue", () => {
   it("resolves the child database id and posts the native sub-issue edge", async () => {
     const rec = makeRecorder((args) => {
       const joined = args.join(" ");
-      if (joined.includes("issues/7") && joined.includes("--jq .id")) {
-        return { code: 0, stdout: "12345\n", stderr: "" };
+      if (joined.includes("issues/7")) {
+        return { code: 0, stdout: JSON.stringify({ id: 12345 }), stderr: "" };
       }
       if (joined.includes("issues/42/sub_issues")) {
         return { code: 0, stdout: "", stderr: "" };
@@ -135,7 +119,7 @@ describe("attachSubIssue", () => {
     expect(rec.calls).toEqual([
       {
         cmd: "gh",
-        args: ["api", "repos/acme/widgets/issues/7", "--jq", ".id"],
+        args: ["api", "repos/acme/widgets/issues/7"],
       },
       {
         cmd: "gh",
