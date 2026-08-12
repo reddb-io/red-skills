@@ -30,13 +30,56 @@ export async function renderAutomaticOutput(
   const complete = renderStructuredBoundary(original);
   if (options.level === "full") return { stdout: complete, lossy: false };
 
+  const sizeThresholdBytes = positiveInteger(options.sizeThresholdBytes, 8 * 1024);
+  const repetitionThresholdRows = positiveInteger(options.repetitionThresholdRows, 20);
+  const topRows = positiveInteger(options.topRows, options.level === "terse" ? 5 : 12);
+  const diskRows = parseDiskCensus(original);
+  if (diskRows) {
+    const shouldReduce = diskRows.length > topRows &&
+      (options.level === "terse" || (original.length > sizeThresholdBytes && diskRows.length >= repetitionThresholdRows));
+    if (!shouldReduce) return { stdout: complete, lossy: false };
+    const handle = await mintBeforeReduction(original, options);
+    if (!handle) return { stdout: complete, lossy: false };
+    const sorted = [...diskRows].sort((left, right) => right.size_kib - left.size_kib || left.path.localeCompare(right.path));
+    const rowsKept = Math.min(topRows, sorted.length);
+    const rowsOmitted = sorted.length - rowsKept;
+    const payload = {
+      family: "automatic-output",
+      content: "disk-census",
+      reduction: {
+        reason: options.level === "terse" ? "explicit-terse" : "size-and-repetition-threshold",
+        input_bytes: original.length,
+        size_threshold_bytes: sizeThresholdBytes,
+        repetition_threshold_rows: repetitionThresholdRows,
+        columns: ["size_kib", "path"],
+        rows_total: sorted.length,
+        rows_kept: rowsKept,
+        rows_omitted: rowsOmitted,
+        changes: [`rows sorted by size_kib descending; capped to top ${rowsKept}; ${rowsOmitted} omitted`],
+      },
+      summary: {
+        total_size_kib: sorted.reduce((sum, row) => sum + row.size_kib, 0),
+        largest_size_kib: sorted[0]?.size_kib ?? 0,
+      },
+      rows: sorted.slice(0, rowsKept),
+      next_steps: [
+        "Recover exact bytes with rsp show <handle>",
+        `Re-run ${options.command} with --full to suppress reduction`,
+      ],
+      recovery: { original: `rsp show ${handle}` },
+    } satisfies JsonObject;
+    return {
+      stdout: Buffer.from(`${encode(payload)}\n`),
+      lossy: true,
+      handle,
+      bytesElided: original.length,
+    };
+  }
+
   const value = decodedValue(complete);
   if (!Array.isArray(value) || !value.every(isJsonObject)) return { stdout: complete, lossy: false };
 
   const rows = value as JsonObject[];
-  const sizeThresholdBytes = positiveInteger(options.sizeThresholdBytes, 8 * 1024);
-  const repetitionThresholdRows = positiveInteger(options.repetitionThresholdRows, 20);
-  const topRows = positiveInteger(options.topRows, options.level === "terse" ? 5 : 12);
   const repeatedRows = majorityShapeCount(rows);
   const crossesAutomaticThreshold = original.length > sizeThresholdBytes &&
     repeatedRows >= repetitionThresholdRows &&
@@ -44,15 +87,7 @@ export async function renderAutomaticOutput(
   const shouldReduce = rows.length > topRows && (options.level === "terse" || crossesAutomaticThreshold);
   if (!shouldReduce) return { stdout: complete, lossy: false };
 
-  let handle: string;
-  try {
-    handle = await options.store?.mint(original, {
-      command: options.command,
-      loss: { level: options.level === "lossless" ? "brief" : options.level, bytes_elided: original.length },
-    }) ?? "";
-  } catch {
-    return { stdout: complete, lossy: false };
-  }
+  const handle = await mintBeforeReduction(original, options);
   if (!handle) return { stdout: complete, lossy: false };
 
   const rowsKept = Math.min(topRows, rows.length);
@@ -85,6 +120,29 @@ export async function renderAutomaticOutput(
     handle,
     bytesElided: original.length,
   };
+}
+
+async function mintBeforeReduction(original: Buffer, options: AutomaticOutputOptions): Promise<string> {
+  try {
+    return await options.store?.mint(original, {
+      command: options.command,
+      loss: { level: options.level === "lossless" ? "brief" : options.level, bytes_elided: original.length },
+    }) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function parseDiskCensus(stdout: Buffer): Array<{ size_kib: number; path: string }> | undefined {
+  const lines = stdout.toString("utf8").split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) return undefined;
+  const rows: Array<{ size_kib: number; path: string }> = [];
+  for (const line of lines) {
+    const match = /^(\d+)\s+(.+)$/.exec(line);
+    if (!match || !match[2]?.includes("target")) return undefined;
+    rows.push({ size_kib: Number(match[1]), path: match[2] });
+  }
+  return rows;
 }
 
 function decodedValue(stdout: Buffer): unknown {
