@@ -87,22 +87,24 @@ describe("rsp automatic output policy", () => {
 
   it("renders the disk census as a deterministic top-N TOON table", async () => {
     const fixture = JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", "automatic", "disk-census.json"), "utf8")) as {
-      command: string;
-      stdout: string;
-      size_threshold_bytes: number;
-      repetition_threshold_rows: number;
-      top_rows: number;
+      command: string[];
+      recorded: { stdout: string };
+      automatic_policy: {
+        size_threshold_bytes: number;
+        repetition_threshold_rows: number;
+        top_rows: number;
+      };
     };
-    const original = Buffer.from(fixture.stdout);
+    const original = Buffer.from(fixture.recorded.stdout);
     const store = new MemoryStore();
 
     const result = await renderAutomaticOutput(original, {
-      command: fixture.command,
+      command: fixture.command.slice(2).join(" "),
       level: "lossless",
       store,
-      sizeThresholdBytes: fixture.size_threshold_bytes,
-      repetitionThresholdRows: fixture.repetition_threshold_rows,
-      topRows: fixture.top_rows,
+      sizeThresholdBytes: fixture.automatic_policy.size_threshold_bytes,
+      repetitionThresholdRows: fixture.automatic_policy.repetition_threshold_rows,
+      topRows: fixture.automatic_policy.top_rows,
     });
 
     expect(result.lossy).toBe(true);
