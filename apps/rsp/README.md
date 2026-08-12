@@ -4,7 +4,7 @@
 high-noise commands, emits compact decision-preserving output, and keeps the
 original bytes recoverable through `el:<id>` handles.
 
-Benchmark headline: `rsp` reaches **99.8% decision-oracle capture** versus
+Benchmark headline: `rsp` reaches **99.2% decision-oracle capture** versus
 **RTK 4.9%** and **Headroom 0.6%** on the two-axis benchmark. The checked-in
 summary is at [bench/results/rsp-two-axis.md](bench/results/rsp-two-axis.md),
 and the benchmark guide is at [bench/README.md](bench/README.md).
