@@ -168,6 +168,7 @@ describe("a project's Worker is born by the daemon", () => {
     // so it must arrive structurally rather than inside the daemon's prose.
     expect(death.exit_code).toBe(78);
     expect(death.project_label).toBe("acme/widgets");
+    await expect(port.recordedDeadWorkerIds()).resolves.toContain("wDEAD");
   });
 
   it("drains each host event exactly once, so a death is never counted twice", async () => {
