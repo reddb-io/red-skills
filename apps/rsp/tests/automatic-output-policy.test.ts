@@ -182,6 +182,33 @@ describe("rsp automatic output policy", () => {
     expect(valueAt(decoded, ["reduction", "rows_omitted"])).toBe(count - expectedKept);
     expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:automaticfixture");
   });
+
+  it("does not make reduced output observable before original bytes are stored", async () => {
+    const original = Buffer.from(JSON.stringify(Array.from({ length: 30 }, (_, id) => ({ id, state: "steady" }))));
+    let releaseMint: ((handle: string) => void) | undefined;
+    const mintFinished = new Promise<string>((resolve) => {
+      releaseMint = resolve;
+    });
+    const pending = renderAutomaticOutput(original, {
+      command: "state-report --json",
+      level: "lossless",
+      sizeThresholdBytes: 64,
+      repetitionThresholdRows: 20,
+      store: { mint: async () => await mintFinished },
+    });
+    let observable = false;
+    void pending.then(() => {
+      observable = true;
+    });
+
+    await Promise.resolve();
+    expect(observable).toBe(false);
+    releaseMint?.("el:automaticfixture");
+
+    const result = await pending;
+    expect(result.lossy).toBe(true);
+    expect(result.stdout.toString("utf8")).toContain("rsp show el:automaticfixture");
+  });
 });
 
 function valueAt(value: unknown, path: readonly (string | number)[]): unknown {
