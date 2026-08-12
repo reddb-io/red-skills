@@ -109,8 +109,15 @@ describe("GitHub outbound write seams", () => {
     const exec: ExecFn = async (cmd, args): Promise<ExecOutput> => {
       calls.push({ cmd, args: [...args] });
       if (args.includes("--jq")) return { code: 0, stdout: "123\n", stderr: "" };
-      if (args[0] === "issue" && args[1] === "create") {
-        return { code: 0, stdout: "https://github.com/acme/widgets/issues/77\n", stderr: "" };
+      // Issue creation rides REST now (#3663): `gh api -X POST repos/{o}/{r}/issues
+      // -f title=... -f body=...`. `createIssue` reads the new issue's number back
+      // out of the `html_url` gh prints as part of the response body.
+      if (args.includes("POST") && args.some((a) => /repos\/.+\/issues$/.test(a))) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ number: 77, html_url: "https://github.com/acme/widgets/issues/77" }),
+          stderr: "",
+        };
       }
       return { code: 0, stdout: "", stderr: "" };
     };

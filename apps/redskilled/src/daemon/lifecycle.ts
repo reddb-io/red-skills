@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
+import { createWorkerTeardownLedger } from "./worker-teardown.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
   appendRedskilledMetricObservation,
@@ -337,19 +338,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const liveness = options.liveness ?? detectWorkerLiveness;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
-  /**
-   * The teardown each Worker is currently inside, keyed by its Worker id.
-   *
-   * A stop now yields to the event loop for as long as the host takes to
-   * confirm the death — which is the point — so two asks for the SAME Worker
-   * can overlap where a blocking stop accidentally serialised them. The map is
-   * what keeps the death bookkeeping exactly-once: the second ask joins the
-   * first's teardown instead of sending a second one, so one Worker is one
-   * death on the lane and one slot given back. Bounded by the live Worker set:
-   * an entry exists only while a teardown is in flight, and stops for DIFFERENT
-   * Workers still run at the same time.
-   */
-  const workerStops = new Map<string, Promise<boolean>>();
+  /** Exactly-once Worker teardown: a second ask joins the stop already in flight. */
+  const endWorkerOnce = createWorkerTeardownLedger(stopProbe);
   const unitInventory = options.unitInventory ??
     (() =>
       maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost)
@@ -1506,35 +1496,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (stops[index]!.project_label === projectLabel) stops.splice(index, 1);
     }
     orphanedRegistrations.delete(projectLabel);
-  }
-
-  /**
-   * Tear one Worker down at most once, whoever asks and however often.
-   *
-   * `settle` is the daemon's own bookkeeping — forget the Worker, write its
-   * death, re-arm the idle gate — and it runs on the ONE teardown that actually
-   * happened, in the order it happened, never on a caller that merely joined.
-   * Every ask still gets the same truthful answer: the awaited promise resolves
-   * when the host has confirmed the death, not when the request was placed.
-   */
-  function endWorkerOnce(
-    worker: RedskilledWorkerView,
-    settle: (confirmed: boolean) => void,
-  ): Promise<boolean> {
-    const joined = workerStops.get(worker.worker_id);
-    if (joined != null) return joined;
-    const teardown = (async () => {
-      let confirmed = false;
-      // A refused stop still releases the daemon's claim; the caller's own event
-      // names what survived rather than forging host confirmation.
-      try { confirmed = (await stopProbe(worker)) === true; } catch {}
-      settle(confirmed);
-      return confirmed;
-    })().finally(() => {
-      if (workerStops.get(worker.worker_id) === teardown) workerStops.delete(worker.worker_id);
-    });
-    workerStops.set(worker.worker_id, teardown);
-    return teardown;
   }
 
   /** Stop one Worker the daemon holds, and record its death. */

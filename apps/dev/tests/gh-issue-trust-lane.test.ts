@@ -17,8 +17,10 @@ interface TimelineEvent {
   actor?: { login: string };
 }
 
-/** A gh fake that answers `issue view --json author…` and the timeline `api`
- * call, so the real `issueTrust` closure can be driven without touching gh. */
+/** A gh fake that answers the routed single-object issue read (author) and the
+ * routed timeline paginate (#3730), so the real `issueTrust` closure can be
+ * driven without touching gh. Both calls are `gh api ...`; the timeline read is
+ * distinguished by its `/timeline` path segment. */
 function ghWith(opts: {
   author: string;
   timeline: TimelineEvent[];
@@ -27,10 +29,14 @@ function ghWith(opts: {
   const exec: ExecFn = (_bin, args) => {
     calls.push([...args]);
     let out: ExecOutput = { code: 0, stdout: "", stderr: "" };
-    if (args[0] === "issue" && args[1] === "view") {
-      out = { code: 0, stdout: JSON.stringify({ author: { login: opts.author }, authorAssociation: "OWNER" }), stderr: "" };
-    } else if (args[0] === "api") {
+    if (args[0] === "api" && args.some((a) => String(a).includes("/timeline"))) {
       out = { code: 0, stdout: JSON.stringify(opts.timeline), stderr: "" };
+    } else if (args[0] === "api") {
+      out = {
+        code: 0,
+        stdout: JSON.stringify({ user: { login: opts.author }, author_association: "OWNER" }),
+        stderr: "",
+      };
     }
     return Promise.resolve(out);
   };

@@ -642,8 +642,9 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(false);
     const joined = calls.map((c) => c.join(" "));
-    // landPr reuses the open PR (#42) and admin-merges it.
-    expect(joined.some((c) => c.includes("pr list"))).toBe(true);
+    // landPr reuses the open PR (#42) and admin-merges it. The reuse probe rides
+    // legacy `gh pr list` or the routed REST list read (#3663, #3726).
+    expect(joined.some((c) => c.includes("pr list") || (c.includes("repos/o/r/pulls") && c.includes("state=open")))).toBe(true);
     expect(joined.some((c) => c.includes("pulls/42/merge"))).toBe(true);
     // No direct `merge --no-ff` of the attempt branch into the locked target.
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
@@ -727,8 +728,16 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     expect(result.outcome).toBe("review-requested");
     expect(result.preserved).toBe(true);
     expect(result.swept).toBe(false);
-    // The PR is opened/reused and labelled — firing the advisory review.
-    expect(joined.some((c) => c.includes("pr edit 42 --add-label ready-for-review"))).toBe(true);
+    // The PR is opened/reused and labelled — firing the advisory review. The
+    // label-add rides legacy `pr edit --add-label` or the routed REST
+    // `POST issues/{n}/labels` (#3663).
+    expect(
+      joined.some(
+        (c) =>
+          c.includes("pr edit 42 --add-label ready-for-review")
+          || (c.includes("repos/o/r/issues/42/labels") && c.includes("labels[]=ready-for-review")),
+      ),
+    ).toBe(true);
     // The merge is HELD for the fresh-agent review.
     expect(joined.some((c) => (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
     // The issue is parked to ready-for-human (running dropped) and NOT closed.
@@ -2124,16 +2133,31 @@ describe("processIssue — an exhausted Re-seed budget parks with the draft open
         // Two-rails REST create (#3663); edit/close still ride the gh CLI.
         (verb === "create" && argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a))),
     );
-  /** Every `gh pr edit --add-label` applied to the draft. */
+  /** Every `gh pr edit --add-label`, or its routed REST
+   * `POST issues/{n}/labels -F labels[]=x` form (#3663), applied to the draft. */
   const prLabels = (trace: { mergeCalls: string[][] }): string[] =>
-    prCalls(trace, "edit")
-      .filter((argv) => argv.includes("--add-label"))
-      .map((argv) => argv[argv.indexOf("--add-label") + 1] ?? "");
-  /** The LAST body written onto the draft — the park's own. */
+    trace.mergeCalls.flatMap((argv) => {
+      if (argv.includes("pr") && argv.includes("edit") && argv.includes("--add-label")) {
+        return [argv[argv.indexOf("--add-label") + 1] ?? ""];
+      }
+      if (argv.includes("POST") && argv.some((a) => /repos\/.+\/issues\/\d+\/labels$/.test(a))) {
+        return argv
+          .filter((a) => a.startsWith("labels[]="))
+          .map((a) => a.slice("labels[]=".length));
+      }
+      return [];
+    });
+  /** The LAST body written onto the draft — the park's own. `--body <text>`
+   * (legacy) or `-f body=<text>` (routed REST `PATCH pulls/{n}`, #3663). */
   const lastPrBody = (trace: { mergeCalls: string[][] }): string => {
-    const bodies = trace.mergeCalls
-      .filter((argv) => argv.includes("--body"))
-      .map((argv) => argv[argv.indexOf("--body") + 1] ?? "");
+    const bodies = trace.mergeCalls.flatMap((argv) => {
+      if (argv.includes("--body")) return [argv[argv.indexOf("--body") + 1] ?? ""];
+      const restBody = argv.find((a) => a.startsWith("body="));
+      if (restBody !== undefined && argv.some((a) => /repos\/.+\/pulls\/\d+$/.test(a))) {
+        return [restBody.slice("body=".length)];
+      }
+      return [];
+    });
     return bodies.at(-1) ?? "";
   };
   /** The LAST body written onto the trail's Issue comment. */

@@ -247,7 +247,9 @@ describe("buildLookups", () => {
     expect(await lookups.discoverOpenPullRequests?.(2667)).toEqual([
       { number: 12, headRefName: "afk/2667", body: "Refs #2667" },
     ]);
-    expect(trace.at(-1)?.args).toContain("acme/widgets");
+    // Reads now route through the REST planner (#3734), which embeds the
+    // slug in the api path rather than passing a standalone --repo arg.
+    expect(trace.at(-1)?.args).toContain("repos/acme/widgets/pulls");
   });
 
   it("returns an empty census when the gh probe fails", async () => {

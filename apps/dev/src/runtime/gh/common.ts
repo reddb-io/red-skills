@@ -60,6 +60,16 @@ function injectedReadClient(ctx: GhContext): Pick<GithubClient, "conditionalRest
       args = accept.includes("diff")
         ? ["pr", "diff", String(parameters.pull_number ?? ""), ...repoArgs(ctx)]
         : ["pr", "view", String(parameters.pull_number ?? ""), ...repoArgs(ctx), "--json", "title,body,author,authorAssociation"];
+    } else if (route === "GET /repos/{owner}/{repo}/issues/{issue_number}") {
+      // The REST argv, so a fixture answering `readsIssue` serves the whole
+      // body — user/author_association included, which the flattened
+      // `--json number,state,labels` spelling silently dropped (#3729).
+      args = ["api", `repos/${String(parameters.owner)}/${String(parameters.repo)}/issues/${String(parameters.issue_number ?? "")}`];
+    } else if (route === "GET /repos/{owner}/{repo}") {
+      // The repo-visibility read (#1101 rides REST too): a bare `gh api
+      // repos/{owner}/{repo}` — the repo object already carries `visibility`
+      // at the top level, so no projection is needed.
+      args = ["api", `repos/${String(parameters.owner)}/${String(parameters.repo)}`];
     } else {
       args = issueArgs(parameters.issue_number);
     }
@@ -83,6 +93,54 @@ function injectedReadClient(ctx: GhContext): Pick<GithubClient, "conditionalRest
       return { data: await request(input.route, input.parameters) as T, headers: {}, quotaFree: false };
     },
     async conditionalPaginate<T>(input: GithubConditionalRestRequest) {
+      if (input.route === "GET /repos/{owner}/{repo}/issues/{issue_number}/comments") {
+        // The routed comments read (#3730): a plain `gh api --paginate`, raw
+        // REST comment rows (`user.login`, not the `author` projection) —
+        // consumers of THIS route (externalApprovalActors) read the REST
+        // shape directly, unlike `issueComments`' hand-projected jq pipeline.
+        const owner = String(input.parameters?.owner ?? "");
+        const repo = String(input.parameters?.repo ?? "");
+        const issue = String(input.parameters?.issue_number ?? "");
+        const args = ["api", "--paginate", `repos/${owner}/${repo}/issues/${issue}/comments`];
+        const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
+        if (out.code !== 0) throw new Error(out.stderr || out.stdout);
+        const parsed = JSON.parse(out.stdout || "[]") as unknown;
+        const data = Array.isArray(parsed) ? (parsed as T[]) : [];
+        return { data, headers: {}, quotaFree: false, requestCount: 1 };
+      }
+      if (input.route === "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline") {
+        // The routed timeline read (#3730), backing the lane-aware promoter
+        // resolution: raw REST timeline events (`labeled`, `actor.login`,
+        // `label.name`) — the caller walks them for the most recent applier.
+        const owner = String(input.parameters?.owner ?? "");
+        const repo = String(input.parameters?.repo ?? "");
+        const issue = String(input.parameters?.issue_number ?? "");
+        const args = ["api", "--paginate", `repos/${owner}/${repo}/issues/${issue}/timeline`];
+        const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
+        if (out.code !== 0) throw new Error(out.stderr || out.stdout);
+        const parsed = JSON.parse(out.stdout || "[]") as unknown;
+        const data = Array.isArray(parsed) ? (parsed as T[]) : [];
+        return { data, headers: {}, quotaFree: false, requestCount: 1 };
+      }
+      if (input.route === "GET /repos/{owner}/{repo}/issues") {
+        // The routed issue-list read (#3730): a plain `gh api --paginate` over
+        // the issues collection, carrying whatever query the caller asked for
+        // (state/labels/per_page) — the full REST row objects come back so
+        // every consumer (candidates, queue counts, boot-sweep state) projects
+        // the fields it needs, same as the single-object routes above.
+        const owner = String(input.parameters?.owner ?? "");
+        const repo = String(input.parameters?.repo ?? "");
+        const query: string[] = [];
+        if (input.parameters?.state !== undefined) query.push("-f", `state=${String(input.parameters.state)}`);
+        if (input.parameters?.labels !== undefined) query.push("-f", `labels=${String(input.parameters.labels)}`);
+        query.push("-f", `per_page=${String(input.parameters?.per_page ?? 100)}`);
+        const args = ["api", "--paginate", `repos/${owner}/${repo}/issues`, ...query];
+        const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
+        if (out.code !== 0) throw new Error(out.stderr || out.stdout);
+        const parsed = JSON.parse(out.stdout || "[]") as unknown;
+        const data = Array.isArray(parsed) ? (parsed as T[]) : [];
+        return { data, headers: {}, quotaFree: false, requestCount: 1 };
+      }
       const issue = String(input.parameters?.issue_number ?? "");
       const args = ["api", "--paginate", apiPath(ctx, `issues/${issue}/sub_issues`), "--jq", ".[] | {number}"];
       const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });

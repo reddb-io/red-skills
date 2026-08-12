@@ -21,15 +21,17 @@ function ghReturning(stdout: string, code = 0): { ctx: GhContext; calls: string[
   return { ctx: { cwd: "/r", repo: "acme/widgets", exec }, calls };
 }
 
+// The routed read (#3730) hands consumers the raw REST comment rows —
+// `user.login`, not the hand-projected `{author:{login}}` shape.
 function comments(...cs: Array<{ login: string; body: string }>): string {
-  return JSON.stringify({ comments: cs.map((c) => ({ author: { login: c.login }, body: c.body })) });
+  return JSON.stringify(cs.map((c) => ({ user: { login: c.login }, body: c.body })));
 }
 
 describe("externalApprovalActors (#2603)", () => {
   it("returns the login of an author whose comment leads with /approve-external", async () => {
     const { ctx, calls } = ghReturning(comments({ login: "maint", body: "/approve-external looks good" }));
     expect(await externalApprovalActors(ctx, 42)).toEqual(["maint"]);
-    expect(calls[0]).toEqual(["issue", "view", "42", "--repo", "acme/widgets", "--json", "comments"]);
+    expect(calls[0]).toEqual(["api", "--paginate", "repos/acme/widgets/issues/42/comments"]);
   });
 
   it("ignores the marker when it is merely quoted inside prose, not a leading command", async () => {
