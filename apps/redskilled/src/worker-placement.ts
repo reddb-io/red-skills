@@ -311,8 +311,8 @@ export interface PlanWorkerPlacementOptions {
   /** Extra `KEY=VALUE` environment for the Worker. */
   readonly env?: Readonly<Record<string, string>>;
   /**
-   * True when the caller gave a log path, so the Worker's own output must reach
-   * the launcher's file descriptors rather than the init system's journal.
+   * True when the caller gave a log path or stdin payload, so the Worker's stdio
+   * must reach the launcher's file descriptors rather than the init system's journal.
    *
    * It is a placement input rather than a launch detail because only the plan
    * knows whether an init system sits between the daemon and the Worker: a

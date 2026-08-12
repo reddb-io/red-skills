@@ -28,6 +28,7 @@ import type {
 } from "../orphan-reaper.js";
 import { type RedskilledLaunchTemplate } from "../launch-template.js";
 import type { RedskilledPaths } from "../paths.js";
+import type { RedskilledHostEventSinks } from "../host-event-sink.js";
 import { type RedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
 import { type RedskilledProjectRegistration,
@@ -80,6 +81,8 @@ import { type RedskilledLease,
 } from "../session-lease.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
+  /** Operator-owned lifecycle hooks and desktop notification declarations. */
+  readonly hostEventSinks?: RedskilledHostEventSinks;
   /** Hard deadline for each daemon-owned GitHub call; 0 or below disables it. */
   readonly remotePollTimeoutMs?: number;
   /** Self-request cadence; 0 or below disables request-lane monitoring. */

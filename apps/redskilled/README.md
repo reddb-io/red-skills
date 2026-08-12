@@ -74,6 +74,43 @@ has rotated out of the lane. Kind-specific facts are `admission_verdict` on a
 birth and `detail`, `exit_code`, `signal`, and `reason` on a death or budget
 kill.
 
+### Operator-scoped event sinks
+
+The same three public lifecycle kinds may fire programs declared in the
+operator-owned `~/.red/config.yaml`:
+
+```yaml
+plugins:
+  dev:
+    redskilled:
+      hooks:
+        worker-birth:
+          argv: [/usr/local/bin/redwall, refresh]
+          env:
+            REDWALL_MODE: live
+      notifications:
+        - worker-death
+        - worker-budget-kill
+```
+
+Each hook is asynchronous and receives the complete host-state
+JSON document on standard input. `REDSKILLED_HOST_EVENT` names the
+triggering kind. The snapshot is taken after the triggering lifecycle change
+and before the sink itself is born, so a Worker-count consumer never counts its
+own refresh process.
+
+Hooks are ordinary host-owned Workers under the synthetic
+`redskilled/host-events` project: admission, host ceilings, placement, event-lane
+accounting, and teardown all apply. A full host may therefore refuse a hook
+without changing the triggering Worker. Sink Worker events never recurse into
+the machine policy.
+
+`notifications` uses the native desktop command for the daemon platform
+(`notify-send`, `osascript`, or PowerShell) and receives the same state document.
+The declarations are read at every daemon start from machine policy, never from
+the daemon-written registration snapshot, so they survive restarts and remain
+operator-owned.
+
 ## What it owns
 
 | Concern | Where it lives |

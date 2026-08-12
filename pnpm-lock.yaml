@@ -363,6 +363,9 @@ importers:
       tuiuiu.js:
         specifier: 1.0.75
         version: 1.0.75
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

@@ -65,6 +65,8 @@ export interface RedskilledWorkerSpec {
   readonly command: string;
   readonly args?: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
+  /** Opaque bytes written once to the Worker's standard input after birth. */
+  readonly input?: string;
   readonly placement?: RedskilledPlacementTarget;
   readonly budget?: RedskilledWorkerBudget;
   /** Opaque claim on host capacity held for a human-attached dispatch. */
@@ -325,7 +327,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     env: workerEnv,
     enabled: options.enabled ?? placementEnabled(env),
     probes,
-    pipeOutput: logReady,
+    pipeOutput: logReady || spec.input != null,
   });
 
   const spawnFn = options.spawnFn ?? spawn;
@@ -335,7 +337,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     // would have run fine.
     ...(plan.cwd != null ? { cwd: plan.cwd } : {}),
     detached: true,
-    stdio: logReady ? ["ignore", "pipe", "pipe"] : "ignore",
+    stdio: [spec.input == null ? "ignore" : "pipe", logReady ? "pipe" : "ignore", logReady ? "pipe" : "ignore"],
     // The Worker's own env goes through `--setenv` under the transient unit;
     // every other backend has to merge it here, or the downgrade would silently
     // change behaviour. The backend decides, not `isolated`: a Job Object is
@@ -346,6 +348,10 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
       ? { ...env }
       : { ...env, ...workerEnv, ...plan.environment },
   });
+  if (spec.input != null) {
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(spec.input);
+  }
   if (logReady && logPath != null) attachWorkerLog(child, logPath);
 
   if (child.pid == null) {

@@ -1,6 +1,6 @@
 # 0140 — The host hook is the event lane, and the daemon never dials out
 
-Status: accepted (design; implementation pending)
+Status: accepted
 
 A program outside RedSkills needs to know when the **redskilled** daemon's state changes
 without polling for it (#3503). The first consumer is Redwall (`red-dev#52`), the wallpaper
@@ -122,3 +122,32 @@ Decisions 1 and 3 through 7 stand unchanged. The lane remains the outbound
 mechanism for an external consumer that registers nothing; daemon hooks are a
 **second** extension point for a project that does, never a replacement for the
 first.
+
+## Amendment 2 — machine policy may declare admitted host event sinks
+
+The operator may declare asynchronous launch templates under
+`plugins.dev.redskilled.hooks.<public-kind>` in `~/.red/config.yaml`. This is a
+third ownership case beside an unregistered lane reader and a project-scoped
+hook: the synthetic owner is `redskilled/host-events`, its workspace is the
+host-scoped daemon home, and every invocation passes ordinary admission,
+placement, accounting and event-lane recording. It therefore satisfies
+Amendment 1's invariant without inventing an untracked process. Refusal is a
+notification failure and never changes the Worker whose lifecycle fired it.
+
+The hook receives the full versioned `host-state` JSON document on stdin and the
+kind in `REDSKILLED_HOST_EVENT`. The daemon captures that document after applying
+the triggering state change but before birthing the sink Worker; this prevents a
+Worker-count consumer from painting its own refresh process into the count.
+Sink Worker lifecycle events never recurse into machine policy.
+
+`plugins.dev.redskilled.notifications` declares public kinds for a second sink.
+The daemon selects the platform-native desktop command and births it through the
+same admitted path with the same state payload. Drawing and wallpaper composition
+remain consumer concerns; emitting the requested native notification belongs to
+the daemon sink the operator explicitly selected.
+
+Machine declarations are re-read from operator policy on every daemon start and
+are never copied into the daemon-written registration-intent snapshot. They thus
+survive restart while preserving the policy/state ownership boundary requested
+by #3503. The public event lane remains the extension point for consumers that
+register nothing.

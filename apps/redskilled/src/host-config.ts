@@ -8,12 +8,19 @@
 import { readFile } from "node:fs/promises";
 import { homedir, totalmem } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
 import {
   resolveHostCeiling,
   type RedskilledHostCeiling,
   type RedskilledHostSettingSource,
 } from "./admission.js";
 import { DEFAULT_REDSKILLED_IDLE_MS } from "./daemon.js";
+import {
+  REDSKILLED_PUBLIC_HOST_EVENT_KINDS,
+  type RedskilledPublicHostEventKind,
+} from "./event-lane.js";
+import type { RedskilledLaunchTemplate } from "./launch-template.js";
+import type { RedskilledHostEventSinks } from "./host-event-sink.js";
 
 export const REDSKILLED_IDLE_MS_ENV = "REDSKILLED_IDLE_MS";
 export const REDSKILLED_HOST_CONFIG_PATH = ".red/config.yaml";
@@ -23,6 +30,10 @@ export interface RedskilledHostConfig {
   readonly memoryCeiling?: string;
   readonly validationCeiling?: string;
   readonly idleMs?: string;
+  /** Operator-scoped programs fired for public Worker lifecycle changes. */
+  readonly hooks?: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>>;
+  /** Public Worker lifecycle changes also surfaced through the native desktop sink. */
+  readonly notifications?: readonly RedskilledPublicHostEventKind[];
 }
 
 export interface RedskilledHostSettingFlags {
@@ -36,6 +47,21 @@ export interface RedskilledHostSettings {
   readonly ceiling: RedskilledHostCeiling;
   readonly idleMs: number;
   readonly idleMsSource: RedskilledHostSettingSource;
+}
+
+/** Attach persistent operator policy to one daemon invocation. */
+export function resolveRedskilledHostEventSinks(
+  config: RedskilledHostConfig,
+  workspacePath: string,
+  platform: NodeJS.Platform = process.platform,
+): RedskilledHostEventSinks | undefined {
+  if (config.hooks == null && config.notifications == null) return undefined;
+  return {
+    workspacePath,
+    ...(config.hooks == null ? {} : { hooks: config.hooks }),
+    ...(config.notifications == null ? {} : { notifications: config.notifications }),
+    platform,
+  };
 }
 
 /** Read `plugins.dev.redskilled` from the operator's host file. */
@@ -53,12 +79,15 @@ export async function readRedskilledHostConfig(
   }
 
   try {
-    const values = parseScalarYaml(text);
+    const document = parse(text) as unknown;
+    const redskilled = mappingAt(document, ["plugins", "dev", "redskilled"]);
     return {
-      ...valueAt(values, "plugins.dev.redskilled.worker_ceiling", "workerCeiling"),
-      ...valueAt(values, "plugins.dev.redskilled.memory_ceiling", "memoryCeiling"),
-      ...valueAt(values, "plugins.dev.redskilled.validation_ceiling", "validationCeiling"),
-      ...valueAt(values, "plugins.dev.redskilled.idle_ms", "idleMs"),
+      ...scalarAt(redskilled, "worker_ceiling", "workerCeiling"),
+      ...scalarAt(redskilled, "memory_ceiling", "memoryCeiling"),
+      ...scalarAt(redskilled, "validation_ceiling", "validationCeiling"),
+      ...scalarAt(redskilled, "idle_ms", "idleMs"),
+      ...hooksAt(redskilled),
+      ...notificationsAt(redskilled),
     };
   } catch (error) {
     // The same resilience rule as malformed ceiling values: report the broken
@@ -109,61 +138,70 @@ function select(
   return undefined;
 }
 
-function valueAt<K extends keyof RedskilledHostConfig>(
-  values: Readonly<Record<string, string>>,
+function scalarAt<K extends keyof RedskilledHostConfig>(
+  values: Readonly<Record<string, unknown>>,
   path: string,
   key: K,
 ): Pick<RedskilledHostConfig, K> | Record<never, never> {
   const value = values[path];
-  return value === undefined ? {} : { [key]: value } as Pick<RedskilledHostConfig, K>;
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw new Error(`${path} must be a scalar`);
+  }
+  return { [key]: String(value) } as Pick<RedskilledHostConfig, K>;
 }
 
-/** A deliberately small mapping/scalar YAML reader matching `.red/config.yaml`. */
-function parseScalarYaml(text: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  const parents: string[] = [];
-  for (const [index, original] of text.split(/\r?\n/).entries()) {
-    const withoutComment = stripComment(original);
-    if (withoutComment.trim() === "") continue;
-    const indentation = withoutComment.match(/^ */)?.[0].length ?? 0;
-    if (indentation % 2 !== 0 || /\t/.test(withoutComment.slice(0, indentation))) {
-      throw new Error(`line ${index + 1} has unsupported indentation`);
-    }
-    const match = /^([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(.*))?$/.exec(withoutComment.slice(indentation).trimEnd());
-    if (match == null) throw new Error(`line ${index + 1} is not a mapping entry`);
-    const depth = indentation / 2;
-    if (depth > parents.length) throw new Error(`line ${index + 1} skips a mapping level`);
-    parents.splice(depth);
-    const key = match[1]!;
-    const raw = match[2] ?? "";
-    if (raw === "") {
-      parents.push(key);
-      continue;
-    }
-    values[[...parents, key].join(".")] = unquote(raw.trim());
+function mappingAt(value: unknown, path: readonly string[]): Readonly<Record<string, unknown>> {
+  let current = value;
+  for (const key of path) {
+    if (!isMapping(current)) return {};
+    current = current[key];
   }
-  return values;
+  return isMapping(current) ? current : {};
 }
 
-function stripComment(line: string): string {
-  let quote: "'" | '"' | undefined;
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index];
-    if (quote == null && (character === "'" || character === '"')) quote = character;
-    else if (quote === character) quote = undefined;
-    else if (quote == null && character === "#" && (index === 0 || /\s/.test(line[index - 1]!))) {
-      return line.slice(0, index).trimEnd();
+function hooksAt(
+  redskilled: Readonly<Record<string, unknown>>,
+): Pick<RedskilledHostConfig, "hooks"> | Record<never, never> {
+  if (redskilled.hooks == null) return {};
+  if (!isMapping(redskilled.hooks)) throw new Error("hooks must be a map keyed by public host event kind");
+  const hooks: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>> = {};
+  for (const [kind, declaration] of Object.entries(redskilled.hooks)) {
+    if (!isPublicKind(kind)) throw new Error(`unsupported hook event ${JSON.stringify(kind)}`);
+    if (!isMapping(declaration) || !Array.isArray(declaration.argv) || declaration.argv.length === 0 ||
+      declaration.argv.some((word) => typeof word !== "string")) {
+      throw new Error(`hook ${JSON.stringify(kind)} must declare a non-empty string argv`);
     }
+    if (declaration.env != null && (!isMapping(declaration.env) ||
+      Object.values(declaration.env).some((entry) => typeof entry !== "string"))) {
+      throw new Error(`hook ${JSON.stringify(kind)} env must map names to strings`);
+    }
+    hooks[kind] = {
+      argv: declaration.argv as string[],
+      ...(declaration.env == null ? {} : { env: declaration.env as Record<string, string> }),
+    };
   }
-  if (quote != null) throw new Error("unclosed quoted scalar");
-  return line;
+  return Object.keys(hooks).length === 0 ? {} : { hooks };
 }
 
-function unquote(value: string): string {
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
+function notificationsAt(
+  redskilled: Readonly<Record<string, unknown>>,
+): Pick<RedskilledHostConfig, "notifications"> | Record<never, never> {
+  if (redskilled.notifications == null) return {};
+  if (!Array.isArray(redskilled.notifications) || redskilled.notifications.some((kind) => !isPublicKind(kind))) {
+    throw new Error("notifications must list public host event kinds");
   }
-  return value;
+  return redskilled.notifications.length === 0
+    ? {}
+    : { notifications: [...new Set(redskilled.notifications as RedskilledPublicHostEventKind[])] };
+}
+
+function isPublicKind(value: unknown): value is RedskilledPublicHostEventKind {
+  return typeof value === "string" && REDSKILLED_PUBLIC_HOST_EVENT_KINDS.includes(value as RedskilledPublicHostEventKind);
+}
+
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function describeSource(source: RedskilledHostSettingSource): string {

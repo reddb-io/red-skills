@@ -74,6 +74,11 @@ plugins:
       # memory_ceiling: 8G
       # validation_ceiling: 2
       # idle_ms: 300000
+      # hooks:
+      #   worker-birth:
+      #     argv: [/usr/local/bin/redwall, refresh]
+      # notifications:
+      #   - worker-death
 `;
 
 /**
