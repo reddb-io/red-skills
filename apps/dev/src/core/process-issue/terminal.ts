@@ -19,12 +19,10 @@ import {
   type SandboxMode,
 } from "../execution.js";
 import {
-  VALIDATION_SCHEMA,
   runFeedback,
   type Exec as PnpmExec,
   type PackageLayout,
   type RunFeedbackResult,
-  type ValidationRecord,
 } from "../feedback.js";
 import {
   computeValidationScope,
@@ -115,6 +113,7 @@ import {
 } from "../triage-labels.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
+import { validationBlockerSummary } from "./validation-park.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editIssueLifecycleLabels, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
@@ -243,73 +242,6 @@ export function oneLine(value: string | undefined, fallback: string): string {
     .find((part) => part.length > 0);
   return line ?? fallback;
 }
-
-function validationRecords(value: string | undefined): ValidationRecord[] {
-  if (!value) return [];
-  const records: ValidationRecord[] = [];
-  for (const line of value.split("\n")) {
-    try {
-      const parsed = JSON.parse(line) as Partial<ValidationRecord>;
-      if (
-        parsed.schema === VALIDATION_SCHEMA &&
-        typeof parsed.name === "string" &&
-        (parsed.status === "passed" || parsed.status === "failed" || parsed.status === "skipped")
-      ) {
-        records.push(parsed as ValidationRecord);
-      }
-    } catch {
-      // Scope headers and prose are not validation records.
-    }
-  }
-  return records;
-}
-
-function hasNonValidationRecord(value: string | undefined): boolean {
-  if (!value) return false;
-  return value.split("\n").some((line) => {
-    try {
-      const parsed = JSON.parse(line) as { schema?: unknown };
-      return typeof parsed.schema === "string" && parsed.schema !== VALIDATION_SCHEMA;
-    } catch {
-      return false;
-    }
-  });
-}
-
-/** Select the exact command fact that licenses a validation Park. */
-function validationBlockerSummary(value: string | undefined): string | undefined {
-  const records = validationRecords(value);
-  if (records.length === 0) return undefined;
-  const failed = records.filter((record) => record.status === "failed");
-  const contradictory = failed.find((record) => record.exitCode === 0);
-  if (contradictory) {
-    throw new Error(
-      `validation blocker rejected: ${contradictory.name} carries exitCode 0`,
-    );
-  }
-  if (failed.length === 0) {
-    // A different structured safety finding (for example branch reversion)
-    // independently licenses this Park; its formatter owns the summary.
-    if (hasNonValidationRecord(value)) return undefined;
-    throw new Error(
-      "validation blocker rejected: park path received all-green validation evidence",
-    );
-  }
-  const record = failed[0]!;
-  if (record.command) {
-    if (record.exitCode === undefined || !Number.isFinite(record.exitCode)) {
-      throw new Error(
-        `validation blocker rejected: ${record.name} names a command without a non-zero exitCode`,
-      );
-    }
-    return (
-      `Validation command \`${record.command}\` failed with exitCode ${record.exitCode}: ` +
-      `${record.summary ?? record.name}`
-    );
-  }
-  return record.summary ?? record.name;
-}
-
 export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): CurrentBlocker | null {
   switch (outcome) {
     case "blocked":
@@ -321,9 +253,7 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
     case "feedback-failed":
       return makeBlocker({
         kind: "validation",
-        summary:
-          validationBlockerSummary(sections.validation) ??
-          oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
+        summary: validationBlockerSummary(sections.validation) ?? oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
         next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
       });
     case "no-sentinel":
