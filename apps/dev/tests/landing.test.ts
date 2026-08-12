@@ -97,6 +97,81 @@ describe("doLanding — happy paths", () => {
   });
 });
 
+describe("doLanding — staged Pi package gate (#3666)", () => {
+  it.each([
+    "plugins/dev/skills/engineering/afk/SKILL.md",
+    "plugins/dev/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+  ])("restages and publishes Pi mirrors before opening a PR for %s", async (changedFile) => {
+    const h = harness({ locked: false, changedFiles: [changedFile] });
+    const mergeExec = h.deps.mergeExec;
+    h.deps.mergeExec = async (argv) => {
+      if (argv.join(" ") === `git -C ${RWT} status --porcelain -- packaging/pi`) {
+        h.mergeCalls.push(argv);
+        return { code: 0, stdout: " M packaging/pi/dev/skills/engineering/afk/SKILL.md\n", stderr: "" };
+      }
+      return mergeExec(argv);
+    };
+
+    await expect(doLanding(h.deps, h.input, h.hooks)).resolves.toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+    });
+
+    const calls = joined(h.mergeCalls);
+    const build = calls.indexOf(`pnpm -C ${RWT} pi:packages:build`);
+    const add = calls.indexOf(`git -C ${RWT} add -- packaging/pi`);
+    const commit = calls.indexOf(
+      `git -C ${RWT} commit -m chore: regenerate staged Pi packages -m Refs #9`,
+    );
+    const publish = calls.indexOf(
+      `git -C ${RWT} push origin HEAD:refs/heads/afk/wAAAA/9-fix-the-thing`,
+    );
+    const openPr = calls.findIndex((call) =>
+      call.includes("pr list") || (call.includes("api repos/") && call.includes("state=open"))
+    );
+    expect([build, add, commit, publish].every((index) => index >= 0)).toBe(true);
+    expect(build).toBeLessThan(add);
+    expect(add).toBeLessThan(commit);
+    expect(commit).toBeLessThan(publish);
+    expect(publish).toBeLessThan(openPr);
+  });
+
+  it("does not run a Pi restage for an unrelated diff", async () => {
+    const h = harness({ locked: false, changedFiles: ["apps/dev/src/core/landing.ts"] });
+
+    await expect(doLanding(h.deps, h.input, h.hooks)).resolves.toMatchObject({ ok: true });
+
+    expect(joined(h.mergeCalls).some((call) => call.includes("pi:packages:build"))).toBe(false);
+  });
+
+  it("returns the Pi build output and stops before PR creation when restaging fails", async () => {
+    const h = harness({
+      locked: false,
+      createPr: true,
+      changedFiles: ["plugins/dev/skills/engineering/afk/SKILL.md"],
+    });
+    const mergeExec = h.deps.mergeExec;
+    h.deps.mergeExec = async (argv) => {
+      if (argv.join(" ") === `pnpm -C ${RWT} pi:packages:build`) {
+        h.mergeCalls.push(argv);
+        return { code: 1, stdout: "builder stdout", stderr: "builder stderr" };
+      }
+      return mergeExec(argv);
+    };
+
+    await expect(doLanding(h.deps, h.input, h.hooks)).resolves.toEqual({
+      ok: false,
+      reason: "infra",
+      locked: false,
+      infraReason: "Pi package restage failed: builder stdout\nbuilder stderr",
+    });
+    expect(h.mergeCalls.some(isRestCreatePullCall)).toBe(false);
+    expect(h.removedRebaseWorktrees).toEqual([RWT]);
+  });
+});
+
 describe("doLanding — after-fork intent barrier (#3279)", () => {
   it("checks the rebased PR worktree before opening or merging a pull request", async () => {
     const h = harness({ locked: false, openPr: true, createPr: true });
