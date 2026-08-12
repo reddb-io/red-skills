@@ -44,7 +44,6 @@ export interface GithubReadShelloutBaselineEntry {
  * when a site moves; never raise one to admit a fresh shell-out.
  */
 export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
-  { path: "apps/dev/src/commands/hitl-card.ts", count: 6, reason: "HITL card discovery still needs routed repo, issue, PR, comment, and list surfaces" },
   { path: "apps/dev/src/commands/requeue.ts", count: 2, reason: "requeue still resolves repository and issue state through the CLI" },
   { path: "apps/dev/src/commands/respond.ts", count: 2, reason: "respond still resolves repository and comment state through the CLI" },
   { path: "apps/dev/src/commands/review.ts", count: 1, reason: "review still resolves repository identity through the CLI" },
@@ -68,7 +67,6 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
 
 /** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
 export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
-  { path: "apps/dev/src/commands/hitl-card.ts", count: 15, reason: "HITL actions still write comments, labels, issue state, and PR dispositions through gh" },
   { path: "apps/dev/src/core/merge.ts", count: 7, reason: "landing uses REST for create and merge, while draft readiness, labels, and update-branch still await routed mutations" },
   { path: "apps/dev/src/runtime/gh/issues.ts", count: 7, reason: "issue body, state, and label edits now use the write plan; comment, create, sub-issue, and label-resource mutations remain" },
   { path: "apps/dev/src/runtime/gh/manager-map.ts", count: 3, reason: "manager-map issue creation still awaits the shared mutation surface" },

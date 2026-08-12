@@ -64,6 +64,24 @@ describe("planGithubWrite — the client owns the write rail", () => {
     expect(plan.args).toBe(argv);
   });
 
+  it("realizes an issue comment on REST", () => {
+    const plan = planGithubWrite([
+      "gh", "issue", "comment", "42", "--repo", "o/r", "--body", "resolved",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: ["gh", "api", "-X", "POST", "repos/o/r/issues/42/comments", "-f", "body=resolved"],
+    });
+  });
+
+  it("preserves an explicit REST API mutation on the REST rail", () => {
+    const argv = [
+      "gh", "api", "repos/o/r/issues/comments/99", "--method", "PATCH", "--field", "body=updated",
+    ];
+    const plan = planGithubWrite(argv);
+    expect(plan).toEqual({ surface: "rest", args: argv });
+  });
+
   it("passes an unrouted write through unchanged", () => {
     const argv = ["gh", "-R", "o/r", "pr", "ready", "42"];
     const plan = planGithubWrite(argv);

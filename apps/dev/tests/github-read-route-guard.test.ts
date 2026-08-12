@@ -90,6 +90,15 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     )?.count).toBe(7);
   });
 
+  it("routes every HITL card read and write through packages/github (#3727)", () => {
+    const path = "apps/dev/src/commands/hitl-card.ts";
+
+    expect(collectGithubReadRouteReport(ROOT).findings.filter((finding) => finding.path === path)).toEqual([]);
+    expect(collectGithubWriteRouteReport(ROOT).findings.filter((finding) => finding.path === path)).toEqual([]);
+    expect(GITHUB_READ_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
+    expect(GITHUB_WRITE_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
+  });
+
   it("rejects a new gh write and points it at the shared client", () => {
     const findings = collectGithubWriteShelloutsFromFiles([
       {
