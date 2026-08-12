@@ -1,4 +1,5 @@
 import type { MergeDriverIo, MergeDriverPrView } from "@reddb-io/red-castle/engine";
+import { planGithubWrite } from "@reddb-io/github";
 import type { GithubMergeRead } from "../core/github-merge-read.js";
 import { apiPath, runGh, type GhContext } from "./gh/common.js";
 
@@ -51,11 +52,13 @@ export function createMergeDriverIo(ctx: GhContext, github: GithubMergeRead): Me
       };
     },
     async updateBranch(pr) {
-      const r = await runGh(ctx, ["api", "-X", "PUT", apiPath(ctx, `pulls/${pr}/update-branch`)]);
+      const plan = planGithubWrite(["gh", "api", "-X", "PUT", apiPath(ctx, `pulls/${pr}/update-branch`)]);
+      const r = await runGh(ctx, plan.args.slice(1));
       if (r.code !== 0) throw new Error(`update-branch #${pr} failed: ${r.stderr.trim()}`);
     },
     async merge(pr, strategy) {
-      const r = await runGh(ctx, ["pr", "merge", String(pr), `--${strategy}`]);
+      const plan = planGithubWrite(["gh", "-R", ctx.repo, "pr", "merge", String(pr), `--${strategy}`]);
+      const r = await runGh(ctx, plan.args.slice(1));
       if (r.code !== 0) throw new Error(`merge #${pr} failed: ${r.stderr.trim()}`);
     },
   };

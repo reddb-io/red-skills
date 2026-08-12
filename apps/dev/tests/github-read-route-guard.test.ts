@@ -128,6 +128,20 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     }
   });
 
+  it("routes the review, docs, Manager-map, and merge-driver cluster through packages/github (#3732)", () => {
+    const migrated = new Set([
+      "apps/dev/src/runtime/review-gh.ts",
+      "apps/dev/src/runtime/wire/docs.ts",
+      "apps/dev/src/runtime/gh/manager-map.ts",
+      "apps/dev/src/runtime/merge-driver-io.ts",
+    ]);
+
+    expect(collectGithubReadRouteReport(ROOT).findings.filter((finding) => migrated.has(finding.path))).toEqual([]);
+    expect(collectGithubWriteRouteReport(ROOT).findings.filter((finding) => migrated.has(finding.path))).toEqual([]);
+    expect(GITHUB_READ_SHELLOUT_BASELINE.filter((entry) => migrated.has(entry.path))).toEqual([]);
+    expect(GITHUB_WRITE_SHELLOUT_BASELINE.filter((entry) => migrated.has(entry.path))).toEqual([]);
+  });
+
   it("rejects a new gh write and points it at the shared client", () => {
     const findings = collectGithubWriteShelloutsFromFiles([
       {

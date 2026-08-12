@@ -50,11 +50,8 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
   { path: "apps/dev/src/runtime/etag-transport.ts", count: 1, reason: "the legacy ETag transport still resolves one PR head through the CLI" },
   { path: "apps/dev/src/runtime/gh/comments.ts", count: 4, reason: "comment reads still need shared conditional REST projections" },
   { path: "apps/dev/src/runtime/gh/issues.ts", count: 10, reason: "issue list, view, and REST helper reads remain the largest dev migration cluster" },
-  { path: "apps/dev/src/runtime/gh/manager-map.ts", count: 3, reason: "Manager map issue list/view reads still use the CLI boundary" },
   { path: "apps/dev/src/runtime/gh/sweeps.ts", count: 4, reason: "sweep issue/PR listings still need shared conditional pagination" },
   { path: "apps/dev/src/runtime/medic-io.ts", count: 3, reason: "medic PR/run observations still need routed client methods" },
-  { path: "apps/dev/src/runtime/review-gh.ts", count: 2, reason: "review PR metadata and diff reads still use gh" },
-  { path: "apps/dev/src/runtime/wire/docs.ts", count: 1, reason: "the docs wire still reads one created PR result through gh" },
   { path: "apps/dev/src/runtime/wire/paths.ts", count: 1, reason: "path wiring still resolves repository identity through gh" },
   { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 2, reason: "the castle adapter still has two REST response reads awaiting client injection" },
 ];
@@ -62,10 +59,6 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
 /** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
 export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
   { path: "apps/dev/src/runtime/gh/issues.ts", count: 7, reason: "issue body, state, and label edits now use the write plan; comment, create, sub-issue, and label-resource mutations remain" },
-  { path: "apps/dev/src/runtime/gh/manager-map.ts", count: 3, reason: "manager-map issue creation still awaits the shared mutation surface" },
-  { path: "apps/dev/src/runtime/merge-driver-io.ts", count: 2, reason: "the compatibility merge driver still shells out for update and merge" },
-  { path: "apps/dev/src/runtime/review-gh.ts", count: 3, reason: "review comments and labels still await routed mutations" },
-  { path: "apps/dev/src/runtime/wire/docs.ts", count: 2, reason: "the docs wire still creates and merges its PR through gh" },
   { path: "packages/red-castle/src/cli.ts", count: 1, reason: "castle bootstrap still creates one label through gh" },
   { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 1, reason: "the castle tracker still writes one issue comment through gh" },
 ];
