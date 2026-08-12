@@ -1,0 +1,29 @@
+{
+  "name": "automatic-disk-census",
+  "command": ["automatic", "output", "find . -type d -name target -prune -print0 | xargs -0 du -sk | sort -nr"],
+  "large_output": true,
+  "automatic_policy": {
+    "size_threshold_bytes": 512,
+    "repetition_threshold_rows": 20,
+    "top_rows": 5
+  },
+  "recorded": {
+    "stdout": "184320\t./packages/compiler-fixtures/alpha/target\n172032\t./packages/compiler-fixtures/beta/target\n160768\t./apps/worker-runtime/target\n149504\t./packages/query-engine/target\n138240\t./packages/storage-adapter/target\n126976\t./packages/telemetry-client/target\n115712\t./apps/release-canary/target\n104448\t./packages/github-client/target\n93184\t./packages/toon-bridge/target\n81920\t./packages/task-runner/target\n70656\t./apps/diagnostic-shell/target\n59392\t./packages/config-reader/target\n48128\t./packages/fixture-loader/target\n36864\t./packages/output-policy/target\n35840\t./packages/resident-client/target\n34816\t./packages/process-tree/target\n33792\t./packages/recovery-store/target\n32768\t./packages/command-router/target\n31744\t./packages/benchmark-kit/target\n30720\t./packages/schema-tools/target\n29696\t./packages/cli-helpers/target\n28672\t./packages/test-support/target\n27648\t./packages/path-utils/target\n26624\t./packages/release-metadata/target\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "content": "disk-census",
+    "rows_total": 24,
+    "rows_kept": 5,
+    "total_size_kib": 1854464,
+    "largest_path": "./packages/compiler-fixtures/alpha/target"
+  },
+  "assertions": [
+    { "question": "how many target directories were found?", "path": "reduction.rows_total", "expected": 24 },
+    { "question": "how many largest directories remain inline?", "path": "reduction.rows_kept", "expected": 5 },
+    { "question": "what is their total size in KiB?", "path": "summary.total_size_kib", "expected": 1854464 },
+    { "question": "which target directory is largest?", "path": "rows.0.path", "expected": "./packages/compiler-fixtures/alpha/target" }
+  ]
+}

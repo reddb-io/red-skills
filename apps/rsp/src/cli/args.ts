@@ -28,6 +28,7 @@ import type { ParsedArgs } from "./types.js";
  */
 const RSP_FLAGS = {
   "store-uri": { kind: "value", coerce: (raw: string) => raw },
+  full: { kind: "boolean" },
   brief: { kind: "boolean" },
   terse: { kind: "boolean" },
   query: { kind: "value", coerce: (raw: string) => raw },
@@ -174,7 +175,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     storeUri: values["store-uri"],
     query,
     // A level is a ceiling, not a sequence: asked for both, rsp emits the less.
-    level: values.terse === true ? "terse" : values.brief === true ? "brief" : "lossless",
+    level: values.terse === true ? "terse" : values.brief === true ? "brief" : values.full === true ? "full" : "lossless",
     positional,
   };
 }

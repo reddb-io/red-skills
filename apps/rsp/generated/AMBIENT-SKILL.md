@@ -22,6 +22,10 @@ The command boundary is the synchronous data plane. Unknown simple argv launches
 before configuration, telemetry, store, or resident code loads. After completion,
 JSON, YAML, TOON, or TOONL stdout becomes canonical TOON only when an immediate
 decode/encode/decode proof preserves its data model; every other byte passes through.
+Large repetitive structured rows cross pinned size and repetition thresholds into
+a deterministic TOON summary. The summary declares every cap or sort, includes
+aggregates and next steps, and exposes exactly one handle only after the resident
+has stored the original bytes. `rsp show` reproduces those bytes exactly.
 The resident is the lazy control plane and sole owner of shared
 elision and telemetry state under `.red/state/rsp`; specialized wrappers, the
 CLI, hooks, proxy, and MCP clients contact it only when shared state is needed.
@@ -55,8 +59,9 @@ decision means rsp inserted a wrapper; `passed` means it deliberately left the
 command or segment raw; `failed-open` means rsp ran the original command after
 an internal proxy failure. Read `rsp stats` contribution metrics as measured
 routing evidence, not a promise that every command family was compressed.
-Unknown simple commands preserve argv, stderr, exit status, and termination signal
-and create no rsp state. Pipeline stages receive native bytes; only completed final
+Unknown simple commands preserve argv, stderr, exit status, and termination signal.
+Ordinary passthrough creates no rsp state; only a qualifying lossy summary lazily
+mints recovery state. Pipeline stages receive native bytes; only completed final
 stdout may cross the lossless structured-data boundary.
 
 ## Wrapped commands
@@ -162,6 +167,9 @@ Use `--brief` for compact summaries that keep enough inline context for
 normal debugging. Use `--terse` for large or repetitive output; lossy output
 mints an `el:<id>` handle, and `rsp show el:<id>` writes the original bytes
 back to stdout. Use `--full` when exact inline output is required.
+For an unlisted command, spell universal controls before `--`, for example
+`rsp --brief -- <command> <args...>`, `rsp --terse -- <command> <args...>`, or
+`rsp --full -- <command> <args...>`.
 
 `rsp cat <file>`, large `rsp git diff`, and large `rsp git log` output may
 truncate by default; pass `--full` when exact inline output is required.

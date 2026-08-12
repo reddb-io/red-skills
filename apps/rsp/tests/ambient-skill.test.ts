@@ -55,7 +55,7 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("The command boundary is the synchronous data plane");
     expect(markdown).toContain("Unknown simple argv launches");
     expect(markdown).toContain("The resident is the lazy control plane");
-    expect(markdown).toContain("create no rsp state");
+    expect(markdown).toContain("Ordinary passthrough creates no rsp state");
     expect(markdown).toContain(
       "No surface is a privileged or canonical contact point",
     );

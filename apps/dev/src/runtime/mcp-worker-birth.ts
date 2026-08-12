@@ -76,7 +76,10 @@ export interface WorkerBirthPort {
 export type WorkerBirthEvent = Pick<
   Awaited<ReturnType<RedskilledBirthPort["drainEvents"]>>[number],
   "kind" | "worker_id" | "detail"
->;
+> & Partial<Pick<
+  Awaited<ReturnType<RedskilledBirthPort["drainEvents"]>>[number],
+  "pid" | "fork_sha" | "log_path" | "admission_verdict"
+>>;
 
 /**
  * Ask the host for one dispatched Worker, or refuse and start nothing.
@@ -145,6 +148,8 @@ export async function requestWorkerBirth(
           `Daemon evidence: ${refusal.evidence}`,
       );
     }
+    const landed = landedBirthAfterReplyFailure(events);
+    if (landed != null) return landed;
     // No fresh host evidence contradicted the transport failure. Keep the
     // existing unreachability detail and its cause-specific repair unchanged.
     throw new Error(redskilledUnreachableAdvice(port.socketPath, err));
@@ -160,6 +165,36 @@ export async function requestWorkerBirth(
     log: granted.logPath,
     warnings: granted.warnings,
     admission: granted.admission,
+  };
+}
+
+/** A fresh birth that is still live even though its success reply was lost. */
+function landedBirthAfterReplyFailure(
+  events: readonly WorkerBirthEvent[],
+): DispatchedWorkerBirth | null {
+  const liveBirths = new Map<string, WorkerBirthEvent>();
+  for (const event of events) {
+    if (event.kind === "worker-birth") {
+      liveBirths.set(event.worker_id, event);
+      continue;
+    }
+    if (event.kind === "worker-death") liveBirths.delete(event.worker_id);
+  }
+  const birth = [...liveBirths.values()].at(-1);
+  if (
+    birth == null ||
+    typeof birth.pid !== "number" ||
+    birth.pid <= 0 ||
+    birth.fork_sha == null ||
+    birth.fork_sha === ""
+  ) return null;
+  return {
+    worker_id: birth.worker_id,
+    pid: birth.pid,
+    fork_sha: birth.fork_sha,
+    log: birth.log_path ?? null,
+    warnings: ["birth landed after the reply timed out; use these handles to watch it"],
+    admission: birth.admission_verdict ?? "birth recorded by daemon",
   };
 }
 

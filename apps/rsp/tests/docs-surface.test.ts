@@ -13,7 +13,7 @@ describe("rsp docs surface", () => {
   it("describes the shipped rsp surface with stable contract headings", async () => {
     const readme = await doc("README.md");
 
-    expect(readme).toContain("99.8% decision-oracle capture");
+    expect(readme).toContain("99.2% decision-oracle capture");
     expect(readme).toContain("RTK 4.9%");
     expect(readme).toContain("Headroom 0.6%");
     expect(readme).toContain("docs/ARCHITECTURE.md");
