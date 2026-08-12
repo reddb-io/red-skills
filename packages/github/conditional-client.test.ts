@@ -793,3 +793,31 @@ describe("the balance watches; by default it stops nothing (#3768)", () => {
     expect(Date.now() - startedAt).toBeLessThan(10_000);
   });
 });
+
+describe("a 404 is an answer, not a failure", () => {
+  it("asks once for an absent resource instead of retrying it", async () => {
+    let calls = 0;
+    const client = createGithubClient({
+      token: "test-token",
+      throttle: false,
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ message: "Not Found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const error = await client.conditionalRest({
+      cacheKey: "codeowners:acme/widgets:.github/CODEOWNERS",
+      route: "GET /repos/{owner}/{repo}/contents/{path}",
+      parameters: { owner: "acme", repo: "widgets", path: ".github/CODEOWNERS" },
+      operation: { key: "api rest", budget: "rest" },
+    }).then(() => null, (thrown: unknown) => thrown);
+
+    expect((error as { status?: number }).status).toBe(404);
+    // Retrying cost 93s of backoff per CODEOWNERS lookup and froze Worker boot.
+    expect(calls).toBe(1);
+  }, 60_000);
+});
