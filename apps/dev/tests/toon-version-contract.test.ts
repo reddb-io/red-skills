@@ -15,8 +15,8 @@ describe("toon catalog version contract", () => {
   it("derives the toon/tq version from the pnpm catalog", () => {
     expect(readCatalogToonVersion(ROOT)).toEqual({
       packageName: "@reddb-io/toon",
-      version: "0.21.0",
-      tag: "v0.21.0",
+      version: "0.22.0",
+      tag: "v0.22.0",
     });
   });
 
