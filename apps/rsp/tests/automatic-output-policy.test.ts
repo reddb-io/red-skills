@@ -1,4 +1,6 @@
 import { decode } from "@reddb-io/toon";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderAutomaticOutput } from "../src/automatic-output-policy.js";
 
@@ -81,6 +83,41 @@ describe("rsp automatic output policy", () => {
     expect(valueAt(decoded, ["next_steps", 0])).toBe("Recover exact bytes with rsp show <handle>");
     expect(valueAt(decoded, ["next_steps", 1])).toBe("Re-run service-status --json with --full to suppress reduction");
     expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:automaticfixture");
+  });
+
+  it("renders the disk census as a deterministic top-N TOON table", async () => {
+    const fixture = JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", "automatic", "disk-census.json"), "utf8")) as {
+      command: string;
+      stdout: string;
+      size_threshold_bytes: number;
+      repetition_threshold_rows: number;
+      top_rows: number;
+    };
+    const original = Buffer.from(fixture.stdout);
+    const store = new MemoryStore();
+
+    const result = await renderAutomaticOutput(original, {
+      command: fixture.command,
+      level: "lossless",
+      store,
+      sizeThresholdBytes: fixture.size_threshold_bytes,
+      repetitionThresholdRows: fixture.repetition_threshold_rows,
+      topRows: fixture.top_rows,
+    });
+
+    expect(result.lossy).toBe(true);
+    expect(store.originals.get("el:automaticfixture")).toEqual(original);
+    expect(result.stdout.toString("utf8").match(/el:[a-z0-9]+/g)).toEqual(["el:automaticfixture"]);
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded["content"]).toBe("disk-census");
+    expect(valueAt(decoded, ["reduction", "rows_total"])).toBe(24);
+    expect(valueAt(decoded, ["reduction", "rows_kept"])).toBe(5);
+    expect(valueAt(decoded, ["reduction", "rows_omitted"])).toBe(19);
+    expect(valueAt(decoded, ["reduction", "changes", 0])).toBe("rows sorted by size_kib descending; capped to top 5; 19 omitted");
+    expect(valueAt(decoded, ["summary", "total_size_kib"])).toBe(1_854_464);
+    expect(valueAt(decoded, ["summary", "largest_size_kib"])).toBe(184_320);
+    expect(valueAt(decoded, ["rows", 0, "path"])).toBe("./packages/compiler-fixtures/alpha/target");
+    expect(valueAt(decoded, ["rows", 4, "size_kib"])).toBe(138_240);
   });
 });
 
