@@ -361,4 +361,20 @@ describe("rsp universal command boundary", () => {
       reduction: { rows_total: 180, rows_omitted: 168 },
     });
   });
+
+  it("honors --terse on the fast proxy boundary", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = "process.stdout.write(JSON.stringify(Array.from({length:10},(_,id)=>({id,state:'steady'}))))";
+    const command = `${process.execPath} -e ${JSON.stringify(script)}`;
+
+    const reduced = rsp(root, ["proxy", "--terse", "--", command]);
+
+    expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
+    expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
+      family: "automatic-output",
+      reduction: { reason: "explicit-terse", rows_total: 10, rows_kept: 5, rows_omitted: 5 },
+    });
+  });
 });
