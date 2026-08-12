@@ -185,6 +185,7 @@ import {
   type Verdict,
 } from "../verdict.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { reportValidationEvidenceInconsistency } from "./validation-park.js";
 import { parseRecords } from "@reddb-io/toon";
 
 /** Recorded when the forge refused the merge and the PR state did not explain it
@@ -225,8 +226,6 @@ function setupFailureExcerpt(log: string | null | undefined): string | undefined
   if (setupFailure < 0) return undefined;
   return lines.slice(setupFailure, setupFailure + 4).join("\n");
 }
-
-
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -1559,14 +1558,7 @@ export async function processIssue(
           : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
       });
     }
-    if (feedback.evidenceInconsistency) {
-      const note = `🤖 ${reseedLane}: INCONSISTENT Validation result — ${feedback.evidenceInconsistency}.`;
-      deps.appendIterLog(note);
-      deps.recordWorkerEvent?.("worker.validation_evidence_inconsistency", {
-        stage: "feedback",
-        reason: feedback.evidenceInconsistency,
-      });
-    }
+    reportValidationEvidenceInconsistency(feedback, reseedLane, deps);
     markProcessSafetyStep("post-agent:feedback-done");
     const baseMergeGeometry = deps.baseMergeReversionGeometry?.(workerBranch);
     if (baseMergeGeometry) {
