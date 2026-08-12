@@ -27,6 +27,20 @@ function failedCheck(overrides: Partial<ClassifiableCheck["record"]> = {}): Clas
   };
 }
 
+function passedCheck(): ClassifiableCheck {
+  return {
+    status: "passed",
+    record: {
+      schema: "red.afk.validation.v1",
+      name: "validation:post_done",
+      status: "passed",
+      command: "pnpm test",
+      exitCode: 0,
+      durationMs: 400,
+    },
+  };
+}
+
 function ledger(rounds: EnvironmentLedger["rounds"], cap = 2): EnvironmentLedger {
   return { cap, rounds };
 }
@@ -208,6 +222,15 @@ describe("decideVerdict — one fault, budget effect, and park decision", () => 
       parkNow: true,
       parkReason: "branch-exhausted",
     });
+  });
+
+  it("refuses a failed-round verdict when the supplied evidence is all green", () => {
+    expect(() => decideVerdict({
+      checks: [passedCheck()],
+      signature: SIGNATURE,
+      history: { environment: emptyEnvironmentLedger(2), branchBudgetAvailable: false },
+      environment: {},
+    })).toThrow(/all-green validation evidence/);
   });
 });
 
