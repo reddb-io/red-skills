@@ -177,7 +177,6 @@ import {
   type RedskilledWorkerLogLine,
 } from "../worker-log.js";
 import {
-  completeRedskilledReplacement,
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isLocalRedskilledBuild,
   isRedskilledBornByReplacement,
@@ -185,7 +184,6 @@ import {
   localRedskilledPublishedEvidence,
   planRedskilledMajorHold,
   planRedskilledReplacement,
-  prepareRedskilledReplacement,
   probePublishedRedskilledVersion,
   readPublishedObservation,
   type RedskilledMajorHold,
@@ -216,6 +214,7 @@ import {
   bootRefusalFromLog,
   observedWorkerDeath,
 } from "./tunables.js";
+import { replaceWithViableSuccessor } from "./takeover.js";
 import { createRemotePollDeadline } from "./remote-poll.js";
 import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
@@ -451,6 +450,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let publishedChecks = 0;
   let publishedHoldReason: RedskilledReplacementHoldReason | null = null;
   let replacementState: "none" | "pending" | "in-progress" = "none";
+  // Do not hammer one broken successor from overlapping checks.
+  let nextTakeoverAttemptAtMs = 0;
   // The world's newest version whatever its major, and the hold it implies. Kept
   // beside the in-major answer because that one is capped by construction: on its
   // own it cannot tell a current daemon from one holding at a boundary (#2926).
@@ -1864,28 +1865,27 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return decision;
   }
 
-  /**
-   * Observe, then hand the session over when a newer version is published.
-   *
-   * The order is the contract: flush the lane, let go of the socket and the
-   * lease, and only then start the successor — a successor racing this process
-   * for the exclusive bind would die, and the machine would keep the old bundle.
-   */
+  /** Observe, prove a viable successor, then hand over the session. */
   async function checkForReplacement(): Promise<RedskilledReplacementDecision> {
     const decision = await observePublishedVersion();
     if (decision.act !== "replace" || replacementState === "in-progress") return decision;
-    // The successor is found FIRST. A published bundle this host cannot reach
-    // costs the upgrade and nothing else: the throw leaves this daemon serving,
-    // still holding every Worker, still reporting the version it actually runs.
-    const prepared = prepareRedskilledReplacement(decision, replacementIO, paths, idleMs);
-    replacementState = "in-progress";
-    await eventLane.flush().catch(() => undefined);
-    await registrationIntentStore.flush().catch(() => undefined);
-    await stop({ reason: "replaced" });
-    completeRedskilledReplacement(prepared, paths, {
-      ...(idleMs == null ? {} : { idleMs }),
+    const nowMs = Date.parse(clock());
+    if (Number.isFinite(nowMs) && nowMs < nextTakeoverAttemptAtMs) return decision;
+    if (Number.isFinite(nowMs)) nextTakeoverAttemptAtMs = nowMs + 60_000;
+    const replaced = await replaceWithViableSuccessor({
+      decision,
       io: replacementIO,
+      paths,
+      ...(idleMs == null ? {} : { idleMs }),
+      incumbentVersion: daemonVersion,
+      incumbentPid: owner.pid,
+      clock,
+      eventLane,
+      flushRegistration: () => registrationIntentStore.flush(),
+      stop: () => stop({ reason: "replaced" }),
+      onViable: () => { replacementState = "in-progress"; },
     });
+    if (!replaced) replacementState = "pending";
     return decision;
   }
 
