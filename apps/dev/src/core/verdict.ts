@@ -104,7 +104,10 @@ function normaliseCap(cap: number): number {
   return Number.isInteger(cap) && cap >= 0 ? cap : 0;
 }
 
-function failedChecks(checks: readonly ClassifiableCheck[]): readonly ClassifiableCheck[] {
+/** Failed checks whose durable record can actually justify a failed round. */
+export function blockingValidationChecks(
+  checks: readonly ClassifiableCheck[],
+): readonly ClassifiableCheck[] {
   return checks.filter((check) => check.status === "failed" && check.record.exitCode !== 0);
 }
 
@@ -113,7 +116,7 @@ function checkEnvironmentCause(
   checks: readonly ClassifiableCheck[],
   subsecondFailuresAreBranchFault: boolean,
 ): Exclude<EnvironmentCause, "stale-base-drift"> | undefined {
-  for (const check of failedChecks(checks)) {
+  for (const check of blockingValidationChecks(checks)) {
     const record = check.record;
     if (record.suspectInfra === true && !subsecondFailuresAreBranchFault) return "suspect-infra";
     if (record.infra === "stall") return "stall";
@@ -182,6 +185,11 @@ function remediationFor(input: VerdictInput, fault: VerdictFault): VerdictRemedi
  * only park that environment fault, never transmute it into branch blame.
  */
 export function decideVerdict(input: VerdictInput): Verdict {
+  if (blockingValidationChecks(input.checks).length === 0) {
+    throw new Error(
+      "Verdict refused a failed Validation round with all-green validation evidence",
+    );
+  }
   const fault = faultFor(input);
   const remediation = remediationFor(input, fault);
   if (remediation?.kind === "agent-correction") {
