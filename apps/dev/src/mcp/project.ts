@@ -344,9 +344,10 @@ export async function projectStart(
   // so a claim whose pid died during setup cannot leave `running` stranded.
   // This remains project-authored work: the daemon carries the hook without
   // learning what a claim, label, branch or queue lane means.
+  const reconciliationLaunch = registrationLaunch({ runner: input.runner, logPath: logPathTemplate });
   const workerDeathHook = {
-    ...launch,
-    argv: [...launch.argv, "--boot-only"],
+    ...reconciliationLaunch,
+    argv: [...reconciliationLaunch.argv, "--boot-only"],
     mode: "sync" as const,
     deadline_ms: 120_000,
   };
