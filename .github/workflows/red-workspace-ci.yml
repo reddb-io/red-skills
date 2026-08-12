@@ -308,6 +308,28 @@ jobs:
         with:
           node-version: 22
 
+      # The rsp integration suite exercises the XML command boundary through
+      # the real `tq` binary on PATH (structured-boundary.ts shells out to it,
+      # and command-boundary.test.ts asserts tq's canonical ordered tree), so
+      # the pinned binary must exist here exactly as it does on dev machines
+      # (/red-setup) and in the RUN_DEV jobs above. Same pinned installer,
+      # same GitHub-release source, no fallback.
+      - name: Install pinned tq
+        if: env.RUN_RSP == 'true'
+        env:
+          TQ_VERSION: v0.22.0
+        run: |
+          set -euo pipefail
+          tq_root="$RUNNER_TEMP/tq"
+          mkdir -p "$tq_root/bin"
+          base="https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static" "$tq_root/bin/tq"
+          scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static.sha256" "$tq_root/tq.sha256"
+          echo "$(cut -d' ' -f1 "$tq_root/tq.sha256")  $tq_root/bin/tq" | sha256sum -c -
+          chmod +x "$tq_root/bin/tq"
+          echo "$tq_root/bin" >> "$GITHUB_PATH"
+          "$tq_root/bin/tq" --version
+
       # Unlike the other jobs, this one MUST let the @reddb-io/sdk postinstall
       # download the `red` binary: the resident tests spawn the built bundle
       # against the embedded RedDb elision store, and `rsp setup` provisions
@@ -324,6 +346,24 @@ jobs:
       - name: Exercise distributable RSP bundle
         if: env.RUN_RSP == 'true'
         run: node dist/rsp.bundle.min.mjs --help
+
+      # The resident tests spawn the built bundle, and the bundled sdk cannot
+      # resolve `bin/red` relative to its own package: the bundle lives in
+      # dist/, so the sdk's package-root fallback points at <repo>/bin/red,
+      # which never exists. Production hosts find the binary through the warm
+      # cache (~/.cache/red-skills/bundles/reddb/<version>/red) that
+      # /red-setup provisions; give the runner the same warm cache from the
+      # binary the sdk postinstall just downloaded.
+      - name: Seed RedDb warm cache for resident tests
+        if: env.RUN_RSP == 'true'
+        run: |
+          set -euo pipefail
+          sdk_dir=$(cd apps/rsp/node_modules/@reddb-io/sdk && pwd -P)
+          version=$(node -p "require('$sdk_dir/package.json').version")
+          dest="$HOME/.cache/red-skills/bundles/reddb/$version"
+          mkdir -p "$dest"
+          cp "$sdk_dir/bin/red" "$dest/red"
+          "$dest/red" --version
 
       - name: Test RSP fidelity and units
         if: env.RUN_RSP == 'true'
