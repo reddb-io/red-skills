@@ -12,6 +12,7 @@ import {
 import {
   REDSKILLED_IDLE_MS_ENV,
   readRedskilledHostConfig,
+  resolveRedskilledHostEventSinks,
   resolveRedskilledHostSettings,
 } from "../src/host-config.js";
 import { provisionRedskilledHome } from "../src/provision.js";
@@ -41,6 +42,14 @@ describe("the daemon-owned host config", () => {
       "      memory_ceiling: 8G",
       "      validation_ceiling: 3",
       "      idle_ms: 61000",
+      "      hooks:",
+      "        worker-birth:",
+      "          argv: [/usr/local/bin/redwall, refresh]",
+      "          env:",
+      "            REDWALL_MODE: live",
+      "      notifications:",
+      "        - worker-death",
+      "        - worker-budget-kill",
       "",
     ].join("\n"));
 
@@ -49,6 +58,13 @@ describe("the daemon-owned host config", () => {
       memoryCeiling: "8G",
       validationCeiling: "3",
       idleMs: "61000",
+      hooks: {
+        "worker-birth": {
+          argv: ["/usr/local/bin/redwall", "refresh"],
+          env: { REDWALL_MODE: "live" },
+        },
+      },
+      notifications: ["worker-death", "worker-budget-kill"],
     });
   });
 
@@ -66,6 +82,19 @@ describe("the daemon-owned host config", () => {
 });
 
 describe("host setting precedence", () => {
+  it("turns persistent policy into daemon event sinks rooted in the host home", () => {
+    expect(resolveRedskilledHostEventSinks({
+      hooks: { "worker-birth": { argv: ["redwall", "refresh"] } },
+      notifications: ["worker-death"],
+    }, "/operator/redskilled", "darwin")).toEqual({
+      workspacePath: "/operator/redskilled",
+      hooks: { "worker-birth": { argv: ["redwall", "refresh"] } },
+      notifications: ["worker-death"],
+      platform: "darwin",
+    });
+    expect(resolveRedskilledHostEventSinks({}, "/operator/redskilled")).toBeUndefined();
+  });
+
   it("resolves flag over environment over home config over the derived default", () => {
     const fromFlag = resolveHostCeiling(
       { [REDSKILLED_WORKER_CEILING_ENV]: "5", [REDSKILLED_MEMORY_CEILING_ENV]: "7G" },
