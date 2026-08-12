@@ -104,10 +104,10 @@ export async function renderAutomaticOutput(
     };
   }
 
-  const value = decodedValue(complete);
-  if (!Array.isArray(value) || !value.every(isJsonObject)) return { stdout: complete, lossy: false };
+  const structured = structuredRows(decodedValue(complete));
+  if (!structured) return { stdout: complete, lossy: false };
 
-  const rows = value as JsonObject[];
+  const { rows } = structured;
   const repeatedRows = majorityShapeCount(rows);
   const crossesAutomaticThreshold = original.length > sizeThresholdBytes &&
     repeatedRows >= repetitionThresholdRows &&
@@ -123,6 +123,7 @@ export async function renderAutomaticOutput(
   const payload = {
     family: "automatic-output",
     content: "structured-array",
+    ...(structured.sourcePath ? { source_path: structured.sourcePath, context: structured.context } : {}),
     reduction: {
       reason: options.level === "terse" ? "explicit-terse" : "size-and-repetition-threshold",
       input_bytes: original.length,
@@ -132,7 +133,9 @@ export async function renderAutomaticOutput(
       rows_total: rows.length,
       rows_kept: rowsKept,
       rows_omitted: rowsOmitted,
-      changes: [`rows capped to first ${rowsKept}; ${rowsOmitted} omitted`],
+      changes: [structured.sourcePath
+        ? `rows at ${structured.sourcePath} capped to first ${rowsKept}; ${rowsOmitted} omitted`
+        : `rows capped to first ${rowsKept}; ${rowsOmitted} omitted`],
     },
     summary: { numeric: numericAggregates(rows) },
     rows: rows.slice(0, rowsKept),
@@ -188,6 +191,19 @@ function decodedValue(stdout: Buffer): unknown {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function structuredRows(value: unknown): { rows: JsonObject[]; sourcePath?: string; context?: JsonObject } | undefined {
+  if (Array.isArray(value) && value.every(isJsonObject)) return { rows: value };
+  if (!isJsonObject(value)) return undefined;
+  const candidates = Object.entries(value)
+    .filter((entry): entry is [string, JsonObject[]] => Array.isArray(entry[1]) && entry[1].every(isJsonObject))
+    .sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]));
+  const selected = candidates[0];
+  if (!selected) return undefined;
+  const [sourcePath, rows] = selected;
+  const context = Object.fromEntries(Object.entries(value).filter(([key]) => key !== sourcePath)) as JsonObject;
+  return { rows, sourcePath, context };
 }
 
 function majorityShapeCount(rows: readonly JsonObject[]): number {
