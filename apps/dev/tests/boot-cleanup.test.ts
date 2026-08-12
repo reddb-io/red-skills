@@ -808,6 +808,39 @@ describe("runBoot cross-host stale-claim sweep (#627)", () => {
     expect(ghCalls.comment[0].body).toContain("worker.pid");
   });
 
+  it("restores a dead claim to its isolated pre-claim lane", async () => {
+    const claimedIssues = async () => [
+      { issue: 42, records: [claim(10, "host1:wXY", 120)], deadOwners: ["host1:wXY"] },
+    ];
+    const viewLabels = async () => ["running", "lane:go"];
+    const { deps, ghCalls } = makeDeps({ claimedIssues, viewLabels });
+
+    const r = await runBoot(deps, options());
+
+    expect(r.staleClaimSweep).toEqual({ released: [42] });
+    expect(ghCalls.editLabels).toEqual([{ issue: 42, remove: ["running"], add: [] }]);
+    expect(ghCalls.comment[0].body).toContain("`lane:go`");
+    expect(ghCalls.comment[0].body).not.toContain("back to `ready-for-agent`");
+  });
+
+  it("audits the zero-commit remote branch left by a crash during setup", async () => {
+    const claimedIssues = async () => [
+      {
+        issue: 42,
+        records: [claim(10, "host1:wXY", 120)],
+        deadOwners: ["host1:wXY"],
+        attemptBranches: [{ branch: "afk/wXY/42-crash", commitsAhead: 0 }],
+      },
+    ];
+    const { deps, ghCalls } = makeDeps({ claimedIssues });
+
+    const r = await runBoot(deps, options());
+
+    expect(r.staleClaimSweep).toEqual({ released: [42] });
+    expect(ghCalls.comment[0].body).toContain("`afk/wXY/42-crash`");
+    expect(ghCalls.comment[0].body).toContain("zero commits");
+  });
+
   it("honours RED_AFK_CLAIM_REFRESH_S / tolerance from env", async () => {
     // 700s old: stale under the default 1200s window? no. Tighten the window to
     // 60×(1+0)=60s via env → 700s is now stale.
