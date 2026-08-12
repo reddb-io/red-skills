@@ -144,19 +144,27 @@ describe("ci-fetch-with-retry", () => {
 });
 
 describe("CI setup network fetches", () => {
-  it("installs workspace-CI tq from the pinned official crate", async () => {
+  // From the pinned official GitHub release, no longer the crate: tq's
+  // crates.io publish runs on a token that lapsed at 0.21.0 (403, unseen)
+  // and `cargo install` took every branch of this repository down with it.
+  // The pin's guarantees carry over — one official binary, one pinned tag,
+  // checksum-verified, fetched through the shared retrying fetcher.
+  it("installs workspace-CI tq from the pinned official release", async () => {
     const step = stepBody(await readWorkflow("red-workspace-ci.yml"), "Install pinned tq");
 
-    expect(step).toContain('cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked');
+    expect(step).toContain('scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static"');
+    expect(step).toContain("https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}");
+    expect(step).toContain("sha256sum -c -");
     expect(step).toContain('tq_root="$RUNNER_TEMP/tq"');
     expect(step).not.toContain("../toon");
     expect(step).not.toContain("curl ");
   });
 
-  it("installs benchmark-CI tq from the pinned official crate", async () => {
+  it("installs benchmark-CI tq from the pinned official release", async () => {
     const step = stepBody(await readWorkflow("red-rsp-benchmark-ci.yml"), "Install pinned tq");
 
-    expect(step).toContain('cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked');
+    expect(step).toContain('scripts/ci-fetch-with-retry.sh "$base/tq-linux-x86_64-static"');
+    expect(step).toContain("sha256sum -c -");
     expect(step).toContain('"$tq_root/bin/tq" --version');
     expect(step).not.toContain("../toon");
     expect(step).not.toContain("curl ");
