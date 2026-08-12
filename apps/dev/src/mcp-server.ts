@@ -47,12 +47,15 @@ import { startResidentSelfUpdate } from "./resident-self-update.js";
 import { createRedskilledBirthPort } from "./runtime/redskilled-birth.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
 import { renewRegistrationDelivery } from "./runtime/registration-delivery.js";
+import { maintainStandingDrain } from "./runtime/standing-drain.js";
 import { workerLogPathTemplate } from "./runtime/redskilled-worker-log.js";
 import {
   newestInstalledPluginVersion,
   refreshPublishedBundleVersion,
 } from "./core/published-version.js";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
+import { loadConfig, readStandingDrain } from "./core/config.js";
+import { drain } from "./mcp/project.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
 const REGISTRATION_DELIVERY_RENEW_MS = 150_000;
@@ -69,15 +72,22 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
   const tick = async () => {
     const port = createRedskilledBirthPort({ root });
     const installed = readBuildInfo("dev").version;
-    await renewRegistrationDelivery({
-      port,
-      publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
-      publishedArgv: (version) => publishedBundleArgv({
-        installedVersion: installed,
-        resolvePublished: () => version,
+    await maintainStandingDrain({
+      standing: () => readStandingDrain(loadConfig(join(root, ".red", "config.yaml"), {
+        warn: () => undefined,
+      })),
+      registration: () => port.registration(),
+      register: (standing) => drain(root, standing),
+      renew: () => renewRegistrationDelivery({
+        port,
+        publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
+        publishedArgv: (version) => publishedBundleArgv({
+          installedVersion: installed,
+          resolvePublished: () => version,
+        }),
+        pluginCacheVersion: () => newestInstalledPluginVersion(),
+        logPath: workerLogPathTemplate(root),
       }),
-      pluginCacheVersion: () => newestInstalledPluginVersion(),
-      logPath: workerLogPathTemplate(root),
     });
   };
   void tick().catch(() => undefined);
