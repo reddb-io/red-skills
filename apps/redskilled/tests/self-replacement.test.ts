@@ -393,6 +393,38 @@ describe("the successor entry", () => {
 });
 
 describe("a daemon that has observed a newer published version", () => {
+  it("keeps serving and records the failed takeover when the successor exits at boot", async () => {
+    const { paths, env } = await session();
+    const lane = createRedskilledEventLane(paths.eventLanePath);
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      replaceCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      supervised: false,
+      publishedVersion: async () => PUBLISHED_VERSION,
+      eventLane: lane,
+      replacementIO: {
+        env,
+        spawnSuccessor: async () => {
+          throw new Error("deliberately broken successor exited 2");
+        },
+      },
+    });
+    running.push(daemon);
+
+    await daemon.checkForReplacement();
+
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+    expect(daemon.hostState().daemon_version).toBe(RUNNING_VERSION);
+    expect(await lane.read()).toContainEqual(
+      expect.objectContaining({
+        event: "daemon-takeover-failed",
+        detail: expect.stringContaining(PUBLISHED_VERSION),
+      }),
+    );
+  });
+
   it("keeps reporting the version it is RUNNING while the replacement is pending", async () => {
     const { paths, env } = await session();
     const daemon = await startRedskilledDaemon({
