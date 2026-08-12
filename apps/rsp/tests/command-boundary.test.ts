@@ -309,7 +309,7 @@ describe("rsp universal command boundary", () => {
     expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
     expect(reduced.stdout.length).toBeLessThan(original.stdout.length);
     const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
-    expect(handles).toHaveLength(1);
+    expect(handles, reduced.stdout.toString("utf8").slice(0, 500)).toHaveLength(1);
     expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
       family: "automatic-output",
       reduction: { rows_total: 180, rows_kept: 12, rows_omitted: 168 },
@@ -355,7 +355,7 @@ describe("rsp universal command boundary", () => {
 
     expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
     const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
-    expect(handles).toHaveLength(1);
+    expect(handles, reduced.stdout.toString("utf8").slice(0, 500)).toHaveLength(1);
     expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
       family: "automatic-output",
       reduction: { rows_total: 180, rows_omitted: 168 },
