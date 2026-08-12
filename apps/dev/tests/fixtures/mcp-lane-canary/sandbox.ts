@@ -32,6 +32,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminatePid } from "@reddb-io/shared/resident-core.js";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
+import { stopRedskilledDaemon } from "@reddb-io/redskilled/client";
 import { sendRedskilledRequest } from "@reddb-io/redskilled/protocol";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -130,6 +131,7 @@ interface BuiltBundles {
 let bundles: Promise<BuiltBundles> | undefined;
 const sandboxes: string[] = [];
 const daemonPids: number[] = [];
+const daemonPaths: ReturnType<typeof resolveRedskilledPaths>[] = [];
 const trackers: CanaryTracker[] = [];
 let sessions = 0;
 
@@ -154,7 +156,7 @@ export function buildCanaryBundles(): Promise<BuiltBundles> {
     const dir = await mkdtemp(join(tmpdir(), "mcp-canary-bundles-"));
     sandboxes.push(dir);
     const mcp = join(dir, "redskilled-mcp.bundle.min.mjs");
-    const redskilled = join(dir, "redskilled.bundle.mjs");
+    const redskilled = join(dir, "redskilled.bundle.min.mjs");
     const healthy = join(dir, "dev-healthy.bundle.min.mjs");
     const unroutable = join(dir, "dev-unroutable.bundle.min.mjs");
     await Promise.all([
@@ -209,6 +211,7 @@ export async function createCanarySandbox(
   });
   const mcpEntry = join(dist, "redskilled-mcp.bundle.min.mjs");
   await copyFile(built.mcp, mcpEntry);
+  await copyFile(built.redskilled, join(dist, "redskilled.bundle.min.mjs"));
   await copyFile(built.dev[variant], join(dist, "dev.bundle.min.mjs"));
 
   // A session key nothing else on the host shares, so "no daemon" is a fact
@@ -253,6 +256,9 @@ export async function createCanarySandbox(
   const tracker = await startCanaryTracker();
   trackers.push(tracker);
   env.REDSKILLED_HOST_TOKEN = "canary-token";
+  env.GITHUB_GRAPHQL_URL = tracker.endpoint;
+
+  daemonPaths.push(resolveRedskilledPaths({ env }));
 
   if (daemon === "up") await startCanaryDaemon(built.redskilled, env, tracker);
 
@@ -327,6 +333,11 @@ async function pings(socketPath: string): Promise<boolean> {
  */
 export async function cleanupCanarySandboxes(): Promise<void> {
   bundles = undefined;
+  await Promise.all(
+    daemonPaths.splice(0).map((paths) =>
+      stopRedskilledDaemon(paths, { settleTimeoutMs: 2_000 }).catch(() => undefined),
+    ),
+  );
   await Promise.all(daemonPids.splice(0).map((pid) => terminatePid(pid, 2_000)));
   // After the daemons: a tracker closed while one still polls it would answer a
   // live poller with a connection error, which is a fact about this cleanup

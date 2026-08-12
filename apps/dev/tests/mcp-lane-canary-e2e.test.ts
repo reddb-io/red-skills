@@ -7,7 +7,7 @@
 //
 //   daemon up   -> green: a registration the daemon holds, and no process of
 //                  the project's own anywhere under it
-//   daemon down -> RED at `project_start`, naming the socket (ADR 0130 rule 6)
+//   daemon down -> green after the MCP lane auto-spawns the shipped daemon sibling
 //
 // Under ADR 0130 Amendment 3 (#2902) the project no longer resolves a slot entry
 // at all — it registers an argv and the host runs it. So #2677's byte-level
@@ -123,38 +123,28 @@ describe("MCP lane canary over the real transport", () => {
 
 describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () => {
   it(
-    "goes RED at project_start when no daemon answers, and starts nothing at all",
+    "auto-spawns the daemon from the MCP bundle's sibling and completes the walk",
     async () => {
       // Identical to the green walk in every byte except one: no daemon is
-      // listening on this sandbox's session socket.
-      //
-      // Before the cutover (#2851) this walk got as far as `daemon_reach`: the
-      // project spawned its own workers, so the lane produced a live worker it
-      // could not vouch for. Now that the daemon owns every birth, the failure
-      // moved EARLIER and got louder — the start itself refuses, because a
-      // project the host never registered is work nothing will ever drive.
-      // Failing at the start is the stronger signal: nothing was started, so
-      // there is no unvouched worker left running to reason about.
+      // listening on this sandbox's session socket. `project_start` therefore
+      // has to take the MCP-only cold-start path before the same public walk can
+      // register, poll, birth, read and stop.
       const { result, socketPath } = await walk("healthy", 3_000, "down");
 
-      expect(result.ok).toBe(false);
-      expect(result.inertStep).toBe("project_start");
-      const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
-      expect(byStep.get("connect")).toBe("ok");
-      expect(byStep.get("project_start")).toBe("inert");
-      // Nothing downstream ran, and nothing downstream needed to.
-      expect(byStep.get("registration_held")).toBe("skipped");
-      expect(byStep.get("no_project_process")).toBe("skipped");
-      expect(byStep.get("queue_polled")).toBe("skipped");
-      expect(byStep.get("worker_born")).toBe("skipped");
-      expect(result.workers).toHaveLength(0);
-      // Loudly, and naming the socket rather than the tool: the operator's next
-      // move is on that path, and "project_start failed" alone would send them
-      // to the wrong process entirely.
-      expect(result.summary).toContain("project_start");
-      expect(result.summary).toContain("redskilled");
+      expect(result.inertStep).toBeUndefined();
+      expect(result.ok).toBe(true);
+      expect(result.steps.map((step) => step.verdict)).toEqual([
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+      ]);
       expect(socketPath).toBeTruthy();
-      expect(result.summary).toContain(socketPath!);
+      expect(existsSync(socketPath!)).toBe(true);
     },
     TIMEOUT,
   );
