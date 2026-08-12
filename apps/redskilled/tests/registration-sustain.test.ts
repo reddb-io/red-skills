@@ -459,7 +459,19 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
 
     // Miss the registration deadline and the complete ordinary recovery window.
     clock.advance(WINDOW_MS * 3);
-    expect(daemon.hostState().registrations).toEqual([]);
+    const stopped = daemon.hostState();
+    expect(stopped.registrations).toEqual([]);
+    const rendered = renderRedskilledStatusline(
+      buildStatuslinePayload({
+        hostState: stopped,
+        ceiling: UNBOUNDED_HOST_CEILING,
+        rss: {},
+        sampledAt: null,
+        now: clock.now(),
+      }),
+      { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" },
+    );
+    expect(rendered.line).toContain("queue 5, drain STOPPED");
 
     const polled = await daemon.pollQueueDiscovery();
     expect(polled?.projects[0]?.depth).toBe(5);
