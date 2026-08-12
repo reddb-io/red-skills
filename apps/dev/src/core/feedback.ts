@@ -42,7 +42,7 @@ import {
   type ValidationTarget,
   type ValidationTargetKind,
 } from "./validation-command.js";
-import { decideVerdict, emptyEnvironmentLedger } from "./verdict.js";
+import { blockingValidationChecks, decideVerdict, emptyEnvironmentLedger } from "./verdict.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
@@ -447,6 +447,56 @@ export interface ClassifiableCheck {
   record: ValidationRecord;
 }
 
+export const ALL_GREEN_VALIDATION_INCONSISTENCY =
+  "aggregate validation result reported failure with all-green validation evidence; " +
+  "refusing blocked:validation park";
+
+/**
+ * Reconcile the aggregate boolean against the durable per-command authority.
+ * A failed record with exitCode 0 is internally contradictory; when no other
+ * record can justify failure, preserve the green command fact and surface the
+ * inconsistency instead of manufacturing a branch fault.
+ */
+export function reconcileValidationEvidence<T extends ClassifiableCheck>(
+  reportedFailed: boolean,
+  checks: readonly T[],
+): { ok: boolean; checks: T[]; sidecar: string[]; inconsistency?: string } {
+  if (!reportedFailed || blockingValidationChecks(checks).length > 0 || checks.length === 0) {
+    return {
+      ok: !reportedFailed,
+      checks: [...checks],
+      sidecar: checks.map((check) => formatValidationLine(check.record)),
+    };
+  }
+  const allGreen = checks.every(
+    (check) => check.status !== "failed" || check.record.exitCode === 0,
+  );
+  if (!allGreen) {
+    return {
+      ok: false,
+      checks: [...checks],
+      sidecar: checks.map((check) => formatValidationLine(check.record)),
+    };
+  }
+  const reconciled = checks.map((check) => {
+    if (check.status !== "failed" || check.record.exitCode !== 0) return check;
+    const record: ValidationRecord = {
+      ...check.record,
+      status: "passed",
+      summary: "command exited 0",
+    };
+    delete record.suspectInfra;
+    delete record.infra;
+    return { ...check, status: "passed", record } as T;
+  });
+  return {
+    ok: true,
+    checks: reconciled,
+    sidecar: reconciled.map((check) => formatValidationLine(check.record)),
+    inconsistency: ALL_GREEN_VALIDATION_INCONSISTENCY,
+  };
+}
+
 /** Strip ANSI SGR sequences so identity matching survives coloured runner output.
  * Test runners colour their FAIL markers; the raw captured bytes keep the escape
  * codes, and an un-stripped `^\s*FAIL\b` never matches `\x1b[31m FAIL \x1b[0m`. */
@@ -604,6 +654,8 @@ export interface RunFeedbackInput {
 export interface RunFeedbackResult {
   /** False when any check failed — the merge gate (ADR 0008). */
   ok: boolean;
+  /** Loud evidence that a contradictory aggregate failure was refused. */
+  evidenceInconsistency?: string;
   /** Every check that ran/skipped, in `script × scope` order. */
   checks: FeedbackCheck[];
   /** The sidecar lines, one JSONL record per check, in the same order. */
@@ -952,10 +1004,12 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       push({ name, script: "test", label: "operator", scope: "", status, record });
     }
 
+    const evidence = reconcileValidationEvidence(failed, checks);
     return {
-      ok: !failed,
-      checks,
-      sidecar,
+      ok: evidence.ok,
+      checks: evidence.checks,
+      sidecar: evidence.sidecar,
+      ...(evidence.inconsistency ? { evidenceInconsistency: evidence.inconsistency } : {}),
       baselineInconclusive: [],
       quarantined: [],
       ...(validationScope === undefined ? {} : { validationScope }),
@@ -1137,6 +1191,13 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     }
   }
 
+  const evidence = reconcileValidationEvidence(failed, checks);
+  if (evidence.inconsistency) {
+    checks.splice(0, checks.length, ...evidence.checks);
+    sidecar.splice(0, sidecar.length, ...evidence.sidecar);
+    failed = false;
+  }
+
   // Baseline comparison is meaningful only when Verdict sees no environment
   // refusal in the check records. Verdict remains the sole fault classifier.
   const checksFault = failed
@@ -1198,9 +1259,18 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       baselineProbeRan: true,
       baselineVerdict: gateDecision.verdict,
       quarantined: quarantine,
+      ...(evidence.inconsistency ? { evidenceInconsistency: evidence.inconsistency } : {}),
       validationScope,
     };
   }
 
-  return { ok: !failed, checks, sidecar, baselineInconclusive: [], quarantined: quarantine, validationScope };
+  return {
+    ok: !failed,
+    checks,
+    sidecar,
+    baselineInconclusive: [],
+    quarantined: quarantine,
+    ...(evidence.inconsistency ? { evidenceInconsistency: evidence.inconsistency } : {}),
+    validationScope,
+  };
 }
