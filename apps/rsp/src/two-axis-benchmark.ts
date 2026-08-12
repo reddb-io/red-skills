@@ -217,6 +217,7 @@ const DEFAULT_FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..",
 const DEFAULT_ARTIFACT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.toon");
 const DEFAULT_SUMMARY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.md");
 const REQUIRED_LARGE_OUTPUT_FIXTURES = [
+  "automatic-disk-census",
   "diff-large-numstat",
   "exec-midstream-anomaly",
   "log-large-history",
@@ -388,7 +389,7 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
 }
 
 async function discoverBenchmarkFixtures(fixtureRoot: string): Promise<FidelityFixture[]> {
-  const roots = [join(fixtureRoot, "exec"), join(fixtureRoot, "file-read"), join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
+  const roots = [join(fixtureRoot, "automatic"), join(fixtureRoot, "exec"), join(fixtureRoot, "file-read"), join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
   const existingRoots = [];
   for (const root of roots) {
     if (await pathExists(root)) existingRoots.push(root);
@@ -544,6 +545,8 @@ function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppr
 
 function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "audited" | "note"> {
   switch (filter) {
+    case "automatic:output":
+      return { audited: "ok", note: "large repetitive output declares deterministic caps and aggregates, keeps one recovery handle, and round-trips original bytes" };
     case "exec:--":
       return { audited: "ok", note: "generic exec summaries route structured content to TOON shapes, fall back to head/tail with deterministic outliers, and retain a recovery handle" };
     case "cat:file":
