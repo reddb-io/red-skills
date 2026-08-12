@@ -321,6 +321,28 @@ describe("rsp universal command boundary", () => {
     expect(recovered.stdout.at(-1)).toBe(0x0a);
   });
 
+  it("recovers exact repetitive output bytes without a final newline", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'no-final-newline-'.repeat(5)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows));",
+    ].join("");
+    const original = spawnSync(process.execPath, ["-e", script], { cwd: root, encoding: "buffer" });
+
+    const reduced = rsp(root, [process.execPath, "-e", script]);
+    const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
+    const recovered = rsp(root, ["show", handles[0]!]);
+
+    expect(handles).toHaveLength(1);
+    expect(recovered.status, recovered.stderr.toString("utf8")).toBe(0);
+    expect(recovered.stdout).toEqual(original.stdout);
+    expect(recovered.stdout.at(-1)).not.toBe(0x0a);
+  });
+
   it("lets --full suppress universal automatic reduction", async () => {
     const root = await tempRoot();
     const setup = rsp(root, ["setup"]);
