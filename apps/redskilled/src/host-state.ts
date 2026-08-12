@@ -271,6 +271,9 @@ export interface RedskilledRegistrationLapse {
   readonly renewals: number;
   /** How many times the project's own work had held it up (Amendment 7). */
   readonly sustains: number;
+  /** Standing policy and last counted backlog, absent on older records. */
+  readonly standing?: boolean;
+  readonly queue_depth?: number;
   readonly detail: string;
 }
 
@@ -279,6 +282,8 @@ export interface RedskilledRegistrationStop {
   readonly project_label: string;
   readonly registered_at: string;
   readonly at: string;
+  readonly standing?: boolean;
+  readonly queue_depth?: number;
   readonly detail: string;
 }
 
@@ -632,6 +637,8 @@ function isRegistrationLapse(value: unknown): value is RedskilledRegistrationLap
     typeof record.renew_by === "string" &&
     Number.isInteger(record.renewals) &&
     Number.isInteger(record.sustains) &&
+    (record.standing === undefined || typeof record.standing === "boolean") &&
+    (record.queue_depth === undefined || Number.isInteger(record.queue_depth)) &&
     typeof record.detail === "string";
 }
 
@@ -641,6 +648,8 @@ function isRegistrationStop(value: unknown): value is RedskilledRegistrationStop
   return typeof record.project_label === "string" &&
     typeof record.registered_at === "string" &&
     typeof record.at === "string" &&
+    (record.standing === undefined || typeof record.standing === "boolean") &&
+    (record.queue_depth === undefined || Number.isInteger(record.queue_depth)) &&
     typeof record.detail === "string";
 }
 
