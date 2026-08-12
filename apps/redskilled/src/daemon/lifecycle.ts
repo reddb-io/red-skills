@@ -747,11 +747,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     void eventLane.recordWorker(appended.record).catch(() => undefined);
   }
 
-  /** Keep one Worker's ending, so the outcome rate rests on the same facts the lane does. */
-  function markWorkerOutcome(mark: RedskilledWorkerOutcomeMark): void {
-    outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
-  }
-
   /**
    * One interval's activity fetch: ONE request, however many projects.
    *
@@ -1659,7 +1654,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // describe the same ending at two different times.
     const input: RecordWorkerEventInput = { kind, worker, ts, detail, ...facts };
     if (kind === "worker-death" || kind === "worker-budget-kill") {
-      markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: kind });
+      const mark: RedskilledWorkerOutcomeMark = { worker_id: worker.worker_id, ts, outcome: kind };
+      outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
       rememberObservedDeath(
         buildHostEvent(input),
         { startedAt: worker.started_at, ...(facts.refusal == null ? {} : { refusal: facts.refusal }) },
