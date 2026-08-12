@@ -15,9 +15,18 @@ block the command the operator asked to run.
 `apps/rsp/src/entry.ts` is the installed entry point. The release bundle uses
 the equivalent `bundle-entry.ts`: a small, independently parsed launcher beside
 `rsp-core.bundle.min.mjs`. `fast-boundary.ts` executes unknown simple commands
-with their original argv and inherited streams before configuration, telemetry,
-store, or resident modules load. Shell compounds that contain no modeled
-segment execute through their original shell string on the same fast path.
+with their original argv before configuration, telemetry, store, or resident
+modules load. Shell compounds that contain no modeled segment execute through
+their original shell string on the same fast path. `completed-boundary.ts`
+captures only the completed agent-facing streams; nonempty UTF-8 stdout lazily
+loads the core's `structured-boundary.ts`, while empty and binary stdout never
+pay that parser cost.
+
+The structured boundary sniffs JSON, YAML, TOON, and TOONL, emits canonical
+TOON only when decode/encode/decode preserves the original data model, and
+otherwise returns the original Buffer. Pipeline stages stay inside the native
+shell execution and therefore never cross this boundary; only final stdout may
+transform. Stderr, exit status, and termination signal are never transformed.
 
 Modeled and RSP-owned commands load `core-entry.ts`, whose `main()` parses the
 top-level command, resolves `.red/config.yaml`, contacts the resident only when
@@ -58,7 +67,8 @@ through commands that would make routing unsafe or recursive:
 
 `rsp proxy` executes the routed shell command verbatim after segment rewriting.
 It splits shell segments on `&&`, `||`, `;`, and `|`, but it never rewrites a
-segment whose next operator is a pipe. That keeps pipeline producer bytes raw.
+segment whose next operator is a pipe. That keeps pipeline producer bytes raw;
+the completed structured boundary runs only after the entire shell exits.
 For non-pipeline-tail segments, the proxy recognizes only families backed by
 shipped wrappers:
 
@@ -73,7 +83,9 @@ Recognized segments emit decision telemetry with hook `proxy`, decision
 `git:log` or `gh:pr:list`. GitHub commands containing `--json`, `--jq`,
 `--json=...`, or `--jq=...` are the lossless selector family. The proxy records
 them with decision `passed`, reason `lossless-gh-json-jq`, and leaves the exact
-segment text unchanged.
+segment text and its internal protocol bytes unchanged. Once the shell exits,
+its final stdout follows the same lossless structured-data boundary as every
+other proxied command.
 
 Redirections stay owned by the shell. A safely modeled segment keeps its raw
 redirect suffix when rsp prefixes the specialized executor; grouping, command
@@ -89,7 +101,7 @@ the usage error instead of inventing a command to run.
 ## Resident Lifecycle
 
 The resident is the lazy control plane for shared state, not a prerequisite for
-the synchronous command data plane. Exact argv passthrough starts no resident,
+the synchronous command data plane. Universal argv execution starts no resident,
 opens no store, and writes no telemetry or state file. Commands that transform,
 recover, coordinate, or account for output load the core and contact the
 resident as described below.
@@ -409,8 +421,10 @@ Important fail-open paths:
 - `gh` auth/rate-limit and other fault outputs preserve the byte-level fault
   output.
 - `gh --json`/`--jq` selector commands are recorded as `lossless-gh-json-jq`
-  passes and execute byte-identically.
+  passes and retain native bytes until the final agent boundary.
 - Binary file reads pass through unchanged.
+- Invalid, ambiguous, prose, binary, or failed structured-data proofs return
+  the original stdout bytes while preserving stderr and command status.
 - An unreachable resident socket costs the elision, never the command: wrappers
   and the proxy hand back the raw stdout, stderr, and exit status, `stats` and
   the bare dashboard degrade to the empty snapshot, `wait` keeps its spooled

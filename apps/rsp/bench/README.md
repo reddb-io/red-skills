@@ -72,10 +72,11 @@ pnpm --filter @reddb-io/rsp build
 pnpm --filter @reddb-io/rsp bench:boundary
 ```
 
-The benchmark samples one cold invocation and 40 warm paired invocations. Its
-reference budgets are at most 200 ms cold and at most 50 ms added p95
-passthrough latency. The checked-in reference is
-[bench/results/rsp-command-boundary.md](results/rsp-command-boundary.md).
+The benchmark samples one cold invocation, 40 warm paired invocations, and 40
+in-process structured transformations of a nested reference fixture. Its
+reference budgets are at most 200 ms cold, at most 50 ms added p95 passthrough
+latency, and at most 100 ms p95 structured transformation. The checked-in
+reference is [bench/results/rsp-command-boundary.md](results/rsp-command-boundary.md).
 
 ## Corpus
 
