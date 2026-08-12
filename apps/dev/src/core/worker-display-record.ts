@@ -32,6 +32,8 @@ export interface WorkerDisplayContext {
   readonly etaSeconds: number | null;
   /** Now, in epoch milliseconds — the one clock this record is dated against. */
   readonly nowMs: number;
+  /** The witnessed start of the current macro phase. */
+  readonly phaseStartedAt?: string | null;
 }
 
 /** A trimmed string, or `null` — the record's absence, not an empty cell. */
@@ -49,6 +51,37 @@ function measured(value: number | undefined): number | null {
 /** A count whose zero is a real observation. */
 function counted(value: number | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+const ACTIVITY_LABELS: Readonly<Record<string, string>> = {
+  setup: "preparing",
+  explore: "searching",
+  impl: "editing",
+  tests: "testing",
+  typecheck: "typechecking",
+  lint: "linting",
+  build: "building",
+  commit: "committing",
+  push: "pushing",
+  landing: "landing",
+};
+
+/** A verb phrase for the operator row; `review` is phase-sensitive by design. */
+function activityLabel(phase: string | null, activity: string | null): string | null {
+  if (activity == null) return null;
+  if (activity === "review") return phase === "validating" ? "reviewing" : "reading";
+  return ACTIVITY_LABELS[activity] ?? activity;
+}
+
+/** Latest valid timestamp, preserving the original ISO spelling. */
+function latestTimestamp(...values: readonly (string | null)[]): string | null {
+  let latest: { value: string; epoch: number } | null = null;
+  for (const value of values) {
+    if (value == null) continue;
+    const epoch = Date.parse(value);
+    if (Number.isFinite(epoch) && (latest == null || epoch > latest.epoch)) latest = { value, epoch };
+  }
+  return latest?.value ?? null;
 }
 
 /**
@@ -90,10 +123,10 @@ export function workerDisplayFromState(state: AfkState, context: WorkerDisplayCo
     origin: text(state.origin) ?? text(current.kind),
     issue: issue === "" || issue == null ? null : text(String(issue)),
     phase,
-    // The momentary detail under the macro phase — `coding·impl`,
-    // `validating·typecheck`. Both halves are load-bearing: the phase says where
+    // The momentary detail under the macro phase — `coding · editing`,
+    // `validating · typechecking`. Both halves are load-bearing: the phase says where
     // in the pipeline, the step says what is happening right now.
-    step: text(current.activity),
+    step: activityLabel(phase, text(current.activity)),
     phase_index: position < 0 ? null : position,
     phase_total: position < 0 ? null : AFK_PHASE_ORDER.length,
     failed: phase === "blocked" || state.failed > 0,
@@ -108,6 +141,14 @@ export function workerDisplayFromState(state: AfkState, context: WorkerDisplayCo
     // took another is one process and two spans, and the host can only see the
     // first. The render subtracts this from the payload's own `generated_at`.
     started_at: text(current.started_at) ?? text(state.started_at),
+    phase_started_at: text(context.phaseStartedAt),
+    // A real-progress anchor, not agent liveness: LOC movement or a new commit.
+    // Attempt start is the honest fallback for a Worker that has produced none.
+    progress_at: latestTimestamp(
+      text(current.last_commit_at),
+      text(current.last_loc_progress_at),
+      text(current.started_at) ?? text(state.started_at),
+    ),
     context: measured(current.context_tokens),
     eta: context.etaSeconds,
     added: counted(current.loc_added),

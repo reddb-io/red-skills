@@ -60,11 +60,13 @@ const PUBLISHED: RedskilledWorkerDisplay = {
   origin: "afk",
   issue: "3144",
   phase: "coding",
-  step: "tests",
+  step: "testing",
   phase_index: 2,
   phase_total: 5,
   heartbeat: "3s",
   started_at: "2026-08-03T12:00:00.000Z",
+  phase_started_at: "2026-08-03T12:05:00.000Z",
+  progress_at: "2026-08-03T12:08:00.000Z",
   tokens: 4200,
   tools: 12,
 };
@@ -122,11 +124,13 @@ describe("a published display reaches the payload", () => {
       origin: "afk",
       issue: "3144",
       phase: "coding",
-      step: "tests",
+      step: "testing",
       phase_index: 2,
       phase_total: 5,
       heartbeat: "3s",
       started_at: "2026-08-03T12:00:00.000Z",
+      phase_started_at: "2026-08-03T12:05:00.000Z",
+      progress_at: "2026-08-03T12:08:00.000Z",
       tokens: 4200,
       tools: 12,
     });
@@ -181,13 +185,13 @@ describe("a published display reaches the payload", () => {
     expect(row?.cells.iss).toBe("iss=3144");
     expect(row?.cells.run).toBe("run=claude opus-4.8 high");
     expect(row?.cells.org).toBe("org=afk");
-    expect(row?.cells.phase).toBe("coding·tests");
+    expect(row?.cells.phase).toBe("coding 3/5 · testing");
     // Two behind, one cursor, two ahead — the bar the daemon never has to name.
     expect(row?.cells.bar).toBe("██▶░░");
     expect(row?.cells.hb).toBe("hb=3s");
     // And the row a reader actually sees is the one that carried a UUID and an age.
     expect(stripAnsi(row?.line ?? "")).toContain("iss=3144");
-    expect(row?.line).toContain("coding·tests");
+    expect(row?.line).toContain("coding 3/5 · testing");
   });
 
   it("draws the honest empty row for a Worker that published nothing", async () => {

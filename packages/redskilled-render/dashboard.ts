@@ -77,7 +77,6 @@ import {
   type RedskilledRenderWorker,
   type RedskilledRenderWorkerDisplay,
   type RedskilledStatuslineMode,
-  workerElapsedMs,
 } from "./payload.js";
 import {
   resolveStatuslineProjectMatch,
@@ -88,6 +87,7 @@ import {
   dashboardTable,
   type RedskilledDashboardTable,
 } from "./dashboard-table.js";
+import { phaseActivityCell, workerClocksCell } from "./worker-cells.js";
 
 /** The row columns, in the order the statusline's per-worker line prints them. */
 export const REDSKILLED_DASHBOARD_COLUMNS = [
@@ -334,9 +334,9 @@ export function workerCells(
     org: repair ? "lane=repair" : landing ? "org=landing" : display.origin == null ? "" : `org=${display.origin}`,
     iss: display.issue == null ? "" : repair ? `pr=#${display.issue.replace(/^#/, "")}` : `iss=${display.issue}`,
     bar: progressBar(display),
-    phase: [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·"),
+    phase: phaseActivityCell(display),
     base: worker.base_commits_ahead == null ? "" : `base +${worker.base_commits_ahead}`,
-    elapsed: formatDuration(workerElapsedMs(worker, generatedAt)),
+    elapsed: workerClocksCell(worker, display, generatedAt),
     // A Worker whose project will not estimate gets NO cell — not `eta=—`, and
     // certainly not a figure this module could have extrapolated off the bar
     // beside it. The absence is the honest answer and it is legible as one.

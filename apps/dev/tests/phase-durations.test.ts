@@ -193,12 +193,14 @@ describe("the tracker measures as it goes and estimates from what it measured", 
     // and does not know when `setup` began.
     await tracker.observe({ phase: "setup", identity, nowEpoch: 10_000, nowIso: "2026-08-03T01:00:00.000Z" });
     expect(tracker.etaSeconds(10_000)).toBeNull();
+    expect(tracker.phaseStartedAt()).toBe("2026-08-03T01:00:00.000Z");
 
     // The transition is witnessed: `setup` is measured, and the estimate for
     // `coding` onward is founded.
     await tracker.observe({ phase: "coding", identity, nowEpoch: 10_090, nowIso: "2026-08-03T01:01:30.000Z" });
     expect(tracker.etaSeconds(10_090)).toBe(1_620);
     expect(tracker.etaSeconds(10_690)).toBe(1_020);
+    expect(tracker.phaseStartedAt()).toBe("2026-08-03T01:01:30.000Z");
 
     const written = await readPhaseDurations(path);
     expect(written.at(-1)).toMatchObject({ phase: "setup", duration_s: 90, issue: 3097, runner: "claude" });

@@ -78,7 +78,7 @@ function display(overrides: Partial<RedskilledWorkerDisplay> = {}): RedskilledWo
     origin: "afk",
     issue: "3012",
     phase: "coding",
-    step: "impl",
+    step: "editing",
     phase_index: 2,
     phase_total: 6,
     heartbeat: "3s",
@@ -231,9 +231,9 @@ describe("the dashboard carries the statusline's own fields", () => {
     expect(cells.run).toBe("run=claude opus-4.8 high");
     expect(cells.org).toBe("org=afk");
     expect(cells.iss).toBe("iss=3012");
-    expect(cells.phase).toBe("coding·impl");
+    expect(cells.phase).toBe("coding 3/6 · editing");
     expect(cells.base).toBe("base +2");
-    expect(cells.elapsed).toBe("1h0m");
+    expect(cells.elapsed).toBe("age=1h0m");
     expect(cells.hb).toBe("hb=3s");
     expect(cells.loc).toBe("loc=+142 -36");
     expect(cells.tks).toBe("tks=45k");
@@ -352,7 +352,7 @@ describe("an unpublished field is an absence, never a zero", () => {
     // The identity and the daemon's own clock still render: they were never the
     // project's to publish.
     expect(cells.wid).toBe("w-1");
-    expect(cells.elapsed).toBe("1h0m");
+    expect(cells.elapsed).toBe("age=1h0m");
   });
 
   it("renders a genuine zero as a zero", () => {
@@ -487,14 +487,18 @@ describe("the published display record is stored and never interpreted", () => {
     expect(clamped.step).toHaveLength(REDSKILLED_DISPLAY_FIELD_MAX);
   });
 
-  it("stores the start, the context and the estimate as opaquely as it stores a count (#3097)", () => {
+  it("stores every clock anchor opaquely rather than deriving an elapsed value", () => {
     const coerced = coerceWorkerDisplay({
       started_at: "2026-08-03T01:00:00.000Z",
+      phase_started_at: "2026-08-03T01:10:00.000Z",
+      progress_at: "2026-08-03T01:20:00.000Z",
       context: 108_000,
       eta: 640,
     });
 
     expect(coerced!.started_at).toBe("2026-08-03T01:00:00.000Z");
+    expect(coerced!.phase_started_at).toBe("2026-08-03T01:10:00.000Z");
+    expect(coerced!.progress_at).toBe("2026-08-03T01:20:00.000Z");
     expect(coerced!.context).toBe(108_000);
     expect(coerced!.eta).toBe(640);
     // No branch in this process asks what any of them MEAN — an `elapsed` is
@@ -508,6 +512,8 @@ describe("the published display record is stored and never interpreted", () => {
     expect(coerced!.eta).toBeNull();
     expect(coerced!.context).toBeNull();
     expect(coerced!.started_at).toBeNull();
+    expect(coerced!.phase_started_at).toBeNull();
+    expect(coerced!.progress_at).toBeNull();
   });
 });
 
