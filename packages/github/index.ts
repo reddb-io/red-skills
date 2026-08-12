@@ -35,6 +35,28 @@ export {
 } from "./surface.js";
 
 export {
+  DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
+  DEFAULT_GITHUB_REQUEST_TIMEOUT_MS,
+  GITHUB_REQUEST_TIMEOUT_ENV,
+  GithubTimeoutError,
+  createTimedGithubFetch,
+  githubRequestTimeoutMs,
+  isGithubTimeoutError,
+  withGithubDeadline,
+  type CreateTimedGithubFetchOptions,
+} from "./deadline.js";
+
+export {
+  DEFAULT_GITHUB_BUDGET_GATE,
+  GITHUB_BUDGET_GATE_CONFIG_KEY,
+  GITHUB_BUDGET_GATE_ENV,
+  githubBudgetGate,
+  githubBudgetGateEnabled,
+  githubBudgetGateFromEnv,
+  type GithubBudgetGateMode,
+} from "./budget-gate.js";
+
+export {
   createGithubAttributionLedger,
   type GithubAttributedOperation,
   type CreateGithubAttributionLedgerOptions,

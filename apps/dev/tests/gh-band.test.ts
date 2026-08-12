@@ -3,14 +3,15 @@
 // the claim, a landing and a finishing Worker's closing comment keep passing
 // until the pool has nothing left at all. A balance nobody could ask for opens
 // the gate rather than closing it.
-import { parseGithubBalance, type GithubBalance } from "@reddb-io/github";
-import { describe, expect, it } from "vitest";
+import { GITHUB_BUDGET_GATE_ENV, parseGithubBalance, type GithubBalance } from "@reddb-io/github";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   OPEN_GH_BAND_GATE,
   createGhBandGate,
   resolveGhBandGate,
 } from "../src/runtime/gh/band.js";
+import { forgetGithubBudgetGateMode } from "../src/runtime/gh/budget-gate-config.js";
 import { tryReadGhJsonRows } from "../src/runtime/gh/read.js";
 
 const NOW = "2026-08-03T12:00:00.000Z";
@@ -93,9 +94,28 @@ describe("the band refuses convenience, never the claim", () => {
   });
 });
 
-describe("absence of injection is not absence of the band", () => {
-  it("hands back a real gate when no caller injected one", () => {
+describe("the band is opt-in; the quota belongs to the operator (#3768)", () => {
+  const declared = process.env[GITHUB_BUDGET_GATE_ENV];
+
+  afterEach(() => {
+    if (declared === undefined) delete process.env[GITHUB_BUDGET_GATE_ENV];
+    else process.env[GITHUB_BUDGET_GATE_ENV] = declared;
+    forgetGithubBudgetGateMode();
+  });
+
+  it("hands back the OPEN gate when nobody asked for the band", () => {
+    delete process.env[GITHUB_BUDGET_GATE_ENV];
+    forgetGithubBudgetGateMode();
+    expect(resolveGhBandGate()).toBe(OPEN_GH_BAND_GATE);
+  });
+
+  it("hands back a real gate once the operator declared the band", () => {
+    process.env[GITHUB_BUDGET_GATE_ENV] = "on";
+    forgetGithubBudgetGateMode();
     expect(resolveGhBandGate()).not.toBe(OPEN_GH_BAND_GATE);
+  });
+
+  it("still lets a caller inject its own gate either way", () => {
     expect(resolveGhBandGate(OPEN_GH_BAND_GATE)).toBe(OPEN_GH_BAND_GATE);
   });
 });

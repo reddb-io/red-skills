@@ -32,9 +32,11 @@
 // most one socket round trip per cadence — the same reason the balance is polled
 // rather than checked before each call (ADR 0084's lesson).
 
+import { resolveGithubBudgetGateMode } from "./budget-gate-config.js";
 import {
   admitGithubOperation,
   balanceFromReport,
+  githubBudgetGateEnabled,
   createGithubCache,
   describeGithubCacheRead,
   githubBalanceCadenceMs,
@@ -205,6 +207,13 @@ let defaultGate: GhBandGate | null = null;
  */
 export function resolveGhBandGate(injected?: GhBandGate): GhBandGate {
   if (injected) return injected;
+  // **OFF BY DEFAULT, and opt-in by config** (`github.budget_gate`). The band's
+  // ordering is still right when an operator wants it, but the quota belongs to
+  // whoever owns the token: a client that refuses a read because ITS reading of
+  // a balance says so is deciding how an operator may spend their own budget. It
+  // is also the second half of #3768 — a gate must first HAVE a balance, so
+  // every read waited on the ask, and a stalled ask wedged reads unrelated to it.
+  if (!githubBudgetGateEnabled(resolveGithubBudgetGateMode())) return OPEN_GH_BAND_GATE;
   defaultGate ??= createGhBandGate({ readBalance: daemonGhBalanceReader() });
   return defaultGate;
 }

@@ -112,7 +112,14 @@ export function createGithubAttributionLedger(
     record(input): Promise<void> {
       const observation = makeObservation(input.operation, input.cost, input.observedAt ?? now(), input.actor);
       const segment = encodeToonlLines().push(toToonlRecord(observation));
-      pendingWrite = pendingWrite.then(async () => {
+      // A FAILED write must not become every later caller's failure. Chaining the
+      // tail onto the raw promise meant one rejection — the lane-ceiling throw
+      // below, an ENOSPC — poisoned the chain permanently: every subsequent
+      // `record` returned an already-rejected promise, its body never ran, and
+      // because a GitHub read awaits this ledger, the whole client stopped
+      // reading for the life of the process. The tail therefore carries ordering
+      // only; the failure travels to the ONE caller that caused it.
+      const settled = pendingWrite.then(async () => {
         await mkdir(dirname(options.path), { recursive: true });
         const incomingBytes = Buffer.byteLength(segment);
         if (await laneOverCeiling(options.path, incomingBytes, retentionPolicy)) {
@@ -129,7 +136,8 @@ export function createGithubAttributionLedger(
         }
         await appendFile(options.path, segment, "utf8");
       });
-      return pendingWrite;
+      pendingWrite = settled.then(() => undefined, () => undefined);
+      return settled;
     },
 
     async report(input): Promise<GithubSpendAttributionReport> {

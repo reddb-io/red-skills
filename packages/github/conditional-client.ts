@@ -17,6 +17,17 @@ import {
 } from "./aliased-query.js";
 import type { GithubAttributionLedger, GithubAttributedOperation } from "./attribution.js";
 import type { GithubBalance } from "./balance.js";
+import {
+  DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
+  createTimedGithubFetch,
+  githubRequestTimeoutMs,
+  withGithubDeadline,
+} from "./deadline.js";
+import {
+  githubBudgetGateEnabled,
+  githubBudgetGateFromEnv,
+  type GithubBudgetGateMode,
+} from "./budget-gate.js";
 import type { GithubApiSurface, GithubRateBudget } from "./surface.js";
 
 const Octokit = RestOctokit.plugin(retry, throttling);
@@ -144,6 +155,18 @@ export interface CreateGithubClientOptions {
   readonly retryCount?: number;
   /** Disable plugin pacing only for a caller-supplied transport test. */
   readonly throttle?: boolean;
+  /**
+   * Whether the balance may REFUSE a call, or only describe one. Off by default:
+   * the quota is the operator's to spend (`budget-gate.ts`).
+   */
+  readonly budgetGate?: GithubBudgetGateMode;
+  /** Per-request deadline; the env-tunable process default when absent. */
+  readonly timeoutMs?: number;
+  /**
+   * Deadline for one balance read. Shorter than a request's, because an unknown
+   * balance is a legal answer and a known one is never worth a stall.
+   */
+  readonly balanceTimeoutMs?: number;
 }
 
 /**
@@ -209,6 +232,15 @@ export class GithubPoolUnavailableError extends Error {
 export function createGithubClient(options: CreateGithubClientOptions): GithubClient {
   const etags = options.etags ?? createMemoryGithubEtagStore();
   const now = options.now ?? (() => new Date().toISOString());
+  // Bounded at the transport, so a route added later inherits the deadline
+  // instead of having to remember it (`deadline.ts`).
+  const timeoutMs = options.timeoutMs ?? githubRequestTimeoutMs();
+  const balanceTimeoutMs = options.balanceTimeoutMs ?? Math.min(timeoutMs || DEFAULT_GITHUB_BALANCE_TIMEOUT_MS, DEFAULT_GITHUB_BALANCE_TIMEOUT_MS);
+  const gated = githubBudgetGateEnabled(options.budgetGate ?? githubBudgetGateFromEnv());
+  const timedFetch = createTimedGithubFetch({
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl as unknown as typeof fetch } : {}),
+    timeoutMs,
+  });
   const octokit = new Octokit({
     auth: options.token,
     // REST.js logs every non-2xx before the caller can classify it, including
@@ -221,7 +253,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       error: () => undefined,
     },
     ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
-    ...(options.fetchImpl ? { request: { fetch: options.fetchImpl } } : {}),
+    request: { fetch: timedFetch as unknown as GithubRequestFetch },
     retry: {
       doNotRetry: [304, 403, 429],
       ...(options.retryCount === undefined ? {} : { retries: options.retryCount }),
@@ -234,15 +266,23 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         },
   });
 
+  // A balance is an OPTIMIZATION here, never a precondition: it picks a rail and,
+  // when the gate is on, refuses a spent pool. So the read is bounded and a
+  // stalled provider degrades to `null` — unknown — rather than holding the call
+  // that asked for it. This is the joiner half of #3768: one wedged balance ask
+  // must not become every caller's wait.
   const readBalance = async (): Promise<GithubBalance | null> => {
+    if (options.balance === undefined) return null;
     try {
-      return await options.balance?.() ?? null;
+      return await withGithubDeadline("balance read", balanceTimeoutMs, async () =>
+        await options.balance!() ?? null);
     } catch {
       return null;
     }
   };
 
   const refuseSpentPool = (balance: GithubBalance | null, pool: GithubRateBudget): void => {
+    if (!gated) return;
     const observed = balance?.pools[pool] ?? null;
     if (observed !== null && observed.remaining <= 0) {
       throw new GithubPoolUnavailableError(pool, observed.reset_at);
@@ -251,7 +291,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
 
   const conditionalRest = async <T>(input: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>> => {
       const held = etags.get(input.cacheKey);
-      const observed = (await readBalance())?.pools[input.operation.budget] ?? null;
+      const observed = gated ? (await readBalance())?.pools[input.operation.budget] ?? null : null;
       if (observed !== null && observed.remaining <= 0) {
         if (held !== undefined) return cachedAnswer<T>(held, input.operation.budget, observed.reset_at, now());
         throw new GithubPoolUnavailableError(input.operation.budget, observed.reset_at);
@@ -376,14 +416,39 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
   };
 
   const flushSingleObjects = async (): Promise<void> => {
-    const balance = await readBalance();
-    const threshold = githubSingleObjectCoalescingThreshold(balance);
-    singleObjectFlushScheduled = false;
-    const groups = [...pendingSingleObjects.values()];
-    pendingSingleObjects.clear();
+    // **THE FLUSH IS THE ONLY DRAIN, so it must always reach one.** A caller
+    // enqueued here holds a promise nothing else can settle, and while
+    // `singleObjectFlushScheduled` is true no second flush is scheduled — so a
+    // throw anywhere above the drain strands every waiting read forever, which
+    // is the shape #3768 wore. The balance read above is bounded (`readBalance`),
+    // and this frame guarantees the rest: the flag is cleared and every stranded
+    // read is REJECTED, because a loud failure is a caller that can retry and a
+    // pending promise is a caller that cannot.
+    try {
+      const balance = await readBalance();
+      const threshold = githubSingleObjectCoalescingThreshold(balance);
+      singleObjectFlushScheduled = false;
+      const groups = [...pendingSingleObjects.values()];
+      pendingSingleObjects.clear();
+      await drainSingleObjectGroups(groups, balance, threshold);
+    } catch (error) {
+      singleObjectFlushScheduled = false;
+      const stranded = [...pendingSingleObjects.values()];
+      pendingSingleObjects.clear();
+      for (const group of stranded) group.forEach((pending) => pending.reject(error));
+    }
+  };
+
+  const drainSingleObjectGroups = async (
+    groups: readonly PendingSingleObjectRead[][],
+    balance: GithubBalance | null,
+    threshold: number,
+  ): Promise<void> => {
     await Promise.all(groups.map(async (group) => {
       const explicit = group[0]!.input.rail;
       const requested = explicit ?? "rest";
+      // Rerouting off an exhausted rail is routing and stays on in both modes;
+      // REFUSING when no rail can answer is the gate's, and stays off by default.
       const source = balance?.pools[requested] ?? null;
       const fallback: GithubApiSurface = requested === "rest" ? "graphql" : "rest";
       const destination = balance?.pools[fallback] ?? null;
@@ -403,7 +468,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
             resetAt: source.reset_at,
             reason: `${requested} pool is exhausted until ${source.reset_at}; used the equivalent ${selected} rail`,
           };
-        } else if (!requestedCache) {
+        } else if (!requestedCache && gated) {
           const error = new GithubPoolUnavailableError(requested, source.reset_at, "the equivalent rail has no known budget");
           group.forEach((pending) => pending.reject(error));
           return;
