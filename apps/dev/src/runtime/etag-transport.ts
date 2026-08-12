@@ -5,6 +5,7 @@ import {
   createFileMergeDriverStore,
 } from "@reddb-io/red-castle/engine";
 import { WebhookForwarder } from "@reddb-io/shared/github-webhook.js";
+import { planGithubRestRead } from "@reddb-io/github";
 import type { ResidentWebhookForwarder } from "../resident-webhook.js";
 import {
   diffCheckRuns,
@@ -127,8 +128,9 @@ export class EtagPollingForwarder extends EventEmitter implements ResidentWebhoo
     const exec = this.options.exec ?? execTool;
     const conditional = async (path: string): Promise<ReturnType<typeof parseConditionalResponse>> => {
       const etag = this.etags.get(path);
-      const args = ["api", "-i", path, ...(etag ? ["-H", `If-None-Match: ${etag}`] : [])];
-      const r = await exec("gh", args, { cwd: this.options.root });
+      const plan = planGithubRestRead({ kind: "rest", path, args: ["-i", ...(etag ? ["-H", `If-None-Match: ${etag}`] : [])] });
+      if (plan.outcome !== "plan") throw new Error(plan.reason);
+      const r = await exec("gh", plan.args, { cwd: this.options.root });
       const parsed = parseConditionalResponse(r.stdout);
       // The quota taxonomy has one owner (`gh/quota.ts`); a rate limit is
       // raised as its own fault so the loop can pace on the reset instant.
@@ -161,15 +163,13 @@ export class EtagPollingForwarder extends EventEmitter implements ResidentWebhoo
     const state = await store.read();
     for (const record of Object.values(state.prs)) {
       if (record.status !== "armed") continue;
-      const head = await exec(
-        "gh",
-        ["pr", "view", String(record.pr), "--json", "headRefOid", "--jq", ".headRefOid"],
-        { cwd: this.options.root },
-      );
+      const headPlan = planGithubRestRead({ kind: "pr", number: record.pr, fields: ["headRefOid"] });
+      if (headPlan.outcome !== "plan") continue;
+      const head = await exec("gh", headPlan.args, { cwd: this.options.root });
       // A quota-exhausted head read means every later read in this cycle is
       // exhausted too — abort the cycle rather than spend the rest of it.
       if (isGhRateLimited(head)) throw new EtagQuotaExhaustedError({});
-      const sha = head.stdout.trim();
+      const sha = head.code === 0 ? String(headPlan.decode(head.stdout).headRefOid ?? "") : "";
       if (head.code !== 0 || sha === "") continue;
       const checks = await conditional(`repos/{owner}/{repo}/commits/${sha}/check-runs`);
       if (checks.status !== 200) continue;

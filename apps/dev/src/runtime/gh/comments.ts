@@ -1,7 +1,7 @@
 import type { HandoffComment } from "../../core/handoff.js";
 import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { ActorTrustVerdict } from "../../core/trust-gate.js";
-import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
+import { apiPath, runGithubRestRead, type GhContext } from "./common.js";
 
 export type CommentTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
 
@@ -126,7 +126,10 @@ export async function issueComments(
   issue: number,
   resolveTrust?: CommentTrustResolver,
 ): Promise<HandoffComment[]> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
+  const r = await runGithubRestRead(ctx, apiPath(ctx, `issues/${issue}/comments`), [
+    "--paginate", "--slurp", "--jq",
+    '{comments: (add | map({body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}))}',
+  ]);
   if (r.code !== 0) return [];
   let parsed: {
     comments?: Array<{
@@ -177,7 +180,7 @@ export async function readIssueComments(
   ctx: GhContext,
   issue: number,
 ): Promise<IssueCommentsReadResult> {
-  const r = await runGh(ctx, ["api", "--paginate", apiPath(ctx, `issues/${issue}/comments`), "--jq", restCommentWithIdJq()]);
+  const r = await runGithubRestRead(ctx, apiPath(ctx, `issues/${issue}/comments`), ["--paginate", "--jq", restCommentWithIdJq()]);
   if (r.code !== 0) return { ok: false, reason: `failed to read issue comments (gh exit ${r.code})` };
   const raw = parseStrictCommentJsonLines(r.stdout ?? "");
   if (!raw) return { ok: false, reason: "failed to parse issue comments JSON" };
@@ -204,7 +207,7 @@ export async function prComments(
   pr: number,
   resolveTrust?: CommentTrustResolver,
 ): Promise<HandoffComment[]> {
-  const r = await runGh(ctx, ["api", "--paginate", apiPath(ctx, `issues/${pr}/comments`), "--jq", restCommentJq()]);
+  const r = await runGithubRestRead(ctx, apiPath(ctx, `issues/${pr}/comments`), ["--paginate", "--jq", restCommentJq()]);
   if (r.code !== 0) return [];
   return projectComments(parseJsonLines(r.stdout) as RawGhComment[], resolveTrust);
 }
@@ -216,7 +219,7 @@ export async function prReviewComments(
   pr: number,
   resolveTrust?: CommentTrustResolver,
 ): Promise<HandoffComment[]> {
-  const r = await runGh(ctx, ["api", "--paginate", apiPath(ctx, `pulls/${pr}/comments`), "--jq", restCommentJq()]);
+  const r = await runGithubRestRead(ctx, apiPath(ctx, `pulls/${pr}/comments`), ["--paginate", "--jq", restCommentJq()]);
   if (r.code !== 0) return [];
   return projectComments(parseJsonLines(r.stdout) as RawGhComment[], resolveTrust);
 }

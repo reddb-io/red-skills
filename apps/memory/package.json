@@ -27,6 +27,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/github": "workspace:*",
     "@reddb-io/sdk": "1.23.1",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",

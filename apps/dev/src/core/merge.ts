@@ -1553,14 +1553,18 @@ async function readMergeStateView(
 ): Promise<MergeStateView> {
   try {
     if (github) return parseMergeStateView(await github.mergeState(repo, prNumber));
-    // Compatibility for non-polling callers not yet supplied the routed read
-    // port. This one-shot rejection diagnosis remains in the shrink-only
-    // inventory; the two repeated wait paths never reach it.
-    const result = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json",
-      "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
-    ]);
-    return result.code === 0 ? parseMergeStateView(result.stdout) : emptyMergeStateView();
+    const plan = planGithubRestRead({
+      kind: "pr",
+      number: prNumber,
+      fields: ["mergeStateStatus", "mergeable", "baseRefOid", "headRefOid"],
+      repo,
+    });
+    if (plan.outcome !== "plan") return emptyMergeStateView();
+    const argv = ["gh", ...plan.args];
+    const result = await exec(argv);
+    return result.code === 0
+      ? parseMergeStateView(JSON.stringify(plan.decode(result.stdout)))
+      : emptyMergeStateView();
   } catch {
     return emptyMergeStateView();
   }
@@ -2646,23 +2650,17 @@ export async function listOpenPr(
   branch: string,
   target: string,
 ): Promise<number | undefined> {
-  const res = await exec([
-    "gh",
-    "-R",
-    repo,
-    "pr",
-    "list",
-    "--head",
-    branch,
-    "--base",
-    target,
-    "--state",
-    "open",
-    "--json",
-    "number",
-    "--jq",
-    ".[0].number // empty",
-  ]);
+  const plan = planGithubRestRead({
+    kind: "rest",
+    path: `repos/${repo}/pulls`,
+    args: [
+      "-f", "state=open", "-f", "per_page=100", "--jq",
+      `map(select(.head.ref == ${JSON.stringify(branch)} and .base.ref == ${JSON.stringify(target)}))[0].number // empty`,
+    ],
+  });
+  if (plan.outcome !== "plan") return undefined;
+  const argv = ["gh", ...plan.args];
+  const res = await exec(argv);
   const text = res.stdout.trim();
   if (text === "") return undefined;
   const num = Number.parseInt(text, 10);

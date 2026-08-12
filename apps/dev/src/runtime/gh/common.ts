@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   createGithubAttributionLedger,
   createGithubClient,
+  planGithubRestRead,
   type GithubClient,
   type GithubConditionalRestRequest,
 } from "@reddb-io/github";
@@ -165,6 +166,18 @@ export function runGh(
   const fn = () => (ctx.exec ?? execTool)("gh", args, opts(ctx));
   if (runOpts.quota === "off") return fn();
   return withGhQuotaBackoff(fn, resolveGhQuotaBackoff(ctx.quotaBackoff));
+}
+
+/** Issue one explicit read-only REST endpoint through the package-owned planner. */
+export function runGithubRestRead(
+  ctx: GhContext,
+  path: string,
+  args: readonly string[] = [],
+  runOpts: RunGhOpts = {},
+): Promise<ExecOutput> {
+  const plan = planGithubRestRead({ kind: "rest", path, args });
+  if (plan.outcome !== "plan") throw new Error(plan.reason);
+  return runGh(ctx, plan.args, runOpts);
 }
 
 export function runRsp(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
