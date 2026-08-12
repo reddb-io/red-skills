@@ -50,6 +50,7 @@ vi.mock("../src/runtime/redskilled-birth.js", async (importOriginal) => {
 import { startRedskilledDaemon, type RedskilledDaemon } from "@reddb-io/redskilled/daemon";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
 import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
+import { drain } from "../src/mcp/project.js";
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];
@@ -110,6 +111,18 @@ async function liveHost(): Promise<RedskilledDaemon> {
 }
 
 describe("starting work registers the project", () => {
+  it("marks only policy-driven registration as standing", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+
+    await drain(root, { runner: "codex", target: 4 }, { standing: true });
+
+    expect(daemon.registrations()[0]).toMatchObject({
+      target: 4,
+      standing: true,
+    });
+  });
+
   it("reaches a draining registration through drain alone", async () => {
     const daemon = await liveHost();
     const root = await project();
