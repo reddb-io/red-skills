@@ -4,7 +4,7 @@ import { answerFrontDoor } from "./front-door.js";
 
 interface RspCore {
   main(argv: string[]): Promise<number>;
-  renderAutomaticCommandOutput(stdout: Buffer, command: string): Promise<Buffer>;
+  renderAutomaticCommandOutput(stdout: Buffer, command: string, level?: "lossless" | "brief" | "terse" | "full"): Promise<Buffer>;
   renderCliFailure(err: unknown): { output: Buffer; status: number };
 }
 
@@ -27,7 +27,10 @@ async function run(argv: readonly string[]): Promise<number> {
   const fast = resolveFastBoundary(argv);
   if (fast) {
     const command = fast.kind === "shell" ? fast.commandLine : fast.argv.join(" ");
-    return await runFastBoundary(fast, async (stdout) => (await loadCore()).renderAutomaticCommandOutput(stdout, command));
+    return await runFastBoundary(
+      fast,
+      async (stdout) => (await loadCore()).renderAutomaticCommandOutput(stdout, command, fast.level),
+    );
   }
   return await (await loadCore()).main([...argv]);
 }
