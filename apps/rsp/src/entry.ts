@@ -6,7 +6,7 @@ import type { renderCliFailure as RenderCliFailure } from "./core-entry.js";
 
 interface RspCore {
   main: typeof CoreMain;
-  renderAutomaticCommandOutput(stdout: Buffer, command: string): Promise<Buffer>;
+  renderAutomaticCommandOutput(stdout: Buffer, command: string, level?: "lossless" | "brief" | "terse" | "full"): Promise<Buffer>;
   renderCliFailure: typeof RenderCliFailure;
 }
 
@@ -20,7 +20,10 @@ async function run(argv: readonly string[]): Promise<number> {
   const fast = resolveFastBoundary(argv);
   if (fast) {
     const command = fast.kind === "shell" ? fast.commandLine : fast.argv.join(" ");
-    return await runFastBoundary(fast, async (stdout) => (await loadCore()).renderAutomaticCommandOutput(stdout, command));
+    return await runFastBoundary(
+      fast,
+      async (stdout) => (await loadCore()).renderAutomaticCommandOutput(stdout, command, fast.level),
+    );
   }
   return await (await loadCore()).main([...argv]);
 }
