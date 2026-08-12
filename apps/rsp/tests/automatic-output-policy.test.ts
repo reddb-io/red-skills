@@ -34,4 +34,66 @@ describe("rsp automatic output policy", () => {
       ],
     });
   });
+
+  it("reduces large repetitive structured rows with declared caps and pinned aggregates", async () => {
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      service: `worker-${String(index).padStart(2, "0")}`,
+      status: "healthy",
+      latency_ms: 40 + index,
+    }));
+    const original = Buffer.from(`${JSON.stringify(rows)}\n`);
+    const store = new MemoryStore();
+
+    const first = await renderAutomaticOutput(original, {
+      command: "service-status --json",
+      level: "lossless",
+      store,
+      sizeThresholdBytes: 128,
+      repetitionThresholdRows: 20,
+      topRows: 5,
+    });
+    const second = await renderAutomaticOutput(original, {
+      command: "service-status --json",
+      level: "lossless",
+      store,
+      sizeThresholdBytes: 128,
+      repetitionThresholdRows: 20,
+      topRows: 5,
+    });
+
+    expect(first.stdout).toEqual(second.stdout);
+    expect(first.lossy).toBe(true);
+    expect(first.handle).toBe("el:automaticfixture");
+    expect(first.bytesElided).toBe(original.length);
+    expect(store.originals.get("el:automaticfixture")).toEqual(original);
+    expect(first.stdout.toString("utf8").match(/el:[a-z0-9]+/g)).toEqual(["el:automaticfixture"]);
+
+    const decoded = decode(first.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(valueAt(decoded, ["reduction", "reason"])).toBe("size-and-repetition-threshold");
+    expect(valueAt(decoded, ["reduction", "rows_total"])).toBe(40);
+    expect(valueAt(decoded, ["reduction", "rows_kept"])).toBe(5);
+    expect(valueAt(decoded, ["reduction", "rows_omitted"])).toBe(35);
+    expect(valueAt(decoded, ["reduction", "changes", 0])).toBe("rows capped to first 5; 35 omitted");
+    expect(valueAt(decoded, ["summary", "numeric", "latency_ms", "min"])).toBe(40);
+    expect(valueAt(decoded, ["summary", "numeric", "latency_ms", "max"])).toBe(79);
+    expect(valueAt(decoded, ["summary", "numeric", "latency_ms", "sum"])).toBe(2380);
+    expect(valueAt(decoded, ["rows", 4, "service"])).toBe("worker-04");
+    expect(valueAt(decoded, ["next_steps", 0])).toBe("Recover exact bytes with rsp show <handle>");
+    expect(valueAt(decoded, ["next_steps", 1])).toBe("Re-run service-status --json with --full to suppress reduction");
+    expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:automaticfixture");
+  });
 });
+
+function valueAt(value: unknown, path: readonly (string | number)[]): unknown {
+  let cursor = value;
+  for (const segment of path) {
+    if (typeof segment === "number" && Array.isArray(cursor)) {
+      cursor = cursor[segment];
+    } else if (typeof segment === "string" && typeof cursor === "object" && cursor !== null && !Array.isArray(cursor)) {
+      cursor = (cursor as Record<string, unknown>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return cursor;
+}
