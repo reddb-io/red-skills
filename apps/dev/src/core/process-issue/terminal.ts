@@ -359,7 +359,6 @@ export function parkLoopFor(
     nowEpoch: deps.nowEpoch(),
   });
 }
-
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
   if (!existing) return false;
   if (next.kind !== "runner") return false;
