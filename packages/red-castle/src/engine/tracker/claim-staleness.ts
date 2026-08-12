@@ -254,6 +254,8 @@ export interface ClaimedIssue {
   /** Most recent commit epoch across this issue's live attempt branches. When
    * recent enough, it proves active progress even if the claim marker is old. */
   attemptBranchCommitS?: number;
+  /** Remote attempt branches and their distance from trunk, for release audit. */
+  attemptBranches?: readonly { branch: string; commitsAhead?: number }[];
   /** Claim owners proven dead on this host by their per-worker `worker.pid`. */
   deadOwners?: readonly string[];
   /** Claim owners proven LIVE on this host by their per-worker `worker.pid`.
@@ -273,20 +275,26 @@ export interface StaleClaimRelease {
 /** Render the single audit comment the boot sweep posts when it releases an
  * issue whose owner died on another host (#627) — the visible record that the
  * issue returned to the executable pool. */
-export function renderStaleClaimSweepAudit(staleOwners: readonly string[]): string {
+export function renderStaleClaimSweepAudit(
+  staleOwners: readonly string[],
+  destination = "ready-for-agent",
+): string {
   const who = staleOwners.map((w) => `\`${w}\``).join(", ");
   return (
-    `🤖 AFK cross-host stale-claim sweep: released this issue back to \`ready-for-agent\` — ` +
+    `🤖 AFK cross-host stale-claim sweep: released this issue back to \`${destination}\` — ` +
     `${staleOwners.length === 1 ? "the claim" : "the claims"} held by ${who} stopped refreshing ` +
     `past the staleness window (owner presumed dead on another host).`
   );
 }
 
 /** Render the audit comment for an immediate same-host ghost-claim release. */
-export function renderDeadClaimSweepAudit(staleOwners: readonly string[]): string {
+export function renderDeadClaimSweepAudit(
+  staleOwners: readonly string[],
+  destination = "ready-for-agent",
+): string {
   const who = staleOwners.map((w) => `\`${w}\``).join(", ");
   return (
-    `🤖 AFK same-host ghost-claim sweep: released this issue back to \`ready-for-agent\` — ` +
+    `🤖 AFK same-host ghost-claim sweep: released this issue back to \`${destination}\` — ` +
     `${staleOwners.length === 1 ? "the claim" : "the claims"} held by ${who} had a dead \`worker.pid\`.`
   );
 }
@@ -294,10 +302,13 @@ export function renderDeadClaimSweepAudit(staleOwners: readonly string[]): strin
 /** Render the audit comment for a stranded label projection: all claim markers
  * ended in concede but the issue still carried `running`, so the sweep returned
  * it to the executable pool. */
-export function renderConcededClaimSweepAudit(concededOwners: readonly string[]): string {
+export function renderConcededClaimSweepAudit(
+  concededOwners: readonly string[],
+  destination = "ready-for-agent",
+): string {
   const who = concededOwners.map((w) => `\`${w}\``).join(", ");
   return (
-    `🤖 AFK claim-label sweep: released this issue back to \`ready-for-agent\` — ` +
+    `🤖 AFK claim-label sweep: released this issue back to \`${destination}\` — ` +
     `${concededOwners.length === 1 ? "the latest claim marker" : "the latest claim markers"} for ${who} ` +
     `ended in concede while the issue was still labeled \`running\`.`
   );
