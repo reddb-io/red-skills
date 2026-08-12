@@ -103,6 +103,32 @@ describe("rsp automatic output policy", () => {
     expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:automaticfixture");
   });
 
+  it("reduces repetitive rows nested in a structured result", async () => {
+    const services = Array.from({ length: 30 }, (_, id) => ({ id, state: "steady", latency_ms: 10 + id }));
+    const original = Buffer.from(JSON.stringify({ generated_at: "2026-08-12T00:00:00Z", services }));
+    const store = new MemoryStore();
+
+    const result = await renderAutomaticOutput(original, {
+      command: "service-status --json",
+      level: "automatic",
+      store,
+      sizeThresholdBytes: 64,
+      repetitionThresholdRows: 20,
+      topRows: 5,
+    });
+
+    expect(result.lossy).toBe(true);
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded).toMatchObject({
+      content: "structured-array",
+      source_path: "services",
+      context: { generated_at: "2026-08-12T00:00:00Z" },
+      reduction: { rows_total: 30, rows_kept: 5, rows_omitted: 25 },
+    });
+    expect(valueAt(decoded, ["summary", "numeric", "latency_ms", "sum"])).toBe(735);
+    expect(result.stdout.toString("utf8").match(/el:[a-z0-9]+/g)).toEqual(["el:automaticfixture"]);
+  });
+
   it("renders the disk census as a deterministic top-N TOON table", async () => {
     const fixture = JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", "automatic", "disk-census.json"), "utf8")) as {
       command: string[];
