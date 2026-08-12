@@ -4,7 +4,7 @@
 high-noise commands, emits compact decision-preserving output, and keeps the
 original bytes recoverable through `el:<id>` handles.
 
-Benchmark headline: `rsp` reaches **99.8% decision-oracle capture** versus
+Benchmark headline: `rsp` reaches **99.2% decision-oracle capture** versus
 **RTK 4.9%** and **Headroom 0.6%** on the two-axis benchmark. The checked-in
 summary is at [bench/results/rsp-two-axis.md](bench/results/rsp-two-axis.md),
 and the benchmark guide is at [bench/README.md](bench/README.md).
@@ -18,7 +18,11 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
   telemetry, the store, or the resident. After completion, JSON, YAML, XML,
   TOON, or TOONL stdout becomes canonical TOON only after a lossless round-trip
   proof; all other bytes pass through unchanged. XML conversion uses the pinned
-  `tq` canonical tree instead of an RSP-owned representation.
+  `tq` canonical tree instead of an RSP-owned representation. Large repetitive
+  structured rows are
+  reduced only after deterministic size and repetition thresholds are crossed;
+  the TOON result declares its cap or sort, includes aggregates and next steps,
+  and carries one recovery handle whose original bytes were stored first.
 - `rsp git status`, `rsp git diff`, `rsp git log`, `rsp git show`,
   `rsp git blame`, `rsp git branch -av`, `rsp git commit`, and `rsp git push`
   render git output as compact TOON when that keeps the decision signal.
@@ -174,6 +178,11 @@ Recover a handle with:
 ```sh
 rsp show el:<id>
 ```
+
+Universal output controls use an explicit separator so flags never leak into
+the wrapped argv: `rsp --brief -- <command> <args...>`, `rsp --terse -- ...`,
+and `rsp --full -- ...`. `--full` keeps the complete structured result and
+suppresses automatic reduction.
 
 Defaults are seven days of derivable/re-executable elision retention, six hours
 of ephemeral retention, and a 64 MiB physical cap; `.red/config.yaml` can

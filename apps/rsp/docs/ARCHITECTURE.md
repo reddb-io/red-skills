@@ -32,6 +32,17 @@ stay inside the native shell execution and therefore never cross this
 boundary; only final stdout may transform. Stderr, exit status, and termination
 signal are never transformed.
 
+`automatic-output-policy.ts` extends that completed boundary without taxing
+ordinary commands. Small structured output stays complete. Large structured
+arrays reduce only when their byte size and majority-shape row count cross
+pinned thresholds; explicit `--terse` uses the same deterministic renderer with
+a tighter cap, while `--full` suppresses reduction. The disk-census recognizer
+sorts Cargo `target` directory rows by KiB and emits a top-N TOON table. Every
+lossy result declares its row cap, omitted count, and any sorting, plus numeric
+aggregates, next steps, and exactly one recovery command. The mint is awaited
+before reduced stdout can be returned. If persistence is unavailable, the
+complete output wins and no unrecoverable summary is emitted.
+
 Modeled and RSP-owned commands load `core-entry.ts`, whose `main()` parses the
 top-level command, resolves `.red/config.yaml`, contacts the resident only when
 shared state is needed, and dispatches to wrapper modules:

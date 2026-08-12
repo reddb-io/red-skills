@@ -9,6 +9,45 @@ import {
 } from "../src/runtime/mcp-worker-birth.js";
 
 describe("the dispatch launcher's birth attribution", () => {
+  it("returns the live Worker handles when the birth landed but its reply timed out", async () => {
+    const birthEvent = {
+      kind: "worker-birth" as const,
+      worker_id: "w3667",
+      detail: null,
+      pid: 36_670,
+      fork_sha: "fork-3667",
+      log_path: "/tmp/workers/w3667/worker.log.toonl",
+      admission_verdict: "admitted-interactive-reservation",
+    };
+    const drainEvents = vi
+      .fn<WorkerBirthPort["drainEvents"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([birthEvent]);
+    const port: WorkerBirthPort = {
+      socketPath: "/run/redskilled.sock",
+      reach: async () => undefined,
+      start: async () => {
+        throw new Error("request timed out");
+      },
+      drainEvents,
+    };
+
+    await expect(
+      requestWorkerBirth(".", ["--issues", "3667", "--once"], {
+        port,
+        entry: [process.execPath],
+      }),
+    ).resolves.toEqual({
+      worker_id: "w3667",
+      pid: 36_670,
+      fork_sha: "fork-3667",
+      log: "/tmp/workers/w3667/worker.log.toonl",
+      warnings: ["birth landed after the reply timed out; use these handles to watch it"],
+      admission: "admitted-interactive-reservation",
+    });
+    expect(drainEvents).toHaveBeenCalledTimes(2);
+  });
+
   it("replays the 2026-08-09 granted Worker as a boot refusal, not daemon unreachability", async () => {
     const socketPath = "/run/redskilled.sock";
     const transportFailure = new RedskilledUnreachableError(

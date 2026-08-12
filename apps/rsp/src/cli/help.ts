@@ -168,6 +168,7 @@ function commandHelpLines(command: string | undefined): string[] {
         "  --store-uri <uri>  default repo store",
         "  --brief            compact summaries",
         "  --terse            aggressive summaries with recovery handles",
+        "  --full             suppress automatic reduction",
         "  --query <text>     filter supported rendered output",
         "  --help, -h         scoped help",
         "  --version, -v      build version; add --json for structured build info",
@@ -176,6 +177,7 @@ function commandHelpLines(command: string | undefined): string[] {
         "  rsp",
         "  rsp stats --since 7d",
         "  rsp git log --terse",
+        "  rsp --full -- <command> <args...>",
         "  rsp show el:<id>",
       ];
     default:

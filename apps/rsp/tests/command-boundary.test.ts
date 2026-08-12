@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { decode } from "@reddb-io/toon";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { measureStructuredBoundary } from "../src/command-boundary-benchmark.js";
 import { buildBundleOnce, bundle } from "./cli.helpers.js";
@@ -288,5 +289,147 @@ describe("rsp universal command boundary", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toEqual(Buffer.from("wrapped cat\n"));
     expect(result.stderr).toEqual(Buffer.alloc(0));
+  });
+
+  it("reduces large repetitive output once and recovers exact final-newline bytes", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'automatic-output-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows)+'\\n');",
+    ].join("");
+    const original = spawnSync(process.execPath, ["-e", script], { cwd: root, encoding: "buffer" });
+    expect(original.status).toBe(0);
+
+    const reduced = rsp(root, [process.execPath, "-e", script]);
+
+    expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
+    expect(reduced.stdout.length).toBeLessThan(original.stdout.length);
+    const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
+    expect(handles, reduced.stdout.toString("utf8").slice(0, 500)).toHaveLength(1);
+    expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
+      family: "automatic-output",
+      reduction: { rows_total: 180, rows_kept: 12, rows_omitted: 168 },
+    });
+
+    const recovered = rsp(root, ["show", handles[0]!]);
+    expect(recovered.status, recovered.stderr.toString("utf8")).toBe(0);
+    expect(recovered.stdout).toEqual(original.stdout);
+    expect(recovered.stdout.at(-1)).toBe(0x0a);
+  });
+
+  it("recovers exact repetitive output bytes without a final newline", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'no-final-newline-'.repeat(5)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows));",
+    ].join("");
+    const original = spawnSync(process.execPath, ["-e", script], { cwd: root, encoding: "buffer" });
+
+    const reduced = rsp(root, [process.execPath, "-e", script]);
+    const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
+    const recovered = rsp(root, ["show", handles[0]!]);
+
+    expect(handles).toHaveLength(1);
+    expect(recovered.status, recovered.stderr.toString("utf8")).toBe(0);
+    expect(recovered.stdout).toEqual(original.stdout);
+    expect(recovered.stdout.at(-1)).not.toBe(0x0a);
+  });
+
+  it("lets --full suppress universal automatic reduction", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'automatic-output-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows)+'\\n');",
+    ].join("");
+
+    const result = rsp(root, ["--full", "--", process.execPath, "-e", script]);
+
+    expect(result.status, `${result.stdout.toString("utf8")}${result.stderr.toString("utf8")}`).toBe(0);
+    expect(result.stdout.toString("utf8")).not.toContain("el:");
+    expect(decode(result.stdout.toString("utf8"))).toHaveLength(180);
+  });
+
+  it("applies automatic reduction after a modeled proxy compound completes", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const emitter = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'proxy-automatic-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows)+'\\n');",
+    ].join("");
+    const command = `git status >/dev/null 2>&1 || true; ${process.execPath} -e ${JSON.stringify(emitter)}`;
+
+    const reduced = rsp(root, ["proxy", "--", command]);
+
+    expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
+    const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
+    expect(handles, reduced.stdout.toString("utf8").slice(0, 500)).toHaveLength(1);
+    expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
+      family: "automatic-output",
+      reduction: { rows_total: 180, rows_omitted: 168 },
+    });
+  });
+
+  it("honors --terse on the fast proxy boundary", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = "process.stdout.write(JSON.stringify(Array.from({length:10},(_,id)=>({id,state:'steady'}))))";
+    const command = `${process.execPath} -e ${JSON.stringify(script)}`;
+
+    const reduced = rsp(root, ["proxy", "--terse", "--", command]);
+
+    expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
+    expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
+      family: "automatic-output",
+      reduction: { reason: "explicit-terse", rows_total: 10, rows_kept: 5, rows_omitted: 5 },
+    });
+  });
+
+  it("honors --full on the fast proxy boundary", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'proxy-full-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows));",
+    ].join("");
+    const command = `${process.execPath} -e ${JSON.stringify(script)}`;
+
+    const complete = rsp(root, ["proxy", "--full", "--", command]);
+
+    expect(complete.status, complete.stderr.toString("utf8")).toBe(0);
+    expect(complete.stdout.toString("utf8")).not.toContain("el:");
+    expect(decode(complete.stdout.toString("utf8"))).toHaveLength(180);
+  });
+
+  it("honors --full after a modeled proxy compound completes", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = "process.stdout.write(JSON.stringify(Array.from({length:180},(_,id)=>({id,state:'steady',detail:'x'.repeat(80)}))))";
+    const command = `git status >/dev/null 2>&1 || true; ${process.execPath} -e ${JSON.stringify(script)}`;
+
+    const complete = rsp(root, ["proxy", "--full", "--", command]);
+
+    expect(complete.status, complete.stderr.toString("utf8")).toBe(0);
+    expect(complete.stdout.toString("utf8")).not.toContain("el:");
+    expect(decode(complete.stdout.toString("utf8"))).toHaveLength(180);
   });
 });

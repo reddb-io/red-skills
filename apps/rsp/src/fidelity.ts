@@ -7,6 +7,7 @@ import { renderGhContract } from "./gh-wrapper.js";
 import { renderTestContract } from "./test-wrapper.js";
 import { renderCatContract } from "./cat-wrapper.js";
 import { renderExecContract } from "./exec-wrapper.js";
+import { renderAutomaticOutput } from "./automatic-output-policy.js";
 import type { RspMintStore } from "./git-wrapper.js";
 import type { RspLossLevel } from "./elision-store.js";
 
@@ -21,6 +22,11 @@ export interface FidelityFixture {
   file: string;
   command: string[];
   large_output?: boolean;
+  automatic_policy?: {
+    size_threshold_bytes: number;
+    repetition_threshold_rows: number;
+    top_rows: number;
+  };
   recorded: RecordedGitContract;
   expected: unknown;
   assertions: FidelityAssertion[];
@@ -70,6 +76,26 @@ export async function renderFixture(
   fixture: FidelityFixture,
   options: FidelityRunOptions,
 ): Promise<GitRenderResult> {
+  if (fixture.command[0] === "automatic" && fixture.command[1] === "output") {
+    const automaticLevel = options.level === "lossless" ? "automatic" : options.level;
+    const result = await renderAutomaticOutput(Buffer.from(fixture.recorded.stdout), {
+      command: fixture.command.slice(2).join(" "),
+      level: automaticLevel,
+      store: options.store,
+      sizeThresholdBytes: fixture.automatic_policy?.size_threshold_bytes,
+      repetitionThresholdRows: fixture.automatic_policy?.repetition_threshold_rows,
+      topRows: fixture.automatic_policy?.top_rows,
+    });
+    return {
+      stdout: result.stdout,
+      stderr: Buffer.from(fixture.recorded.stderr),
+      status: fixture.recorded.status,
+      signal: fixture.recorded.signal,
+      mintedHandle: result.handle,
+      bytesElided: result.bytesElided,
+      rawOutput: Buffer.from(fixture.recorded.stdout),
+    };
+  }
   if (fixture.command[0] === "vitest" || fixture.command[0] === "cargo") {
     return await renderTestContract(fixture.command, fixture.recorded, options);
   }
@@ -163,6 +189,7 @@ function isFixture(value: unknown): value is FidelityFixture {
     Array.isArray(value.command) &&
     value.command.every((part) => typeof part === "string") &&
     (!Object.prototype.hasOwnProperty.call(value, "large_output") || typeof value.large_output === "boolean") &&
+    (!Object.prototype.hasOwnProperty.call(value, "automatic_policy") || isAutomaticPolicy(value.automatic_policy)) &&
     isRecord(value.recorded) &&
     typeof value.recorded.stdout === "string" &&
     typeof value.recorded.stderr === "string" &&
@@ -170,6 +197,13 @@ function isFixture(value: unknown): value is FidelityFixture {
     (typeof value.recorded.signal === "string" || value.recorded.signal === null) &&
     Array.isArray(value.assertions) &&
     value.assertions.every(isAssertion);
+}
+
+function isAutomaticPolicy(value: unknown): value is NonNullable<FidelityFixture["automatic_policy"]> {
+  return isRecord(value) &&
+    typeof value.size_threshold_bytes === "number" &&
+    typeof value.repetition_threshold_rows === "number" &&
+    typeof value.top_rows === "number";
 }
 
 function isAssertion(value: unknown): value is FidelityAssertion {
