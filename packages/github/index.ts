@@ -75,6 +75,13 @@ export {
 } from "./balance-store.js";
 
 export {
+  createGithubBalanceHistory,
+  type CreateGithubBalanceHistoryOptions,
+  type GithubBalanceHistory,
+  type GithubBalanceHistoryRow,
+} from "./balance-history.js";
+
+export {
   GITHUB_BALANCE_CADENCE,
   GITHUB_DIVERSION_BANDS,
   GITHUB_BALANCE_MIN_CADENCE_MS,

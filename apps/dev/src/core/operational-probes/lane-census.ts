@@ -174,6 +174,11 @@ function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistr
       join(hostState, "github", "spend.toonl"),
       LANE_RETENTION_REGISTRY["github-spend"],
     ),
+    host(
+      "github-balance-history",
+      join(hostState, "github", "balance-history.toonl"),
+      LANE_RETENTION_REGISTRY["github-balance-history"],
+    ),
   ];
 }
 

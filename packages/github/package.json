@@ -13,6 +13,7 @@
     "./rest-plan.js": "./rest-plan.ts",
     "./balance.js": "./balance.ts",
     "./balance-store.js": "./balance-store.ts",
+    "./balance-history.js": "./balance-history.ts",
     "./cache.js": "./cache.ts"
   },
   "dependencies": {

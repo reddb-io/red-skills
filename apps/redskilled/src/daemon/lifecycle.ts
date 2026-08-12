@@ -781,6 +781,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lastBalance = await remotePoll("GitHub balance poll", () =>
       fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() }));
     await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
+    await balanceRegistration.history?.append(lastBalance).catch(() => undefined);
     return lastBalance;
   }
 

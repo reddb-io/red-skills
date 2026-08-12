@@ -43,6 +43,7 @@ import {
 } from "./daemon.js";
 import {
   createGithubAttributionLedger,
+  createGithubBalanceHistory,
   createGithubBalanceStore,
   createGithubBalanceTransport,
   type GithubAttributionLedger,
@@ -462,6 +463,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       : {
           ...resolvedGithubBalance,
           store: createGithubBalanceStore({ path: join(hostStateRoot, "github", "balance.toon") }),
+          history: createGithubBalanceHistory({
+            path: join(hostStateRoot, "github", "balance-history.toonl"),
+          }),
         };
     // Before this daemon anchors itself, it speaks for whatever the last one
     // could not (slice #3028). The host singleton is the only process guaranteed
