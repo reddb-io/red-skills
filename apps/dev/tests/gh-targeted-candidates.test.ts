@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { selectCastleIssues } from "@reddb-io/red-castle/engine";
 import { resolveDispatchCandidates } from "../src/runtime/gh/candidates.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
@@ -15,6 +15,10 @@ function issue(number: number, labels: string[] = ["lane:go"]): string {
 }
 
 describe("targeted dispatch candidate resolution", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("resolves consecutive /go targets directly by number without consulting the lane listing", async () => {
     const calls: { cmd: string; args: readonly string[] }[] = [];
     const exec: ExecFn = async (cmd, args): Promise<ExecOutput> => {
@@ -60,6 +64,27 @@ describe("targeted dispatch candidate resolution", () => {
     ).toThrow(
       "requested issue(s) missing: #404 (declared lane `lane:go`; consulted queue `lane:go`)",
     );
+  });
+
+  it("boots a freshly minted /go target when the direct read briefly returns 404", async () => {
+    vi.useFakeTimers();
+    const replies = [
+      { code: 1, stdout: "", stderr: "HTTP 404: Not Found" },
+      { code: 1, stdout: "", stderr: "HTTP 404: Not Found" },
+      { code: 0, stdout: issue(3667), stderr: "" },
+    ];
+    const exec = vi.fn<ExecFn>(async (): Promise<ExecOutput> => replies.shift()!);
+    const ctx: GhContext = { cwd: "/repo", repo: "acme/widgets", exec };
+
+    const candidatesPromise = resolveDispatchCandidates(
+      ctx,
+      { kind: "issues", numbers: [3667] },
+      "lane:go",
+    );
+    await vi.runAllTimersAsync();
+
+    await expect(candidatesPromise).resolves.toMatchObject([{ number: 3667 }]);
+    expect(exec).toHaveBeenCalledTimes(3);
   });
 
   it("does not admit a direct target that is closed or outside the declared lane", async () => {

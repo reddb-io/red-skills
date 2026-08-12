@@ -34,18 +34,22 @@ import {
   buildDaemonDeathEvent,
   buildDaemonStartEvent,
   buildDaemonStopEvent,
+  buildDaemonTakeoverFailedEvent,
   type RecordDaemonDeathInput,
   type RecordDaemonStartInput,
   type RecordDaemonStopInput,
+  type RecordDaemonTakeoverFailedInput,
 } from "./daemon-events.js";
 export {
   buildDaemonDeathEvent,
   buildDaemonStartEvent,
   buildDaemonStopEvent,
+  buildDaemonTakeoverFailedEvent,
   REDSKILLED_DAEMON_EVENT_PREFIX,
   type RecordDaemonDeathInput,
   type RecordDaemonStartInput,
   type RecordDaemonStopInput,
+  type RecordDaemonTakeoverFailedInput,
 } from "./daemon-events.js";
 import { decodeLaneRows } from "./event-lane-decode.js";
 import {
@@ -96,7 +100,8 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
       | "demand-refusal"
       | "daemon-start"
       | "daemon-death"
-      | "daemon-stop",
+      | "daemon-stop"
+      | "daemon-takeover-failed",
   ): boolean;
 };
 
@@ -120,6 +125,7 @@ export const REDSKILLED_DAEMON_EVENT_KINDS = [
   "daemon-start",
   "daemon-death",
   "daemon-stop",
+  "daemon-takeover-failed",
 ] as const;
 
 export type RedskilledDaemonEventKind = typeof REDSKILLED_DAEMON_EVENT_KINDS[number];
@@ -362,6 +368,8 @@ export interface RedskilledEventLane {
   recordDaemonStart(input: RecordDaemonStartInput): Promise<RedskilledHostEvent>;
   /** Append a successor's retroactive account of an unrecorded predecessor death. */
   recordDaemonDeath(input: RecordDaemonDeathInput): Promise<RedskilledHostEvent>;
+  /** Append a failed takeover while the incumbent still owns the live session. */
+  recordDaemonTakeoverFailed(input: RecordDaemonTakeoverFailedInput): Promise<RedskilledHostEvent>;
   /**
    * Append the daemon's own stop; resolves once the bytes are on the lane.
    *
@@ -418,6 +426,7 @@ export function createRedskilledEventLane(
     recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
     recordDaemonStart: (input) => append(buildDaemonStartEvent(input)),
     recordDaemonDeath: (input) => append(buildDaemonDeathEvent(input)),
+    recordDaemonTakeoverFailed: (input) => append(buildDaemonTakeoverFailedEvent(input)),
     recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
     flush: async () => {
