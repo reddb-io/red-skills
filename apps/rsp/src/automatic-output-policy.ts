@@ -4,12 +4,14 @@ import { renderStructuredBoundary } from "./structured-boundary.js";
 
 export interface AutomaticOutputOptions {
   readonly command: string;
-  readonly level: RspLossLevel;
+  readonly level: AutomaticOutputLevel;
   readonly store?: AutomaticOutputStore;
   readonly sizeThresholdBytes?: number;
   readonly repetitionThresholdRows?: number;
   readonly topRows?: number;
 }
+
+export type AutomaticOutputLevel = RspLossLevel | "automatic";
 
 export interface AutomaticOutputStore {
   mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<string>;
@@ -26,7 +28,7 @@ export interface AutomaticOutputResult {
 export async function renderAutomaticCommandOutput(
   original: Buffer,
   command: string,
-  level: RspLossLevel = "lossless",
+  level: AutomaticOutputLevel = "automatic",
 ): Promise<Buffer> {
   let resident: import("./resident-client.js").ResidentRspElisionStore | undefined;
   const store = {
@@ -58,7 +60,7 @@ export async function renderAutomaticOutput(
   options: AutomaticOutputOptions,
 ): Promise<AutomaticOutputResult> {
   const complete = isDocumentationCommand(options.command) ? original : renderStructuredBoundary(original);
-  if (options.level === "full") return { stdout: complete, lossy: false };
+  if (options.level === "full" || options.level === "lossless") return { stdout: complete, lossy: false };
 
   const sizeThresholdBytes = positiveInteger(options.sizeThresholdBytes, 8 * 1024);
   const repetitionThresholdRows = positiveInteger(options.repetitionThresholdRows, 20);
@@ -156,7 +158,7 @@ async function mintBeforeReduction(original: Buffer, options: AutomaticOutputOpt
   try {
     const handle = await options.store?.mint(original, {
       command: options.command,
-      loss: { level: options.level === "lossless" ? "brief" : options.level, bytes_elided: original.length },
+      loss: { level: options.level === "automatic" ? "brief" : options.level, bytes_elided: original.length },
     }) ?? "";
     return handle.startsWith("el:") ? handle : "";
   } catch {
