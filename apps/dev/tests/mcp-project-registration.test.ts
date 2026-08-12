@@ -102,9 +102,25 @@ async function project(): Promise<string> {
 }
 
 /** The daemon this session reaches, already answering. */
-async function liveHost(): Promise<RedskilledDaemon> {
+async function liveHost(queueDepth?: number): Promise<RedskilledDaemon> {
   const paths = await sessionPaths();
-  const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+  const daemon = await startRedskilledDaemon({
+    paths,
+    idleMs: 60_000,
+    ...(queueDepth == null
+      ? {}
+      : {
+          queueDiscovery: {
+            intervalMs: 0,
+            transport: async () => ({
+              data: {
+                rateLimit: { remaining: 4_900, resetAt: null },
+                q0: { issueCount: queueDepth },
+              },
+            }),
+          },
+        }),
+  });
   running.push(daemon);
   host.paths = paths;
   return daemon;
@@ -318,6 +334,32 @@ describe("starting work registers the project", () => {
       lapsed_at: expect.stringMatching(/^2026-|^20\d\d-/),
       reason: expect.stringContaining("nothing renewed it"),
     });
+  });
+
+  it("reports a declared standing drain with queued work as loudly stopped", async () => {
+    const daemon = await liveHost(5);
+    const root = await project();
+    await writeFile(
+      join(root, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    enabled: true\n    afk:\n      standing:\n        runner: codex\n        target: 4\n",
+      "utf8",
+    );
+    daemon.registerProject({
+      project_label: "acme/widgets",
+      selector: 'repo:acme/widgets is:issue is:open label:"ready-for-agent"',
+      queue_poll: { owner: "acme", repo: "widgets", labels: ["ready-for-agent"] },
+      argv: ["red-skills-dev", "run", "--once", "--runner", "codex"],
+      workspace_path: root,
+      target: 4,
+      standing: true,
+      renew_within_ms: 20,
+    });
+    await daemon.pollQueueDiscovery();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(daemon.hostState().registrations).toEqual([]);
+
+    const status = await createCastleMcpDependencies(root).projectStatus();
+    expect(status.registration.reason).toContain("queue 5, drain STOPPED");
   });
 
   it("re-creates a lapsed registration through drain", async () => {
