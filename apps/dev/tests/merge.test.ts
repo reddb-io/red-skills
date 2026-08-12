@@ -759,7 +759,9 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
     expect(result).toEqual({ ok: true, prNumber: 88 });
     const c = joined(recorded);
     expect(c.some((x) => x.includes("api -X POST") && x.includes("/pulls") && x.includes("base=main") && x.includes("head=afk/wBBBB/9-x"))).toBe(true);
-    expect(c).toContain("gh -R reddb-io/red-skills pr edit 88 --add-label ready-for-review");
+    expect(c).toContain(
+      "gh api -X POST repos/reddb-io/red-skills/issues/88/labels -F labels[]=ready-for-review",
+    );
     // The whole point: the merge is held for the fresh-agent review.
     expect(c.some((x) => x.includes("/merge"))).toBe(false);
   });
@@ -779,13 +781,15 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
     expect(result).toEqual({ ok: true, prNumber: 42 });
     const c = joined(calls);
     expect(c.some((x) => x.includes("api -X POST") && x.includes("/pulls"))).toBe(false);
-    expect(c).toContain("gh -R reddb-io/red-skills pr edit 42 --add-label ready-for-review");
+    expect(c).toContain(
+      "gh api -X POST repos/reddb-io/red-skills/issues/42/labels -F labels[]=ready-for-review",
+    );
   });
 
   it("fails when the label edit fails (PR still resolved)", async () => {
     const { exec } = fakeExec([
       { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "5\n" } },
-      { match: (a) => a.join(" ").includes("pr edit"), result: { code: 1 } },
+      { match: (a) => a.join(" ").includes("issues/5/labels"), result: { code: 1 } },
     ]);
     const result = await openReviewPr(exec, {
       repo: "reddb-io/red-skills",
@@ -1613,7 +1617,7 @@ describe("landPr CI-aware wiring (#812)", () => {
             stderr: "",
           };
         }
-        if (cmd.includes("pr update-branch")) {
+        if (cmd.includes("pulls/5/update-branch")) {
           updated = true;
           return { code: 0, stdout: "", stderr: "" };
         }
@@ -1630,7 +1634,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       });
       expect(r.ok).toBe(true);
       expect(merges).toBe(2);
-      expect(calls.some((c) => c.join(" ").includes("pr update-branch 5"))).toBe(true);
+      expect(calls.some((c) => c.join(" ").includes("api -X PUT repos/o/r/pulls/5/update-branch"))).toBe(true);
     });
 
     it("names the OBSERVED cause when the rejection is not a stale branch", async () => {
@@ -1670,7 +1674,7 @@ describe("landPr CI-aware wiring (#812)", () => {
             stderr: "",
           };
         }
-        if (cmd.includes("pr update-branch")) {
+        if (cmd.includes("pulls/5/update-branch")) {
           updates += 1;
           return { code: 0, stdout: "", stderr: "" };
         }
