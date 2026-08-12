@@ -9,6 +9,8 @@ import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 
 const LEAK_ENV_KEY = "RED_SKILLS_TEST_TOKEN";
 const LEAK_ENV_VALUE = "red-skills-test-token-123456";
+const isRestCreatePullCall = (args: readonly string[]): boolean =>
+  args.includes("POST") && args.some((arg) => /\/pulls$/.test(arg));
 const LEAK_TEXT = [
   "session https://claude.ai/code/session_abc123_X-y",
   `literal ${LEAK_ENV_VALUE}`,
@@ -157,7 +159,7 @@ describe("GitHub outbound write seams", () => {
     const exec: Exec = async (args) => {
       calls.push([...args]);
       if (args.includes("list")) {
-        const previousCreates = calls.filter((call) => call.includes("create")).length;
+        const previousCreates = calls.filter(isRestCreatePullCall).length;
         return { code: 0, stdout: previousCreates > 0 ? "88\n" : "", stderr: "" };
       }
       return { code: 0, stdout: "", stderr: "" };
@@ -178,7 +180,7 @@ describe("GitHub outbound write seams", () => {
       mergeQueueWait: { sleep: async () => {}, maxPolls: 1 },
     });
 
-    const create = calls.find((args) => args.includes("create"));
+    const create = calls.find(isRestCreatePullCall);
     expect(create).toBeTruthy();
     expectScrubbed(create!.join("\n"));
     expect(create!.join("\n")).toContain("Closes #1365");

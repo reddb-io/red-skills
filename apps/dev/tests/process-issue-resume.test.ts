@@ -307,7 +307,7 @@ describe("branch adoption is decided on commits, not on the ref name (issue #286
     const { deps, input, trace } = harness({
       onRunAgent: async () => {
         routeWasOpenWhenAgentStarted = trace.mergeCalls.some((argv) =>
-          argv.join(" ").includes("pr create --draft --base main")
+          argv.includes("POST") && argv.includes("draft=true") && argv.includes("base=main")
         );
       },
     });
@@ -322,19 +322,20 @@ describe("branch adoption is decided on commits, not on the ref name (issue #286
     expect(routeWasOpenWhenAgentStarted).toBe(true);
     expect(trace.mergeCalls).toContainEqual([
       "gh",
-      "-R",
-      "o/r",
-      "pr",
-      "create",
-      "--draft",
-      "--base",
-      "main",
-      "--head",
-      PRIOR_BRANCH,
-      "--title",
-      "resume: #9",
-      "--body",
-      expect.stringContaining("Closes #9"),
+      "api",
+      "-X",
+      "POST",
+      "repos/o/r/pulls",
+      "-F",
+      "draft=true",
+      "-f",
+      "base=main",
+      "-f",
+      `head=${PRIOR_BRANCH}`,
+      "-f",
+      "title=resume: #9",
+      "-f",
+      expect.stringContaining("body=Resuming preserved Worker commits for #9."),
     ]);
   });
 

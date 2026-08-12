@@ -4,10 +4,16 @@ import { describe, expect, it } from "vitest";
 import {
   GITHUB_READ_EXEMPTIONS,
   GITHUB_READ_SHELLOUT_BASELINE,
+  GITHUB_ROUTE_SCAN_ROOTS,
+  GITHUB_WRITE_SHELLOUT_BASELINE,
   collectGithubReadRouteReport,
   collectGithubReadShelloutsFromFiles,
+  collectGithubWriteRouteReport,
+  collectGithubWriteShelloutsFromFiles,
   formatGithubReadRouteFailure,
+  formatGithubWriteRouteFailure,
   githubReadRouteViolations,
+  githubWriteRouteViolations,
 } from "../src/core/github-read-route-guard.js";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 
@@ -66,6 +72,43 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
         `,
       },
     ])).toEqual([]);
+  });
+
+  it("holds raw GitHub writes to their own shrink-only baseline", () => {
+    const report = collectGithubWriteRouteReport(ROOT);
+    const violations = githubWriteRouteViolations(report);
+
+    expect(violations, formatGithubWriteRouteFailure(report, violations)).toEqual([]);
+    expect(report.findings.length).toBeLessThanOrEqual(
+      GITHUB_WRITE_SHELLOUT_BASELINE.reduce((sum, entry) => sum + entry.count, 0),
+    );
+    expect(formatGithubWriteRouteFailure(report, ["probe"])).toContain(
+      `${report.findings.length} GitHub write shell-out(s) remain`,
+    );
+  });
+
+  it("rejects a new gh write and points it at the shared client", () => {
+    const findings = collectGithubWriteShelloutsFromFiles([
+      {
+        relativePath: "packages/red-castle/src/engine/new-writer.ts",
+        sourceText: `\nexport async function merge(runGh: any) {\n  return runGh(["pr", "merge", "42", "--merge"]);\n}\n`,
+      },
+    ]);
+    const report = { findings, baseline: [], exemptions: GITHUB_READ_EXEMPTIONS };
+    const violations = githubWriteRouteViolations(report);
+    const failure = formatGithubWriteRouteFailure(report, violations);
+
+    expect(violations).toHaveLength(1);
+    expect(failure).toContain("packages/red-castle/src/engine/new-writer.ts:3");
+    expect(failure).toContain("createGithubClient");
+  });
+
+  it("sweeps red-castle alongside both daemon applications", () => {
+    expect(GITHUB_ROUTE_SCAN_ROOTS).toEqual([
+      "apps/dev/src",
+      "apps/redskilled/src",
+      "packages/red-castle/src",
+    ]);
   });
 
   it("runs in every validation cone", () => {

@@ -448,11 +448,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // The last activity fetch, kept for the same reason the RSS reading is: a read
   // between two polls is dated by the poll it came from, never by the read.
   let lastActivity: RedskilledRepositoryActivity | null = null;
-  // The last balance the TOKEN answered with — the only copy on this host, and
-  // not a number this process maintains. It is `null` until something has been
-  // asked, because "nobody asked yet" and "the budget is full" are opposite facts
-  // and the second one admits every call (ADR 0132 Amendment 2).
-  let lastBalance: GithubBalance | null = null;
+  // The last TOKEN answer; null means unasked, never "full budget" (ADR 0132 Amendment 2).
+  let lastBalance: GithubBalance | null = null, balanceHydrated = false, balanceHydration: Promise<GithubBalance | null> | null = null;
   // The last queue fetch, held beside the activity one rather than merged into it:
   // two cadences produce two instants, and a document that carried one date for
   // both would age the fast half by the slow half's clock.
@@ -769,16 +766,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
   }
 
-  /**
-   * Ask the token what it has left. ONE request, and one poller host-wide.
-   *
-   * The answer replaces the stored one whatever it says, including when it says
-   * nothing: a refusal that left the last good balance standing would keep
-   * admitting convenience reads against a number the token stopped confirming.
-   */
+  /** Ask the token once host-wide; every answer replaces the stored observation. */
   async function pollGithubBalance(): Promise<GithubBalance | null> {
     if (balanceRegistration == null) return null;
+    if (!balanceHydrated && balanceRegistration.store) {
+      balanceHydration ??= balanceRegistration.store.read().then((stored) => {
+        balanceHydrated = true;
+        if (stored !== null) lastBalance = stored;
+        return stored;
+      }).finally(() => { balanceHydration = null; });
+      if ((await balanceHydration) !== null) return lastBalance;
+    }
     lastBalance = await fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() });
+    await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
     return lastBalance;
   }
 
