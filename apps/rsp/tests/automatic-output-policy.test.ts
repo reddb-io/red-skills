@@ -81,7 +81,7 @@ describe("rsp automatic output policy", () => {
     expect(valueAt(decoded, ["summary", "numeric", "latency_ms", "sum"])).toBe(2380);
     expect(valueAt(decoded, ["rows", 4, "service"])).toBe("worker-04");
     expect(valueAt(decoded, ["next_steps", 0])).toBe("Recover exact bytes with rsp show <handle>");
-    expect(valueAt(decoded, ["next_steps", 1])).toBe("Re-run service-status --json with --full to suppress reduction");
+    expect(valueAt(decoded, ["next_steps", 1])).toBe("Repeat the same rsp invocation with --full to suppress reduction");
     expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:automaticfixture");
   });
 
