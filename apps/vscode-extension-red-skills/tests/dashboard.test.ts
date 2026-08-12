@@ -49,6 +49,8 @@ function withDisplay(payload: ReturnType<typeof statuslinePayload>): ReturnType<
         wait_deadline: null,
         wait_escalation: null,
         started_at: null,
+        phase_started_at: null,
+        progress_at: null,
         context: null,
         eta: null,
         added: null,
@@ -267,7 +269,7 @@ describe("the frame is drawn here, from the one document the daemon composed", (
     const html = renderDashboardHtml(snapshot);
     expect(html).toContain("lane=repair");
     expect(html).toContain("pr=#3291");
-    expect(html).toContain("merging·regenerate");
+    expect(html).toContain("merging 3/6 · regenerate");
   });
 
   it("shows why a process died, and the engine that answered, from the daemon's own frame", async () => {

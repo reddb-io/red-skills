@@ -72,6 +72,10 @@ export interface RedskilledRenderWorkerDisplay {
   readonly wait_escalation: string | null;
   /** When the work started, ISO-8601. `elapsed` is derived from it, never published. */
   readonly started_at: string | null;
+  /** When the current macro phase began; absent on older publishers. */
+  readonly phase_started_at?: string | null;
+  /** Last LOC or commit movement; absent on older publishers. */
+  readonly progress_at?: string | null;
   /** Input-side tokens on the last turn — the context window's occupancy. */
   readonly context: number | null;
   /** Seconds the project expects the work still to take; `null` when it will not say. */
@@ -104,6 +108,8 @@ export const REDSKILLED_RENDER_DISPLAY_ABSENT: RedskilledRenderWorkerDisplay = {
   wait_deadline: null,
   wait_escalation: null,
   started_at: null,
+  phase_started_at: null,
+  progress_at: null,
   context: null,
   eta: null,
   added: null,

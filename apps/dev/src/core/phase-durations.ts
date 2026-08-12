@@ -344,6 +344,8 @@ export interface PhaseDurationTracker {
   }): Promise<void>;
   /** Seconds of work expected to remain, or `null` when nothing may be claimed. */
   etaSeconds(nowEpoch: number): number | null;
+  /** The witnessed start of the current phase, or `null` before observation. */
+  phaseStartedAt(): string | null;
 }
 
 /**
@@ -371,6 +373,7 @@ export function createPhaseDurationTracker(options: {
   let watch: PhaseWatch | null = null;
   let estimateAtEntry: number | null = null;
   let witnessed = false;
+  let phaseStartedAt: string | null = null;
 
   return {
     async observe({ phase, identity, nowEpoch, nowIso }) {
@@ -389,6 +392,7 @@ export function createPhaseDurationTracker(options: {
         );
       }
       watch = advance.watch;
+      phaseStartedAt = nowIso;
       estimateAtEntry = witnessed
         ? estimatePhaseEtaSeconds({
           stats: summarizePhaseDurations(records, {
@@ -404,6 +408,9 @@ export function createPhaseDurationTracker(options: {
     etaSeconds(nowEpoch) {
       if (watch == null) return null;
       return remainingEtaSeconds(estimateAtEntry, nowEpoch - watch.since_epoch);
+    },
+    phaseStartedAt() {
+      return phaseStartedAt;
     },
   };
 }

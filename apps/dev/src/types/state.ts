@@ -47,6 +47,11 @@ export const AfkCurrentSchema = z.object({
    * Renamed from `last_progress_at` (which mislabeled "commit" as "progress");
    * read-shimmed from the old key for one release. See ADR 0065. */
   last_commit_at: z.string().default(""),
+  /** ISO timestamp of the last observed LOC-volume change. Unlike
+   * `last_commit_at`, this advances while an uncommitted edit grows or shrinks,
+   * so display surfaces can expose a real-progress clock that does not reset on
+   * every read/test/tool transition. */
+  last_loc_progress_at: z.string().default(""),
   /** ISO timestamp of the last observed STREAM event (any agent text/tool/
    * reasoning chunk), stamped in `recordAgentEvent`. The honest liveness clock:
    * an exploring worker advances this every few seconds even when it has not

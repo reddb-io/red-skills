@@ -77,7 +77,7 @@ export function dashboardTable(
       { key: "runner", header: "Runner", flex: 1, minWidth: 12, truncate: true },
       { key: "phase", header: "Phase", flex: 2, minWidth: 16, truncate: true },
       { key: "progress", header: "Progress", width: 9 },
-      { key: "elapsed", header: "Elapsed", width: 9, align: "right" },
+      { key: "elapsed", header: "Clocks", width: 34, align: "right" },
       { key: "eta", header: "ETA", width: 8, align: "right" },
       { key: "activity", header: "Activity", flex: 2, minWidth: 16, truncate: true },
     ],

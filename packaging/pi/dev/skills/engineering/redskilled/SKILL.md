@@ -289,6 +289,49 @@ The admission vocabulary carried by `admission_verdict` is `admitted`,
 `refused-over-memory-ceiling`, `refused-over-interactive-reservation`,
 `refused-unreachable-trunk-remote`, and `refused-unaccountable-budget`.
 
+### Worker phase, activity, and clock vocabulary
+
+`phase` is the Worker's place in the macro pipeline; `step` is the activity it is
+performing now. Rows make the distinction grammatical and positional:
+`coding 2/5 · reading`. The bar beside it is the same position drawn visually.
+
+| Phase | Position | Meaning |
+| --- | --- | --- |
+| `setup` | 1/5 | Preparing the attempt and isolated worktree |
+| `coding` | 2/5 | Agent-owned implementation work |
+| `validating` | 3/5 | Checking the completed implementation |
+| `merging` | 4/5 | Landing the validated branch |
+| `done` | 5/5 | Terminal success |
+
+Landing sub-phases (`gate`, `push-pr`, `merge`, and `cascade`) occupy the fourth
+position too. `blocked` is terminal but outside the successful five-position
+pipeline, so it has no ordinal.
+
+Steps are present-participle activities. These are display values; older internal
+state nouns are translated by the project publisher before a `worker-activity`
+event reaches the daemon.
+
+| Step | What is happening |
+| --- | --- |
+| `preparing` | Setting up the current phase |
+| `reading` | Reading existing code during `coding` |
+| `searching` | Searching the codebase |
+| `editing` | Changing implementation or tests |
+| `testing` | Running tests |
+| `typechecking` | Running a type checker |
+| `linting` | Running a linter or formatter check |
+| `building` | Building or compiling |
+| `committing` | Creating a commit |
+| `pushing` | Pushing a branch |
+| `reviewing` | Reviewing finished work during `validating` |
+| `landing` | Advancing the landing operation |
+
+Every Worker row carries three named clocks derived against the payload's single
+`generated_at` instant: `age=` is process age, `phase=` is time in the macro
+phase, and `idle=` is time since LOC or commit movement. Activity changes do not
+reset any of them. A 30-minute no-progress stall therefore shows at least
+`idle=30m0s` even if the Worker continues alternating between reading and tests.
+
 ### Canonical `tq` recipes
 
 Use `tq` directly on the daemon's TOONL lane; there is no report verb and no

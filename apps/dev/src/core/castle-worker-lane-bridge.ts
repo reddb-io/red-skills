@@ -228,6 +228,7 @@ export function createCastleWorkerLaneBridge(
         : workerDisplayFromState(state, {
           etaSeconds: phaseDurations.etaSeconds(Math.floor(nowMs() / 1000)),
           nowMs: nowMs(),
+          phaseStartedAt: phaseDurations.phaseStartedAt(),
         });
       const mechanicalHeal: RedskilledMechanicalHealStamp | undefined =
         kind === "worker.mechanical_regeneration_cure"

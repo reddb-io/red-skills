@@ -738,11 +738,10 @@ export function buildProcessDeps({
             }
           },
         });
-        // Remember the volume for the on_heartbeat vitals provider (#832).
+        const locChanged = added !== lastHeartbeatDiff.added || removed !== lastHeartbeatDiff.removed;
         lastHeartbeatDiff = { added, removed };
         // Update the per-attempt peak diff (only grows; never decreases).
-        if (added > peakLocAdded) peakLocAdded = added;
-        if (removed > peakLocRemoved) peakLocRemoved = removed;
+        if (added > peakLocAdded) peakLocAdded = added; if (removed > peakLocRemoved) peakLocRemoved = removed;
         // Close this heartbeat window on the meter — derives the waiting count
         // (a window with no new stream events) and snapshots the cumulative
         // tool/text counts to fold into the record + state.
@@ -760,6 +759,7 @@ export function buildProcessDeps({
           "current.loc_peak_added": peakLocAdded,
           "current.loc_peak_removed": peakLocRemoved,
           "current.worktree": worktree,
+          ...(locChanged ? { "current.last_loc_progress_at": ts } : {}),
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
         await castleBridge.record("worker.heartbeat", {
