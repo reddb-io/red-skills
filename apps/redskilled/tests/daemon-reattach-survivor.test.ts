@@ -23,6 +23,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ensureRedskilledDaemon,
+  publishRedskilledWorkerLogLine,
   readRedskilledHostState,
   startRedskilledWorker,
   type RedskilledClientConfig,
@@ -206,6 +207,48 @@ describe("a launch client that dies is not a Worker that died", () => {
     expect(second.hostState().workers.map((worker) => worker.worker_id)).toEqual(["wWTVC"]);
     expect(second.reattached().map((worker) => worker.worker_id)).toEqual(["wWTVC"]);
     expect(second.hostState().budget_accounting.worker_count).toBe(1);
+  });
+
+  it("keeps a re-attachable Worker when its active unit contradicts a missed liveness probe", async () => {
+    const paths = await sessionPaths();
+    const lane = createRedskilledEventLane(paths.eventLanePath);
+    const worker: RedskilledWorkerView = {
+      worker_id: "hBQ3P",
+      project_label: "reddb-io/red-skills",
+      pid: 137_871,
+      started_at: "2026-08-11T19:40:00.000Z",
+      workspace_path: "/tmp/ws",
+      isolated: true,
+      unit: "red-worker-reddb-io-red-skills-hbq3p.service",
+      warnings: [],
+    };
+    await lane.record({ event: "worker-birth", worker, ts: worker.started_at });
+
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      // A watch gap is not a death: the host's active-unit census is the
+      // independent liveness anchor that still sees this Worker.
+      liveness: () => false,
+      unitInventory: () => [worker.unit!],
+      unitMainPid: () => 137_873,
+    });
+    running.push(daemon);
+
+    expect(daemon.hostState().workers.map((view) => view.worker_id)).toEqual([worker.worker_id]);
+    expect(daemon.hostState().workers[0]!.project_label).toBe(worker.project_label);
+    expect(daemon.hostState().workers[0]!.pid).toBe(137_873);
+
+    const heartbeat = await publishRedskilledWorkerLogLine(
+      paths,
+      { worker_id: worker.worker_id, line: "still working", session_project: worker.project_label },
+      { sessionProject: worker.project_label },
+    );
+    expect(heartbeat.accepted).toBe(true);
+
+    await daemon.flushEvents();
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events.map((event) => event.event)).toEqual(["worker-birth"]);
   });
 
   it("still records a death when the process that exited WAS the Worker", async () => {
