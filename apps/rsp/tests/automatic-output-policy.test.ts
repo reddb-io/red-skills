@@ -16,6 +16,24 @@ class MemoryStore {
 }
 
 describe("rsp automatic output policy", () => {
+  it("keeps explicitly lossless output complete above automatic thresholds", async () => {
+    const rows = Array.from({ length: 40 }, (_, id) => ({ id, state: "steady", detail: "x".repeat(80) }));
+    const original = Buffer.from(JSON.stringify(rows));
+    const store = new MemoryStore();
+
+    const result = await renderAutomaticOutput(original, {
+      command: "state-report --json",
+      level: "lossless",
+      store,
+      sizeThresholdBytes: 64,
+      repetitionThresholdRows: 20,
+    });
+
+    expect(result.lossy).toBe(false);
+    expect(decode(result.stdout.toString("utf8"))).toEqual(rows);
+    expect(store.mintCalls).toBe(0);
+  });
+
   it("keeps small structured output complete and mints no recovery handle", async () => {
     const original = Buffer.from('{"services":[{"name":"api","healthy":true},{"name":"worker","healthy":false}]}\n');
     const store = new MemoryStore();
