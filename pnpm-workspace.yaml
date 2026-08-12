@@ -16,7 +16,7 @@ catalog:
   "@types/node": ^22.0.0
   zod: ^3.23.8
   "@modelcontextprotocol/sdk": ^1.0.0
-  "@reddb-io/toon": 0.21.0
+  "@reddb-io/toon": 0.22.0
 
 onlyBuiltDependencies:
   - "@reddb-io/sdk"
@@ -32,4 +32,4 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - "@reddb-io/sdk"
-  - '@reddb-io/toon@0.21.0'
+  - '@reddb-io/toon@0.22.0'

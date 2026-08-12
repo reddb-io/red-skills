@@ -67,6 +67,76 @@ describe("rsp universal command boundary", () => {
     });
   });
 
+  it("emits tq's canonical ordered tree for completed XML", async () => {
+    const root = await tempRoot();
+    const xml = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      "<!--before--><?build release?>",
+      '<catalog xmlns="urn:catalog" xmlns:x="urn:item" x:mode="full" id="7">',
+      'lead<![CDATA[<raw>&data]]><x:item code="a&amp;b"/>',
+      "<x:item></x:item><!--inside--><?step done?>tail",
+      "</catalog>",
+    ].join("");
+    const result = rsp(root, [process.execPath, "-e", `process.stdout.write(${JSON.stringify(xml)})`]);
+
+    expect(result.status).toBe(0);
+    expect((await import("@reddb-io/toon")).decode(result.stdout.toString("utf8"))).toEqual({
+      xml: {
+        declaration: { version: "1.0", encoding: "UTF-8", standalone: "yes" },
+        children: [
+          { type: "comment", value: "before" },
+          { type: "processing_instruction", target: "build", value: "release" },
+          {
+            type: "element",
+            name: "catalog",
+            attributes: [
+              { name: "xmlns", value: "urn:catalog" },
+              { name: "xmlns:x", value: "urn:item" },
+              { name: "x:mode", value: "full" },
+              { name: "id", value: "7" },
+            ],
+            children: [
+              { type: "text", value: "lead" },
+              { type: "cdata", value: "<raw>&data" },
+              {
+                type: "element",
+                name: "x:item",
+                attributes: [{ name: "code", value: "a&b" }],
+                children: [],
+                empty: true,
+              },
+              { type: "element", name: "x:item", attributes: [], children: [], empty: false },
+              { type: "comment", value: "inside" },
+              { type: "processing_instruction", target: "step", value: "done" },
+              { type: "text", value: "tail" },
+            ],
+            empty: false,
+          },
+        ],
+      },
+    });
+
+    const pipeline = [
+      `printf '%s' ${JSON.stringify(xml)}`,
+      `${process.execPath} -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>process.stdout.write(JSON.stringify({received:input})))'`,
+    ].join(" | ");
+    const proxied = rsp(root, ["proxy", "--", pipeline]);
+
+    expect(proxied.status).toBe(0);
+    expect((await import("@reddb-io/toon")).decode(proxied.stdout.toString("utf8"))).toEqual({ received: xml });
+  });
+
+  it.each([
+    ["malformed XML", "<root><open></root>"],
+    ["unsupported XML", "<!DOCTYPE root><root/>"],
+  ])("keeps %s byte-identical", async (_label, xml) => {
+    const root = await tempRoot();
+    const result = rsp(root, [process.execPath, "-e", `process.stdout.write(${JSON.stringify(xml)})`]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toEqual(Buffer.from(xml));
+  });
+
   it("preserves stderr and non-zero exit status when structured stdout is transformed", async () => {
     const root = await tempRoot();
     const result = rsp(root, [process.execPath, "-e", "process.stdout.write('{\"ok\":false}');process.stderr.write('native error\\n');process.exit(29)"]);

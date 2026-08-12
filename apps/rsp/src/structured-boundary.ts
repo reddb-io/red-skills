@@ -1,4 +1,5 @@
 import { isUtf8 } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import { decode, encode, parseRecords, type JsonValue } from "@reddb-io/toon";
 import { parseAllDocuments } from "yaml";
@@ -6,7 +7,11 @@ import { parseAllDocuments } from "yaml";
 export interface StructuredBoundaryDependencies {
   readonly encode?: (value: JsonValue) => string;
   readonly decode?: (input: string) => unknown;
+  readonly runTq?: TqConversion;
 }
+
+type TqFormat = "toon" | "xml";
+type TqConversion = (input: string, inputFormat: TqFormat, outputFormat: TqFormat) => string | undefined;
 
 export interface CompletedOutputContract {
   readonly stdout: Buffer;
@@ -37,7 +42,8 @@ export function renderStructuredBoundary(
   const trimmed = text.trim();
   if (trimmed === "") return stdout;
 
-  const candidate = decodeStructuredText(trimmed, dependencies.decode ?? decode);
+  const candidate = decodeXmlText(trimmed, dependencies.decode ?? decode, dependencies.runTq ?? runTqConversion) ??
+    decodeStructuredText(trimmed, dependencies.decode ?? decode);
   if (!candidate) return stdout;
   const { value } = candidate;
 
@@ -52,7 +58,39 @@ export function renderStructuredBoundary(
   }
 }
 
-type StructuredSource = "json" | "yaml" | "toon" | "toonl";
+type StructuredSource = "json" | "xml" | "yaml" | "toon" | "toonl";
+
+function decodeXmlText(
+  text: string,
+  decodeToon: (input: string) => unknown,
+  runTq: TqConversion,
+): { value: unknown; source: "xml" } | undefined {
+  if (!text.startsWith("<")) return undefined;
+  const canonicalToon = runTq(text, "xml", "toon");
+  if (canonicalToon === undefined) return undefined;
+  const roundTrippedXml = runTq(canonicalToon, "toon", "xml");
+  if (roundTrippedXml === undefined) return undefined;
+  const provenToon = runTq(roundTrippedXml, "xml", "toon");
+  if (provenToon === undefined) return undefined;
+  try {
+    const value = decodeToon(canonicalToon);
+    if (!isDeepStrictEqual(value, decodeToon(provenToon))) return undefined;
+    return { value, source: "xml" };
+  } catch {
+    return undefined;
+  }
+}
+
+function runTqConversion(input: string, inputFormat: TqFormat, outputFormat: TqFormat): string | undefined {
+  const converted = spawnSync("tq", ["-p", inputFormat, "-o", outputFormat, "."], {
+    input,
+    encoding: "utf8",
+    maxBuffer: Math.max(16 * 1024 * 1024, input.length * 32),
+    timeout: 5_000,
+  });
+  if (converted.error || converted.status !== 0 || converted.signal || converted.stdout === "") return undefined;
+  return converted.stdout;
+}
 
 function decodeStructuredText(
   text: string,

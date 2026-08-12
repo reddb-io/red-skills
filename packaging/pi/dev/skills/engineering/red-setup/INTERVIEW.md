@@ -151,7 +151,7 @@ If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the s
 Install the pinned `tq` through the official Rust package manager:
 
 ```bash
-cargo install reddb-io-tq --version 0.21.0 --locked --force
+cargo install reddb-io-tq --version 0.22.0 --locked --force
 ```
 
 Then verify:
@@ -160,7 +160,7 @@ Then verify:
 tq --version
 ```
 
-The installed version must be at least `0.21.0`. Record the same floor in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same package-manager fix. Do not document or offer a jq fallback.
+The installed version must be at least `0.22.0`. Record the same floor in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same package-manager fix. Do not document or offer a jq fallback.
 
 **Section E3 — Execution daemon (`redskilled`) — mandatory when `dev` is enabled.**
 

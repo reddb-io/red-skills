@@ -245,7 +245,7 @@ jobs:
       - name: Install pinned tq
         if: env.RUN_DEV == 'true'
         env:
-          TQ_VERSION: v0.21.0
+          TQ_VERSION: v0.22.0
         run: |
           set -euo pipefail
           tq_root="$RUNNER_TEMP/tq"
