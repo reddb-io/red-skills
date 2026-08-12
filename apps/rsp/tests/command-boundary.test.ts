@@ -289,4 +289,34 @@ describe("rsp universal command boundary", () => {
     expect(result.stdout).toEqual(Buffer.from("wrapped cat\n"));
     expect(result.stderr).toEqual(Buffer.alloc(0));
   });
+
+  it("reduces large repetitive output once and recovers exact final-newline bytes", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'automatic-output-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows)+'\\n');",
+    ].join("");
+    const original = spawnSync(process.execPath, ["-e", script], { cwd: root, encoding: "buffer" });
+    expect(original.status).toBe(0);
+
+    const reduced = rsp(root, [process.execPath, "-e", script]);
+
+    expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
+    expect(reduced.stdout.length).toBeLessThan(original.stdout.length);
+    const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
+    expect(handles).toHaveLength(1);
+    expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
+      family: "automatic-output",
+      reduction: { rows_total: 180, rows_kept: 12, rows_omitted: 168 },
+    });
+
+    const recovered = rsp(root, ["show", handles[0]!]);
+    expect(recovered.status, recovered.stderr.toString("utf8")).toBe(0);
+    expect(recovered.stdout).toEqual(original.stdout);
+    expect(recovered.stdout.at(-1)).toBe(0x0a);
+  });
 });
