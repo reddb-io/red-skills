@@ -26,8 +26,10 @@ const RSP_COMMANDS = new Set([
 ]);
 
 export type FastBoundaryInvocation =
-  | { kind: "argv"; argv: string[] }
-  | { kind: "shell"; commandLine: string };
+  | { kind: "argv"; argv: string[]; level: FastBoundaryLossLevel }
+  | { kind: "shell"; commandLine: string; level: FastBoundaryLossLevel };
+
+export type FastBoundaryLossLevel = "automatic" | "brief" | "terse" | "full";
 
 /**
  * Resolve only the paths that require no RSP-owned work.
@@ -40,21 +42,34 @@ export type FastBoundaryInvocation =
  */
 export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvocation | null {
   const first = argv[0];
+  if (first === "--full" || first === "--brief" || first === "--terse") {
+    if (argv[1] !== "--" || !argv[2]) return null;
+    return { kind: "argv", argv: [...argv.slice(2)], level: first.slice(2) as FastBoundaryLossLevel };
+  }
   if (!first || first.startsWith("-")) {
     if (first !== "--" || !argv[1]) return null;
-    return { kind: "argv", argv: [...argv.slice(1)] };
+    return { kind: "argv", argv: [...argv.slice(1)], level: "automatic" };
   }
   if (first === "proxy") {
     if (process.env.RSP_PROXY_FAIL_INTERNAL === "1") return null;
     const separator = argv.indexOf("--");
+    const proxyFlags = separator >= 0 ? argv.slice(1, separator) : [];
+    if (proxyFlags.some((flag) => flag !== "--full" && flag !== "--brief" && flag !== "--terse")) return null;
     const commandParts = separator >= 0 ? argv.slice(separator + 1) : argv.slice(1);
     if (commandParts.length !== 1 || !commandParts[0]?.trim()) return null;
     const commandLine = commandParts[0];
     if (mayUseSpecializedProxyExecutor(commandLine)) return null;
-    return { kind: "shell", commandLine };
+    const level = proxyFlags.includes("--terse")
+      ? "terse"
+      : proxyFlags.includes("--brief")
+        ? "brief"
+        : proxyFlags.includes("--full")
+          ? "full"
+          : "automatic";
+    return { kind: "shell", commandLine, level };
   }
   if (RSP_COMMANDS.has(first)) return null;
-  return { kind: "argv", argv: [...argv] };
+  return { kind: "argv", argv: [...argv], level: "automatic" };
 }
 
 export async function runFastBoundary(

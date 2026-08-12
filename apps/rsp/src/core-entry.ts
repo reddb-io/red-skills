@@ -2,6 +2,7 @@ import { isStructuredUsageRenderable } from "./cli/args.js";
 import { main } from "./cli/main.js";
 import { renderStructuredError } from "./structured-error.js";
 export { renderStructuredBoundary } from "./structured-boundary.js";
+export { renderAutomaticCommandOutput } from "./automatic-output-policy.js";
 
 export { main };
 

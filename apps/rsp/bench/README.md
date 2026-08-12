@@ -9,7 +9,7 @@ The rsp benchmark measures two separate questions:
    command facts an agent needs, such as exit status, failure rows, commit ids,
    PR rows, and recovery handles.
 
-The headline used by the rsp docs is **99.8% decision-oracle capture** for rsp
+The headline used by the rsp docs is **99.2% decision-oracle capture** for rsp
 versus **RTK 4.9%** and **Headroom 0.6%**. The generated result artifacts live
 in [bench/results/rsp-two-axis.md](results/rsp-two-axis.md) and
 [bench/results/rsp-two-axis.toon](results/rsp-two-axis.toon).

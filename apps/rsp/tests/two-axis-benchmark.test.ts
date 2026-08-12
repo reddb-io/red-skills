@@ -26,11 +26,12 @@ describe("rsp two-axis benchmark report", () => {
 
     expect(report.corpus).toMatchObject({
       label: "home",
-      fixture_count: 34,
-      large_output_filters: ["cat:file", "exec:--", "git:diff", "git:log", "vitest:run"],
+      fixture_count: 35,
+      large_output_filters: ["automatic:output", "cat:file", "exec:--", "git:diff", "git:log", "vitest:run"],
     });
     expect(report.corpus.provenance[0]).toContain("Repo-authored");
     expect(report.corpus.filters).toEqual([
+      "automatic:output",
       "cargo:test",
       "cat:file",
       "exec:--",
@@ -47,6 +48,13 @@ describe("rsp two-axis benchmark report", () => {
       "git:status",
       "vitest:run",
     ]);
+    expect(report.filters.find((row) => row.filter === "automatic:output")).toMatchObject({
+      fixture_count: 1,
+      mode: "active",
+      brief: { fidelity_pass_rate_pct: 100 },
+      terse: { fidelity_pass_rate_pct: 100 },
+    });
+    expect(report.filters.find((row) => row.filter === "automatic:output")?.brief.median_delta_pct).toBeGreaterThan(0);
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
     expect(report.method.oracle_ceiling_source).toBe("fixture-adjacent hand-reviewed compact TOON renderings");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
