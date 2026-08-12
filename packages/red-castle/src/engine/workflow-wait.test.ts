@@ -116,6 +116,8 @@ describe("castle workflow wait", () => {
     const client = createGithubClient({
       token: "fixture-token",
       balance: () => githubBalance(remaining),
+      // The budget gate defaults OFF; this test exercises the opted-in path.
+      budgetGate: "on",
       fetchImpl,
       retryCount: 0,
       throttle: false,
