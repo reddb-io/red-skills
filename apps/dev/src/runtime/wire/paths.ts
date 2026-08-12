@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { PROJECT_SUPERVISOR_LANE } from "@reddb-io/red-castle/engine";
+import { inferGithubRepoSlug } from "./github-slug.js";
 
 export interface RepoContext {
   /** Primary checkout dir. */
@@ -11,11 +12,9 @@ export interface RepoContext {
   remote: string;
 }
 
-/** Resolve owner/repo from `gh repo view`, best-effort (empty when unavailable). */
+/** Resolve owner/repo from the configured git remote, best-effort. */
 export async function resolveRepoSlug(root: string): Promise<string> {
-  const { gh } = await import("../exec.js");
-  const r = await gh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], { cwd: root });
-  return r.code === 0 ? r.stdout.trim() : "";
+  return inferGithubRepoSlug(root);
 }
 
 export async function resolveRepoContext(root = process.cwd()): Promise<RepoContext> {
