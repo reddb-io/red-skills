@@ -302,6 +302,42 @@ describe("branch adoption is decided on commits, not on the ref name (issue #286
     expect(trace.handoffs[0]?.content ?? "").toContain("<resume-from-branch>");
   });
 
+  it("opens a draft route before resuming a preserved branch with commits", async () => {
+    let routeWasOpenWhenAgentStarted = false;
+    const { deps, input, trace } = harness({
+      onRunAgent: async () => {
+        routeWasOpenWhenAgentStarted = trace.mergeCalls.some((argv) =>
+          argv.join(" ").includes("pr create --draft --base main")
+        );
+      },
+    });
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+    Object.assign(deps.lookups, {
+      branchCommitsAhead: async () => 9,
+      discoverOpenPullRequests: async () => [],
+    });
+
+    await import("../src/core/process-issue.js").then((m) => m.processIssue(deps, input));
+
+    expect(routeWasOpenWhenAgentStarted).toBe(true);
+    expect(trace.mergeCalls).toContainEqual([
+      "gh",
+      "-R",
+      "o/r",
+      "pr",
+      "create",
+      "--draft",
+      "--base",
+      "main",
+      "--head",
+      PRIOR_BRANCH,
+      "--title",
+      "resume: #9",
+      "--body",
+      expect.stringContaining("Closes #9"),
+    ]);
+  });
+
   it("records on the issue why a restart refused a branch that carries work", async () => {
     const { deps, input, trace } = harness({});
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
