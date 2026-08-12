@@ -29,7 +29,7 @@ export type FastBoundaryInvocation =
   | { kind: "argv"; argv: string[]; level: FastBoundaryLossLevel }
   | { kind: "shell"; commandLine: string; level: FastBoundaryLossLevel };
 
-export type FastBoundaryLossLevel = "lossless" | "brief" | "terse" | "full";
+export type FastBoundaryLossLevel = "automatic" | "brief" | "terse" | "full";
 
 /**
  * Resolve only the paths that require no RSP-owned work.
@@ -48,7 +48,7 @@ export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvoca
   }
   if (!first || first.startsWith("-")) {
     if (first !== "--" || !argv[1]) return null;
-    return { kind: "argv", argv: [...argv.slice(1)], level: "lossless" };
+    return { kind: "argv", argv: [...argv.slice(1)], level: "automatic" };
   }
   if (first === "proxy") {
     if (process.env.RSP_PROXY_FAIL_INTERNAL === "1") return null;
@@ -65,11 +65,11 @@ export function resolveFastBoundary(argv: readonly string[]): FastBoundaryInvoca
         ? "brief"
         : proxyFlags.includes("--full")
           ? "full"
-          : "lossless";
+          : "automatic";
     return { kind: "shell", commandLine, level };
   }
   if (RSP_COMMANDS.has(first)) return null;
-  return { kind: "argv", argv: [...argv], level: "lossless" };
+  return { kind: "argv", argv: [...argv], level: "automatic" };
 }
 
 export async function runFastBoundary(
