@@ -198,9 +198,9 @@ describe("the shipped redskilled-mcp bundle carries the canary", () => {
 
 // Deliberately LAST in the file: the closing case runs the harness's own
 // cleanup, which drops the shared bundle cache every earlier test reuses.
-describe("the canary's daemon lives in a runtime directory the sandbox owns (#2884)", () => {
+describe("the canary's daemon runtime and home belong to the sandbox (#2884, #3707)", () => {
   it(
-    "writes its socket, lease and lane outside the operator's runtime directory",
+    "writes its socket, lease and durable event lane inside sandbox-owned roots",
     async () => {
       const sandbox = await createCanarySandbox("healthy");
       const paths = resolveRedskilledPaths({ env: sandbox.env });
@@ -210,6 +210,8 @@ describe("the canary's daemon lives in a runtime directory the sandbox owns (#28
       expect(paths.runtimeDir.startsWith(`${sandbox.runtimeRoot}/`)).toBe(true);
       expect(existsSync(paths.socketPath)).toBe(true);
       expect(existsSync(paths.leasePath)).toBe(true);
+      expect(paths.eventLanePath.startsWith(`${sandbox.root}/`)).toBe(true);
+      expect(paths.registrationIntentPath.startsWith(`${sandbox.root}/`)).toBe(true);
 
       // The path this sandbox WOULD have used before the fix: same session key,
       // the operator's real environment. Nothing may exist there. This is a pure

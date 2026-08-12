@@ -21,6 +21,9 @@
 // indistinguishable from the one-daemon-per-project failure ADR 0130 exists to
 // prevent. The sandbox therefore pins `XDG_RUNTIME_DIR` too: every process in
 // the lane derives the same runtime dir, and it is a temp dir cleanup removes.
+// Its HOME is pinned for the same reason: the durable event and death lanes and
+// stable bundles belong below the sandbox's `~/.red/redskilled`, never below the
+// operator's real home.
 
 import { build } from "esbuild";
 import { execFileSync, spawn } from "node:child_process";
@@ -240,6 +243,10 @@ export async function createCanarySandbox(
     // the machine-wide claim (ADR 0130 Amendment 3) that refuses a second daemon
     // on a real host cannot refuse the harness against the developer's own.
     REDSKILLED_MACHINE_DIR: join(root, "machine"),
+    // Durable daemon state is independently home-scoped. A unique socket and
+    // machine claim do not stop births and deaths crossing into the operator's
+    // real lane unless the whole child-process family shares this scratch HOME.
+    HOME: join(root, "home"),
   };
 
   // Loud, not hopeful: `runtimeSocketDir` silently falls back to `tmpdir()` when

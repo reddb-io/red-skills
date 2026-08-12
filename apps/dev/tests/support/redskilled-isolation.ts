@@ -14,7 +14,7 @@
  * one has to remember it. The canary's sandbox stays as it is — it pins the
  * environment of the child processes it launches, which no setup file can do.
  *
- * Four pins, and each closes a different way to the operator's host:
+ * Six pins, and each closes a different way to the operator's host:
  *
  * 1. `REDSKILLED_SESSION` — the scope itself. A key nothing else uses means the
  *    derived socket is one no daemon on this machine is listening on.
@@ -31,7 +31,11 @@
  *    daemon it is asserting the absence of. Pinned to a path that does not
  *    exist: the spawn fails immediately, by name, without a network fetch.
  *
- * 5. `RED_DEV_ENGINE_FLOOR` — the dispatch engine floor (#3031). Its default
+ * 5. `HOME` — the host-scoped daemon home. The event lane, death lane and
+ *    durable bundles live below `~/.red/redskilled`; leaving it ambient lets a
+ *    sandbox daemon read and write the operator's real history.
+ *
+ * 6. `RED_DEV_ENGINE_FLOOR` — the dispatch engine floor (#3031). Its default
  *    policy makes every dispatch surface read the npm dist-tag, so an unpinned
  *    suite would put a NETWORK call behind `dispatchIssue` and let the
  *    operator's registry decide a unit test. Pinned `off`: a suite that means to
@@ -68,6 +72,7 @@ export function pinIsolatedRedskilledHost(env: NodeJS.ProcessEnv = process.env):
   env.REDSKILLED_SESSION = `red-skills-test-host:${root}`;
   env.XDG_RUNTIME_DIR = join(root, "runtime");
   env.REDSKILLED_MACHINE_DIR = join(root, "machine");
+  env.HOME = join(root, "home");
   // Named for what it is, so the failure a spawn reports reads as the pin rather
   // than as a broken installation.
   env.REDSKILLED_BIN = join(root, "no-daemon-in-this-sandbox");
