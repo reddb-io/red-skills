@@ -46,6 +46,10 @@ importers:
         version: 5.9.3
 
   apps/afk-container:
+    dependencies:
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
     devDependencies:
       vitest:
         specifier: 'catalog:'
@@ -251,6 +255,9 @@ importers:
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@reddb-io/sdk':
         specifier: 1.23.1
         version: 1.23.1
