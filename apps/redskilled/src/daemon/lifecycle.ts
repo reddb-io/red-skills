@@ -86,6 +86,7 @@ import {
   type RedskilledProjectRegistrationRequest,
 } from "../project-registration.js";
 import { createRedskilledProjectHookRuntime } from "../project-hook.js";
+import { createRedskilledHostEventSinkRuntime } from "../host-event-sink.js";
 import {
   detectUnitMainPid,
   detectWorkerLiveness,
@@ -427,6 +428,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     start: (spec, admission) => startWorker(spec, { admission, hook: true }).worker,
     refuse: (projectLabel, detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel, detail }).catch(() => undefined),
     recordExpiry: (projectLabel, detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel, detail }).catch(() => undefined),
+  });
+  const hostEventSinks = createRedskilledHostEventSinkRuntime({
+    declaration: options.hostEventSinks,
+    hostState,
+    liveWorkerIds: () => workers.keys(),
+    admit,
+    start: (spec, admission) => startWorker(spec, { admission }).worker,
+    refuse: (detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel: "redskilled/host-events", detail }).catch(() => undefined),
   });
   let workerBirthTail: Promise<void> = Promise.resolve();
   function startAfterProjectHooks<T>(start: () => T | Promise<T>): Promise<T> {
@@ -1665,6 +1674,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       .recordWorker(input)
       .catch(() => undefined);
     projectHooks.onEvent(kind, worker);
+    hostEventSinks.onEvent(kind, worker);
   }
 
   /** Put one host-observed loss on every surface, newest observation winning. */
