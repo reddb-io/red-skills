@@ -43,7 +43,7 @@ describe("standing drain maintenance", () => {
   it("renews an existing registration across an MCP session swap", async () => {
     const { deps, register, renew } = harness({
       standing: { runner: "codex", target: 4 },
-      held: { project_label: "acme/widgets" },
+      held: { project_label: "acme/widgets", standing: true },
     });
 
     await maintainStandingDrain(deps);
