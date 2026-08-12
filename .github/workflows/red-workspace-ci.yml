@@ -76,6 +76,17 @@ jobs:
           if [ -z "$base" ]; then base="origin/$BASE_REF"; fi
           node scripts/ci-affected-scope.mjs --base "$base" --head HEAD --github-output
 
+      # This belongs beside the PR diff owner, not in a working-tree invariant:
+      # explicit event SHAs make the answer independent of a contributor's
+      # checked-out branch. Docs, .red, and workflow-only exemptions are stated
+      # by the checker; an apps/ or packages/ diff must name its release intent.
+      - name: Require a release entry for shippable changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/require-release-entry.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
+
   workflow-security:
     runs-on: ubuntu-latest
     steps:
