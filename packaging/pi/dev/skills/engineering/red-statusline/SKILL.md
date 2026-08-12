@@ -38,7 +38,7 @@ disable-model-invocation: true
 
 ## 5. Report The Worker Modes
 
-**Never render the Worker line yourself.** The daemon serves it finished — `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` prints the local project's Workers, the same command with `global` prints every project's and names the owner of each, and `--verbose` adds one second line per Worker carrying the last line that Worker logged. A host that formatted its own line would be the second renderer that drifts from the first (ADR 0130 rule 10).
+**Keep one host producer.** The dev bundle renders the local bedrock, performs one bounded local socket read, and appends the daemon's finished Worker tail. Configure only that dev command in Claude Code; running a second daemon CLI beneath it duplicates the daemon document (#3559). Use `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` only for direct inspection: `global` names every project's owner, and `--verbose` adds the last line each Worker published.
 
 **State the mode and the declared defaults, do not guess them.** Read `plugins.dev.statusline.*` from `.red/config.yaml` and report what it declares; the keys are in [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
 
@@ -67,8 +67,8 @@ Tell the user which host branch you used, what changed or why nothing changed, a
 
 The statusline has two client architectures — read [HOST-NOTES.md](HOST-NOTES.md#two-client-architecture) for the boundary rule before touching either path. In brief:
 
-- **Command-backed host (`statusLine`)** — a direct collector client (ADR 0084). Never rewire it through the MCP server; an MCP handshake per render tick is the synchronous-fetch-in-render-path regression the ADR forbids.
-- **Agents and UIs** — consume the same aggregate via the `dev:afk` MCP tool `statusline_aggregate`. The tool calls the identical collector cores and cache discipline as the command, so both surfaces stay in sync without duplicating logic.
+- **Command-backed host (`statusLine`)** — the dev bundle composes stdin/local-git bedrock with one daemon-fed tail over a bounded local socket read (ADR 0141). Keep it cached-bundle-first and invoke it once.
+- **Agents and UIs** — consume structured project data through the `dev:afk` MCP tool `statusline_aggregate`, while daemon-backed host surfaces expose structured host state. They do not carry Claude's stdin-only model, context, or subscription-window facts.
 
 When diagnosing a blank statusline, rule out the stale session first — a `statusLine` written during the running session reaches the host only at the next start — then probe the `statusLine` command directly (step 5 of the Claude Code recipe in HOST-NOTES.md). The MCP path is NOT in scope either way.
 
