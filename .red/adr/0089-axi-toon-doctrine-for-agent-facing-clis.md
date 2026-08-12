@@ -158,3 +158,18 @@ Every TOON/TOONL producer obeys:
 2. **Explicit opt-in = declared optimization.** Reduction (field projection, row capping, truncation) happens only behind an explicit flag (`--compact` or equivalent) and is declared in-band — the document marks that it was optimized and what was reduced, with recovery in reach (an Elision handle where bytes are stored; re-run without the flag where the output is re-derivable).
 
 Silent lossy normalization on the default path is the forbidden pattern. The escape hatches of the original decision (`--json`, `--full`) are unchanged.
+
+## Amendment 3: recoverable automatic reduction at the RSP command boundary
+
+RSP's completed-command boundary adds a third, explicitly named **automatic**
+regime. Ordinary structured output remains complete. Output may cross into a
+lossy summary only when deterministic, fixture-pinned size and repetition
+thresholds both activate. Before that summary becomes observable, RSP stores
+the original stdout bytes and the summary declares every projection or cap,
+contains exactly one recovery handle, and points to `rsp show` and `--full`.
+
+This does not redefine the existing **lossless** level: an explicitly lossless
+render never projects, caps, or truncates. `--brief` and `--terse` remain named
+optimization levels, and `--full` suppresses the automatic regime. Automatic
+reduction is therefore recoverable by construction rather than the silent
+default-path normalization prohibited above.
