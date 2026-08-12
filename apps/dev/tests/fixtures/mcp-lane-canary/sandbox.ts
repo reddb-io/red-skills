@@ -43,7 +43,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export type CanaryLaneVariant = "healthy" | "unroutable";
 
 /** Whether a daemon answers on this sandbox's session socket. */
-export type CanaryDaemonState = "up" | "down";
+export type CanaryDaemonState = "up" | "down" | "broken-successor";
 
 export interface CanarySandbox {
   /** Repo root the workers are created in. */
@@ -280,9 +280,16 @@ export async function createCanarySandbox(
     env.REDSKILLED_BIN = daemonBin;
   }
 
+  if (daemon === "broken-successor") {
+    const cache = join(env.HOME, ".cache", "red-skills", "bundles");
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, "redskilled-1.0.1.bundle.min.mjs"), "process.exit(2);\n", "utf8");
+    env.REDSKILLED_NO_REGISTRY_PROBE = "1";
+  }
+
   daemonPaths.push(resolveRedskilledPaths({ env }));
 
-  if (daemon === "up") await startCanaryDaemon(built.redskilled, env, tracker);
+  if (daemon !== "down") await startCanaryDaemon(built.redskilled, env, tracker, daemon);
 
   return { root, mcpEntry, runtimeRoot, env, trackerRequests: tracker.requests };
 }
@@ -294,6 +301,7 @@ async function startCanaryDaemon(
   entry: string,
   env: Record<string, string>,
   tracker: CanaryTracker,
+  state: Exclude<CanaryDaemonState, "down"> = "up",
 ): Promise<void> {
   const paths = resolveRedskilledPaths({ env });
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
@@ -309,7 +317,8 @@ async function startCanaryDaemon(
       "--machine-id-hash", paths.machineIdHash,
       // Longer than any canary walk: an idle exit mid-probe would read as a
       // broken socket boundary when it is only a bored daemon.
-      "--idle-ms", "600000",
+      "--idle-ms", state === "broken-successor" ? "100" : "600000",
+      ...(state === "broken-successor" ? ["--daemon-version", "1.0.0"] : []),
       // The lane's own cadence, compressed. The production windows are fifteen
       // seconds apiece and a probe that waited two of them would time out on a
       // healthy host; what is under test is that the loop RUNS, not how slowly.
