@@ -76,6 +76,10 @@ function commandPath(args: readonly string[]): string[] {
  * - `gh -R o/r pr merge <n> --merge --auto [...]`  → unchanged (GraphQL enqueue)
  * - `gh -R o/r pr create --base b --head h --title t --body y [--draft]`
  *   → REST `POST pulls`
+ * - `gh issue comment <n> -R o/r --body y`
+ *   → REST `POST issues/{n}/comments`
+ * - `gh api <rest-path> --method <verb> ...`
+ *   → unchanged on the explicitly selected REST rail
  *
  * Any other argv passes through unchanged on the GraphQL rail the gh CLI
  * defaults to — an unrouted write is the caller's existing behavior, never a
@@ -172,5 +176,19 @@ export function planGithubWrite(
       };
     }
   }
+  if (repo && group === "issue" && verb === "comment") {
+    const issueNumber = args[args.indexOf("comment") + 1];
+    const body = flagValue(args, "--body");
+    if (issueNumber && /^\d+$/.test(issueNumber) && body !== undefined) {
+      return {
+        surface: "rest",
+        args: [
+          "gh", "api", "-X", "POST", `repos/${repo}/issues/${issueNumber}/comments`,
+          "-f", `body=${body}`,
+        ],
+      };
+    }
+  }
+  if (group === "api" && verb !== "graphql") return { args, surface: "rest" };
   return { args, surface: "graphql" };
 }
