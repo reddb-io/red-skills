@@ -339,6 +339,17 @@ export async function projectStart(
   // its slot and its runner — lived in a builder nothing called. A Worker born
   // without its id minted a second one, and no surface could join the two.
   const launch = registrationLaunch({ runner: input.runner, selector: input.selector, logPath: logPathTemplate });
+  // A Worker's death is the daemon's authoritative liveness verdict. Run one
+  // boot-only reconciliation before another birth can consume the freed slot,
+  // so a claim whose pid died during setup cannot leave `running` stranded.
+  // This remains project-authored work: the daemon carries the hook without
+  // learning what a claim, label, branch or queue lane means.
+  const workerDeathHook = {
+    ...launch,
+    argv: [...launch.argv, "--boot-only"],
+    mode: "sync" as const,
+    deadline_ms: 120_000,
+  };
 
   let registered;
   try {
@@ -358,6 +369,7 @@ export async function projectStart(
       // (#3118) and the worker id it assigns — that the pure builder re-pins.
       env: launch.env ?? {},
       ...(launch.log_path == null ? {} : { log_path: launch.log_path }),
+      hooks: { "worker-death": workerDeathHook },
       target: input.target,
       ...(options.standing === true ? { standing: true } : {}),
     });
@@ -466,6 +478,7 @@ export async function drain(
       ...(held.trunk == null ? {} : { trunk: held.trunk }),
       env: { ...held.env },
       ...(held.log_path == null ? {} : { log_path: held.log_path }),
+      ...(held.hooks == null ? {} : { hooks: held.hooks }),
       target: action.target,
       ...(options.standing === true || held.standing === true ? { standing: true } : {}),
       renew_within_ms: held.renew_within_ms,
@@ -492,6 +505,7 @@ export async function drain(
       ...(held.trunk == null ? {} : { trunk: held.trunk }),
       env: { ...held.env },
       ...(held.log_path == null ? {} : { log_path: held.log_path }),
+      ...(held.hooks == null ? {} : { hooks: held.hooks }),
       target: held.target,
       standing: true,
       renew_within_ms: held.renew_within_ms,
