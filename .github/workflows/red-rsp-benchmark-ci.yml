@@ -32,7 +32,7 @@ jobs:
       # crates token is told in full.
       - name: Install pinned tq
         env:
-          TQ_VERSION: v0.22.0
+          TQ_VERSION: v0.26.2
         run: |
           set -euo pipefail
           tq_root="$RUNNER_TEMP/tq"
