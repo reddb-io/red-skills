@@ -87,6 +87,7 @@ import {
 } from "../project-registration.js";
 import { createRedskilledProjectHookRuntime } from "../project-hook.js";
 import { createRedskilledHostEventSinkRuntime } from "../host-event-sink.js";
+import { pingAnswer } from "./ping-answer.js";
 import {
   detectUnitMainPid,
   detectWorkerLiveness,
@@ -100,7 +101,6 @@ import {
   stopWorker,
 } from "../reattach.js";
 import {
-  REDSKILLED_PROTOCOL_VERSION,
   type RedskilledRequest,
   type RedskilledResponse,
   type RedskilledStatuslineRenderRequest,
@@ -2309,18 +2309,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   async function respond(request: RedskilledRequest): Promise<RedskilledResponse> {
     try {
-      if (request.op === "ping") {
-        return {
-          id: request.id,
-          ok: true,
-          value: {
-            pong: true,
-            protocol_version: REDSKILLED_PROTOCOL_VERSION,
-            daemon_version: daemonVersion,
-            pid: owner.pid,
-          },
-        };
-      }
+      if (request.op === "ping") return pingAnswer(request.id, daemonVersion, owner.pid);
       if (request.op === "host-state") return { id: request.id, ok: true, value: hostState() };
       if (request.op === "reap") return { id: request.id, ok: true, value: await orphanReaper.reap(request.report === true) };
       if (request.op === "statusline-payload") {
