@@ -218,7 +218,7 @@ export function createCastleMcpDependencies(
         policy,
         {
           issueTrust: (candidate) => ghx.issueTrust(gh, candidate.number),
-          actorTrustSignals: (actor) => ghx.actorTrustSignals(gh, actor),
+          actorTrustSignals: ghx.createActorTrustLookup(gh),
         },
       );
       return buildQueueStatus(eligible, heldForSummon, readyForHuman);

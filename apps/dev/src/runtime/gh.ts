@@ -63,6 +63,7 @@ export {
   issueAuthor,
   repoVisibility,
   actorTrustSignals,
+  createActorTrustLookup,
   externalApprovalActors,
 } from "./gh/trust.js";
 export { issueMeta } from "./gh/meta.js";
