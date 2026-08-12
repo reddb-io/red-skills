@@ -95,7 +95,14 @@ import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.js";
 import type { WorkerStateRecordReclaimPlan } from "./worker-state-reclaim.js";
-import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import {
+  LABEL_GO_LANE,
+  LABEL_HUMAN,
+  LABEL_QUARANTINE,
+  LABEL_READY,
+  LABEL_RUNNING,
+  LABEL_SCOUT_LANE,
+} from "./triage-labels.js";
 import { readHitlTypeLabels } from "./config.js";
 import { blockedLabelsIn, isRefused, planTransition, type StateTransition } from "./state-transition.js";
 import {
@@ -1299,9 +1306,21 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
         }
       }
       const parked = currentLabels.includes(LABEL_HUMAN) || blockedLabelsIn(currentLabels).length > 0;
+      const isolatedLane = currentLabels.includes(LABEL_GO_LANE)
+        ? LABEL_GO_LANE
+        : currentLabels.includes(LABEL_SCOUT_LANE)
+          ? LABEL_SCOUT_LANE
+          : undefined;
+      let destination = LABEL_READY;
       if (parked) {
         // A parked issue only sheds the stale `running` projection — the park
         // itself is the authoritative state and must survive the sweep (#968).
+        await deps.gh.editLabels(p.issue, [LABEL_RUNNING], []);
+      } else if (isolatedLane) {
+        // go/scout lanes are executable by their lane label alone. Restoring the
+        // fleet label would cross the isolation boundary and lose the pre-claim
+        // route the crashed Worker took.
+        destination = isolatedLane;
         await deps.gh.editLabels(p.issue, [LABEL_RUNNING], []);
       } else {
         const plan = planTransition(currentLabels, { kind: "queue" });
@@ -1316,11 +1335,19 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
       }
       const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
       const concededOwners = p.concededOwners ?? [];
-      const body = concededOwners.length > 0
-        ? renderConcededClaimSweepAudit(concededOwners)
+      const releaseAudit = concededOwners.length > 0
+        ? renderConcededClaimSweepAudit(concededOwners, destination)
         : p.staleOwners.some((owner) => deadOwners.has(owner))
-          ? renderDeadClaimSweepAudit(p.staleOwners)
-          : renderStaleClaimSweepAudit(p.staleOwners);
+          ? renderDeadClaimSweepAudit(p.staleOwners, destination)
+          : renderStaleClaimSweepAudit(p.staleOwners, destination);
+      const zeroCommitBranches = (claimedIssue?.attemptBranches ?? [])
+        .filter((branch) => branch.commitsAhead === 0)
+        .map((branch) => `\`${branch.branch}\``);
+      const branchAudit = zeroCommitBranches.length === 0
+        ? ""
+        : `\n\nRemote attempt ${zeroCommitBranches.length === 1 ? "branch" : "branches"} ` +
+          `${zeroCommitBranches.join(", ")} carried zero commits ahead of trunk and remained for branch cleanup policy.`;
+      const body = releaseAudit + branchAudit;
       await deps.gh.comment(p.issue, body);
       released.push(p.issue);
       if (concededOwners.length > 0) repairedConceded.push(p.issue);
