@@ -128,7 +128,9 @@ describe("doLanding — staged Pi package gate (#3666)", () => {
     const publish = calls.indexOf(
       `git -C ${RWT} push origin HEAD:refs/heads/afk/wAAAA/9-fix-the-thing`,
     );
-    const openPr = calls.findIndex((call) => call.includes("pr list"));
+    const openPr = calls.findIndex((call) =>
+      call.includes("pr list") || (call.includes("api repos/") && call.includes("state=open"))
+    );
     expect([build, add, commit, publish].every((index) => index >= 0)).toBe(true);
     expect(build).toBeLessThan(add);
     expect(add).toBeLessThan(commit);
@@ -165,7 +167,7 @@ describe("doLanding — staged Pi package gate (#3666)", () => {
       locked: false,
       infraReason: "Pi package restage failed: builder stdout\nbuilder stderr",
     });
-    expect(joined(h.mergeCalls).some((call) => call.includes("pr create"))).toBe(false);
+    expect(h.mergeCalls.some(isRestCreatePullCall)).toBe(false);
     expect(h.removedRebaseWorktrees).toEqual([RWT]);
   });
 });
