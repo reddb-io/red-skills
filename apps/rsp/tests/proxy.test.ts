@@ -95,7 +95,7 @@ describe("rsp proxy segment recognition", () => {
       "--pid-file",
       paths.pidPath,
       "--store-uri",
-      `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
+      `file://${join(root, ".red", "state", "red-skills.rdb")}`,
       "--ttl-days",
       String(DEFAULT_RSP_TTL_DAYS),
       "--ephemeral-ttl-hours",

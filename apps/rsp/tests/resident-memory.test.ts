@@ -29,7 +29,7 @@ describe("resident memory transport", () => {
   it("writes the resident PID registry while serving and removes it on idle exit", async () => {
     const root = await tempRoot();
     const paths = resolveResidentPaths(root);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const timing = await calibratedResidentTiming(root);
 
     const server = runResidentServer({
@@ -67,7 +67,7 @@ describe("resident memory transport", () => {
     await writeFile(join(writerB, "b.md"), "bravo-resident-token belongs to writer B\n", "utf8");
 
     const paths = resolveResidentPaths(root);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const timing = await calibratedResidentTiming(root);
     const server = runResidentServer({
       socketPath: paths.socketPath,
@@ -112,7 +112,7 @@ describe("resident memory transport", () => {
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
     await writeFile(
       join(root, ".red", "brain", "config.yaml"),
-      "connection_string: file://./.red/tmp/red-skills.rdb\n",
+      "connection_string: file://./.red/state/red-skills.rdb\n",
       "utf8",
     );
     const docs = join(root, "docs");
@@ -120,7 +120,7 @@ describe("resident memory transport", () => {
     await writeFile(join(docs, "memory.md"), "memory-shared-resident-token\n", "utf8");
 
     const paths = resolveResidentPaths(root);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const timing = await calibratedResidentTiming(root);
     const server = runResidentServer({
       socketPath: paths.socketPath,

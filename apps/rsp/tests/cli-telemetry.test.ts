@@ -231,9 +231,10 @@ describe("rsp cli", () => {
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const db = await connect(storeUri);
+    const recent = Date.now() - 24 * 60 * 60 * 1_000;
     try {
       await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("big", {
-        created_at: "2026-07-05T12:00:00.000Z",
+        created_at: new Date(recent).toISOString(),
         command: "git log --terse",
         elided: true,
         raw_bytes: 8000,
@@ -245,7 +246,7 @@ describe("rsp cli", () => {
         store_open_count: 1,
       });
       await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("small", {
-        created_at: "2026-07-06T13:30:00.000Z",
+        created_at: new Date(recent + 60_000).toISOString(),
         command: "gh pr list --brief",
         elided: false,
         raw_bytes: 200,
@@ -256,7 +257,7 @@ describe("rsp cli", () => {
         store_open_count: 0,
       });
       await db.kv(RSP_TELEMETRY_DEGRADATIONS_COLLECTION).put("down", {
-        created_at: "2026-07-06T14:00:00.000Z",
+        created_at: new Date(recent + 120_000).toISOString(),
         command: "git --version",
         reason: "store not provisioned",
       });

@@ -151,6 +151,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
     });
@@ -173,6 +174,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
     });
@@ -195,6 +197,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "4s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "100ms",
     });
@@ -221,6 +224,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "4s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       // The grace window is already spent by the first poll, so only the
       // BLOCKED reading itself can keep this wait running.
@@ -247,6 +251,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--json", "--timeout", "1s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1ms",
     });
@@ -267,6 +272,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--json", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
     });
 
@@ -313,6 +319,7 @@ describe("rsp cli", () => {
       GH_FORWARDER_PIDS: forwarderPids,
       GH_NODE_BIN: process.execPath,
       GH_PR_READY_FILE: readyFile,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
     };
     const children = reasons.map((reason, index) => {
@@ -369,7 +376,7 @@ describe("rsp cli", () => {
   it("wait run pins branch latest to one run id before polling", async () => {
     const root = await tempRoot();
     const fakeGh = await fakeGhPath(root, [
-      { workflow_runs: [{ id: 111 }] },
+      [{ databaseId: 111 }],
       { id: 111, status: "in_progress", conclusion: null, name: "CI", head_branch: "feature/wait" },
       { id: 111, status: "completed", conclusion: "success", name: "CI", head_branch: "feature/wait" },
     ]);
@@ -377,6 +384,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "run", "--branch", "feature/wait", "--latest", "--json", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_RUN_POLL_MS: "10ms",
     });
 
