@@ -262,6 +262,37 @@ describe("stamped orphan teardown", () => {
     expect(events[1]!.detail).toMatch(/orphan-reaped/);
   });
 
+  it("closes an adopted birth when the process group survives teardown", async () => {
+    const root = await scratch("redskilled-orphan-survivor-");
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: root,
+    });
+    const killed: number[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      unitInventory: () => [],
+      orphanReaperMs: 0,
+      orphanCensus: async () => [processRow()],
+      orphanStarttime: () => "1200",
+      orphanKillGroup: async (pgid) => {
+        killed.push(pgid);
+        return false;
+      },
+    });
+    daemons.push(daemon);
+
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 1, reaped: 0, suspects: 0 });
+    await daemon.flushEvents();
+
+    expect(killed).toEqual([4_242]);
+    expect(daemon.workerCount()).toBe(0);
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
+    expect(events[1]!.detail).toMatch(/group-survived: process group 4242/);
+  });
+
   it("adopts a stamped process whose live birth has no holder", async () => {
     const root = await scratch("redskilled-orphan-adopt-");
     const paths = resolveRedskilledPaths({
