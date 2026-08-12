@@ -271,7 +271,7 @@ async function installRspShim(root: string): Promise<string> {
   return `${binDir}:${process.env.PATH ?? ""}`;
 }
 
-async function fakeGhPath(root: string, responses: Array<Record<string, unknown>>): Promise<{ path: string; responsesDir: string; countFile: string }> {
+async function fakeGhPath(root: string, responses: unknown[]): Promise<{ path: string; responsesDir: string; countFile: string }> {
   const bin = join(root, "bin");
   const responsesDir = join(root, "gh-responses");
   await mkdir(bin, { recursive: true });

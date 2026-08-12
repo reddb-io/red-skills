@@ -11,7 +11,7 @@
  * JSON appears in this module because it is GitHub's wire format — an external
  * interface. It is decoded at this boundary and never becomes internal state.
  */
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { resolveRspConfig } from "../config.js";
 import {
   readGhConditionalJson,
@@ -60,17 +60,23 @@ async function readWaitGithubJson(request: GhConditionalRequest): Promise<GhCond
   }
   return await readGhConditionalJson({
     ...request,
-    residentRead: async (input) => await waitGithubClient(root, env).read(input),
+    residentRead: async (input) => await (await waitGithubClient(root, env, request.signal)).read(input),
   });
 }
 
-function waitGithubClient(root: string, env: NodeJS.ProcessEnv): RspResidentGithubClient {
+async function waitGithubClient(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal | undefined,
+): Promise<RspResidentGithubClient> {
   const held = waitGithubClients.get(root);
   if (held) return held;
-  const token = String(env.GH_TOKEN ?? env.GITHUB_TOKEN ?? execFileSync("gh", ["auth", "token"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  })).trim();
+  let token = String(env.GH_TOKEN ?? env.GITHUB_TOKEN ?? "").trim();
+  if (!token) {
+    const credential = await runGhCommand(["auth", "token"], root, signal ?? AbortSignal.timeout(60_000));
+    if (credential.status !== 0) throw new Error(credential.stderr || "rsp wait could not obtain a GitHub credential");
+    token = credential.stdout.trim();
+  }
   if (!token) throw new Error("rsp wait could not obtain a GitHub credential");
   const baseUrl = String(env.GITHUB_API_URL ?? "").trim() || undefined;
   const client = createRspResidentGithubClient({
@@ -97,6 +103,11 @@ function isResidentUnavailable(result: GhConditionalResult): boolean {
  * repeated polls stay quota-free.
  */
 export async function ghJson(args: readonly string[], options: GhCallOptions): Promise<GhResult> {
+  // Integration fixtures can exercise the published CLI against a fake `gh`
+  // executable without weakening the production conditional-client path.
+  if (process.env.RSP_WAIT_GITHUB_TEST_TRANSPORT === "gh") {
+    return await withProbeBound(options, async (signal) => await runGhCommand(args, options.cwd, signal));
+  }
   return await withProbeBound(options, async (signal) => {
     const conditional = await conditionalGhJson(args, options.cwd, signal);
     if (conditional) return conditional;

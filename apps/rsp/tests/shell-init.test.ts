@@ -9,6 +9,7 @@ import { renderShellInit } from "../src/shell-init.js";
 const roots: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 const tsxLoader = createRequire(import.meta.url).resolve("tsx");
+const hasFish = spawnSync("fish", ["--version"], { encoding: "utf8" }).status === 0;
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-shell-init-"));
@@ -57,7 +58,7 @@ describe("rsp shell-init snippets", () => {
     }
   });
 
-  it("emits fish syntax accepted by fish -n", async () => {
+  it.skipIf(!hasFish)("emits fish syntax accepted by fish -n", async () => {
     const root = await tempRoot();
     const path = join(root, "rsp-init.fish");
     await writeFile(path, renderShellInit("fish"), "utf8");
@@ -67,7 +68,7 @@ describe("rsp shell-init snippets", () => {
     expect(res.status, res.stderr).toBe(0);
   });
 
-  it("fish snippet installs command-word abbreviations and rspx when sourced", async () => {
+  it.skipIf(!hasFish)("fish snippet installs command-word abbreviations and rspx when sourced", async () => {
     const root = await tempRoot();
     const bin = join(root, "bin");
     await writeFile(join(root, "rsp-init.fish"), renderShellInit("fish"), "utf8");
