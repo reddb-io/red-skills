@@ -338,4 +338,27 @@ describe("rsp universal command boundary", () => {
     expect(result.stdout.toString("utf8")).not.toContain("el:");
     expect(decode(result.stdout.toString("utf8"))).toHaveLength(180);
   });
+
+  it("applies automatic reduction after a modeled proxy compound completes", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const emitter = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'proxy-automatic-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows)+'\\n');",
+    ].join("");
+    const command = `git status >/dev/null 2>&1 || true; ${process.execPath} -e ${JSON.stringify(emitter)}`;
+
+    const reduced = rsp(root, ["proxy", "--", command]);
+
+    expect(reduced.status, reduced.stderr.toString("utf8")).toBe(0);
+    const handles = reduced.stdout.toString("utf8").match(/el:[a-z0-9]+/g) ?? [];
+    expect(handles).toHaveLength(1);
+    expect(decode(reduced.stdout.toString("utf8"))).toMatchObject({
+      family: "automatic-output",
+      reduction: { rows_total: 180, rows_omitted: 168 },
+    });
+  });
 });
