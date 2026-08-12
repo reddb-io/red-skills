@@ -49,7 +49,6 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
   { path: "apps/dev/src/core/merge.ts", count: 2, reason: "one-shot merge rejection diagnosis and queued-PR discovery remain after the two hot waits moved" },
   { path: "apps/dev/src/runtime/etag-transport.ts", count: 1, reason: "the legacy ETag transport still resolves one PR head through the CLI" },
   { path: "apps/dev/src/runtime/gh/comments.ts", count: 4, reason: "comment reads still need shared conditional REST projections" },
-  { path: "apps/dev/src/runtime/gh/issues.ts", count: 10, reason: "issue list, view, and REST helper reads remain the largest dev migration cluster" },
   { path: "apps/dev/src/runtime/gh/sweeps.ts", count: 4, reason: "sweep issue/PR listings still need shared conditional pagination" },
   { path: "apps/dev/src/runtime/medic-io.ts", count: 3, reason: "medic PR/run observations still need routed client methods" },
   { path: "apps/dev/src/runtime/wire/paths.ts", count: 1, reason: "path wiring still resolves repository identity through gh" },
@@ -57,7 +56,6 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
 
 /** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
 export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
-  { path: "apps/dev/src/runtime/gh/issues.ts", count: 7, reason: "issue body, state, and label edits now use the write plan; comment, create, sub-issue, and label-resource mutations remain" },
 ];
 
 export interface GithubReadSourceFile {

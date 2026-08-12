@@ -91,6 +91,7 @@ function labels(body: Record<string, unknown>): unknown {
 }
 
 const ISSUE_PROJECTIONS: Readonly<Record<string, Projection>> = {
+  databaseId: (body) => body.id,
   number: (body) => body.number,
   title: (body) => str(body.title),
   body: (body) => str(body.body),

@@ -11,10 +11,46 @@ import {
   GITHUB_REST_CONCURRENCY,
   parseAliasedRepositoryResponse,
 } from "@reddb-io/shared/github-batch.js";
-import { planGithubWrite } from "@reddb-io/github";
+import { planGithubWrite, type GithubClient } from "@reddb-io/github";
 import { scrubOutbound } from "../outbound-redaction.js";
-import { repoArgs, runGh, type GhContext } from "./common.js";
+import { apiPath, githubReadClient, repoArgs, runGh, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
+
+async function runGithubWrite(ctx: GhContext, args: readonly string[]) {
+  const planned = planGithubWrite(["gh", ...args]);
+  return runGh(ctx, planned.args.slice(1));
+}
+
+function repoCoordinates(ctx: GhContext): { owner: string; repo: string } {
+  const [owner, repo] = ctx.repo.split("/", 2);
+  if (!owner || !repo) throw new Error("GitHub routed reads require an owner/repository slug");
+  return { owner, repo };
+}
+
+async function conditionalPages<T>(
+  ctx: GhContext,
+  cacheKey: string,
+  route: string,
+  parameters: Readonly<Record<string, unknown>>,
+  operationKey: string,
+): Promise<readonly T[]> {
+  const answer = await githubReadClient(ctx).conditionalPaginate<T>({
+    cacheKey,
+    route,
+    parameters,
+    operation: { key: operationKey, budget: "rest" },
+    actor: "dev",
+  });
+  return answer.data;
+}
+
+function githubGraphqlClient(ctx: GhContext): Pick<GithubClient, "graphql"> {
+  const client = (ctx.github ?? githubReadClient(ctx)) as Partial<GithubClient>;
+  if (typeof client.graphql !== "function") {
+    throw new Error("GitHub routed GraphQL reads require a full client");
+  }
+  return client as Pick<GithubClient, "graphql">;
+}
 
 async function readLabelsForEdit(
   ctx: GhContext,
@@ -45,14 +81,18 @@ export async function viewLabels(ctx: GhContext, issue: number): Promise<string[
 export async function listLabelNames(
   ctx: GhContext,
 ): Promise<{ names: string[] } | { failure: string }> {
-  const r = await runGh(ctx, ["label", "list", ...repoArgs(ctx), "--limit", "1000", "--json", "name"]);
-  if (r.code !== 0) return { failure: (r.stderr || r.stdout || `gh label list exited ${r.code}`).trim() };
   try {
-    const parsed = JSON.parse(r.stdout || "[]") as Array<{ name?: unknown }>;
-    if (!Array.isArray(parsed)) return { failure: "gh label list returned a non-list payload" };
-    return { names: parsed.map((row) => String(row.name ?? "")).filter((name) => name !== "") };
+    const coordinates = repoCoordinates(ctx);
+    const rows = await conditionalPages<{ name?: unknown }>(
+      ctx,
+      `dev:labels:${ctx.repo}`,
+      "GET /repos/{owner}/{repo}/labels",
+      coordinates,
+      "label list",
+    );
+    return { names: rows.map((row) => String(row.name ?? "")).filter((name) => name !== "") };
   } catch (error) {
-    return { failure: `gh label list payload unreadable: ${error instanceof Error ? error.message : String(error)}` };
+    return { failure: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -97,13 +137,13 @@ export async function editLabels(
 
 /** `gh issue comment --body …` (best-effort). */
 export async function comment(ctx: GhContext, issue: number, body: string): Promise<void> {
-  await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
+  await runGithubWrite(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
 }
 
 /** Edit an existing issue comment by REST id. Returns false when gh refuses the
  * patch so callers can preserve idempotency instead of posting duplicates. */
 export async function editComment(ctx: GhContext, commentId: number, body: string): Promise<boolean> {
-  const r = await runGh(ctx, [
+  const r = await runGithubWrite(ctx, [
     "api",
     "-X",
     "PATCH",
@@ -120,16 +160,11 @@ export async function editComment(ctx: GhContext, commentId: number, body: strin
 // cross-host total order), which `gh issue comment` / `gh issue view --json
 // comments` do not expose. The REST API does, so these go through `gh api`.
 
-function apiPath(ctx: GhContext, suffix: string): string {
-  // ctx.repo is `owner/repo`; fall back to the cwd repo when unset (gh resolves).
-  return ctx.repo ? `repos/${ctx.repo}/${suffix}` : suffix;
-}
-
 /** Post a claim/concede marker comment and resolve its server-assigned numeric
  * id (the total order). Throws on a non-zero gh exit so a failed POST never reads
  * as a won claim. */
 export async function postClaimComment(ctx: GhContext, issue: number, body: string): Promise<number> {
-  const r = await runGh(ctx, [
+  const r = await runGithubWrite(ctx, [
     "api",
     "-X",
     "POST",
@@ -153,36 +188,26 @@ export async function listClaimComments(
   ctx: GhContext,
   issue: number,
 ): Promise<{ id: number; body: string; createdAt?: string }[]> {
-  const r = await runGh(ctx, [
-    "api",
-    "--paginate",
-    apiPath(ctx, `issues/${issue}/comments`),
-    "--jq",
-    ".[] | {id: .id, body: .body, createdAt: .created_at}",
-  ]);
-  if (r.code !== 0) return [];
-  const out: { id: number; body: string; createdAt?: string }[] = [];
-  for (const line of (r.stdout ?? "").split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    try {
-      const o = JSON.parse(t) as { id?: number; body?: string; createdAt?: string };
-      if (typeof o.id === "number" && typeof o.body === "string") {
-        out.push({ id: o.id, body: o.body, createdAt: o.createdAt });
-      }
-    } catch {
-      // tolerate a malformed jq line; the reconciler is garbage-tolerant anyway.
-    }
+  try {
+    const coordinates = repoCoordinates(ctx);
+    const rows = await conditionalPages<{ id?: number; body?: string; created_at?: string }>(
+      ctx,
+      `dev:issue-comments:${ctx.repo}:${issue}`,
+      "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      { ...coordinates, issue_number: issue },
+      "api rest",
+    );
+    return rows.flatMap((row) => typeof row.id === "number" && typeof row.body === "string"
+      ? [{ id: row.id, body: row.body, ...(row.created_at ? { createdAt: row.created_at } : {}) }]
+      : []);
+  } catch {
+    return [];
   }
-  return out;
 }
 
 /** `gh issue edit --body …`. */
 export async function editBody(ctx: GhContext, issue: number, body: string): Promise<boolean> {
-  const plan = planGithubWrite([
-    "gh", "issue", "edit", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body),
-  ]);
-  const r = await runGh(ctx, plan.args.slice(1));
+  const r = await runGithubWrite(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
   return r.code === 0;
 }
 
@@ -196,7 +221,7 @@ export async function createIssue(
   spec: { title: string; body: string; labels?: readonly string[] },
 ): Promise<number> {
   const labelArgs = (spec.labels ?? []).flatMap((l) => ["--label", l]);
-  const r = await runGh(ctx, [
+  const r = await runGithubWrite(ctx, [
     "issue",
     "create",
     ...repoArgs(ctx),
@@ -217,10 +242,10 @@ export async function createIssue(
 /** Resolve a GitHub issue's REST database id. The sub-issues and dependency
  * endpoints require this numeric id, not the issue number. */
 async function issueDatabaseId(ctx: GhContext, issue: number): Promise<number> {
-  const r = await runGh(ctx, ["api", apiPath(ctx, `issues/${issue}`), "--jq", ".id"]);
-  const id = Number((r.stdout ?? "").trim());
-  if (r.code !== 0 || !Number.isInteger(id) || id <= 0) {
-    throw new Error(`gh: failed to resolve issue database id for #${issue} (code ${r.code})`);
+  const read = await readSingleObject(ctx, "issue", issue, ["databaseId"]);
+  const id = Number(read.row?.databaseId ?? 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error(`gh: failed to resolve issue database id for #${issue} (code ${read.out.code})`);
   }
   return id;
 }
@@ -230,7 +255,7 @@ async function issueDatabaseId(ctx: GhContext, issue: number): Promise<number> {
  * a failed POST throws so the caller can leave the pair for the next sweep. */
 export async function attachSubIssue(ctx: GhContext, parent: number, child: number): Promise<void> {
   const childId = await issueDatabaseId(ctx, child);
-  const r = await runGh(ctx, [
+  const r = await runGithubWrite(ctx, [
     "api",
     "-X",
     "POST",
@@ -245,34 +270,24 @@ export async function attachSubIssue(ctx: GhContext, parent: number, child: numb
   }
 }
 
-function parseIssueRows(stdout: string): Array<{
+function parseIssueRows(value: unknown): Array<{
   number?: number;
   state?: string;
   closedAt?: string | null;
   labels?: Array<{ name?: string }>;
 }> {
-  try {
-    const rows = JSON.parse(stdout || "[]");
-    return Array.isArray(rows) ? rows : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseNumberJsonLines(stdout: string): number[] {
-  const out: number[] = [];
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as { number?: unknown };
-      const n = Number(parsed.number ?? 0);
-      if (Number.isInteger(n) && n > 0) out.push(n);
-    } catch {
-      // Ignore malformed jq lines; the sweep will retry on a later boot.
-    }
-  }
-  return out;
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null && !Array.isArray(row))
+    .filter((row) => !("pull_request" in row))
+    .map((row) => ({
+      number: Number(row.number ?? 0),
+      state: String(row.state ?? ""),
+      closedAt: typeof row.closedAt === "string" || row.closedAt === null
+        ? row.closedAt
+        : typeof row.closed_at === "string" || row.closed_at === null ? row.closed_at : undefined,
+      labels: Array.isArray(row.labels) ? row.labels as Array<{ name?: string }> : [],
+    }));
 }
 
 function isRecentSpecRow(row: { state?: string; closedAt?: string | null }, nowS: number, recentDays: number): boolean {
@@ -284,33 +299,31 @@ function isRecentSpecRow(row: { state?: string; closedAt?: string | null }, nowS
 }
 
 async function listSpecLabelChildren(ctx: GhContext, spec: number): Promise<number[]> {
-  const r = await runGh(ctx, [
-    "issue",
-    "list",
-    ...repoArgs(ctx),
-    "--label",
-    `spec:${spec}`,
-    "--state",
-    "all",
-    "--limit",
-    "500",
-    "--json",
-    "number,labels",
-  ]);
-  if (r.code !== 0) return [];
-  return parseIssueRows(r.stdout).map((row) => Number(row.number ?? 0)).filter((n) => Number.isInteger(n) && n > 0);
+  try {
+    const coordinates = repoCoordinates(ctx);
+    const rows = await conditionalPages<Record<string, unknown>>(
+      ctx,
+      `dev:spec-label-children:${ctx.repo}:${spec}`,
+      "GET /repos/{owner}/{repo}/issues",
+      { ...coordinates, labels: `spec:${spec}`, state: "all" },
+      "issue list",
+    );
+    return parseIssueRows(rows).map((row) => Number(row.number ?? 0)).filter((n) => Number.isInteger(n) && n > 0);
+  } catch {
+    return [];
+  }
 }
 
 async function listNativeSubIssues(ctx: GhContext, spec: number): Promise<number[]> {
-  const r = await runGh(ctx, [
-    "api",
-    "--paginate",
-    apiPath(ctx, `issues/${spec}/sub_issues`),
-    "--jq",
-    ".[] | {number}",
-  ]);
-  if (r.code !== 0) throw new Error(`gh: failed to list native sub-issues for #${spec} (code ${r.code})`);
-  return parseNumberJsonLines(r.stdout);
+  const coordinates = repoCoordinates(ctx);
+  const rows = await conditionalPages<{ number?: unknown }>(
+    ctx,
+    `dev:native-sub-issues:${ctx.repo}:${spec}`,
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues",
+    { ...coordinates, issue_number: spec },
+    "api rest",
+  );
+  return rows.map((row) => Number(row.number ?? 0)).filter((number) => Number.isInteger(number) && number > 0);
 }
 
 async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]): Promise<Map<number, number[]>> {
@@ -323,26 +336,17 @@ async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]
   for (let start = 0; start < specs.length; start += GITHUB_GRAPHQL_BATCH_SIZE) {
     const chunk = specs.slice(start, start + GITHUB_GRAPHQL_BATCH_SIZE);
     const operation = buildAliasedRepositoryQuery("issue", chunk, ["subIssues"]);
-    const response = await runGh(ctx, [
-      "api",
-      "graphql",
-      "-f",
-      `query=${operation.query}`,
-      "-F",
-      `owner=${owner}`,
-      "-F",
-      `repo=${repo}`,
-    ]);
-    if (response.code !== 0) {
+    let payload: unknown;
+    try {
+      const data = await githubGraphqlClient(ctx).graphql<unknown>(operation.query, { owner, repo }, {
+        operation: { key: "api graphql", budget: "graphql" },
+        actor: "dev",
+      });
+      payload = { data };
+    } catch {
       const fallback = await boundedMap(chunk, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
       for (const [spec, children] of fallback) out.set(spec, children);
       continue;
-    }
-    let payload: unknown;
-    try {
-      payload = JSON.parse(response.stdout || "{}");
-    } catch {
-      payload = {};
     }
     const fallbackSpecs: number[] = [];
     for (const row of parseAliasedRepositoryResponse(operation, payload)) {
@@ -387,15 +391,15 @@ export interface DependencyEdgeTicketScan {
 export const DEPENDENCY_EDGE_REST_BUDGET = 150;
 
 async function listNativeBlockedBy(ctx: GhContext, ticket: number): Promise<number[]> {
-  const r = await runGh(ctx, [
-    "api",
-    "--paginate",
-    apiPath(ctx, `issues/${ticket}/dependencies/blocked_by`),
-    "--jq",
-    ".[] | {number}",
-  ]);
-  if (r.code !== 0) throw new Error(`gh: failed to list native blocked-by for #${ticket} (code ${r.code})`);
-  return parseNumberJsonLines(r.stdout);
+  const coordinates = repoCoordinates(ctx);
+  const rows = await conditionalPages<{ number?: unknown }>(
+    ctx,
+    `dev:native-blocked-by:${ctx.repo}:${ticket}`,
+    "GET /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by",
+    { ...coordinates, issue_number: ticket },
+    "api rest",
+  );
+  return rows.map((row) => Number(row.number ?? 0)).filter((number) => Number.isInteger(number) && number > 0);
 }
 
 /**
@@ -411,20 +415,21 @@ export async function listDependencyEdgeTickets(
   ctx: GhContext,
   restBudget = DEPENDENCY_EDGE_REST_BUDGET,
 ): Promise<DependencyEdgeTicketScan> {
-  const r = await runGh(ctx, [
-    "issue",
-    "list",
-    ...repoArgs(ctx),
-    "--state",
-    "open",
-    "--limit",
-    "500",
-    "--json",
-    "number,labels",
-  ]);
-  if (r.code !== 0) return { tickets: [], unread: [] };
+  let rows: readonly Record<string, unknown>[];
+  try {
+    const coordinates = repoCoordinates(ctx);
+    rows = await conditionalPages<Record<string, unknown>>(
+      ctx,
+      `dev:dependency-tickets:${ctx.repo}`,
+      "GET /repos/{owner}/{repo}/issues",
+      { ...coordinates, state: "open" },
+      "issue list",
+    );
+  } catch {
+    return { tickets: [], unread: [] };
+  }
 
-  const open = parseIssueRows(r.stdout)
+  const open = parseIssueRows(rows)
     .map((row) => ({
       number: Number(row.number ?? 0),
       labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
@@ -465,22 +470,21 @@ export async function listSpecSubIssueCandidates(
   nowS = Math.floor(Date.now() / 1000),
   recentDays = 30,
 ): Promise<SpecSubIssueCandidate[]> {
-  const r = await runGh(ctx, [
-    "issue",
-    "list",
-    ...repoArgs(ctx),
-    "--label",
-    LABEL_TYPE_SPEC,
-    "--state",
-    "all",
-    "--limit",
-    "500",
-    "--json",
-    "number,state,closedAt,labels",
-  ]);
-  if (r.code !== 0) return [];
+  let rows: readonly Record<string, unknown>[];
+  try {
+    const coordinates = repoCoordinates(ctx);
+    rows = await conditionalPages<Record<string, unknown>>(
+      ctx,
+      `dev:spec-candidates:${ctx.repo}`,
+      "GET /repos/{owner}/{repo}/issues",
+      { ...coordinates, labels: LABEL_TYPE_SPEC, state: "all" },
+      "issue list",
+    );
+  } catch {
+    return [];
+  }
 
-  const specs = parseIssueRows(r.stdout)
+  const specs = parseIssueRows(rows)
     .filter((row) => isRecentSpecRow(row, nowS, recentDays))
     .map((row) => ({
       number: Number(row.number ?? 0),
@@ -506,7 +510,7 @@ export async function listSpecSubIssueCandidates(
  * supervisor.sh ensure_runner_error_label — a label that already exists exits
  * non-zero and is swallowed. */
 export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
-  await runGh(ctx, 
+  await runGithubWrite(ctx,
     [
       "label",
       "create",
@@ -530,7 +534,7 @@ export async function ensureLabel(
   name: string,
   presentation: { color?: string; description?: string } = {},
 ): Promise<void> {
-  await runGh(ctx,
+  await runGithubWrite(ctx,
     [
       "label",
       "create",
@@ -546,10 +550,7 @@ export async function ensureLabel(
 
 /** `gh issue close --reason completed`. */
 export async function closeIssue(ctx: GhContext, issue: number): Promise<void> {
-  const plan = planGithubWrite([
-    "gh", "issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed",
-  ]);
-  await runGh(ctx, plan.args.slice(1));
+  await runGithubWrite(ctx, ["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"]);
 }
 
 /** Full metadata for a single issue (`gh issue view --json number,title,body,labels`).
@@ -558,31 +559,20 @@ export async function viewIssueFull(
   ctx: GhContext,
   issue: number,
 ): Promise<{ number: number; title: string; body: string; labels: string[] } | null> {
-  const r = await runGh(ctx, [
-    "issue",
-    "view",
-    String(issue),
-    ...repoArgs(ctx),
-    "--json",
-    "number,title,body,labels",
-  ]);
-  if (r.code !== 0) return null;
-  try {
-    const parsed = JSON.parse(r.stdout) as {
-      number?: number;
-      title?: string;
-      body?: string;
-      labels?: Array<{ name?: string }>;
-    };
-    return {
-      number: Number(parsed.number ?? issue),
-      title: String(parsed.title ?? ""),
-      body: String(parsed.body ?? ""),
-      labels: Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [],
-    };
-  } catch {
-    return null;
-  }
+  const read = await readSingleObject(ctx, "issue", issue, ["number", "title", "body", "labels"]);
+  if (!read.row) return null;
+  const parsed = read.row as {
+    number?: number;
+    title?: string;
+    body?: string;
+    labels?: Array<{ name?: string }>;
+  };
+  return {
+    number: Number(parsed.number ?? issue),
+    title: String(parsed.title ?? ""),
+    body: String(parsed.body ?? ""),
+    labels: Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [],
+  };
 }
 
 export type IssueBodyReadResult =

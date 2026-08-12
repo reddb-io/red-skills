@@ -22,6 +22,11 @@ const ISSUE_BODY = JSON.stringify({
 });
 
 describe("planGithubRestRead — issues", () => {
+  it("projects the REST database id used by issue relationship endpoints", () => {
+    const read = plan(planGithubRestRead({ kind: "issue", number: 42, fields: ["databaseId"], repo: "acme/widgets" }));
+    expect(read.decode(JSON.stringify({ id: 12345 }))).toEqual({ databaseId: 12345 });
+  });
+
   it("issues one gh api request against the repository path", () => {
     const read = plan(planGithubRestRead({ kind: "issue", number: 42, fields: ["state", "labels"], repo: "acme/widgets" }));
     expect(read.args).toEqual(["api", "repos/acme/widgets/issues/42"]);
