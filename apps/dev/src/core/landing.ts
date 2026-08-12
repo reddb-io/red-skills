@@ -1,8 +1,7 @@
 // landing — the flag-toggled landing of a completed Attempt's worker branch
 // into its base (ADR 0030 amended by #842 / 0031). Carved out of process-issue
 // so the push → pre_merge → land → (direct-merge conflict self-resolve) →
-// post_merge sequence lives in ONE place that owns "how landing works", with a
-// direct test surface of its own.
+// post_merge sequence has one owner and a direct test surface.
 //
 // PURE SEQUENCING over injected ports. The push, the merge-stage executor, the
 // conflict resolver, the merge hooks, and the landing-worktree provisioner are
@@ -11,12 +10,9 @@
 // LANDING MODE IS DECOUPLED FROM THE LOCK (#842). The branch-lock (ADR 0031)
 // only resolves the target `base` (lock > pin > main); the `openPr` flag —
 // `afk.worktree_launches_pull_request`, default true — independently chooses the
-// landing MODE. NEITHER mode destructively touches the primary checkout's
-// working tree — the primary branch is sacred (issue #572):
-//   - openPr=false (DIRECT) → merge --no-ff + push + (one-shot self-resolve of
-//                conflicts) run inside an ISOLATED detached worktree at <base>,
-//                so a push reject's `reset --hard` only rewinds that throwaway
-//                checkout, never the primary's WIP.
+// landing MODE. Neither mode touches the primary checkout (issue #572):
+//   - openPr=false (DIRECT) → merge --no-ff + push + conflict self-resolution
+//                run inside an isolated detached worktree at <base>.
 //   - openPr=true  (PR)     → `landPr` (admin-merged PR into <base> carrying the
 //                attempt history). The merge is remote, so no pre-merge local
 //                integrate runs — that step used to fail the whole landing on a
@@ -43,13 +39,13 @@ import {
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
+import { restagePiPackages } from "./pi-package-restage.js";
 import type {
   QueueCustodyHandoffResult,
   QueueCustodyIdentity,
 } from "./queue-custodian.js";
 
-/** Everything the landing needs, all side effects injected — mirroring how
- * process-issue called each of these inline. */
+/** Landing side effects, all injected as they were in process-issue. */
 export interface LandingDeps {
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr / the
    * locked conflict resolve + abort/reset/push). */
@@ -593,6 +589,8 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   const waitForReview = decorateReviewWait(deps, input);
   const ciAwait = decorateCiAwait(deps, input);
   try {
+    const restageFailure = await restagePiPackages(deps, input, prepared.dir, true);
+    if (restageFailure) return restageFailure;
     if (deps.intentGate && !(await deps.intentGate(prepared.dir)).ok) {
       return { ok: false, reason: "intent-finding", locked: input.locked };
     }
@@ -969,6 +967,8 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // Capture the integrated tip from the worktree as the rollback anchor.
     const preMergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
     const validateIntegratedTree = async (): Promise<LandingResult | undefined> => {
+      const restageFailure = await restagePiPackages(deps, input, landDir, false);
+      if (restageFailure) return restageFailure;
       if (deps.intentGate && !(await deps.intentGate(landDir)).ok) {
         return { ok: false, reason: "intent-finding", locked: input.locked };
       }

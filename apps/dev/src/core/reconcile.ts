@@ -654,8 +654,8 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       base,
       trunk: input.trunk,
       issue,
-      title: input.title,
-      labels: input.labels,
+      title: input.title, labels: input.labels,
+      changedFiles,
     },
     {
       preMerge: () => landingHookContext(input, branch, { mergeBase: input.base }),
