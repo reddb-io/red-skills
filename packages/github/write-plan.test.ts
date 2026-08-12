@@ -46,6 +46,22 @@ describe("planGithubWrite — the client owns the write rail", () => {
     ]);
   });
 
+  it("realizes issue creation on REST with every label carried", () => {
+    const plan = planGithubWrite([
+      "gh", "issue", "create", "--repo", "o/r",
+      "--title", "Fix it", "--body", "Details",
+      "--label", "lane:go", "--label", "kind,with-comma",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: [
+        "gh", "api", "-X", "POST", "repos/o/r/issues",
+        "-f", "title=Fix it", "-f", "body=Details",
+        "-F", "labels[]=lane:go", "-F", "labels[]=kind,with-comma",
+      ],
+    });
+  });
+
   it("realizes issue closure as a REST PATCH", () => {
     const plan = planGithubWrite([
       "gh", "-R", "o/r", "issue", "close", "42", "--reason", "completed",
@@ -169,4 +185,21 @@ describe("planGithubWrite — the client owns the write rail", () => {
     const argv = ["gh", "-R", "o/r", "pr", "ready", "42"];
     expect(planGithubWrite(argv)).toEqual({ surface: "graphql", args: argv });
   });
+
+  it("realizes label creation on REST with its presentation carried", () => {
+    const plan = planGithubWrite([
+      "gh", "label", "create", "Sandcastle", "--repo", "o/r",
+      "--description", "Issues for Sandcastle to work on", "--color", "F9A825",
+    ]);
+    expect(plan).toEqual({
+      surface: "rest",
+      args: [
+        "gh", "api", "-X", "POST", "repos/o/r/labels",
+        "-f", "name=Sandcastle",
+        "-f", "color=F9A825",
+        "-f", "description=Issues for Sandcastle to work on",
+      ],
+    });
+  });
+
 });

@@ -53,14 +53,11 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
   { path: "apps/dev/src/runtime/gh/sweeps.ts", count: 4, reason: "sweep issue/PR listings still need shared conditional pagination" },
   { path: "apps/dev/src/runtime/medic-io.ts", count: 3, reason: "medic PR/run observations still need routed client methods" },
   { path: "apps/dev/src/runtime/wire/paths.ts", count: 1, reason: "path wiring still resolves repository identity through gh" },
-  { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 2, reason: "the castle adapter still has two REST response reads awaiting client injection" },
 ];
 
 /** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
 export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
   { path: "apps/dev/src/runtime/gh/issues.ts", count: 7, reason: "issue body, state, and label edits now use the write plan; comment, create, sub-issue, and label-resource mutations remain" },
-  { path: "packages/red-castle/src/cli.ts", count: 1, reason: "castle bootstrap still creates one label through gh" },
-  { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 1, reason: "the castle tracker still writes one issue comment through gh" },
 ];
 
 export interface GithubReadSourceFile {

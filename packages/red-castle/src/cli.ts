@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { styleText } from "node:util";
 
 import { Display } from "./Display.js";
+import { createSandcastleLabel } from "./GithubBootstrap.js";
 import {
   buildImage,
   checkDockerHealth,
@@ -467,11 +468,7 @@ const initCommand = Command.make(
 
         if (shouldCreateLabel) {
           yield* Effect.try({
-            try: () =>
-              execSync(
-                'gh label create "Sandcastle" --description "Issues for Sandcastle to work on" --color "F9A825"',
-                { cwd, stdio: "ignore" },
-              ),
+            try: () => createSandcastleLabel(cwd),
             catch: () => undefined,
           }).pipe(Effect.ignore);
         }
