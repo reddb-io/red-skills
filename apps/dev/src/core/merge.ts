@@ -851,36 +851,9 @@ async function requiredCheckContexts(
   }
 }
 
-/**
- * Decide the merge readiness from the parsed merge state. `mergeable` is the
- * settled-vs-computing AUTHORITY: `mergeStateStatus` alone can read a transient
- * value (even a spurious `DIRTY`) before GitHub finishes computing mergeability,
- * and classifying that pre-settle read as a terminal `conflict` is exactly the
- * #2084/#2085 phantom-conflict concede-loop on a provably fast-forwardable
- * branch. Order matters:
- *   1. mergeable=CONFLICTING → a settled, genuine conflict → `conflict`.
- *   2. mergeable=UNKNOWN → GitHub is still computing mergeability → `pending`
- *      (re-poll until it settles; the poll budget accommodates it). A transient
- *      `mergeStateStatus` is never terminal while mergeability is unsettled.
- *   3. DIRTY → `conflict`. Fallback for callers/tests that did NOT fetch
- *      `mergeable` (it is empty). Unreachable once `mergeable` is fetched — case
- *      1 covers real conflicts — but kept for back-compat.
- *   4. any required check FAILED → `ci-failed` (never clears by waiting).
- *   5. BEHIND → out of date vs base but still MERGEABLE (unlike DIRTY);
- *      `preMergeRebase` already integrated the base, so a BEHIND at check time is
- *      a benign race → `pending` (re-poll).
- *   6. CLEAN → `merge`.
- *   7. any check still running → `pending`.
- *   8. BLOCKED with a required check that has NOT reported a verdict yet (#2747)
- *      → `pending`. *No verdict yet* is not *a blocking verdict*: right after a
- *      PR opens the rollup is still empty, and merging into that hole gets the
- *      merge REJECTED by branch protection, which the landing path parks as
- *      `blocked:ci` on a PR that was never red. Re-poll until the checks report.
- *   9. BLOCKED with every required check reported → likely a required REVIEW;
- *      attempts merge, surfacing as `merge-failed` if protection requires it → `merge`.
- *  10. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
- *  11. UNKNOWN / DRAFT / empty mergeStateStatus → `pending`.
- */
+/** Decide readiness from settled mergeability and observed check verdicts.
+ * UNKNOWN mergeability and missing required contexts are pending; BLOCKED is
+ * mergeable only after every required context reports (#2084, #2747, #3511). */
 export function classifyMergeState(view: MergeStateView, context: MergeClassifyContext = {}): MergeReadiness {
   const s = up(view.mergeStateStatus);
   const m = up(view.mergeable);
@@ -896,20 +869,16 @@ export function classifyMergeState(view: MergeStateView, context: MergeClassifyC
   return "pending";
 }
 
-/** Why the forge refused a `gh pr merge`, READ BACK from the PR instead of
- * guessed (#2807). */
+/** Why the forge refused `gh pr merge`, read back instead of guessed (#2807). */
 export type MergeRejectionCause =
-  /** Out of date vs base; branch protection requires branches to be up to date.
-   * The one cause the landing repairs itself: update the branch and merge. */
+  /** The landing repairs an out-of-date branch itself. */
   | "stale-branch"
   | "ci-failed"
   | "conflict"
-  /** BLOCKED with every check reported — an unsatisfied protection rule that is
-   * not a check (a required review, a code-owner gate, …). */
+  /** BLOCKED after required checks reported; the exact rule remains unknown. */
   | "protection-blocked"
   | "checks-pending"
-  /** The rejection is real but the PR state does not explain it (or could not be
-   * re-read). Named as unexplained rather than attributed to a probable cause. */
+  /** The rejection is real but the observed PR state does not explain it. */
   | "unknown";
 
 export interface MergeRejectionDiagnosis {
@@ -928,20 +897,11 @@ function mergeStateEvidence(view: MergeStateView): string {
   return `mergeStateStatus=${state} mergeable=${mergeable}`;
 }
 
-/**
- * Classify a merge rejection from the PR state observed AFTER it (#2807).
- *
- * The landing used to record every `gh pr merge` failure as "usually because
- * branch protection or CI is not satisfied" and park `blocked:ci`. Observed
- * twice in 40 minutes on PRs whose every required check was green and that were
- * `mergeable=true` / `CLEAN`: `<base>` had simply advanced between the readiness
- * poll and the merge call, so protection's *require branches to be up to date*
- * declined it. A stale base is the NORMAL condition of a busy lane — every land
- * moves `<base>` for every other in-flight worker — so it must be repaired in
- * the landing lane, not parked with an instruction naming a check that never
- * failed.
- */
-export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiagnosis {
+/** Classify a merge rejection only from PR state observed after it (#2807). */
+export function diagnoseMergeRejection(
+  view: MergeStateView,
+  context: MergeClassifyContext = {},
+): MergeRejectionDiagnosis {
   const s = up(view.mergeStateStatus);
   const m = up(view.mergeable);
   if (m === "CONFLICTING" || s === "DIRTY") {
@@ -980,13 +940,23 @@ export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiag
         : `a status check has not reported a verdict yet (${mergeStateEvidence(view)})`,
     };
   }
+  if (s === "BLOCKED" && blockedWithoutVerdict(view, context)) {
+    const missing = missingRequiredChecks(view, context.requiredChecks ?? []);
+    return {
+      cause: "checks-pending",
+      retryable: true,
+      summary: missing.length > 0
+        ? `required status checks have not reported yet: ${missing.join(", ")}`
+        : `required status checks have not reported yet (${mergeStateEvidence(view)})`,
+    };
+  }
   if (s === "BLOCKED") {
     return {
       cause: "protection-blocked",
       retryable: false,
       summary:
-        `branch protection blocks the PR with every check reported and none failing ` +
-        `(${mergeStateEvidence(view)}) — an unsatisfied non-check rule such as a required review`,
+        `the forge reports the PR blocked after every required check reported ` +
+        `(${mergeStateEvidence(view)}); the exact unsatisfied rule is unknown`,
     };
   }
   return {
@@ -996,25 +966,14 @@ export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiag
   };
 }
 
-/** Extra evidence {@link classifyMergeState} uses to tell *no verdict yet* apart
- * from *a blocking verdict* on a BLOCKED PR (#2747). */
+/** Evidence distinguishing no verdict yet from a blocking verdict (#2747). */
 export interface MergeClassifyContext {
-  /** Required status-check contexts on the base branch, when they could be read
-   * (empty / absent = unknown, never "there are none"). */
+  /** Empty or absent means unknown, never "there are none". */
   requiredChecks?: readonly string[];
 }
 
-/**
- * True when a BLOCKED rollup has not yet produced a verdict for the checks that
- * gate the merge — the state that must keep waiting rather than merge-and-park.
- *
- * With the required contexts known, a required check missing from EVERY rollup
- * bucket has simply not been created yet. With them unknown, an explicitly empty
- * rollup (`checkCount === 0`) is the same "not reported yet" hole; a rollup we
- * could not count at all (`checkCount` absent) keeps the historical behaviour.
- */
-function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyContext): boolean {
-  const required = context.requiredChecks ?? [];
+/** True while a BLOCKED rollup lacks any required check's verdict. */
+function missingRequiredChecks(view: MergeStateView, required: readonly string[]): string[] {
   if (required.length > 0) {
     const reported = new Set<string>([
       ...(view.successfulCheckNames ?? []),
@@ -1022,8 +981,14 @@ function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyConte
       ...(view.failedCheckNames ?? []),
       ...(view.pendingCheckNames ?? []),
     ]);
-    return required.some((name) => !reported.has(name));
+    return required.filter((name) => !reported.has(name));
   }
+  return [];
+}
+
+function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyContext): boolean {
+  const required = context.requiredChecks ?? [];
+  if (required.length > 0) return missingRequiredChecks(view, required).length > 0;
   return view.checkCount === 0;
 }
 
@@ -1601,17 +1566,8 @@ async function readMergeStateView(
   }
 }
 
-/**
- * Run the merge; on rejection, read the PR back and repair the one cause the
- * landing owns — an out-of-date branch (#2807).
- *
- * Returns `undefined` once the merge succeeds, or the failing {@link LandPrResult}
- * carrying the OBSERVED cause. A stale branch is updated (`gh pr update-branch`,
- * exactly what a human does) and, when CI-aware, re-waited to green before the
- * next merge, so a base that moved mid-landing never parks a green PR. Every
- * other cause is returned unretried: a failing check, a conflict, or a review
- * gate is genuinely refusable and no amount of retrying clears it.
- */
+/** Merge after repairing a stale branch or waiting out transient BLOCKED state.
+ * Returns the observed terminal rejection; never invents its cause (#2807). */
 async function mergeWithStaleBranchRecovery(
   exec: Exec,
   input: {
@@ -1625,10 +1581,45 @@ async function mergeWithStaleBranchRecovery(
   },
 ): Promise<LandPrResult | undefined> {
   const { repo, prNumber, mergeArgs, ciAwait } = input;
+  let requiredChecks: readonly string[] = [];
+  let requiredChecksRead = false;
   for (let round = 0; ; round += 1) {
     const merge = await exec(mergeArgs);
     if (merge.code === 0) return undefined;
-    const diagnosis = diagnoseMergeRejection(await readMergeStateView(exec, ciAwait?.github, repo, prNumber));
+    if (ciAwait && !requiredChecksRead) {
+      requiredChecks = await requiredCheckContexts(
+        ciAwait.github,
+        repo,
+        ciAwait.baseBranch ?? input.target,
+        ciAwait.probeTimeoutMs,
+      );
+      requiredChecksRead = true;
+    }
+    const diagnosis = diagnoseMergeRejection(
+      await readMergeStateView(exec, ciAwait?.github, repo, prNumber),
+      { requiredChecks },
+    );
+    if (diagnosis.cause === "checks-pending") {
+      if (!ciAwait) {
+        return {
+          ok: false,
+          prNumber,
+          reason: "merge-failed",
+          mergeFailure: { ...diagnosis, retryable: false },
+        };
+      }
+      if (round >= STALE_BRANCH_MERGE_ROUNDS) {
+        return { ok: false, prNumber, reason: "ci-pending" };
+      }
+      const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+        ...ciAwait,
+        baseBranch: ciAwait.baseBranch ?? input.target,
+      });
+      if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+      if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+      if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+      continue;
+    }
     if (!diagnosis.retryable || round >= STALE_BRANCH_MERGE_ROUNDS) {
       return { ok: false, prNumber, reason: "merge-failed", mergeFailure: diagnosis };
     }

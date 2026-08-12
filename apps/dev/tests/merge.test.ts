@@ -1208,6 +1208,28 @@ describe("diagnoseMergeRejection (#2807)", () => {
     expect(d.retryable).toBe(false);
     expect(d.summary).not.toMatch(/usually|probably/i);
   });
+
+  it("does not diagnose BLOCKED while a required check has not reported", () => {
+    const d = diagnoseMergeRejection(view("BLOCKED", greenRollup), {
+      requiredChecks: ["test", "typecheck"],
+    });
+
+    expect(d.cause).toBe("checks-pending");
+    expect(d.retryable).toBe(true);
+    expect(d.summary).toContain("typecheck");
+    expect(d.summary).not.toMatch(/review|code.owner/i);
+  });
+
+  it("states an unverified non-check rule as unknown", () => {
+    const d = diagnoseMergeRejection(view("BLOCKED", greenRollup), {
+      requiredChecks: ["test"],
+    });
+
+    expect(d.cause).toBe("protection-blocked");
+    expect(d.retryable).toBe(false);
+    expect(d.summary).toContain("exact unsatisfied rule is unknown");
+    expect(d.summary).not.toMatch(/required review|code.owner/i);
+  });
 });
 
 describe("waitForMergeReady (#812 poll loop)", () => {
@@ -1475,6 +1497,70 @@ describe("landPr CI-aware wiring (#812)", () => {
       expect(polls).toBe(2);
       expect(calls.some((c) => c.join(" ").includes("pulls/5/merge"))).toBe(true);
     });
+  });
+
+  it("replays the 2026-08-08 transient BLOCKED state without parking", async () => {
+    const required = ["test", "typecheck"];
+    const green = required.map((name) => ({ name, status: "COMPLETED", conclusion: "SUCCESS" }));
+    const calls: string[][] = [];
+    let mergeAttempts = 0;
+    let mergeStateReads = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (cmd.includes("required_status_checks/contexts")) {
+        return { code: 0, stdout: JSON.stringify(required), stderr: "" };
+      }
+      if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
+        mergeStateReads += 1;
+        return {
+          code: 0,
+          stdout: JSON.stringify(
+            mergeStateReads === 1
+              ? {
+                  mergeStateStatus: "BLOCKED",
+                  mergeable: "MERGEABLE",
+                  statusCheckRollup: [green[0]],
+                }
+              : {
+                  mergeStateStatus: "CLEAN",
+                  mergeable: "MERGEABLE",
+                  statusCheckRollup: green,
+                },
+          ),
+          stderr: "",
+        };
+      }
+      if (cmd.includes("pr merge")) {
+        mergeAttempts += 1;
+        return mergeAttempts === 1
+          ? { code: 1, stdout: "", stderr: "Protected branch update failed" }
+          : { code: 0, stdout: "", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    const result = await landPr(exec, {
+      repo: "o/r",
+      gitRepo: "/repo",
+      remote: "origin",
+      branch: "afk/wX/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+      mergeQueue: true,
+      ciAwait: {
+        github: githubFromExec(exec),
+        sleep: async () => {},
+        maxPolls: 2,
+      },
+      queueHandoff: async (_prNumber, armNativeIntent) => armNativeIntent(),
+    });
+
+    expect(result).toEqual({ ok: true, prNumber: 5, custody: true });
+    expect(mergeAttempts).toBe(2);
+    expect(calls.some((argv) => argv.includes("update-branch"))).toBe(false);
   });
 
   it("returns conflict on DIRTY (real merge conflict, distinct from ci)", async () => {
