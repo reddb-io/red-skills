@@ -142,6 +142,22 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     expect(GITHUB_WRITE_SHELLOUT_BASELINE.filter((entry) => migrated.has(entry.path))).toEqual([]);
   });
 
+  it("routes the red-castle tracker and CLI through packages/github (#3733)", () => {
+    const paths = [
+      "packages/red-castle/src/engine/tracker/github/adapter.ts",
+      "packages/red-castle/src/cli.ts",
+    ];
+    const readReport = collectGithubReadRouteReport(ROOT);
+    const writeReport = collectGithubWriteRouteReport(ROOT);
+
+    for (const path of paths) {
+      expect(readReport.findings.filter((finding) => finding.path === path)).toEqual([]);
+      expect(writeReport.findings.filter((finding) => finding.path === path)).toEqual([]);
+      expect(GITHUB_READ_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
+      expect(GITHUB_WRITE_SHELLOUT_BASELINE.some((entry) => entry.path === path)).toBe(false);
+    }
+  });
+
   it("rejects a new gh write and points it at the shared client", () => {
     const findings = collectGithubWriteShelloutsFromFiles([
       {
