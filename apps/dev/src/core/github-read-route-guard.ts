@@ -56,8 +56,6 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
 
 /** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
 export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
-  { path: "packages/red-castle/src/cli.ts", count: 1, reason: "castle bootstrap still creates one label through gh" },
-  { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 1, reason: "the castle tracker still writes one issue comment through gh" },
 ];
 
 export interface GithubReadSourceFile {
