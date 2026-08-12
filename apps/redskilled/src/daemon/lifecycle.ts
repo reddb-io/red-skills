@@ -70,6 +70,7 @@ import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-t
 import {
   createRedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
+import { mayRecoverRegistration, registrationHistory } from "../registration-recovery.js";
 import {
   buildProjectRegistration,
   renewProjectRegistration,
@@ -571,9 +572,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     detail?: string,
   ): void {
     const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
-    const observed = lastQueue?.projects.find(
-      (project) => project.project_label === registration.project_label,
-    );
     lapses.push({
       project_label: registration.project_label,
       registered_at: registration.registered_at,
@@ -581,10 +579,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       renew_by: registration.renew_by,
       renewals: registration.renewals,
       sustains: registration.sustains ?? 0,
-      ...(registration.standing === true ? { standing: true } : {}),
-      ...(observed?.outcome === "counted" && observed.depth != null
-        ? { queue_depth: observed.depth }
-        : {}),
+      ...registrationHistory(registration, lastQueue),
       detail: detail ??
         `redskilled dropped the registration for project ${JSON.stringify(registration.project_label)}: it stood ` +
         `until ${registration.renew_by} and nothing renewed it — no session spoke for it, and no poll found it ` +
@@ -643,7 +638,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     for (const [label, lapsed] of [...recoverableRegistrations]) {
       // Recovery is a belt, not immortal intent. After one original window there
       // is no live statement left to restore, so the extra polling stops.
-      if (lapsed.standing !== true && nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+      if (!mayRecoverRegistration(lapsed, nowMs)) {
         recoverableRegistrations.delete(label);
         changed = true;
         continue;
@@ -864,11 +859,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     expireLapsedRegistrations(now);
     const nowMs = Date.parse(now);
     for (const [label, lapsed] of [...recoverableRegistrations]) {
-      if (
-        lapsed.standing !== true &&
-        Number.isFinite(nowMs) &&
-        nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms
-      ) {
+      if (!mayRecoverRegistration(lapsed, nowMs)) {
         recoverableRegistrations.delete(label);
       }
     }
@@ -1485,16 +1476,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const released = releasedCurrent || releasedRecoverable;
     if (held != null) {
       const detail = `redskilled released the registration for project ${JSON.stringify(projectLabel)}`;
-      const observed = lastQueue?.projects.find((project) => project.project_label === projectLabel);
       removeRegistrationHistory(projectLabel);
       stops.push({
         project_label: projectLabel,
         registered_at: held.registered_at,
         at: clock(),
-        ...(held.standing === true ? { standing: true } : {}),
-        ...(observed?.outcome === "counted" && observed.depth != null
-          ? { queue_depth: observed.depth }
-          : {}),
+        ...registrationHistory(held, lastQueue),
         detail,
       });
       if (stops.length > REDSKILLED_LAPSE_MEMORY) stops.splice(0, stops.length - REDSKILLED_LAPSE_MEMORY);
