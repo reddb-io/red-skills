@@ -50,6 +50,7 @@ export {
   createGithubClient,
   createMemoryGithubEtagStore,
   githubSingleObjectCoalescingThreshold,
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type CreateGithubClientOptions,
   type GithubClient,

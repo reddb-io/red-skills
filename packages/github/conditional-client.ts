@@ -558,6 +558,23 @@ export function isGithubRateLimitError(error: unknown): boolean {
     (error instanceof Error && /secondary rate|rate limit/i.test(error.message));
 }
 
+/** Reset instant carried by a primary or secondary rate-limit refusal. */
+export function githubRateLimitResetAt(error: unknown, nowMs = Date.now()): string | null {
+  const headers = errorHeaders(error);
+  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
+  if (Number.isFinite(resetSeconds) && resetSeconds >= 0) {
+    return new Date(resetSeconds * 1_000).toISOString();
+  }
+  const retryAfter = header(headers, "retry-after");
+  if (retryAfter == null) return null;
+  const delaySeconds = Number(retryAfter);
+  if (Number.isFinite(delaySeconds) && delaySeconds >= 0 && Number.isFinite(nowMs)) {
+    return new Date(nowMs + delaySeconds * 1_000).toISOString();
+  }
+  const retryAtMs = Date.parse(retryAfter);
+  return Number.isFinite(retryAtMs) ? new Date(retryAtMs).toISOString() : null;
+}
+
 function httpStatus(error: unknown): number | undefined {
   if (!isRecord(error)) return undefined;
   return typeof error.status === "number" ? error.status : undefined;
