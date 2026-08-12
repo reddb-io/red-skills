@@ -123,6 +123,54 @@ describe("castle lane writers", () => {
     expect(records.at(-1)?.payload).toEqual({ signal: "beat-12" });
   });
 
+  it("trims a maxLines-only lane on append and keeps the newest records", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "monitor", "m1");
+
+    for (let record = 1; record <= 4; record += 1) {
+      await appendCastleLaneRecord(
+        path,
+        {
+          at: `2026-07-16T20:00:0${record}.000Z`,
+          kind: "monitor.sampled",
+          msg: `record-${record}`,
+        },
+        { retentionPolicy: { maxLines: 3, targetRatio: 0.5 } },
+      );
+    }
+
+    expect(
+      (await readCastleLaneRecords(path)).map((record) => record.msg),
+    ).toEqual(["record-3", "record-4"]);
+  });
+
+  it("enforces retention through worker, supervisor, and monitor writers", async () => {
+    const writers = createCastleLaneWriters(createEnginePaths(redRoot), {
+      clock: () => "2026-07-16T20:00:00.000Z",
+      retentionPolicies: {
+        worker: { maxLines: 3, targetRatio: 0.5 },
+        supervisor: { maxLines: 3, targetRatio: 0.5 },
+        monitor: { maxLines: 3, targetRatio: 0.5 },
+      },
+    });
+
+    for (const writer of [
+      writers.worker("wAB12"),
+      writers.supervisor("s1"),
+      writers.monitor("m1"),
+    ]) {
+      for (let record = 1; record <= 4; record += 1) {
+        await writer.append({
+          kind: "lane.sampled",
+          msg: `record-${record}`,
+        });
+      }
+      expect(
+        (await readCastleLaneRecords(writer.path)).map((record) => record.msg),
+      ).toEqual(["record-3", "record-4"]);
+    }
+  });
+
   it("writes worker and supervisor state snapshots as TOON state.toon documents", async () => {
     const paths = createEnginePaths(redRoot);
     const workerSnapshot = {
@@ -195,6 +243,32 @@ describe("castle lane writers", () => {
         merge_sha: "abc123",
       },
     ]);
+  });
+
+  it("enforces the castle-history policy at its append site", async () => {
+    const paths = createEnginePaths(redRoot);
+
+    for (let record = 1; record <= 4; record += 1) {
+      await appendCastleHistoryRecord(
+        paths.castleHistory,
+        {
+          ts: `2026-07-16T20:03:0${record}.000Z`,
+          epoch: 1784232180 + record,
+          worker: `wAB1${record}`,
+          issue: 1905,
+          event: "done",
+          duration_s: record,
+          runner: "codex",
+        },
+        { retentionPolicy: { maxLines: 3, targetRatio: 0.5 } },
+      );
+    }
+
+    expect(
+      parseRecords(await readFile(paths.castleHistory, "utf8")).map(
+        (row) => row.worker,
+      ),
+    ).toEqual(["wAB13", "wAB14"]);
   });
 
   it("rejects records outside the published red.castle.lane.v1 family before writing", async () => {

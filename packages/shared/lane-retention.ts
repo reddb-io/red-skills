@@ -7,12 +7,7 @@
  * several lanes have closed record vocabularies.
  */
 import { execFile } from "node:child_process";
-import {
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import {
   readdir,
   readFile,
@@ -70,6 +65,10 @@ export const LANE_RETENTION_REGISTRY = {
     maxBytes: 8 * MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "rsp-telemetry-legacy-spool": {
+    maxBytes: 8 * MIB,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
   "rsp-telemetry-corrections": {
     maxBytes: MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
@@ -83,6 +82,14 @@ export const LANE_RETENTION_REGISTRY = {
     maxLines: 50_000,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "supervisor-log": {
+    maxLines: 50_000,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
+  "monitor-log": {
+    maxLines: 50_000,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
   "worker-liveness": {
     maxBytes: MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
@@ -91,17 +98,28 @@ export const LANE_RETENTION_REGISTRY = {
     maxLines: 10_000,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "redskilled-events": {
+    maxBytes: 4 * MIB,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
 } as const satisfies Readonly<Record<string, RegisteredLaneRetentionPolicy>>;
 
 export type LaneRetentionPolicyName = keyof typeof LANE_RETENTION_REGISTRY;
 
-export type LaneRetentionStat = (path: string) => Promise<{ readonly size: number }>;
+export type LaneRetentionStat = (
+  path: string,
+) => Promise<{ readonly size: number }>;
 export type LaneRetentionStatSync = (path: string) => { readonly size: number };
 
 function maxBytes(policy: LaneRetentionPolicy): number | undefined {
   const ceiling = policy.maxBytes;
-  if (ceiling !== undefined && (!Number.isSafeInteger(ceiling) || ceiling < 0)) {
-    throw new Error("lane retention maxBytes must be a non-negative safe integer");
+  if (
+    ceiling !== undefined &&
+    (!Number.isSafeInteger(ceiling) || ceiling < 0)
+  ) {
+    throw new Error(
+      "lane retention maxBytes must be a non-negative safe integer",
+    );
   }
   return ceiling;
 }
@@ -161,15 +179,27 @@ export type LaneTrimMethod = "tq" | "js";
 export interface TrimLaneKeepLastOptions {
   readonly timeoutMs?: number;
   /** Return true only when tq completed the in-place replacement. */
-  readonly runTq?: (path: string, keepLast: number, timeoutMs: number) => Promise<boolean>;
+  readonly runTq?: (
+    path: string,
+    keepLast: number,
+    timeoutMs: number,
+  ) => Promise<boolean>;
 }
 
-async function runTqTrim(path: string, keepLast: number, timeoutMs: number): Promise<boolean> {
+async function runTqTrim(
+  path: string,
+  keepLast: number,
+  timeoutMs: number,
+): Promise<boolean> {
   try {
-    await execFileAsync("tq", ["trim", "--keep-last", String(keepLast), "--in-place", path], {
-      timeout: timeoutMs,
-      windowsHide: true,
-    });
+    await execFileAsync(
+      "tq",
+      ["trim", "--keep-last", String(keepLast), "--in-place", path],
+      {
+        timeout: timeoutMs,
+        windowsHide: true,
+      },
+    );
     return true;
   } catch {
     return false;
@@ -178,7 +208,9 @@ async function runTqTrim(path: string, keepLast: number, timeoutMs: number): Pro
 
 function assertKeepLast(keepLast: number): void {
   if (!Number.isSafeInteger(keepLast) || keepLast < 0) {
-    throw new Error("lane retention keepLast must be a non-negative safe integer");
+    throw new Error(
+      "lane retention keepLast must be a non-negative safe integer",
+    );
   }
 }
 
@@ -189,7 +221,10 @@ function encodeRows(rows: readonly ToonlRecord[]): string {
 }
 
 /** Atomic replacement used by asynchronous lane writers and the JS trimmer. */
-export async function replaceLaneAtomically(path: string, text: string): Promise<void> {
+export async function replaceLaneAtomically(
+  path: string,
+  text: string,
+): Promise<void> {
   const temporary = `${path}.retaining-${process.pid}`;
   try {
     await writeFile(temporary, text, { encoding: "utf8", mode: 0o600 });
@@ -225,7 +260,9 @@ export async function trimLaneKeepLast(
   if (await tq(path, keepLast, timeoutMs)) return "tq";
 
   const raw = await readFile(path, "utf8");
-  const complete = raw.endsWith("\n") ? raw : raw.slice(0, raw.lastIndexOf("\n") + 1);
+  const complete = raw.endsWith("\n")
+    ? raw
+    : raw.slice(0, raw.lastIndexOf("\n") + 1);
   const rows = complete === "" ? [] : parseRecords(complete);
   const kept = keepLast === 0 ? [] : rows.slice(-keepLast);
   await replaceLaneAtomically(path, encodeRows(kept));
@@ -251,11 +288,13 @@ function pidAlive(pid: number): boolean {
 }
 
 const LANE_REPLACEMENT_TEMP_PID = /\.(?:rotate|retaining)-(\d+)(?:-|$)/;
-const RSP_DRAIN_TEMP_PID = /rsp-telemetry\.spool\.(?:toonl|jsonl)\.(\d+)\.\d+\.drain$/;
+const RSP_DRAIN_TEMP_PID =
+  /rsp-telemetry\.spool\.(?:toonl|jsonl)\.(\d+)\.\d+\.drain$/;
 
 /** Return the owning pid for every temporary lane generation known to retention. */
 export function laneTempOwnerPid(path: string): number | null {
-  const match = LANE_REPLACEMENT_TEMP_PID.exec(path) ?? RSP_DRAIN_TEMP_PID.exec(path);
+  const match =
+    LANE_REPLACEMENT_TEMP_PID.exec(path) ?? RSP_DRAIN_TEMP_PID.exec(path);
   return match === null ? null : Number(match[1]);
 }
 

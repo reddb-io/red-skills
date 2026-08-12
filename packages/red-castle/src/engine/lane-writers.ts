@@ -3,12 +3,13 @@ import {
   mkdir,
   readFile,
   rename,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   LANE_RETENTION_REGISTRY,
-  laneOverCeiling,
+  laneSizeOverCeiling,
   trimLaneKeepLast,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
@@ -32,6 +33,11 @@ import {
 import type { EnginePaths } from "./paths.js";
 
 type ToonlRecord = Record<string, string | number | boolean | null>;
+
+const laneLineCounts = new Map<
+  string,
+  { readonly bytes: number; readonly lines: number }
+>();
 
 export class CastleLaneValidationError extends Error {
   constructor(message: string) {
@@ -203,36 +209,97 @@ async function appendToonlRecord<T extends Record<string, unknown>>(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const encoded = encodeToonlLines().push(toToonlRecord(record));
-  if (
-    retentionPolicy?.maxBytes !== undefined &&
-    await laneOverCeiling(path, Buffer.byteLength(encoded), retentionPolicy)
-  ) {
-    const ceiling = retentionPolicy.maxBytes;
-    const incomingBytes = Buffer.byteLength(encoded);
-    if (incomingBytes > ceiling) {
-      throw new Error(`castle lane record exceeds its ${ceiling}-byte ceiling`);
+  const incomingBytes = Buffer.byteLength(encoded);
+  let currentBytes = 0;
+  if (retentionPolicy !== undefined) {
+    try {
+      currentBytes = (await stat(path)).size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+  }
+
+  let rows: ToonlRecord[] | undefined;
+  const readRows = async (): Promise<ToonlRecord[]> => {
+    if (rows !== undefined) return rows;
     let raw = "";
     try {
       raw = await readFile(path, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const rows = raw === "" ? [] : parseRecords(raw);
-    const targetBytes = Math.max(
-      incomingBytes,
-      Math.floor(ceiling * (retentionPolicy.targetRatio ?? 0.5)),
-    );
-    const keepLast = keepLastWithinByteTarget(
-      rows,
-      incomingBytes,
-      targetBytes,
-    );
+    rows = raw === "" ? [] : parseRecords(raw);
+    return rows;
+  };
+
+  let currentLines: number | undefined;
+  const lineCeiling = retentionPolicy?.maxLines;
+  if (lineCeiling !== undefined) {
+    if (!Number.isSafeInteger(lineCeiling) || lineCeiling < 0) {
+      throw new Error(
+        "castle lane retention maxLines must be a non-negative safe integer",
+      );
+    }
+    if (lineCeiling === 0) {
+      throw new Error("castle lane record exceeds its 0-line ceiling");
+    }
+    const cached = laneLineCounts.get(path);
+    currentLines =
+      cached?.bytes === currentBytes ? cached.lines : (await readRows()).length;
+  }
+
+  const overLines =
+    lineCeiling !== undefined && currentLines! + 1 > lineCeiling;
+  const overBytes =
+    retentionPolicy !== undefined &&
+    laneSizeOverCeiling(currentBytes, incomingBytes, retentionPolicy);
+  let keepLast: number | undefined;
+  if (overLines || overBytes) {
+    const existingRows = await readRows();
+    keepLast = existingRows.length;
+    if (overLines) {
+      const targetLines = Math.ceil(
+        lineCeiling! * (retentionPolicy?.targetRatio ?? 0.5),
+      );
+      keepLast = Math.min(keepLast, Math.max(0, targetLines - 1));
+    }
+    if (overBytes) {
+      const ceiling = retentionPolicy!.maxBytes!;
+      if (incomingBytes > ceiling) {
+        throw new Error(
+          `castle lane record exceeds its ${ceiling}-byte ceiling`,
+        );
+      }
+      const targetBytes = Math.max(
+        incomingBytes,
+        Math.floor(ceiling * (retentionPolicy!.targetRatio ?? 0.5)),
+      );
+      keepLast = Math.min(
+        keepLast,
+        keepLastWithinByteTarget(existingRows, incomingBytes, targetBytes),
+      );
+    }
     await trimLaneKeepLast(path, keepLast);
   }
+
   // `appendFile` opens and closes the lane for every beat. That close-before-
   // next-stat lifecycle is what makes the preceding atomic replacement safe.
   await appendFile(path, encoded, "utf8");
+
+  if (currentLines !== undefined) {
+    if (keepLast === undefined) {
+      laneLineCounts.set(path, {
+        bytes: currentBytes + incomingBytes,
+        lines: currentLines + 1,
+      });
+    } else {
+      const kept = keepLast === 0 ? [] : rows!.slice(-keepLast);
+      laneLineCounts.set(path, {
+        bytes: Buffer.byteLength(encodedRows(kept)) + incomingBytes,
+        lines: keepLast + 1,
+      });
+    }
+  }
 }
 
 function toToonlRecord(record: Record<string, unknown>): ToonlRecord {
@@ -269,7 +336,9 @@ function normalizeCastleLaneRecord(record: unknown): CastleLaneRecord {
 
 function normalizeCastleHistoryRecord(record: unknown): CastleHistoryRecord {
   if (record === null || typeof record !== "object") {
-    throw new CastleLaneValidationError("castle history record must be an object");
+    throw new CastleLaneValidationError(
+      "castle history record must be an object",
+    );
   }
   const raw = { ...(record as Record<string, unknown>) };
   for (const field of ["merge_sha", "reason"]) {
@@ -295,11 +364,13 @@ export async function appendCastleLaneRecord(
 export async function appendCastleHistoryRecord(
   path: string,
   record: CastleHistoryRecord,
+  options: { readonly retentionPolicy?: LaneRetentionPolicy } = {},
 ): Promise<CastleHistoryRecord> {
   const validated = validateCastleHistoryRecord(record);
   await appendToonlRecord(
     path,
     validated as unknown as Record<string, unknown>,
+    options.retentionPolicy ?? LANE_RETENTION_REGISTRY["castle-history"],
   );
   return validated;
 }
@@ -311,11 +382,7 @@ export async function writeCastleStateSnapshot(
   const validated = validateCastleStateSnapshot(snapshot);
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(
-    tmpPath,
-    encode(validated as unknown as JsonValue),
-    "utf8",
-  );
+  await writeFile(tmpPath, encode(validated as unknown as JsonValue), "utf8");
   await rename(tmpPath, path);
   return validated;
 }
@@ -399,6 +466,10 @@ export interface CastleLaneWriters {
 
 export interface CastleLaneWritersOptions {
   readonly clock?: () => string;
+  /** Tiny overrides for posed tests; production uses the shared registry. */
+  readonly retentionPolicies?: Partial<
+    Readonly<Record<CastleLaneName, LaneRetentionPolicy>>
+  >;
   /** Tiny override for posed tests; production uses the shared 1 MiB policy. */
   readonly livenessMaxBytes?: number;
 }
@@ -428,18 +499,38 @@ export function createCastleLaneWriters(
   options: CastleLaneWritersOptions = {},
 ): CastleLaneWriters {
   const clock = options.clock ?? (() => new Date().toISOString());
+  const lanePolicy = (
+    lane: CastleLaneName,
+    registered: LaneRetentionPolicy,
+  ): LaneRetentionPolicy => ({
+    ...registered,
+    ...options.retentionPolicies?.[lane],
+  });
   const livenessPolicy: LaneRetentionPolicy = {
-    ...LANE_RETENTION_REGISTRY["worker-liveness"],
+    ...lanePolicy("liveness", LANE_RETENTION_REGISTRY["worker-liveness"]),
     ...(options.livenessMaxBytes === undefined
       ? {}
       : { maxBytes: options.livenessMaxBytes }),
   };
   return {
-    worker: (id) => makeLaneWriter(castleLanePath(paths, "worker", id), clock),
+    worker: (id) =>
+      makeLaneWriter(
+        castleLanePath(paths, "worker", id),
+        clock,
+        lanePolicy("worker", LANE_RETENTION_REGISTRY["worker-log"]),
+      ),
     supervisor: (id) =>
-      makeLaneWriter(castleLanePath(paths, "supervisor", id), clock),
+      makeLaneWriter(
+        castleLanePath(paths, "supervisor", id),
+        clock,
+        lanePolicy("supervisor", LANE_RETENTION_REGISTRY["supervisor-log"]),
+      ),
     monitor: (id) =>
-      makeLaneWriter(castleLanePath(paths, "monitor", id), clock),
+      makeLaneWriter(
+        castleLanePath(paths, "monitor", id),
+        clock,
+        lanePolicy("monitor", LANE_RETENTION_REGISTRY["monitor-log"]),
+      ),
     liveness: (workerId) =>
       makeLaneWriter(
         castleLanePath(paths, "liveness", workerId),

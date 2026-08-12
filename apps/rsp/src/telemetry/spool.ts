@@ -10,7 +10,14 @@ import {
   statSync,
   writeSync,
 } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import {
@@ -87,7 +94,9 @@ export function telemetrySpoolCorrectionsPath(rootDir: string): string {
 export async function appendTelemetryEvent(
   rootDir: string,
   event: RspTelemetryEvent,
-  retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+  retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY[
+    "rsp-telemetry-spool"
+  ],
 ): Promise<void> {
   appendTelemetryEventSync(rootDir, event, retention);
 }
@@ -100,7 +109,9 @@ export interface AppendTelemetryEventSyncOptions {
 export function appendTelemetryEventSync(
   rootDir: string,
   event: RspTelemetryEvent,
-  retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+  retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY[
+    "rsp-telemetry-spool"
+  ],
   options: AppendTelemetryEventSyncOptions = {},
 ): void {
   try {
@@ -120,7 +131,12 @@ export function appendTelemetryEventSync(
       formatSpoolRow,
     );
     appendSpoolLineSync(path, line, options);
-    if (droppedBytes > 0) appendRetentionCorrection(resolvedRoot, "telemetry spool retention", droppedBytes);
+    if (droppedBytes > 0)
+      appendRetentionCorrection(
+        resolvedRoot,
+        "telemetry spool retention",
+        droppedBytes,
+      );
   } catch {}
 }
 
@@ -152,8 +168,14 @@ function appendSpoolLineSync(
   }
 }
 
-function compactTelemetryEventForSpool(event: RspTelemetryEvent): RspTelemetryEvent {
-  return compactTextField(compactTextField(event, "raw_text", "raw_bytes"), "emitted_text", "emitted_bytes");
+function compactTelemetryEventForSpool(
+  event: RspTelemetryEvent,
+): RspTelemetryEvent {
+  return compactTextField(
+    compactTextField(event, "raw_text", "raw_bytes"),
+    "emitted_text",
+    "emitted_bytes",
+  );
 }
 
 function compactTextField(
@@ -172,15 +194,23 @@ function compactTextField(
   return next;
 }
 
-export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
+export interface TelemetrySpoolRetentionOptions {
+  readonly active?: LaneRetentionPolicy;
+  readonly legacy?: LaneRetentionPolicy;
+}
+
+export async function takeTelemetrySpool(
+  rootDir: string,
+  retention: TelemetrySpoolRetentionOptions = {},
+): Promise<string[]> {
   const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
   if (!resolvedRoot) return [];
   const path = telemetrySpoolPath(resolvedRoot);
   await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
-  const files = await renameActiveSpools(resolvedRoot);
+  const files = await renameActiveSpools(resolvedRoot, retention);
   const entries = [
-    ...await readPendingCorrectionEntries(resolvedRoot),
-    ...await readDrainEntries(files),
+    ...(await readPendingCorrectionEntries(resolvedRoot)),
+    ...(await readDrainEntries(files)),
   ];
   await Promise.all(files.map((file) => rm(file, { force: true })));
   return entries.map((entry) => JSON.stringify(entry.event));
@@ -214,18 +244,31 @@ export async function drainTelemetrySpool(
  * Adopt those leftovers, skipping any still owned by a live process other than us.
  */
 async function orphanedDrainFiles(rootDir: string): Promise<string[]> {
-  const spoolPaths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const spoolPaths = [
+    telemetrySpoolPath(rootDir),
+    telemetryLegacySpoolPath(rootDir),
+  ];
   const dir = dirname(spoolPaths[0]!);
   const names = await readdir(dir).catch(() => [] as string[]);
-  return names.filter((name) =>
-    spoolPaths.some((spoolPath) => name.startsWith(`${basename(spoolPath)}.`) && name.endsWith(".drain"))
-  )
+  return names
+    .filter((name) =>
+      spoolPaths.some(
+        (spoolPath) =>
+          name.startsWith(`${basename(spoolPath)}.`) && name.endsWith(".drain"),
+      ),
+    )
     .filter((name) => {
-      const base = spoolPaths.find((spoolPath) => name.startsWith(`${basename(spoolPath)}.`));
+      const base = spoolPaths.find((spoolPath) =>
+        name.startsWith(`${basename(spoolPath)}.`),
+      );
       if (!base) return false;
       const prefix = `${basename(base)}.`;
       const pid = Number(name.slice(prefix.length).split(".")[0]);
-      return !(Number.isInteger(pid) && pid !== process.pid && isProcessAlive(pid));
+      return !(
+        Number.isInteger(pid) &&
+        pid !== process.pid &&
+        isProcessAlive(pid)
+      );
     })
     .sort()
     .map((name) => join(dir, name));
@@ -261,7 +304,9 @@ async function drainEntry(
   drainLine: (line: string) => Promise<boolean>,
   fromCorrection: boolean,
 ): Promise<void> {
-  const line = entry.event ? JSON.stringify(entry.event) : entry.raw_line ?? "";
+  const line = entry.event
+    ? JSON.stringify(entry.event)
+    : (entry.raw_line ?? "");
   try {
     if (await drainLine(line)) {
       if (fromCorrection) {
@@ -304,7 +349,8 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
       parsed.collection !== RSP_DECISIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_INVOCATIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_DEGRADATIONS_COLLECTION
-    ) return null;
+    )
+      return null;
     return parsed as RspTelemetryEvent;
   } catch {
     return null;
@@ -316,7 +362,11 @@ function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
   return spoolEmitter.push(spoolEntryToToonlRow(row));
 }
 
-function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow, reportRetention = true): void {
+function appendCorrection(
+  rootDir: string,
+  correction: RspTelemetryCorrectionRow,
+  reportRetention = true,
+): void {
   try {
     const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
     if (!resolvedRoot) return;
@@ -335,7 +385,12 @@ function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow
       mode: 0o600,
     });
     if (reportRetention && droppedBytes > 0) {
-      appendRetentionCorrection(resolvedRoot, "telemetry corrections retention", droppedBytes, false);
+      appendRetentionCorrection(
+        resolvedRoot,
+        "telemetry corrections retention",
+        droppedBytes,
+        false,
+      );
     }
   } catch {}
 }
@@ -347,19 +402,23 @@ function appendRetentionCorrection(
   reportRetention = true,
 ): void {
   const spoolId = randomUUID();
-  appendCorrection(rootDir, {
-    correction_id: randomUUID(),
-    target_spool_id: spoolId,
-    action: "retry",
-    created_at: new Date().toISOString(),
-    event_json: JSON.stringify({
-      collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
-      id: spoolId,
+  appendCorrection(
+    rootDir,
+    {
+      correction_id: randomUUID(),
+      target_spool_id: spoolId,
+      action: "retry",
       created_at: new Date().toISOString(),
-      reason,
-      bytes,
-    } satisfies RspTelemetryEvent),
-  }, reportRetention);
+      event_json: JSON.stringify({
+        collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+        id: spoolId,
+        created_at: new Date().toISOString(),
+        reason,
+        bytes,
+      } satisfies RspTelemetryEvent),
+    },
+    reportRetention,
+  );
 }
 
 function formatCorrectionRow(correction: RspTelemetryCorrectionRow): string {
@@ -395,7 +454,9 @@ function trimLaneBeforeAppend<Row>(
   if (maxBytes === undefined) return 0;
   const targetBytes = Math.max(
     0,
-    Math.floor(maxBytes * (policy.targetRatio ?? DEFAULT_LANE_RETENTION_TARGET_RATIO)) - incomingBytes,
+    Math.floor(
+      maxBytes * (policy.targetRatio ?? DEFAULT_LANE_RETENTION_TARGET_RATIO),
+    ) - incomingBytes,
   );
   const rows = parse(original);
   const kept: string[] = [];
@@ -409,21 +470,55 @@ function trimLaneBeforeAppend<Row>(
   }
   const replacement = kept.join("");
   replaceLaneAtomicallySync(path, replacement);
-  return Math.max(0, Buffer.byteLength(original) - Buffer.byteLength(replacement));
+  return Math.max(
+    0,
+    Buffer.byteLength(original) - Buffer.byteLength(replacement),
+  );
 }
 
-async function renameActiveSpools(rootDir: string): Promise<string[]> {
+async function renameActiveSpools(
+  rootDir: string,
+  retention: TelemetrySpoolRetentionOptions = {},
+): Promise<string[]> {
   const activePath = telemetrySpoolPath(rootDir);
-  const paths = [activePath, telemetryLegacySpoolPath(rootDir)];
+  const legacyPath = telemetryLegacySpoolPath(rootDir);
+  const paths = [
+    {
+      path: activePath,
+      policy:
+        retention.active ?? LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+    },
+    {
+      path: legacyPath,
+      policy:
+        retention.legacy ??
+        LANE_RETENTION_REGISTRY["rsp-telemetry-legacy-spool"],
+    },
+  ];
   const renamed: string[] = [];
-  for (const path of paths) {
+  for (const { path, policy } of paths) {
+    const droppedBytes = trimLaneBeforeAppend(
+      path,
+      "",
+      policy,
+      parseSpoolEntries,
+      formatSpoolRow,
+    );
+    if (droppedBytes > 0) {
+      appendRetentionCorrection(
+        rootDir,
+        "telemetry spool migration retention",
+        droppedBytes,
+      );
+    }
     const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
     try {
       await rename(path, drainingPath);
       // The JSONL path is a read-once migration input, never an active lane.
       // Recreating it after ingestion made an obsolete internal format look
       // canonical and left an empty `.jsonl` behind on every drain.
-      if (path === activePath) await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+      if (path === activePath)
+        await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
       renamed.push(drainingPath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
@@ -433,10 +528,14 @@ async function renameActiveSpools(rootDir: string): Promise<string[]> {
 }
 
 async function ensureActiveSpoolFiles(rootDir: string): Promise<void> {
-  await writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }).catch(() => undefined);
+  await writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }).catch(
+    () => undefined,
+  );
 }
 
-async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetrySpoolEntry[]> {
+async function readDrainEntries(
+  paths: readonly string[],
+): Promise<RspTelemetrySpoolEntry[]> {
   const entries: RspTelemetrySpoolEntry[] = [];
   for (const path of paths) {
     entries.push(...parseSpoolEntries(await readSettledFile(path)));
@@ -444,13 +543,22 @@ async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetryS
   return entries;
 }
 
-async function readPendingCorrectionEntries(rootDir: string): Promise<RspTelemetrySpoolEntry[]> {
-  const text = await readFile(telemetrySpoolCorrectionsPath(rootDir), "utf8").catch(() => "");
+async function readPendingCorrectionEntries(
+  rootDir: string,
+): Promise<RspTelemetrySpoolEntry[]> {
+  const text = await readFile(
+    telemetrySpoolCorrectionsPath(rootDir),
+    "utf8",
+  ).catch(() => "");
   const latest = new Map<string, RspTelemetryCorrectionRow>();
-  for (const row of parseCorrectionRows(text)) latest.set(row.target_spool_id, row);
+  for (const row of parseCorrectionRows(text))
+    latest.set(row.target_spool_id, row);
   return [...latest.values()]
     .filter((row) => row.action === "retry" && row.event_json)
-    .map((row) => ({ spool_id: row.target_spool_id, event: parseTelemetryEvent(row.event_json!) ?? undefined }))
+    .map((row) => ({
+      spool_id: row.target_spool_id,
+      event: parseTelemetryEvent(row.event_json!) ?? undefined,
+    }))
     .filter((entry) => entry.event !== undefined);
 }
 
@@ -464,9 +572,11 @@ function parseSpoolEntries(text: string): RspTelemetrySpoolEntry[] {
       const parsed = JSON.parse(line) as unknown;
       if (isRecord(parsed)) {
         const event = parseTelemetryEvent(JSON.stringify(parsed));
-        entries.push(event
-          ? { spool_id: legacySpoolId(JSON.stringify(parsed)), event }
-          : { spool_id: legacySpoolId(line), raw_line: line });
+        entries.push(
+          event
+            ? { spool_id: legacySpoolId(JSON.stringify(parsed)), event }
+            : { spool_id: legacySpoolId(line), raw_line: line },
+        );
       }
       continue;
     } catch {}
@@ -481,18 +591,24 @@ function parseSpoolEntries(text: string): RspTelemetrySpoolEntry[] {
     try {
       for (const row of parseRecords(`${header}\n${line}\n`)) {
         if (isFlatToonlRecord(row) && isSpoolRow(row)) {
-          entries.push({ spool_id: row.spool_id, event: eventFromSpoolRow(row)! });
+          entries.push({
+            spool_id: row.spool_id,
+            event: eventFromSpoolRow(row)!,
+          });
         }
       }
     } catch {
-      if (line.startsWith("{")) entries.push({ spool_id: legacySpoolId(line), raw_line: line });
+      if (line.startsWith("{"))
+        entries.push({ spool_id: legacySpoolId(line), raw_line: line });
     }
   }
   return entries;
 }
 
 function parseCorrectionRows(text: string): RspTelemetryCorrectionRow[] {
-  return parseSniffedRecords(text).map(toCorrectionRow).filter((row): row is RspTelemetryCorrectionRow => row !== null);
+  return parseSniffedRecords(text)
+    .map(toCorrectionRow)
+    .filter((row): row is RspTelemetryCorrectionRow => row !== null);
 }
 
 function parseSniffedRecords(text: string): FlatToonlRecord[] {
@@ -547,11 +663,17 @@ function eventFromSpoolRow(row: FlatToonlRecord): RspTelemetryEvent | null {
   return parseTelemetryEvent(JSON.stringify(event));
 }
 
-function isSpoolRow(value: FlatToonlRecord): value is FlatToonlRecord & { spool_id: string } {
-  return typeof value.spool_id === "string" && eventFromSpoolRow(value) !== null;
+function isSpoolRow(
+  value: FlatToonlRecord,
+): value is FlatToonlRecord & { spool_id: string } {
+  return (
+    typeof value.spool_id === "string" && eventFromSpoolRow(value) !== null
+  );
 }
 
-function toCorrectionRow(value: FlatToonlRecord): RspTelemetryCorrectionRow | null {
+function toCorrectionRow(
+  value: FlatToonlRecord,
+): RspTelemetryCorrectionRow | null {
   if (
     typeof value.correction_id === "string" &&
     typeof value.target_spool_id === "string" &&
@@ -572,10 +694,11 @@ function toCorrectionRow(value: FlatToonlRecord): RspTelemetryCorrectionRow | nu
 
 function isFlatToonlRecord(value: unknown): value is FlatToonlRecord {
   if (!isRecord(value)) return false;
-  return Object.values(value).every((entry) =>
-    typeof entry === "string" ||
-    typeof entry === "number" ||
-    typeof entry === "boolean" ||
-    entry === null
+  return Object.values(value).every(
+    (entry) =>
+      typeof entry === "string" ||
+      typeof entry === "number" ||
+      typeof entry === "boolean" ||
+      entry === null,
   );
 }

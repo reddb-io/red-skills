@@ -1,8 +1,10 @@
 import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { describe, expect, it } from "vitest";
 import {
+  LANE_CENSUS_POLICY_NAMES,
   collectLaneCensusProbeInput,
   runLaneCensusProbe,
 } from "../src/core/operational-probes/lane-census.js";
@@ -12,6 +14,12 @@ import {
 } from "../src/core/operational-probes.js";
 
 describe("lane census operational probe", () => {
+  it("keeps the enforced retention registry in exact census parity", () => {
+    expect([...LANE_CENSUS_POLICY_NAMES].sort()).toEqual(
+      Object.keys(LANE_RETENTION_REGISTRY).sort(),
+    );
+  });
+
   it("reports registered lane bytes and lines against the declared ceiling", () => {
     const below = runLaneCensusProbe({
       lanes: [
@@ -43,9 +51,13 @@ describe("lane census operational probe", () => {
     });
 
     expect(below).toMatchObject({ verdict: "ok" });
-    expect(below.evidence).toContain("process-deaths(project)=99/100 bytes, 3 lines");
+    expect(below.evidence).toContain(
+      "process-deaths(project)=99/100 bytes, 3 lines",
+    );
     expect(above).toMatchObject({ verdict: "red" });
-    expect(above.evidence).toContain("process-deaths(project)=101/100 bytes, 4 lines [over]");
+    expect(above.evidence).toContain(
+      "process-deaths(project)=101/100 bytes, 4 lines [over]",
+    );
   });
 
   it("flags an unregistered TOONL lane and a dead-pid replacement temp", () => {
@@ -53,13 +65,23 @@ describe("lane census operational probe", () => {
       lanes: [],
       unregisteredToonl: [".red/state/unknown/events.toonl"],
       temps: [
-        { path: ".red/state/deaths/deaths.toonl.rotate-42", pid: 42, pidAlive: false },
-        { path: "[host]/redskilled.log.toonl.retaining-43", pid: 43, pidAlive: true },
+        {
+          path: ".red/state/deaths/deaths.toonl.rotate-42",
+          pid: 42,
+          pidAlive: false,
+        },
+        {
+          path: "[host]/redskilled.log.toonl.retaining-43",
+          pid: 43,
+          pidAlive: true,
+        },
       ],
     });
 
     expect(result).toMatchObject({ verdict: "red" });
-    expect(result.evidence).toContain("unregistered=.red/state/unknown/events.toonl");
+    expect(result.evidence).toContain(
+      "unregistered=.red/state/unknown/events.toonl",
+    );
     expect(result.evidence).toContain(
       "dead-pid-temps=.red/state/deaths/deaths.toonl.rotate-42(pid=42)",
     );
@@ -71,9 +93,59 @@ describe("lane census operational probe", () => {
     const projectRoot = join(root, "project");
     const hostRoot = join(root, "host");
     try {
-      const projectDeaths = join(projectRoot, ".red", "state", "deaths", "deaths.toonl");
-      const workerLog = join(projectRoot, ".red", "tmp", "workers", "wTEST", "worker.log.toonl");
-      const unknown = join(projectRoot, ".red", "state", "unknown", "events.toonl");
+      const projectDeaths = join(
+        projectRoot,
+        ".red",
+        "state",
+        "deaths",
+        "deaths.toonl",
+      );
+      const workerLog = join(
+        projectRoot,
+        ".red",
+        "tmp",
+        "workers",
+        "wTEST",
+        "worker.log.toonl",
+      );
+      const workerLiveness = join(
+        projectRoot,
+        ".red",
+        "tmp",
+        "workers",
+        "wTEST",
+        "liveness.toonl",
+      );
+      const supervisorLog = join(
+        projectRoot,
+        ".red",
+        "tmp",
+        "supervisors",
+        "s1",
+        "supervisor.log.toonl",
+      );
+      const monitorLog = join(
+        projectRoot,
+        ".red",
+        "tmp",
+        "monitors",
+        "m1",
+        "monitor.log.toonl",
+      );
+      const legacyRspSpool = join(
+        projectRoot,
+        ".red",
+        "state",
+        "rsp",
+        "rsp-telemetry.spool.jsonl",
+      );
+      const unknown = join(
+        projectRoot,
+        ".red",
+        "state",
+        "unknown",
+        "events.toonl",
+      );
       const deadTemp = `${projectDeaths}.rotate-42`;
       const deadDrain = join(
         projectRoot,
@@ -84,15 +156,31 @@ describe("lane census operational probe", () => {
       );
       const hostEvents = join(hostRoot, "redskilled.log.toonl");
       await Promise.all([
-        mkdir(join(projectRoot, ".red", "state", "deaths"), { recursive: true }),
-        mkdir(join(projectRoot, ".red", "tmp", "workers", "wTEST"), { recursive: true }),
-        mkdir(join(projectRoot, ".red", "state", "unknown"), { recursive: true }),
+        mkdir(join(projectRoot, ".red", "state", "deaths"), {
+          recursive: true,
+        }),
+        mkdir(join(projectRoot, ".red", "tmp", "workers", "wTEST"), {
+          recursive: true,
+        }),
+        mkdir(join(projectRoot, ".red", "tmp", "supervisors", "s1"), {
+          recursive: true,
+        }),
+        mkdir(join(projectRoot, ".red", "tmp", "monitors", "m1"), {
+          recursive: true,
+        }),
+        mkdir(join(projectRoot, ".red", "state", "unknown"), {
+          recursive: true,
+        }),
         mkdir(join(projectRoot, ".red", "state", "rsp"), { recursive: true }),
         mkdir(hostRoot, { recursive: true }),
       ]);
       await Promise.all([
         writeFile(projectDeaths, "header\nrecord\n"),
         writeFile(workerLog, "[3]{msg}:\none\ntwo\nthree\n"),
+        writeFile(workerLiveness, "[1]{msg}:\nalive\n"),
+        writeFile(supervisorLog, "[1]{msg}:\nsupervising\n"),
+        writeFile(monitorLog, "[1]{msg}:\nmonitoring\n"),
+        writeFile(legacyRspSpool, '{"legacy":true}\n'),
         writeFile(unknown, "mystery\n"),
         writeFile(deadTemp, "partial"),
         writeFile(deadDrain, "pending telemetry"),
@@ -105,29 +193,52 @@ describe("lane census operational probe", () => {
         isPidAlive: (pid) => pid !== 42,
       });
 
-      expect(input.lanes).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          id: "process-deaths",
-          tier: "project",
-          path: ".red/state/deaths/deaths.toonl",
-          bytes: 14,
-          lines: 2,
-        }),
-        expect.objectContaining({
-          id: "worker-log",
-          tier: "project",
-          path: ".red/tmp/workers/wTEST/worker.log.toonl",
-          lines: 3,
-          maxLines: 50_000,
-        }),
-        expect.objectContaining({
-          id: "redskilled-events",
-          tier: "host",
-          path: "[host]/redskilled.log.toonl",
-          lines: 1,
-        }),
-      ]));
-      expect(input.unregisteredToonl).toEqual([".red/state/unknown/events.toonl"]);
+      expect(input.lanes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "process-deaths",
+            tier: "project",
+            path: ".red/state/deaths/deaths.toonl",
+            bytes: 14,
+            lines: 2,
+          }),
+          expect.objectContaining({
+            id: "worker-log",
+            tier: "project",
+            path: ".red/tmp/workers/wTEST/worker.log.toonl",
+            lines: 3,
+            maxLines: 50_000,
+          }),
+          expect.objectContaining({
+            id: "worker-liveness",
+            path: ".red/tmp/workers/wTEST/liveness.toonl",
+            lines: 1,
+          }),
+          expect.objectContaining({
+            id: "supervisor-log",
+            path: ".red/tmp/supervisors/s1/supervisor.log.toonl",
+            maxLines: 50_000,
+          }),
+          expect.objectContaining({
+            id: "monitor-log",
+            path: ".red/tmp/monitors/m1/monitor.log.toonl",
+            maxLines: 50_000,
+          }),
+          expect.objectContaining({
+            id: "rsp-telemetry-legacy-spool",
+            path: ".red/state/rsp/rsp-telemetry.spool.jsonl",
+          }),
+          expect.objectContaining({
+            id: "redskilled-events",
+            tier: "host",
+            path: "[host]/redskilled.log.toonl",
+            lines: 1,
+          }),
+        ]),
+      );
+      expect(input.unregisteredToonl).toEqual([
+        ".red/state/unknown/events.toonl",
+      ]);
       expect(input.temps).toContainEqual({
         path: ".red/state/deaths/deaths.toonl.rotate-42",
         pid: 42,
@@ -159,9 +270,8 @@ describe("lane census operational probe", () => {
         projectRoot,
         hostRoot,
         isPidAlive: (pid) => pid === process.pid,
-        readStat: async (path) => path === workerLog
-          ? { size: warningBytes + 1 }
-          : stat(path),
+        readStat: async (path) =>
+          path === workerLog ? { size: warningBytes + 1 } : stat(path),
       });
       const result = runLaneCensusProbe(input);
 
@@ -176,7 +286,9 @@ describe("lane census operational probe", () => {
   });
 
   it("is reachable through the shared operational probe registry", async () => {
-    expect(OPERATIONAL_PROBES.map((probe) => probe.id)).toContain("runtime.lane-census");
+    expect(OPERATIONAL_PROBES.map((probe) => probe.id)).toContain(
+      "runtime.lane-census",
+    );
 
     const report = await runOperationalProbes({
       remoteUrls: [],
@@ -187,6 +299,8 @@ describe("lane census operational probe", () => {
       },
     });
 
-    expect(report.findings).toContainEqual(expect.objectContaining({ id: "runtime.lane-census" }));
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ id: "runtime.lane-census" }),
+    );
   });
 });

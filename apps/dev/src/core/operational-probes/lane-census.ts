@@ -17,10 +17,7 @@ import {
   stateDir,
   tmpDir,
 } from "@reddb-io/shared/red-paths.js";
-import {
-  DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES,
-  REDSKILLED_EVENT_LANE_FILE,
-} from "@reddb-io/redskilled/event-lane";
+import { REDSKILLED_EVENT_LANE_FILE } from "@reddb-io/redskilled/event-lane";
 import type {
   OperationalProbe,
   OperationalProbeContext,
@@ -31,6 +28,23 @@ export const LANE_CENSUS_PROBE_ID = "runtime.lane-census";
 export const LANE_CENSUS_PROBE_NAME = "Runtime lane census";
 export const LANE_CENSUS_CANONICAL_FIX =
   "Repair the owning lane writer: enforce its declared ceiling, register intentional TOONL lanes, and let the owner sweep dead-pid replacement temps.";
+
+/** Explicit census side of the writer-policy parity invariant. */
+export const LANE_CENSUS_POLICY_NAMES = [
+  "process-deaths",
+  "github-spend",
+  "castle-singleton-events",
+  "rsp-telemetry-spool",
+  "rsp-telemetry-legacy-spool",
+  "rsp-telemetry-corrections",
+  "death-attributions",
+  "worker-log",
+  "supervisor-log",
+  "monitor-log",
+  "worker-liveness",
+  "castle-history",
+  "redskilled-events",
+] as const;
 
 export type LaneCensusTier = "project" | "host";
 
@@ -70,7 +84,9 @@ export interface CollectLaneCensusOptions {
   readonly hostRoot: string;
   readonly isPidAlive?: (pid: number) => boolean | Promise<boolean>;
   /** Stat seam for the live-log size read; defaults to fs stat. */
-  readonly readStat?: (path: string) => Promise<{ size: number }> | { size: number };
+  readonly readStat?: (
+    path: string,
+  ) => Promise<{ size: number }> | { size: number };
 }
 
 interface LaneRegistration {
@@ -98,7 +114,11 @@ function pathInside(root: string, path: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function safeDisplay(projectRoot: string, hostRoot: string, path: string): string {
+function safeDisplay(
+  projectRoot: string,
+  hostRoot: string,
+  path: string,
+): string {
   return pathInside(projectRoot, path)
     ? projectDisplay(projectRoot, path)
     : hostDisplay(hostRoot, path);
@@ -114,15 +134,28 @@ function registration(
   return { id, tier, absolutePath, path, policy };
 }
 
-function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistration[] {
+function staticRegistrations(
+  projectRoot: string,
+  hostRoot: string,
+): LaneRegistration[] {
   const projectState = stateDir(projectRoot);
   const hostState = join(hostRoot, "state");
   const project = (id: string, path: string, policy: LaneRetentionPolicy) =>
-    registration(id, "project", path, projectDisplay(projectRoot, path), policy);
+    registration(
+      id,
+      "project",
+      path,
+      projectDisplay(projectRoot, path),
+      policy,
+    );
   const host = (id: string, path: string, policy: LaneRetentionPolicy) =>
     registration(id, "host", path, hostDisplay(hostRoot, path), policy);
   return [
-    project("process-deaths", deathLaneFile(projectRoot), LANE_RETENTION_REGISTRY["process-deaths"]),
+    project(
+      "process-deaths",
+      deathLaneFile(projectRoot),
+      LANE_RETENTION_REGISTRY["process-deaths"],
+    ),
     project(
       "death-attributions",
       deathAttributionFile(projectRoot),
@@ -154,6 +187,11 @@ function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistr
       LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
     ),
     project(
+      "rsp-telemetry-legacy-spool",
+      join(rspStateDir(projectRoot), "rsp-telemetry.spool.jsonl"),
+      LANE_RETENTION_REGISTRY["rsp-telemetry-legacy-spool"],
+    ),
+    project(
       "rsp-telemetry-corrections",
       join(rspStateDir(projectRoot), "rsp-telemetry.spool.corrections.toonl"),
       LANE_RETENTION_REGISTRY["rsp-telemetry-corrections"],
@@ -161,9 +199,13 @@ function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistr
     host(
       "redskilled-events",
       join(hostRoot, REDSKILLED_EVENT_LANE_FILE),
-      { maxBytes: DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES },
+      LANE_RETENTION_REGISTRY["redskilled-events"],
     ),
-    host("process-deaths", deathLaneFileIn(hostState), LANE_RETENTION_REGISTRY["process-deaths"]),
+    host(
+      "process-deaths",
+      deathLaneFileIn(hostState),
+      LANE_RETENTION_REGISTRY["process-deaths"],
+    ),
     host(
       "death-attributions",
       deathAttributionFileIn(hostState),
@@ -193,7 +235,8 @@ async function walkFiles(root: string, recursive = true): Promise<string[]> {
   for (const entry of entries) {
     const path = join(root, entry.name);
     if (entry.isFile()) files.push(path);
-    else if (recursive && entry.isDirectory()) files.push(...await walkFiles(path));
+    else if (recursive && entry.isDirectory())
+      files.push(...(await walkFiles(path)));
   }
   return files;
 }
@@ -240,8 +283,12 @@ async function inspectLane(lane: LaneRegistration): Promise<LaneCensusLane> {
     path: lane.path,
     bytes,
     lines: await countLines(lane.absolutePath, bytes),
-    ...(lane.policy.maxBytes === undefined ? {} : { maxBytes: lane.policy.maxBytes }),
-    ...(lane.policy.maxLines === undefined ? {} : { maxLines: lane.policy.maxLines }),
+    ...(lane.policy.maxBytes === undefined
+      ? {}
+      : { maxBytes: lane.policy.maxBytes }),
+    ...(lane.policy.maxLines === undefined
+      ? {}
+      : { maxLines: lane.policy.maxLines }),
   };
 }
 
@@ -260,34 +307,97 @@ export async function collectLaneCensusProbeInput(
 ): Promise<LaneCensusProbeInput> {
   const { projectRoot, hostRoot } = options;
   const workersRoot = join(tmpDir(projectRoot), "workers");
-  const [projectStateFiles, workerFiles, hostRootFiles, hostStateFiles] = await Promise.all([
+  const supervisorsRoot = join(tmpDir(projectRoot), "supervisors");
+  const monitorsRoot = join(tmpDir(projectRoot), "monitors");
+  const [
+    projectStateFiles,
+    workerFiles,
+    supervisorFiles,
+    monitorFiles,
+    hostRootFiles,
+    hostStateFiles,
+  ] = await Promise.all([
     walkFiles(stateDir(projectRoot)),
     walkFiles(workersRoot),
+    walkFiles(supervisorsRoot),
+    walkFiles(monitorsRoot),
     walkFiles(hostRoot, false),
     walkFiles(join(hostRoot, "state")),
   ]);
   const registrations = staticRegistrations(projectRoot, hostRoot);
   for (const absolutePath of workerFiles) {
     const segments = slash(relative(workersRoot, absolutePath)).split("/");
-    if (segments.length !== 2 || segments[1] !== "worker.log.toonl") continue;
-    registrations.push(registration(
-      "worker-log",
-      "project",
-      absolutePath,
-      projectDisplay(projectRoot, absolutePath),
-      LANE_RETENTION_REGISTRY["worker-log"],
-    ));
+    if (segments.length !== 2) continue;
+    const lane =
+      segments[1] === "worker.log.toonl"
+        ? { id: "worker-log", policy: LANE_RETENTION_REGISTRY["worker-log"] }
+        : segments[1] === "liveness.toonl"
+          ? {
+              id: "worker-liveness",
+              policy: LANE_RETENTION_REGISTRY["worker-liveness"],
+            }
+          : undefined;
+    if (!lane) continue;
+    registrations.push(
+      registration(
+        lane.id,
+        "project",
+        absolutePath,
+        projectDisplay(projectRoot, absolutePath),
+        lane.policy,
+      ),
+    );
+  }
+  for (const [root, files, filename, id, policy] of [
+    [
+      supervisorsRoot,
+      supervisorFiles,
+      "supervisor.log.toonl",
+      "supervisor-log",
+      LANE_RETENTION_REGISTRY["supervisor-log"],
+    ],
+    [
+      monitorsRoot,
+      monitorFiles,
+      "monitor.log.toonl",
+      "monitor-log",
+      LANE_RETENTION_REGISTRY["monitor-log"],
+    ],
+  ] as const) {
+    for (const absolutePath of files) {
+      const segments = slash(relative(root, absolutePath)).split("/");
+      if (segments.length !== 2 || segments[1] !== filename) continue;
+      registrations.push(
+        registration(
+          id,
+          "project",
+          absolutePath,
+          projectDisplay(projectRoot, absolutePath),
+          policy,
+        ),
+      );
+    }
   }
 
-  const registeredPaths = new Set(registrations.map((lane) => lane.absolutePath));
-  const unregisteredToonl = [...projectStateFiles, ...hostRootFiles, ...hostStateFiles]
+  const registeredPaths = new Set(
+    registrations.map((lane) => lane.absolutePath),
+  );
+  const discoveredFiles = [
+    ...projectStateFiles,
+    ...workerFiles,
+    ...supervisorFiles,
+    ...monitorFiles,
+    ...hostRootFiles,
+    ...hostStateFiles,
+  ];
+  const unregisteredToonl = discoveredFiles
     .filter((path) => path.endsWith(".toonl") && !registeredPaths.has(path))
     .map((path) => safeDisplay(projectRoot, hostRoot, path))
     .sort();
 
   const isPidAlive = options.isPidAlive ?? defaultPidAlive;
   const temps: LaneCensusTemp[] = [];
-  for (const path of [...projectStateFiles, ...workerFiles, ...hostRootFiles, ...hostStateFiles]) {
+  for (const path of discoveredFiles) {
     const pid = laneTempOwnerPid(path);
     if (pid === null) continue;
     temps.push({
@@ -304,8 +414,11 @@ export async function collectLaneCensusProbeInput(
     if (segments.length !== 2 || segments[1] !== "worker.log.toonl") continue;
     const pidPath = join(workersRoot, segments[0]!, "worker.pid");
     if (!workerFiles.includes(pidPath)) continue;
-    const pid = Number((await readFile(pidPath, "utf8").catch(() => "")).trim());
-    if (!Number.isInteger(pid) || pid <= 0 || !(await isPidAlive(pid))) continue;
+    const pid = Number(
+      (await readFile(pidPath, "utf8").catch(() => "")).trim(),
+    );
+    if (!Number.isInteger(pid) || pid <= 0 || !(await isPidAlive(pid)))
+      continue;
     const size = (await readStat(absolutePath)).size;
     if (size <= LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES) continue;
     liveLogs.push({
@@ -316,7 +429,9 @@ export async function collectLaneCensusProbeInput(
   }
 
   return {
-    lanes: (await Promise.all(registrations.map(inspectLane))).sort((a, b) => a.path.localeCompare(b.path)),
+    lanes: (await Promise.all(registrations.map(inspectLane))).sort((a, b) =>
+      a.path.localeCompare(b.path),
+    ),
     unregisteredToonl,
     temps: temps.sort((a, b) => a.path.localeCompare(b.path)),
     liveLogs: liveLogs.sort((a, b) => a.path.localeCompare(b.path)),
@@ -324,19 +439,27 @@ export async function collectLaneCensusProbeInput(
 }
 
 function laneOverCeiling(lane: LaneCensusLane): boolean {
-  return (lane.maxBytes !== undefined && lane.bytes > lane.maxBytes)
-    || (lane.maxLines !== undefined && lane.lines > lane.maxLines);
+  return (
+    (lane.maxBytes !== undefined && lane.bytes > lane.maxBytes) ||
+    (lane.maxLines !== undefined && lane.lines > lane.maxLines)
+  );
 }
 
 function laneEvidence(lane: LaneCensusLane): string {
   const ceilings = [
-    lane.maxBytes === undefined ? `${lane.bytes} bytes` : `${lane.bytes}/${lane.maxBytes} bytes`,
-    lane.maxLines === undefined ? `${lane.lines} lines` : `${lane.lines}/${lane.maxLines} lines`,
+    lane.maxBytes === undefined
+      ? `${lane.bytes} bytes`
+      : `${lane.bytes}/${lane.maxBytes} bytes`,
+    lane.maxLines === undefined
+      ? `${lane.lines} lines`
+      : `${lane.lines}/${lane.maxLines} lines`,
   ];
   return `${lane.id}(${lane.tier})=${ceilings.join(", ")}${laneOverCeiling(lane) ? " [over]" : ""}`;
 }
 
-export function runLaneCensusProbe(input: LaneCensusProbeInput | undefined): OperationalProbeResult {
+export function runLaneCensusProbe(
+  input: LaneCensusProbeInput | undefined,
+): OperationalProbeResult {
   if (!input) {
     return {
       id: LANE_CENSUS_PROBE_ID,
@@ -350,17 +473,24 @@ export function runLaneCensusProbe(input: LaneCensusProbeInput | undefined): Ope
   const over = input.lanes.filter(laneOverCeiling);
   const deadTemps = input.temps.filter((temp) => !temp.pidAlive);
   const liveLogs = input.liveLogs ?? [];
-  const red = over.length > 0 || input.unregisteredToonl.length > 0 || deadTemps.length > 0
-    || liveLogs.length > 0;
+  const red =
+    over.length > 0 ||
+    input.unregisteredToonl.length > 0 ||
+    deadTemps.length > 0 ||
+    liveLogs.length > 0;
   const details = input.lanes.map(laneEvidence);
   for (const log of liveLogs) {
-    details.push(`live-log=${log.path} ${log.bytes}/${log.warnBytes} bytes [over]`);
+    details.push(
+      `live-log=${log.path} ${log.bytes}/${log.warnBytes} bytes [over]`,
+    );
   }
   if (input.unregisteredToonl.length > 0) {
     details.push(`unregistered=${input.unregisteredToonl.join(",")}`);
   }
   if (deadTemps.length > 0) {
-    details.push(`dead-pid-temps=${deadTemps.map((temp) => `${temp.path}(pid=${temp.pid})`).join(",")}`);
+    details.push(
+      `dead-pid-temps=${deadTemps.map((temp) => `${temp.path}(pid=${temp.pid})`).join(",")}`,
+    );
   }
 
   return {
@@ -377,5 +507,6 @@ export const laneCensusProbe: OperationalProbe = {
   id: LANE_CENSUS_PROBE_ID,
   name: LANE_CENSUS_PROBE_NAME,
   canonicalFix: LANE_CENSUS_CANONICAL_FIX,
-  run: (context: OperationalProbeContext) => runLaneCensusProbe(context.laneCensus),
+  run: (context: OperationalProbeContext) =>
+    runLaneCensusProbe(context.laneCensus),
 };

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { renameSync, rmSync, writeFileSync } from "node:fs";
-import { appendTelemetryEventSync } from "../src/telemetry.js";
+import {
+  appendTelemetryEventSync,
+  takeTelemetrySpool,
+} from "../src/telemetry.js";
 import {
   appendTelemetryEvent,
   calibratedTelemetryTiming,
@@ -62,7 +65,9 @@ describe("rsp telemetry spool", () => {
       tokens_saved_high: null,
       dollars_saved_estimate_usd: 0.00125,
     });
-    expect(tokenSavingsEstimate(1_000_000, false, "claude-sonnet-4")).toMatchObject({
+    expect(
+      tokenSavingsEstimate(1_000_000, false, "claude-sonnet-4"),
+    ).toMatchObject({
       tokens_saved: 1_000_000,
       dollars_saved_estimate_usd: 3,
       pricing_model_family: "claude-sonnet-4",
@@ -84,10 +89,12 @@ describe("rsp telemetry spool", () => {
     ]);
 
     await writeFile(join(root, ".red", "tmp", "not-a-dir"), "x", "utf8");
-    await expect(appendTelemetryEvent(join(root, "not-there"), {
-      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
-      id: "lost",
-    })).resolves.toBeUndefined();
+    await expect(
+      appendTelemetryEvent(join(root, "not-there"), {
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "lost",
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("retries an append whose inode is renamed away during the write", async () => {
@@ -96,23 +103,30 @@ describe("rsp telemetry spool", () => {
     const draining = `${spool}.999999.1783958744462.drain`;
     let raced = false;
 
-    appendTelemetryEventSync(root, {
-      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
-      id: "rename-race",
-      command: "git status",
-    }, undefined, {
-      afterWrite(path, attempt) {
-        if (attempt !== 1) return;
-        raced = true;
-        renameSync(path, draining);
-        writeFileSync(path, "", { mode: 0o600 });
-        rmSync(draining);
+    appendTelemetryEventSync(
+      root,
+      {
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "rename-race",
+        command: "git status",
       },
-    });
+      undefined,
+      {
+        afterWrite(path, attempt) {
+          if (attempt !== 1) return;
+          raced = true;
+          renameSync(path, draining);
+          writeFileSync(path, "", { mode: 0o600 });
+          rmSync(draining);
+        },
+      },
+    );
 
     expect(raced).toBe(true);
     await expect(readSpoolRows(root)).resolves.toEqual([
-      expect.objectContaining({ event: expect.objectContaining({ id: "rename-race" }) }),
+      expect.objectContaining({
+        event: expect.objectContaining({ id: "rename-race" }),
+      }),
     ]);
   });
 
@@ -121,27 +135,42 @@ describe("rsp telemetry spool", () => {
     const retention = { maxBytes: 1_024 };
 
     for (let index = 0; index < 12; index += 1) {
-      await appendTelemetryEvent(root, {
-        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
-        id: `bounded-${index}`,
-        command: `git log ${"x".repeat(120)}`,
-      }, retention);
+      await appendTelemetryEvent(
+        root,
+        {
+          collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+          id: `bounded-${index}`,
+          command: `git log ${"x".repeat(120)}`,
+        },
+        retention,
+      );
     }
 
     const rows = await readSpoolRows(root);
-    expect(rows.some((row) => row.event && (row.event as { id?: string }).id === "bounded-0")).toBe(false);
+    expect(
+      rows.some(
+        (row) => row.event && (row.event as { id?: string }).id === "bounded-0",
+      ),
+    ).toBe(false);
     expect(rows.at(-1)).toMatchObject({ event: { id: "bounded-11" } });
-    expect(Buffer.byteLength(await readFile(telemetrySpoolPath(root), "utf8"))).toBeLessThanOrEqual(retention.maxBytes);
-    await expect(readCorrectionRows(root)).resolves.toContainEqual(expect.objectContaining({
-      action: "retry",
-      event: expect.objectContaining({
-        collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
-        reason: "telemetry spool retention",
-        bytes: expect.any(Number),
+    expect(
+      Buffer.byteLength(await readFile(telemetrySpoolPath(root), "utf8")),
+    ).toBeLessThanOrEqual(retention.maxBytes);
+    await expect(readCorrectionRows(root)).resolves.toContainEqual(
+      expect.objectContaining({
+        action: "retry",
+        event: expect.objectContaining({
+          collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+          reason: "telemetry spool retention",
+          bytes: expect.any(Number),
+        }),
       }),
-    }));
-    const correction = (await readCorrectionRows(root)).find((row) => row.event !== undefined);
-    if (correction === undefined) throw new Error("no correction row carrying an event was written");
+    );
+    const correction = (await readCorrectionRows(root)).find(
+      (row) => row.event !== undefined,
+    );
+    if (correction === undefined)
+      throw new Error("no correction row carrying an event was written");
     expect((correction.event as { bytes?: number }).bytes).toBeGreaterThan(0);
   });
 
@@ -176,16 +205,22 @@ describe("rsp telemetry spool", () => {
     });
     expect(retried.join("\n")).toContain('"id":"retry-me"');
     const afterRetry = await readCorrectionRows(root);
-    expect(afterRetry.at(-1)).toEqual(expect.objectContaining({ action: "resolved" }));
+    expect(afterRetry.at(-1)).toEqual(
+      expect.objectContaining({ action: "resolved" }),
+    );
   });
 
   it("drains legacy JSONL spools by sniffing format without rewriting them", async () => {
     const root = await tempRoot();
-    await writeFile(telemetryLegacySpoolPath(root), `${JSON.stringify({
-      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
-      id: "legacy-jsonl",
-      command: "git status",
-    })}\n`, "utf8");
+    await writeFile(
+      telemetryLegacySpoolPath(root),
+      `${JSON.stringify({
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "legacy-jsonl",
+        command: "git status",
+      })}\n`,
+      "utf8",
+    );
 
     const drained: string[] = [];
     await drainTelemetrySpool(root, async (line) => {
@@ -195,7 +230,27 @@ describe("rsp telemetry spool", () => {
 
     expect(drained.join("\n")).toContain('"id":"legacy-jsonl"');
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
-    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(telemetryLegacySpoolPath(root), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("applies the legacy spool retention policy before migration drain", async () => {
+    const root = await tempRoot();
+    await writeFile(
+      telemetryLegacySpoolPath(root),
+      `${JSON.stringify({
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "oversized-legacy-jsonl",
+        command: "git status",
+      })}\n`,
+      "utf8",
+    );
+
+    const drained = await takeTelemetrySpool(root, {
+      legacy: { maxBytes: 0, targetRatio: 0.5 },
+    });
+    expect(drained.join("\n")).not.toContain("oversized-legacy-jsonl");
   });
 
   it("ingests orphaned .drain files left behind by a crashed drain", async () => {
@@ -248,7 +303,9 @@ describe("rsp telemetry spool", () => {
 
     expect(drained.join("\n")).toContain('"id":"orphaned"');
     expect(drained.join("\n")).not.toContain('"id":"not-mine"');
-    await expect(readFile(inFlight, "utf8")).resolves.toContain('"id":"not-mine"');
+    await expect(readFile(inFlight, "utf8")).resolves.toContain(
+      '"id":"not-mine"',
+    );
   });
 
   it("keeps oversized raw and emitted text out of the spool while preserving byte estimates", async () => {
@@ -313,14 +370,26 @@ describe("rsp telemetry spool", () => {
     await server;
 
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
-    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "boot-event")).resolves.toMatchObject({
+    await expect(
+      readTelemetry(
+        storeUri,
+        RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        "boot-event",
+      ),
+    ).resolves.toMatchObject({
       id: "boot-event",
       command: "git status",
       tokens_raw: expect.any(Number),
       tokens_emitted: expect.any(Number),
       estimated: false,
     });
-    await expect(readTelemetry(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION, "idle-event")).resolves.toMatchObject({
+    await expect(
+      readTelemetry(
+        storeUri,
+        RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+        "idle-event",
+      ),
+    ).resolves.toMatchObject({
       id: "idle-event",
       reason: "resident unavailable",
     });
@@ -361,12 +430,18 @@ describe("rsp telemetry spool", () => {
     await waitForResident(paths.socketPath, timing.waitTimeoutMs);
     await server;
 
-    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "exact")).resolves.toMatchObject({
+    await expect(
+      readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "exact"),
+    ).resolves.toMatchObject({
       tokens_raw: expect.any(Number),
       tokens_emitted: expect.any(Number),
       estimated: false,
     });
-    const estimated = await readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "estimated");
+    const estimated = await readTelemetry(
+      storeUri,
+      RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      "estimated",
+    );
     expect(estimated).toMatchObject({
       tokens_raw: Math.ceil(Buffer.byteLength(huge, "utf8") / 4),
       tokens_emitted: Math.ceil(Buffer.byteLength(huge, "utf8") / 4),
@@ -412,9 +487,15 @@ describe("rsp telemetry spool", () => {
     await waitForResident(paths.socketPath, timing.waitTimeoutMs);
     await server;
 
-    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "expired")).resolves.toBeNull();
-    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "oldest")).resolves.toBeNull();
-    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "newest")).resolves.toMatchObject({
+    await expect(
+      readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "expired"),
+    ).resolves.toBeNull();
+    await expect(
+      readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "oldest"),
+    ).resolves.toBeNull();
+    await expect(
+      readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "newest"),
+    ).resolves.toMatchObject({
       id: "newest",
     });
   }, 60_000);
@@ -464,11 +545,14 @@ describe("rsp telemetry spool", () => {
     });
     await waitForResident(paths.socketPath, timing.waitTimeoutMs);
 
-    const response = await sendResidentRequest({ socketPath: paths.socketPath }, {
-      id: "stats",
-      op: "telemetry-stats",
-      sinceDays: 7,
-    });
+    const response = await sendResidentRequest(
+      { socketPath: paths.socketPath },
+      {
+        id: "stats",
+        op: "telemetry-stats",
+        sinceDays: 7,
+      },
+    );
 
     expect(response.ok).toBe(true);
     expect(response.ok && response.value).toMatchObject({
@@ -480,7 +564,13 @@ describe("rsp telemetry spool", () => {
         raw_bytes: 1000,
         emitted_bytes: 100,
         bytes_saved: 900,
-        top_commands: [expect.objectContaining({ command: "git log", invocations: 1, bytes_saved: 900 })],
+        top_commands: [
+          expect.objectContaining({
+            command: "git log",
+            invocations: 1,
+            bytes_saved: 900,
+          }),
+        ],
       },
       health: {
         degradations: 1,
@@ -496,7 +586,10 @@ describe("rsp telemetry spool", () => {
             stderr_head: "unsupported git subcommand:",
           }),
         ],
-        most_recent: expect.objectContaining({ reason: "wrapper-crash", command: "git --version" }),
+        most_recent: expect.objectContaining({
+          reason: "wrapper-crash",
+          command: "git --version",
+        }),
       },
       latency: {
         wrapper_ms_p50: 12,
@@ -589,11 +682,14 @@ describe("rsp telemetry spool", () => {
     });
     await waitForResident(paths.socketPath, timing.waitTimeoutMs);
 
-    const response = await sendResidentRequest({ socketPath: paths.socketPath }, {
-      id: "stats",
-      op: "telemetry-stats",
-      sinceDays: 7,
-    });
+    const response = await sendResidentRequest(
+      { socketPath: paths.socketPath },
+      {
+        id: "stats",
+        op: "telemetry-stats",
+        sinceDays: 7,
+      },
+    );
 
     expect(response.ok).toBe(true);
     expect(response.ok && response.value).toMatchObject({
@@ -614,11 +710,14 @@ describe("rsp telemetry spool", () => {
         show_hit_rate: 0.5,
       },
     });
-    const accountingResponse = await sendResidentRequest({ socketPath: paths.socketPath }, {
-      id: "accounting-stats",
-      op: "accounting-stats",
-      byteBudget: 1_000,
-    });
+    const accountingResponse = await sendResidentRequest(
+      { socketPath: paths.socketPath },
+      {
+        id: "accounting-stats",
+        op: "accounting-stats",
+        byteBudget: 1_000,
+      },
+    );
     expect(accountingResponse.ok).toBe(true);
     expect(accountingResponse.ok && accountingResponse.value).toMatchObject({
       storage_classes: {
@@ -628,7 +727,13 @@ describe("rsp telemetry spool", () => {
       },
     });
     await server;
-    await expect(readTelemetry(storeUri, RSP_ACCOUNTING_EVENTS_COLLECTION, "accounted-invocation")).resolves.not.toHaveProperty("raw_text");
+    await expect(
+      readTelemetry(
+        storeUri,
+        RSP_ACCOUNTING_EVENTS_COLLECTION,
+        "accounted-invocation",
+      ),
+    ).resolves.not.toHaveProperty("raw_text");
   }, 60_000);
 
   it("computes contribution-rate stats from the dedicated decision lane", async () => {
@@ -678,7 +783,11 @@ describe("rsp telemetry spool", () => {
         saved_units: 1,
       });
 
-      const stats = await readTelemetryStats(db, 7, new Date("2026-07-11T00:00:00.000Z"));
+      const stats = await readTelemetryStats(
+        db,
+        7,
+        new Date("2026-07-11T00:00:00.000Z"),
+      );
 
       expect(stats.decisions).toEqual({
         seen: 5,
@@ -697,15 +806,38 @@ describe("rsp telemetry spool", () => {
         // field, never re-derived — the contribution lane reports whatever key
         // the minting surface recorded.
         by_command_family: [
-          { command_family: "git status", contributed: 0, passed: 2, failed_open: 0, contribution_rate: 0 },
-          { command_family: "gh api", contributed: 1, passed: 0, failed_open: 0, contribution_rate: 1 },
-          { command_family: "gh pr view json-jq", contributed: 0, passed: 1, failed_open: 0, contribution_rate: 0 },
-          { command_family: "unknown", contributed: 0, passed: 0, failed_open: 1, contribution_rate: 0 },
+          {
+            command_family: "git status",
+            contributed: 0,
+            passed: 2,
+            failed_open: 0,
+            contribution_rate: 0,
+          },
+          {
+            command_family: "gh api",
+            contributed: 1,
+            passed: 0,
+            failed_open: 0,
+            contribution_rate: 1,
+          },
+          {
+            command_family: "gh pr view json-jq",
+            contributed: 0,
+            passed: 1,
+            failed_open: 0,
+            contribution_rate: 0,
+          },
+          {
+            command_family: "unknown",
+            contributed: 0,
+            passed: 0,
+            failed_open: 1,
+            contribution_rate: 0,
+          },
         ],
       });
     } finally {
       await db.close();
     }
   });
-
 });
