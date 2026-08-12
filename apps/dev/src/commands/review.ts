@@ -10,7 +10,6 @@
 
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { Output } from "@reddb-io/red-castle";
-import { execTool } from "../runtime/exec.js";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { defaultSandcastleDeps, type AgentRunner } from "../core/execution.js";

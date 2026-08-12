@@ -18,6 +18,11 @@ const isRestCreatePullCall = (args: readonly string[]): boolean =>
 const isRestMergePullCall = (args: readonly string[]): boolean =>
   args.includes("PUT") && args.some((arg) => /\/pulls\/\d+\/merge$/.test(arg));
 
+// `listOpenPr` no longer issues the legacy `gh pr list`; it lists via REST
+// (#3663): `gh api repos/{o}/{r}/pulls -f state=open ...`.
+const isRestListOpenPullsCall = (args: readonly string[]): boolean =>
+  args.includes("api") && args.some((arg) => /repos\/.+\/pulls$/.test(arg)) && args.includes("state=open");
+
 // AFK end-to-end lifecycle harness against a REAL local git repo.
 //
 // process-issue.test.ts drives the SAME `processIssue(deps, input)` orchestrator
@@ -181,7 +186,7 @@ async function setup(opts: {
   const handleGh = async (argv: string[]): Promise<ExecOut> => {
     const prIdx = argv.indexOf("pr");
     const sub = prIdx >= 0 ? argv[prIdx + 1] : "";
-    if (sub === "list") {
+    if (sub === "list" || isRestListOpenPullsCall(argv)) {
       // Reuse-or-create: empty until `pr create` mints a number.
       return { code: 0, stdout: state.prNumber ? `${state.prNumber}\n` : "", stderr: "" };
     }

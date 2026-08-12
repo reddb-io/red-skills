@@ -107,7 +107,9 @@ describe("ETag polling transport", () => {
     const calls: string[][] = [];
     const exec = vi.fn(async (_cmd: string, args: readonly string[]) => {
       calls.push([...args]);
-      if (args[0] === "api" && String(args[2]).includes("/events")) {
+      // The realized argv is `api <path> -i [-H ...]`, so the events path
+      // lands at index 1 (the route), not index 2 (#3726).
+      if (args[0] === "api" && String(args[1]).includes("/events")) {
         const conditional = args.includes("-H");
         return {
           code: 0,
@@ -127,7 +129,7 @@ describe("ETag polling transport", () => {
     await forwarder.pollOnce();
 
     expect(deliveries).toEqual([]);
-    const second = calls.filter((args) => String(args[2]).includes("/events"))[1]!;
+    const second = calls.filter((args) => String(args[1]).includes("/events"))[1]!;
     expect(second).toContain("-H");
     expect(second.join(" ")).toContain('If-None-Match: "e1"');
   });
@@ -135,7 +137,7 @@ describe("ETag polling transport", () => {
   it("a new repo event becomes one delivery, deduped by id across cycles", async () => {
     dir = mkdtempSync(join(tmpdir(), "etag-"));
     const exec = vi.fn(async (_cmd: string, args: readonly string[]) => {
-      if (args[0] === "api" && String(args[2]).includes("/events")) {
+      if (args[0] === "api" && String(args[1]).includes("/events")) {
         return {
           code: 0,
           stdout: httpResponse(200, { ETag: '"e2"' }, [

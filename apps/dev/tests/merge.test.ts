@@ -97,6 +97,20 @@ const MERGED_PR_VIEW = JSON.stringify(
 
 const joined = (calls: string[][]): string[] => calls.map((c) => c.join(" "));
 
+/**
+ * True when `argv` is the routed open-PR lookup (#3663): `gh api
+ * repos/{o}/{r}/pulls -f state=open ...`. `listOpenPr` no longer issues the
+ * legacy `gh pr list`, so fakes must recognize this REST list shape to answer
+ * the head/base filter and hand back a PR number (or none).
+ */
+function listsOpenPr(argv: readonly string[]): boolean {
+  return (
+    argv.includes("api") &&
+    argv.some((a) => /repos\/.+\/pulls$/.test(a)) &&
+    argv.includes("state=open")
+  );
+}
+
 describe("integrateOrigin", () => {
   it("no-ops when local already at the origin tip", async () => {
     const { exec, calls } = fakeExec();
@@ -262,7 +276,7 @@ describe("landPr (unlocked path)", () => {
       const cmd = argv.join(" ");
       if (cmd.includes("api -X POST repos/reddb-io/red-skills/pulls")) prMade = true;
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
-      if (cmd.includes("pr list")) {
+      if (listsOpenPr(argv)) {
         return { code: 0, stdout: prMade ? "77\n" : "\n", stderr: "" };
       }
       if (cmd === "git -C /repo rev-parse --verify --quiet origin/main") {
@@ -305,7 +319,7 @@ describe("landPr (unlocked path)", () => {
 
   it("reuses an already-open PR instead of creating a second one", async () => {
     const { exec, calls } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "42\n" } },
     ]);
     const result = await landPr(exec, {
       repo: "reddb-io/red-skills",
@@ -324,7 +338,7 @@ describe("landPr (unlocked path)", () => {
 
   it("returns failure when the admin-merge fails", async () => {
     const { exec } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "5\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "5\n" } },
       { match: (a) => a.join(" ").includes("/merge"), result: { code: 1 } },
     ]);
     const result = await landPr(exec, {
@@ -341,7 +355,7 @@ describe("landPr (unlocked path)", () => {
 
   it("fails when no PR can be resolved after create", async () => {
     const { exec } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "\n" } },
     ]);
     const result = await landPr(exec, {
       repo: "reddb-io/red-skills",
@@ -357,7 +371,7 @@ describe("landPr (unlocked path)", () => {
 
   it("locked → admin-merges AND promotes the mirror without reading the primary", async () => {
     const { exec, calls } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "42\n" } },
       { match: (a) => a.join(" ") === "git -C /repo rev-parse --verify --quiet origin/feature-locked", result: { stdout: "lock-tip\n" } },
     ]);
     const result = await landPr(exec, {
@@ -745,7 +759,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
       const cmd = argv.join(" ");
       if (cmd.includes("api -X POST") && cmd.includes("/pulls")) prMade = true;
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
-      if (cmd.includes("pr list")) return { code: 0, stdout: prMade ? "88\n" : "\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: prMade ? "88\n" : "\n", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
     const result = await openReviewPr(review, {
@@ -768,7 +782,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
 
   it("reuses an open PR and re-applies the label (idempotent)", async () => {
     const { exec, calls } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "42\n" } },
     ]);
     const result = await openReviewPr(exec, {
       repo: "reddb-io/red-skills",
@@ -788,7 +802,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
 
   it("fails when the label edit fails (PR still resolved)", async () => {
     const { exec } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "5\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "5\n" } },
       { match: (a) => a.join(" ").includes("issues/5/labels"), result: { code: 1 } },
     ]);
     const result = await openReviewPr(exec, {
@@ -804,7 +818,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
 
   it("fails when no PR can be resolved", async () => {
     const { exec } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "\n" } },
     ]);
     const result = await openReviewPr(exec, {
       repo: "reddb-io/red-skills",
@@ -957,7 +971,7 @@ describe("landPr wait_for_review wiring", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "77\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "77\n", stderr: "" };
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr checks")) {
         checksPolled = true;
@@ -987,7 +1001,7 @@ describe("landPr wait_for_review wiring", () => {
 
   it("does NOT poll review checks by default (waitForReview absent)", async () => {
     const { exec, calls } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "42\n" } },
     ]);
     const result = await landPr(exec, {
       repo: "o/r",
@@ -1351,7 +1365,7 @@ describe("landPr CI-aware wiring (#812)", () => {
   it("returns the forge merge commit SHA after a synchronous PR merge", async () => {
     const exec: Exec = async (argv) => {
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "42\n", stderr: "" };
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
@@ -1376,7 +1390,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "77\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "77\n", stderr: "" };
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr view")) {
         viewed = true;
@@ -1402,7 +1416,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
       if (cmd.includes("pr view")) {
         return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] }), stderr: "" };
       }
@@ -1419,7 +1433,7 @@ describe("landPr CI-aware wiring (#812)", () => {
   it("returns ci-pending (no merge, no re-run) when checks stay pending", async () => {
     const exec: Exec = async (argv) => {
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
       if (cmd.includes("pr view")) {
         return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] }), stderr: "" };
       }
@@ -1444,7 +1458,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       const exec: Exec = async (argv) => {
         calls.push(argv);
         const cmd = argv.join(" ");
-        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
         if (cmd.includes("required_status_checks/contexts")) return { code: 0, stdout: protectionContexts, stderr: "" };
         if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
         if (cmd.includes("pr view")) {
@@ -1474,7 +1488,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       const exec: Exec = async (argv) => {
         calls.push(argv);
         const cmd = argv.join(" ");
-        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
         if (cmd.includes("required_status_checks/contexts")) return { code: 0, stdout: protectionContexts, stderr: "" };
         if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
         if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
@@ -1512,7 +1526,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
       if (cmd.includes("required_status_checks/contexts")) {
         return { code: 0, stdout: JSON.stringify(required), stderr: "" };
       }
@@ -1570,7 +1584,7 @@ describe("landPr CI-aware wiring (#812)", () => {
   it("returns conflict on DIRTY (real merge conflict, distinct from ci)", async () => {
     const exec: Exec = async (argv) => {
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
       if (cmd.includes("pr view")) {
         return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "DIRTY", statusCheckRollup: [] }), stderr: "" };
       }
@@ -1601,7 +1615,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       const exec: Exec = async (argv) => {
         calls.push(argv);
         const cmd = argv.join(" ");
-        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
         if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
         if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
           // CLEAN at the readiness poll, BEHIND once the base moves under the
@@ -1638,9 +1652,15 @@ describe("landPr CI-aware wiring (#812)", () => {
     });
 
     it("names the OBSERVED cause when the rejection is not a stale branch", async () => {
+      // #3726: without `ciAwait`, the rejection diagnosis reads only the 4 REST
+      // fields `listOpenPr`'s single-object route requests (no rollup) — a
+      // "protection-blocked" verdict needs the check rollup to rule out
+      // "checks-pending", so this scenario supplies `ciAwait.github` (the
+      // legacy argv-shaped `GithubMergeRead`, unaffected by the REST routing)
+      // to carry `statusCheckRollup` the way it always has.
       const exec: Exec = async (argv) => {
         const cmd = argv.join(" ");
-        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
         if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
           return {
             code: 0,
@@ -1653,6 +1673,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       };
       const r = await landPr(exec, {
         repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+        ciAwait: { github: githubFromExec(exec), sleep: async () => {} },
       });
       expect(r.ok).toBe(false);
       expect(r.reason).toBe("merge-failed");
@@ -1665,12 +1686,12 @@ describe("landPr CI-aware wiring (#812)", () => {
       let updates = 0;
       const exec: Exec = async (argv) => {
         const cmd = argv.join(" ");
-        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
-        if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
+        if (listsOpenPr(argv)) return { code: 0, stdout: "5\n", stderr: "" };
+        if (readsPull(argv)) {
           // a lane so busy the branch is BEHIND again on every look
           return {
             code: 0,
-            stdout: JSON.stringify({ mergeStateStatus: "BEHIND", mergeable: "MERGEABLE", statusCheckRollup: green }),
+            stdout: JSON.stringify(restPullBody({ mergeStateStatus: "BEHIND", mergeable: "MERGEABLE" })),
             stderr: "",
           };
         }
@@ -1696,7 +1717,7 @@ describe("landPr CI-aware wiring (#812)", () => {
 
   it("does NOT poll merge state by default (ciAwait absent)", async () => {
     const { exec, calls } = fakeExec([
-      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+      { match: (a) => listsOpenPr(a), result: { stdout: "42\n" } },
     ]);
     const r = await landPr(exec, {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
@@ -2262,7 +2283,7 @@ describe("landPr on a merge-queue base (#2986)", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "42\n", stderr: "" };
       if (readsPull(argv)) {
         const stdout = views[Math.min(i, views.length - 1)] ?? "";
         i += 1;
@@ -2327,7 +2348,7 @@ describe("landPr on a merge-queue base (#2986)", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "42\n", stderr: "" };
       if (readsPull(argv)) return { code: 1, stdout: "", stderr: "gh: could not read PR" };
       return { code: 0, stdout: "", stderr: "" };
     };
@@ -2530,7 +2551,7 @@ describe("the merge confirmation on a dirty PR (#3030)", () => {
     const exec: Exec = async (argv) => {
       calls.push(argv);
       const cmd = argv.join(" ");
-      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (listsOpenPr(argv)) return { code: 0, stdout: "42\n", stderr: "" };
       if (cmd.includes("/merge")) {
         opts.onMerge?.();
         return { code: 0, stdout: "", stderr: "" };

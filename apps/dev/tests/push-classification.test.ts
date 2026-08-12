@@ -230,7 +230,10 @@ describe("#2811 — work that reaches the remote is visible on the tracker", () 
             created = true;
             return { code: 0, stdout: "", stderr: "" };
           }
-          if (argv.includes("pr") && argv.includes("list")) {
+          if (
+            (argv.includes("pr") && argv.includes("list"))
+            || (argv.includes("api") && argv.some((a) => /repos\/.+\/pulls$/.test(a)) && argv.includes("state=open"))
+          ) {
             return { code: 0, stdout: created ? "77\n" : "", stderr: "" };
           }
           return { code: 0, stdout: "", stderr: "" };

@@ -22,7 +22,7 @@ describe("doLanding — happy paths", () => {
     // both merge hooks fired, in order.
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("pr list"))).toBe(true);
+    expect(j.some((c) => (c.includes("pr list") || (c.includes("api repos/") && c.includes("state=open"))))).toBe(true);
     expect(h.mergeCalls.some(isRestMergePullCall)).toBe(true);
     // unlocked never merges the attempt branch locally.
     expect(j.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
@@ -69,7 +69,7 @@ describe("doLanding — happy paths", () => {
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
-    expect(j.some((c) => c.includes("pr list"))).toBe(false);
+    expect(j.some((c) => (c.includes("pr list") || (c.includes("api repos/") && c.includes("state=open"))))).toBe(false);
     expect(h.mergeCalls.some(isRestMergePullCall)).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
@@ -261,7 +261,7 @@ describe("doLanding — abort / failure short-circuits", () => {
     expect(h.firedHooks).toEqual(["pre_merge"]);
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("merge --ff-only"))).toBe(false);
-    expect(j.some((c) => c.includes("pr list"))).toBe(false);
+    expect(j.some((c) => (c.includes("pr list") || (c.includes("api repos/") && c.includes("state=open"))))).toBe(false);
   });
 
   it("integrate failure (locked, in the worktree) → { ok:false, integrate-failed }, never lands or fires post_merge", async () => {
@@ -666,7 +666,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(prMerged(h.mergeCalls)).toBe(true);
     expect(directMerged(j)).toBe(false);
     // PR base is the resolved base (main here) — the reused-PR lookup keys on it.
-    expect(j.some((c) => c.includes("pr list") && c.includes("--base main"))).toBe(true);
+    expect(j.some((c) => (c.includes("pr list") || (c.includes("api repos/") && c.includes("state=open"))) && (c.includes("--base main") || c.includes('.base.ref == \"main\"')))).toBe(true);
   });
 
   it("no lock + false → DIRECT merge into main, no PR (offline, new)", async () => {
@@ -678,7 +678,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(directMerged(j)).toBe(true);
     // No PR opened/merged at all.
     expect(prMerged(h.mergeCalls)).toBe(false);
-    expect(j.some((c) => c.includes("pr list"))).toBe(false);
+    expect(j.some((c) => (c.includes("pr list") || (c.includes("api repos/") && c.includes("state=open"))))).toBe(false);
     // Merge ran in the isolated worktree, pushing main from its HEAD.
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
   });
@@ -717,7 +717,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     const j = joined(h.mergeCalls);
     expect(prMerged(h.mergeCalls)).toBe(true);
     // The PR targeted the lock branch as its base (PR #42 reused via pr list).
-    expect(j.some((c) => c.includes("pr list") && c.includes("--base feature-locked"))).toBe(true);
+    expect(j.some((c) => (c.includes("pr list") || (c.includes("api repos/") && c.includes("state=open"))) && (c.includes("--base feature-locked") || c.includes('.base.ref == \"feature-locked\"')))).toBe(true);
     // No local direct merge of the attempt branch.
     expect(directMerged(j)).toBe(false);
   });

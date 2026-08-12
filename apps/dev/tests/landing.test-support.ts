@@ -263,7 +263,12 @@ export function harness(opts: Opts = {}): Harness {
       if (j.startsWith(`git -C ${RWT} push origin HEAD:refs/heads/`) && j.includes("--force-with-lease")) {
         return { code: opts.rebasePushCode ?? 0, stdout: "", stderr: "" };
       }
-      if (argv.includes("pr") && argv.includes("list")) {
+      // Both rails answer the open-PR probe: legacy `gh pr list` and the routed
+      // REST read `gh api repos/{o}/{r}/pulls -f state=open ...` (#3726).
+      if (
+        (argv.includes("pr") && argv.includes("list")) ||
+        (argv.includes("api") && argv.some((a) => /repos\/.+\/pulls$/.test(a)) && argv.includes("state=open"))
+      ) {
         if (opts.createPr && !prCreated) return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "42\n", stderr: "" };
       }
@@ -309,12 +314,22 @@ export function harness(opts: Opts = {}): Harness {
       // (#3094) and answers a REST body.
       if (readsPull(argv)) {
         queuePolls += 1;
+        // The routed single-object read also serves the CI-aware merge state
+        // (#3726): carry the same fields the legacy `pr view` poll drove.
+        const ciMap: Record<string, { mergeStateStatus: string; mergeable: string }> = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE" },
+          "ci-failed": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE" },
+          "ci-pending": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE" },
+          conflict: { mergeStateStatus: "DIRTY", mergeable: "CONFLICTING" },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE" },
+        };
+        const ciView = ciMap[opts.ciAware ?? "merge"]!;
         // #3160: a confirmation that cannot READ the PR — the probe fails, so the
         // wait observes nothing rather than observing "not merged".
         if (opts.queueOutcome === "probe-failing") {
           return { code: 1, stdout: "", stderr: "gh: could not resolve host api.github.com" };
         }
-        const accepted = restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: true });
+        const accepted = restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: true, ...ciView });
         // Unset → the forge merged on the spot and the very first confirmation
         // says so. A test that opts in models the ENQUEUE: accepted first, then
         // its outcome, so the landing has something to actually wait through.
@@ -326,7 +341,7 @@ export function harness(opts: Opts = {}): Harness {
           return {
             code: 0,
             stdout: JSON.stringify(
-              restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: false }),
+              restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: false, ...ciView }),
             ),
             stderr: "",
           };
@@ -339,6 +354,7 @@ export function harness(opts: Opts = {}): Harness {
               mergedAt: "2026-08-01T00:00:00Z",
               mergeCommitOid: "abc1234",
               autoMerge: false,
+              ...ciView,
             }),
           ),
           stderr: "",

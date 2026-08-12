@@ -23,8 +23,9 @@ describe("repoVisibility (#1101)", () => {
   it("reads and lower-cases a PUBLIC repo", async () => {
     const { ctx, calls } = ghReturning(JSON.stringify({ visibility: "PUBLIC" }));
     expect(await repoVisibility(ctx)).toBe("public");
-    // Passes the repo slug + the visibility json field.
-    expect(calls[0]).toEqual(["repo", "view", "acme/widgets", "--json", "visibility"]);
+    // The routed REST read (#3730): a bare `gh api repos/{o}/{r}` — the repo
+    // object already carries `visibility` at the top level.
+    expect(calls[0]).toEqual(["api", "repos/acme/widgets"]);
   });
 
   it("reads a PRIVATE repo", async () => {
@@ -52,13 +53,17 @@ describe("repoVisibility (#1101)", () => {
     expect(await repoVisibility(ctx)).toBeUndefined();
   });
 
-  it("omits the repo slug when ctx.repo is empty (worker's own checkout)", async () => {
+  it("degrades to undefined with no call when ctx.repo is empty (worker's own checkout)", async () => {
+    // The routed REST path needs an owner/repo pair to build `repos/{o}/{r}`
+    // (#3730) — unlike the legacy `gh repo view` CLI, REST has no cwd-resolved
+    // placeholder for the whole-repo endpoint, so an empty slug short-circuits
+    // before any call is issued.
     const calls: string[][] = [];
     const exec: ExecFn = (_bin, args) => {
       calls.push([...args]);
       return Promise.resolve({ code: 0, stdout: JSON.stringify({ visibility: "public" }), stderr: "" });
     };
-    await repoVisibility({ cwd: "/r", repo: "", exec });
-    expect(calls[0]).toEqual(["repo", "view", "--json", "visibility"]);
+    expect(await repoVisibility({ cwd: "/r", repo: "", exec })).toBeUndefined();
+    expect(calls).toHaveLength(0);
   });
 });
