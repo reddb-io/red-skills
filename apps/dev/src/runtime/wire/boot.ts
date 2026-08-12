@@ -493,9 +493,12 @@ export async function buildBootDeps(
   const issueStates = await ghx.listIssueStates(ghCtx);
   const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
   const liveBranchCommitByIssue = new Map<number, number>();
+  const liveBranchesByIssue = new Map<number, string[]>();
   for (const ref of options.branches.remoteLiveRefs) {
     const issue = liveIssueFromBranch(ref.branch);
-    if (issue === null || !Number.isFinite(ref.commitS)) continue;
+    if (issue === null) continue;
+    liveBranchesByIssue.set(issue, [...(liveBranchesByIssue.get(issue) ?? []), ref.branch]);
+    if (!Number.isFinite(ref.commitS)) continue;
     const previous = liveBranchCommitByIssue.get(issue);
     if (previous === undefined || ref.commitS! > previous) liveBranchCommitByIssue.set(issue, ref.commitS!);
   }
@@ -637,12 +640,26 @@ export async function buildBootDeps(
               const pid = existsSync(pidPath) ? Number(readFileSync(pidPath, "utf8").trim()) : Number.NaN;
               (Number.isInteger(pid) && isLivePid(pid) ? liveOwners : deadOwners).push(worker);
             }
+            const attemptBranches = deadOwners.length === 0
+              ? undefined
+              : await Promise.all((liveBranchesByIssue.get(issue) ?? []).map(async (branch) => {
+                  const commitsAhead = await gitx.branchCommitsAhead(
+                    gitCtx,
+                    branch,
+                    options.branches.trunk,
+                  );
+                  return {
+                    branch,
+                    ...(commitsAhead === undefined ? {} : { commitsAhead }),
+                  };
+                }));
             claimed.push({
               issue,
               records,
               deadOwners,
               liveOwners,
               attemptBranchCommitS: liveBranchCommitByIssue.get(issue),
+              ...(attemptBranches === undefined ? {} : { attemptBranches }),
             });
           } catch {
             // best-effort: skip an issue whose claim comments cannot be read.
