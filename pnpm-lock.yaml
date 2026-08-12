@@ -10,8 +10,8 @@ catalogs:
       specifier: ^1.0.0
       version: 1.29.0
     '@reddb-io/toon':
-      specifier: 0.21.0
-      version: 0.21.0
+      specifier: 0.22.0
+      version: 0.22.0
     '@types/node':
       specifier: ^22.0.0
       version: 22.20.1
@@ -61,7 +61,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -120,7 +120,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -203,7 +203,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -237,7 +237,7 @@ importers:
         version: link:../../packages/build-info
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
     devDependencies:
       esbuild:
         specifier: 'catalog:'
@@ -259,7 +259,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
@@ -352,7 +352,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       tuiuiu.js:
         specifier: 1.0.75
         version: 1.0.75
@@ -386,7 +386,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -426,7 +426,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
@@ -500,7 +500,7 @@ importers:
     dependencies:
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -545,7 +545,7 @@ importers:
         version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
 
   packages/red-castle:
     dependencies:
@@ -569,7 +569,7 @@ importers:
         version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.1.0
@@ -612,7 +612,7 @@ importers:
         version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -628,7 +628,7 @@ importers:
     dependencies:
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.21.0
+        version: 0.22.0
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
@@ -1689,8 +1689,8 @@ packages:
     resolution: {integrity: sha512-aPXh8WeP5SSu17SBU8e2kOgZMuKnrTW/qYviD3zu7LLoAP5cOP6rDRl7C/6LreixHepNc+vwkyVILfK0RTJtLQ==}
     engines: {node: '>=18'}
 
-  '@reddb-io/toon@0.21.0':
-    resolution: {integrity: sha512-TmT6D+7h/b4//ZRrkczLYgHDq7mG2y/hAp0AevFGjdDETqkCTq/YWia98O77wDN0S5zhBQyqwQIqSWg3z5QedA==}
+  '@reddb-io/toon@0.22.0':
+    resolution: {integrity: sha512-wzXbeVRNHZ1mXsAWV0vGV+yDc0xTG1Y+mWt4j6Nl4eiGsIoDrDN+rnI3S2422a0xL+8Ga5zLHRsvS4sij/Yq8g==}
     engines: {node: '>=18'}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
@@ -3714,7 +3714,7 @@ snapshots:
 
   '@reddb-io/sdk@1.23.1': {}
 
-  '@reddb-io/toon@0.21.0': {}
+  '@reddb-io/toon@0.22.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true
