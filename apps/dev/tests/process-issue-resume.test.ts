@@ -119,6 +119,24 @@ describe("branch-resume: non-gate-green resume path (issue #2397)", () => {
 
     expect(trace.freshWorkerBranchCalls).toHaveLength(0);
   });
+
+  it("hands an inherited suspect-infra feedback failure to the agent before re-validation (#3705)", async () => {
+    const failure =
+      "feedback-failed-infra: pnpm typecheck exit 2; suspect-infra repeated signature v1:510a86ed26095749";
+    const { deps, input, trace } = harness({
+      prevFailureContext: gateStageFailed(failure),
+    });
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+
+    const result = await import("../src/core/process-issue.js").then((m) =>
+      m.processIssue(deps, input),
+    );
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.runAgentCalls[0]?.handoffContent).toContain(failure);
+    expect(trace.iterLogs.some((line) => line.includes("gate-green fast path"))).toBe(false);
+  });
 });
 
 describe("branch-resume: explicit restart override (issue #2397)", () => {
