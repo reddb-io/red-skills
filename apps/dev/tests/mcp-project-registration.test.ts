@@ -241,6 +241,19 @@ describe("starting work registers the project", () => {
     expect(spawn.mock.calls.filter((call) => (call[1] ?? []).includes("__supervise"))).toEqual([]);
   });
 
+  it("registers worker-death as one bounded claim-reconciliation cycle", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+
+    await createCastleMcpDependencies(root).projectStart({ runner: "codex", target: 1 });
+
+    const hook = daemon.registrations()[0]?.hooks?.["worker-death"];
+    expect(hook).toMatchObject({ mode: "sync" });
+    expect(hook?.deadline_ms).toBeGreaterThan(0);
+    expect(hook?.argv).toEqual(expect.arrayContaining(["run", "--boot-only"]));
+    expect(hook?.env).toMatchObject({ RED_AFK_RUNNER: "codex" });
+  });
+
   it("carries the project's selector and argv unmodified", async () => {
     const daemon = await liveHost();
     const root = await project();
