@@ -58,7 +58,7 @@ export async function renderAutomaticOutput(
   original: Buffer,
   options: AutomaticOutputOptions,
 ): Promise<AutomaticOutputResult> {
-  const complete = renderStructuredBoundary(original);
+  const complete = isDocumentationCommand(options.command) ? original : renderStructuredBoundary(original);
   if (options.level === "full") return { stdout: complete, lossy: false };
 
   const sizeThresholdBytes = positiveInteger(options.sizeThresholdBytes, 8 * 1024);
@@ -151,6 +151,10 @@ export async function renderAutomaticOutput(
     handle,
     bytesElided: original.length,
   };
+}
+
+function isDocumentationCommand(command: string): boolean {
+  return /(?:^|\s)(?:--help|-h)(?:\s|$)/.test(command);
 }
 
 async function mintBeforeReduction(original: Buffer, options: AutomaticOutputOptions): Promise<string> {
