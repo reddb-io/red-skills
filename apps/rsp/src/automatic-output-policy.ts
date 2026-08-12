@@ -1,4 +1,4 @@
-import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import type { RspLossLevel, RspMintMeta } from "./elision-store.js";
 import { renderStructuredBoundary } from "./structured-boundary.js";
 
@@ -90,7 +90,7 @@ export async function renderAutomaticOutput(
       rows: sorted.slice(0, rowsKept),
       next_steps: [
         "Recover exact bytes with rsp show <handle>",
-        `Re-run ${options.command} with --full to suppress reduction`,
+        "Repeat the same rsp invocation with --full to suppress reduction",
       ],
       recovery: { original: `rsp show ${handle}` },
     } satisfies JsonObject;
@@ -136,7 +136,7 @@ export async function renderAutomaticOutput(
     rows: rows.slice(0, rowsKept),
     next_steps: [
       "Recover exact bytes with rsp show <handle>",
-      `Re-run ${options.command} with --full to suppress reduction`,
+      "Repeat the same rsp invocation with --full to suppress reduction",
     ],
     recovery: { original: `rsp show ${handle}` },
   } satisfies JsonObject;
