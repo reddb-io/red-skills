@@ -643,6 +643,16 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { sink: "onQuotaWait" },
   },
   {
+    path: "apps/dev/src/runtime/gh/candidates.ts",
+    fn: "readTargetIssue",
+    subject: "a just-created, explicitly targeted GitHub issue becoming readable",
+    deadline: "4 point reads across 2.5s (250ms + 750ms + 1.5s)",
+    escalation: "returns the final 404 so the caller excludes the unreadable target instead of polling forever",
+    heartbeat: {
+      silent: "a bounded 2.5s read-after-write bridge whose returned candidate result is the report",
+    },
+  },
+  {
     path: "apps/dev/src/runtime/exec.ts",
     fn: "terminateProcessGroup",
     subject: "the process group leaving the process table after SIGTERM, then after SIGKILL",
