@@ -55,6 +55,7 @@ import {
   spawn,
   startHungOldResident,
   stat,
+  TEST_RESIDENT_READY_TIMEOUT_MS,
   stopTrackedResidents,
   telemetrySpoolPath,
   tempRoot,
@@ -224,14 +225,23 @@ describe("rsp cli", () => {
     await waitForResidentSocket(root);
 
     const raw = runGit(["-C", root, "log"]);
-    const node = timedStatus(runNodeNoop);
     const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir }));
 
     expect(wrapped.status, `${wrapped.stdout.toString("utf8")}${wrapped.stderr.toString("utf8")}`).toBe(0);
     expect(wrapped.stderr).toEqual(Buffer.alloc(0));
     expect(wrapped.stdout.length).toBeLessThan(raw.stdout.length);
     expect(wrapped.stdout.toString("utf8")).toContain("recovery unavailable (resident cold) — re-run: git log");
-    expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(250));
+    // The guarded regression is WAITING: a wrapper that blocks on the hung
+    // store open sits out the full resident ready timeout (the same
+    // normalized RSP_RESIDENT_READY_TIMEOUT_MS this child inherits), while
+    // the fallback path completes in ordinary cold-spawn time. Half the
+    // ready timeout separates the two decisively on any host; a wall-clock
+    // delta bound (formerly 250ms over a node-noop baseline) does not — a
+    // cold CI runner spends multiple seconds legitimately spawning the
+    // bundle and rendering `git log` (#3625 round 3).
+    expect(wrapped.elapsedMs, "fallback must not wait on the resident ready timeout").toBeLessThan(
+      TEST_RESIDENT_READY_TIMEOUT_MS / 2,
+    );
     await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
       id: randomUUID(),
       op: "handover",
