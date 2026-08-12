@@ -440,6 +440,48 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
     expect(recovered.renewals).toBeGreaterThan(0);
   });
 
+  it("keeps a declared standing drain recoverable beyond the ordinary window", async () => {
+    const clock = testClock();
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      registrationSustainMs: 0,
+      clock: clock.now,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([5]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject(request({ standing: true }));
+    await daemon.pollQueueDiscovery();
+
+    // Miss the registration deadline and the complete ordinary recovery window.
+    clock.advance(WINDOW_MS * 3);
+    const stopped = daemon.hostState();
+    expect(stopped.registrations).toEqual([]);
+    const rendered = renderRedskilledStatusline(
+      buildStatuslinePayload({
+        hostState: stopped,
+        ceiling: UNBOUNDED_HOST_CEILING,
+        rss: {},
+        sampledAt: null,
+        now: clock.now(),
+      }),
+      { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" },
+    );
+    expect(rendered.line).toContain("queue 5, drain STOPPED");
+
+    const polled = await daemon.pollQueueDiscovery();
+    expect(polled?.projects[0]?.depth).toBe(5);
+    expect(daemon.hostState().registrations?.[0]).toMatchObject({
+      project_label: "acme/widgets",
+      standing: true,
+      sustained_by: "open-work",
+    });
+  });
+
   it("stops being polled once it has lapsed, so an empty selector costs no request", async () => {
     const clock = testClock();
     const queried: string[] = [];

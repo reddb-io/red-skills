@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { AgentEffort } from "./execution.js";
 import { isRunner, type Runner } from "../types/runner.js";
+export { readStandingDrain, type StandingDrainConfig } from "./standing-drain-config.js";
 
 /**
  * config.ts — TypeScript port of scripts/config.sh.
@@ -1367,9 +1368,7 @@ export function readValidationResourceBudget(values: ConfigValues): ValidationRe
   };
 }
 
-/** Default CI-aware merge wait, in seconds (#812) — 30 minutes, generous enough
- * to outlast a slow required-check suite (e.g. reddb's 25 checks / ~25m fuzzer)
- * without wedging the worker forever. */
+/** Default CI-aware merge wait (#812): 30 minutes, enough for the known slow required-check suite. */
 export const DEFAULT_MERGE_CI_TIMEOUT_S = 1800;
 
 /**

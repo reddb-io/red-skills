@@ -471,8 +471,11 @@ function unmatchedHead(
   }
   if (match === "stopped") {
     const stopped = payload.stopped_projects?.find((record) => record.project_label === project);
+    const standingStopped = stopped?.standing === true && (stopped.queue_depth ?? 0) > 0
+      ? `queue ${stopped.queue_depth}, drain STOPPED — `
+      : "";
     return composeRepair({
-      state: `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`,
+      state: `${standingStopped}project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`,
       repair: registrationRepair(),
     });
   }
@@ -480,8 +483,11 @@ function unmatchedHead(
     const lapse = payload.lapsed_projects?.find((record) => record.project_label === project);
     if (lapse != null) {
       const registered = lapse.registered_at == null ? "" : ` (registered ${clockTime(lapse.registered_at)})`;
+      const standingStopped = lapse.standing === true && (lapse.queue_depth ?? 0) > 0
+        ? `queue ${lapse.queue_depth}, drain STOPPED — `
+        : "";
       return composeRepair({
-        state: `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`,
+        state: `${standingStopped}project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`,
         repair: registrationRepair(),
       });
     }

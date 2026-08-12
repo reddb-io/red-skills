@@ -68,6 +68,23 @@ describe("ask-red router docs contract", () => {
     expect(askRedSkill).toContain("/red-doctor");
   });
 
+  it("routes standing drain policy to the AFK config and MCP contracts", async () => {
+    const [askRed, config, mcp, template] = await Promise.all([
+      readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md"),
+      readRepoFile("plugins/dev/skills/engineering/afk/docs/CONFIG.md"),
+      readRepoFile("plugins/dev/skills/engineering/afk/MCP.md"),
+      readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml"),
+    ]);
+
+    for (const document of [askRed, config, mcp, template]) {
+      expect(document).toContain("standing");
+      expect(document).toContain("runner");
+      expect(document).toContain("target");
+    }
+    expect(askRed).toContain("afk/docs/CONFIG.md");
+    expect(askRed).toContain("afk/MCP.md");
+  });
+
   it("routes ADR curation through the proposal-driven reverse grill", async () => {
     const askRedSkill = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
 

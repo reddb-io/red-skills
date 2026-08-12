@@ -519,6 +519,30 @@ describe("an unknown project's registration history (#3191)", () => {
     }
   });
 
+  it("renders a standing drain with queued work as loudly stopped", () => {
+    const rendered = renderRedskilledStatusline(
+      payload({
+        host: emptyHost,
+        projects: [],
+        workers: [],
+        known_projects: ["acme/widgets"],
+        registered_projects: [],
+        lapsed_projects: [{
+          project_label: "acme/widgets",
+          at: "2026-08-03T17:36:15.000Z",
+          reason: "the registration lapsed",
+          standing: true,
+          queue_depth: 5,
+        }],
+      }),
+      { ...LOCAL, maxWidth: 320 },
+    );
+
+    expect(rendered.project_match).toBe("lapsed");
+    expect(rendered.line).toContain("queue 5, drain STOPPED");
+    expect(rendered.line).not.toContain("idle");
+  });
+
   it("argues none when this directory has no project identity to register", () => {
     const rendered = renderRedskilledStatusline(
       payload({ host: emptyHost, projects: [], workers: [] }),

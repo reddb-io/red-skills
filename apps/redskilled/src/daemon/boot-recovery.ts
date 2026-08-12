@@ -33,7 +33,11 @@ export function planRegistrationBootRecovery(
       continue;
     }
     abandoned.push(registration);
-    if (!Number.isFinite(nowMs) || nowMs - renewByMs <= registration.renew_within_ms) {
+    if (
+      registration.standing === true ||
+      !Number.isFinite(nowMs) ||
+      nowMs - renewByMs <= registration.renew_within_ms
+    ) {
       recoverable.push(registration);
     }
   }
