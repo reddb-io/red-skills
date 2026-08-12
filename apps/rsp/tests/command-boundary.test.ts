@@ -320,4 +320,22 @@ describe("rsp universal command boundary", () => {
     expect(recovered.stdout).toEqual(original.stdout);
     expect(recovered.stdout.at(-1)).toBe(0x0a);
   });
+
+  it("lets --full suppress universal automatic reduction", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'automatic-output-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows)+'\\n');",
+    ].join("");
+
+    const result = rsp(root, ["--full", "--", process.execPath, "-e", script]);
+
+    expect(result.status, `${result.stdout.toString("utf8")}${result.stderr.toString("utf8")}`).toBe(0);
+    expect(result.stdout.toString("utf8")).not.toContain("el:");
+    expect(decode(result.stdout.toString("utf8"))).toHaveLength(180);
+  });
 });
