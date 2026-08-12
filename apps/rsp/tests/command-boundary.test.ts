@@ -377,4 +377,23 @@ describe("rsp universal command boundary", () => {
       reduction: { reason: "explicit-terse", rows_total: 10, rows_kept: 5, rows_omitted: 5 },
     });
   });
+
+  it("honors --full on the fast proxy boundary", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = [
+      "const rows=Array.from({length:180},(_,index)=>({",
+      "id:index,status:'healthy',detail:'proxy-full-fixture-'.repeat(4)+index",
+      "}));",
+      "process.stdout.write(JSON.stringify(rows));",
+    ].join("");
+    const command = `${process.execPath} -e ${JSON.stringify(script)}`;
+
+    const complete = rsp(root, ["proxy", "--full", "--", command]);
+
+    expect(complete.status, complete.stderr.toString("utf8")).toBe(0);
+    expect(complete.stdout.toString("utf8")).not.toContain("el:");
+    expect(decode(complete.stdout.toString("utf8"))).toHaveLength(180);
+  });
 });
