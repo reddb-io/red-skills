@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { decode } from "@reddb-io/toon";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { measureStructuredBoundary } from "../src/command-boundary-benchmark.js";
 import { buildBundleOnce, bundle } from "./cli.helpers.js";
