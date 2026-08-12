@@ -40,7 +40,7 @@ describe("rsp automatic output policy", () => {
 
     const result = await renderAutomaticOutput(original, {
       command: "service-status --json",
-      level: "lossless",
+      level: "automatic",
       store,
     });
 
@@ -66,7 +66,7 @@ describe("rsp automatic output policy", () => {
 
     const first = await renderAutomaticOutput(original, {
       command: "service-status --json",
-      level: "lossless",
+      level: "automatic",
       store,
       sizeThresholdBytes: 128,
       repetitionThresholdRows: 20,
@@ -74,7 +74,7 @@ describe("rsp automatic output policy", () => {
     });
     const second = await renderAutomaticOutput(original, {
       command: "service-status --json",
-      level: "lossless",
+      level: "automatic",
       store,
       sizeThresholdBytes: 128,
       repetitionThresholdRows: 20,
@@ -118,7 +118,7 @@ describe("rsp automatic output policy", () => {
 
     const result = await renderAutomaticOutput(original, {
       command: fixture.command.slice(2).join(" "),
-      level: "lossless",
+      level: "automatic",
       store,
       sizeThresholdBytes: fixture.automatic_policy.size_threshold_bytes,
       repetitionThresholdRows: fixture.automatic_policy.repetition_threshold_rows,
@@ -152,21 +152,21 @@ describe("rsp automatic output policy", () => {
 
     const structuredResult = await renderAutomaticOutput(structured, {
       command: "unique-report --json",
-      level: "lossless",
+      level: "automatic",
       store,
       sizeThresholdBytes: 64,
       repetitionThresholdRows: 20,
     });
     const cargoResult = await renderAutomaticOutput(cargoHelp, {
       command: "cargo --help",
-      level: "lossless",
+      level: "automatic",
       store,
       sizeThresholdBytes: 64,
       repetitionThresholdRows: 2,
     });
     const rgResult = await renderAutomaticOutput(rgDocs, {
       command: "rg --help",
-      level: "lossless",
+      level: "automatic",
       store,
       sizeThresholdBytes: 64,
       repetitionThresholdRows: 2,
@@ -211,7 +211,7 @@ describe("rsp automatic output policy", () => {
     });
     const pending = renderAutomaticOutput(original, {
       command: "state-report --json",
-      level: "lossless",
+      level: "automatic",
       sizeThresholdBytes: 64,
       repetitionThresholdRows: 20,
       store: { mint: async () => await mintFinished },
