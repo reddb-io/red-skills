@@ -121,7 +121,8 @@ describe("rsp cli", () => {
     expect(stdout).toContain("usage: rsp wait <subcommand> [options]");
     expect(stdout).toContain("rsp wait pr 123");
     expect(stdout).toContain("rsp wait run --branch feature/wait --latest");
-    expect(stdout).toContain("rsp wait release --tag \"v2.*\"");
+    expect(stdout).toContain("rsp wait job 93919316178");
+    expect(stdout).toContain("rsp wait release --tag \"v2.*\" --existing");
     expect(stdout).toContain("rsp wait cmd -- \"pnpm -C apps/rsp build\"");
     expect(stdout).toContain("Exit codes: 0 = success verdict, 1 = failure verdict, 2 = timeout/indeterminate.");
   });
@@ -150,11 +151,12 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
     });
 
-    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(actual.status, `${actual.stderr.toString("utf8")}\n${actual.stdout.toString("utf8")}`).toBe(0);
     expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(1);
     const decoded = decode(actual.stdout.toString("utf8")) as {
       wait: { status: string };
@@ -172,11 +174,12 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
     });
 
-    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(actual.status, `${actual.stderr.toString("utf8")}\n${actual.stdout.toString("utf8")}`).toBe(0);
     expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(1);
     const decoded = decode(actual.stdout.toString("utf8")) as {
       wait: { status: string };
@@ -194,6 +197,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "4s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "100ms",
     });
@@ -220,6 +224,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "4s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       // The grace window is already spent by the first poll, so only the
       // BLOCKED reading itself can keep this wait running.
@@ -246,6 +251,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--json", "--timeout", "1s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
       RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1ms",
     });
@@ -266,6 +272,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "pr", "123", "--json", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
     });
 
@@ -312,6 +319,7 @@ describe("rsp cli", () => {
       GH_FORWARDER_PIDS: forwarderPids,
       GH_NODE_BIN: process.execPath,
       GH_PR_READY_FILE: readyFile,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_PR_POLL_MS: "10ms",
     };
     const children = reasons.map((reason, index) => {
@@ -368,7 +376,7 @@ describe("rsp cli", () => {
   it("wait run pins branch latest to one run id before polling", async () => {
     const root = await tempRoot();
     const fakeGh = await fakeGhPath(root, [
-      { workflow_runs: [{ id: 111 }] },
+      [{ databaseId: 111 }],
       { id: 111, status: "in_progress", conclusion: null, name: "CI", head_branch: "feature/wait" },
       { id: 111, status: "completed", conclusion: "success", name: "CI", head_branch: "feature/wait" },
     ]);
@@ -376,6 +384,7 @@ describe("rsp cli", () => {
     const actual = runRsp(root, ["wait", "run", "--branch", "feature/wait", "--latest", "--json", "--timeout", "2s"], {
       PATH: fakeGh.path,
       GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_GITHUB_TEST_TRANSPORT: "gh",
       RSP_WAIT_RUN_POLL_MS: "10ms",
     });
 
@@ -927,10 +936,11 @@ describe("rsp cli", () => {
     const root = await tempRoot();
     await enableRsp(root);
     const storeUri = `file://${join(root, "red.rdb")}`;
+    const mintedAt = new Date();
     const store = await RspElisionStore.open({
       uri: storeUri,
       ephemeralTtlHours: 720,
-      now: () => new Date("2026-07-10T12:00:00.000Z"),
+      now: () => mintedAt,
     });
     try {
       await store.mint(Buffer.from("abc"), {
@@ -974,7 +984,7 @@ describe("rsp cli", () => {
     ]);
     expect(decoded.waits).toEqual({ active: 0, entries: [] });
     expect(decoded.store.records).toBe(1);
-    expect(decoded.store.oldest).toBe("2026-07-10T12:00:00.000Z");
+    expect(decoded.store.oldest).toBe(mintedAt.toISOString());
     expect(decoded.store.budget).toBe(67108864);
     expect(decoded.store.storage_classes.derivable).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
     expect(decoded.store.storage_classes["re-executable"]).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });

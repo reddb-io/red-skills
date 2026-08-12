@@ -146,6 +146,70 @@ describe("the orphan reaper process census", () => {
 });
 
 describe("stamped orphan teardown", () => {
+  it("re-derives active unit births when the rotated event lane cannot prove them", async () => {
+    const activeUnit = "red-worker-acme-widgets-hlive.service";
+    const held = new Set<string>();
+    const adopted: Array<{ worker_id: string; record_birth: boolean; started_at: string; unit?: string }> = [];
+    const killed: number[] = [];
+    const reports: string[] = [];
+    const runtime = createRedskilledOrphanReaperRuntime({
+      authorized: true,
+      interval_ms: 0,
+      census: () => [
+        processRow({
+          worker_id: "hLIVE",
+          born_at: "2026-08-11T10:09:59.000Z",
+          pid: 4_241,
+          pgid: 4_241,
+          age_ms: 1_000,
+          unit: activeUnit,
+        }),
+        processRow(),
+      ],
+      active_worker_units: () => [activeUnit],
+      clock: () => "2026-08-11T10:10:00.000Z",
+      held_worker_ids: () => held,
+      live_births: () => {
+        throw new Error("the pre-rotation birth history is unavailable");
+      },
+      read_starttime: () => "1200",
+      kill_group: async (pgid) => {
+        killed.push(pgid);
+        return true;
+      },
+      report: (detail) => reports.push(detail),
+      adopt: (worker, recordBirth) => {
+        held.add(worker.worker_id);
+        adopted.push({
+          worker_id: worker.worker_id,
+          record_birth: recordBirth,
+          started_at: worker.started_at,
+          ...(worker.unit == null ? {} : { unit: worker.unit }),
+        });
+      },
+      record_reaped: (worker) => {
+        held.delete(worker.worker_id);
+      },
+    });
+
+    await expect(runtime.sweep()).resolves.toEqual({ adopted: 2, reaped: 1, suspects: 0 });
+    expect(adopted).toEqual([
+      {
+        worker_id: "hLIVE",
+        record_birth: true,
+        started_at: "2026-08-11T10:09:59.000Z",
+        unit: activeUnit,
+      },
+      {
+        worker_id: "hLOST",
+        record_birth: true,
+        started_at: "2026-08-11T10:00:00.000Z",
+      },
+    ]);
+    expect(killed).toEqual([4_242]);
+    expect(reports.join(" ")).not.toMatch(/census withheld/);
+  });
+
   it("keeps report mode free of daemon-map, signal and event-lane mutations", async () => {
     const mutations = { adopt: 0, kill: 0, laneWrites: 0 };
     const runtime = createRedskilledOrphanReaperRuntime({
@@ -260,6 +324,37 @@ describe("stamped orphan teardown", () => {
     expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
     expect(events[0]!.detail).toMatch(/adopted stamped orphan/);
     expect(events[1]!.detail).toMatch(/orphan-reaped/);
+  });
+
+  it("closes an adopted birth when the process group survives teardown", async () => {
+    const root = await scratch("redskilled-orphan-survivor-");
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: root,
+    });
+    const killed: number[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      unitInventory: () => [],
+      orphanReaperMs: 0,
+      orphanCensus: async () => [processRow()],
+      orphanStarttime: () => "1200",
+      orphanKillGroup: async (pgid) => {
+        killed.push(pgid);
+        return false;
+      },
+    });
+    daemons.push(daemon);
+
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 1, reaped: 0, suspects: 0 });
+    await daemon.flushEvents();
+
+    expect(killed).toEqual([4_242]);
+    expect(daemon.workerCount()).toBe(0);
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
+    expect(events[1]!.detail).toMatch(/group-survived: process group 4242/);
   });
 
   it("adopts a stamped process whose live birth has no holder", async () => {

@@ -6,6 +6,9 @@ import { integrationGlobs } from "./vitest.suites.js";
 export default defineConfig({
   test: {
     include: integrationGlobs(),
+    // This suite exercises subprocess and resident boundaries. An unhandled
+    // error is a gate failure even when every assertion happened to finish.
+    dangerouslyIgnoreUnhandledErrors: false,
     environment: "node",
     pool: "forks",
     poolOptions: {

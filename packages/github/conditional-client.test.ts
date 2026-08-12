@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createGithubAttributionLedger } from "./attribution.js";
 import {
   createGithubClient,
+  GithubPoolUnavailableError,
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type GithubRequestFetch,
 } from "./conditional-client.js";
@@ -19,6 +21,22 @@ const SEARCH_POLL: GithubAttributedOperation = {
 };
 
 const roots: string[] = [];
+
+describe("rate-limit reset evidence", () => {
+  it("reads the primary reset instant from a refused response", () => {
+    expect(githubRateLimitResetAt({
+      status: 403,
+      response: { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1" } },
+    }, 0)).toBe("1970-01-01T00:00:01.000Z");
+  });
+
+  it("dates a secondary-limit retry-after from the refusal instant", () => {
+    expect(githubRateLimitResetAt({
+      status: 429,
+      response: { headers: { "retry-after": "60" } },
+    }, 0)).toBe("1970-01-01T00:01:00.000Z");
+  });
+});
 
 function balance(restRemaining: number, graphqlRemaining: number): GithubBalance {
   const reset = "2026-08-05T12:00:00.000Z";
@@ -55,6 +73,144 @@ async function ledgerPath(): Promise<string> {
 }
 
 describe("the conditional GitHub client", () => {
+  it("honors an explicit GraphQL rail while that pool has budget", async () => {
+    const seen: string[] = [];
+    const client = createGithubClient({
+      token: "test-token",
+      balance: () => balance(4_883, 5_000),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify({
+          data: { r0: { object: { number: 7, headRefOid: "abc123" } }, rateLimit: { cost: 1 } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+
+    const answer = await client.singleObject<{ number: number; headRefOid: string }>({
+      cacheKey: "pr:acme/widgets:7",
+      kind: "pr",
+      owner: "acme",
+      repo: "widgets",
+      number: 7,
+      selection: "number headRefOid",
+      operation: { key: "pr view", budget: "rest" },
+      rail: "graphql",
+    });
+
+    expect(answer).toMatchObject({
+      data: { number: 7, headRefOid: "abc123" },
+      surface: "graphql",
+      routing: { requestedRail: "graphql", selectedRail: "graphql", rerouted: false },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("/graphql");
+  });
+
+  it("replays today's dry GraphQL incident on REST without issuing GraphQL", async () => {
+    const seen: string[] = [];
+    const client = createGithubClient({
+      token: "test-token",
+      balance: () => balance(4_883, 0),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify({ number: 7, head: { sha: "abc123" }, state: "open" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const answer = await client.singleObject<{ number: number; head: { sha: string } }>({
+      cacheKey: "pr:acme/widgets:7",
+      kind: "pr",
+      owner: "acme",
+      repo: "widgets",
+      number: 7,
+      selection: "number headRefOid",
+      operation: { key: "pr view", budget: "rest" },
+      rail: "graphql",
+    });
+
+    expect(answer).toMatchObject({
+      surface: "rest",
+      routing: {
+        requestedRail: "graphql",
+        selectedRail: "rest",
+        rerouted: true,
+        pool: "graphql",
+        resetAt: "2026-08-05T12:00:00.000Z",
+      },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("/pulls/7");
+    expect(seen.every((url) => !url.includes("/graphql"))).toBe(true);
+  });
+
+  it("parks an operation with no equivalent by naming its pool and reset", async () => {
+    const client = createGithubClient({
+      token: "test-token",
+      balance: () => balance(0, 4_883),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async () => {
+        throw new Error("a dry pool must be refused before transport");
+      },
+    });
+
+    const error = await client.conditionalRest({
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" },
+    }).then(() => null, (thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GithubPoolUnavailableError);
+    expect(error).toMatchObject({ pool: "rest", resetAt: "2026-08-05T12:00:00.000Z" });
+    expect(String(error)).toContain("rest pool");
+    expect(String(error)).toContain("2026-08-05T12:00:00.000Z");
+  });
+
+  it("falls back to the last-known REST answer with its age before parking", async () => {
+    let current = balance(4_883, 0);
+    const instants = ["2026-08-05T11:00:00.000Z", "2026-08-05T11:00:30.000Z"];
+    const client = createGithubClient({
+      token: "test-token",
+      balance: () => current,
+      now: () => instants.shift() ?? "2026-08-05T11:00:30.000Z",
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async () => new Response(JSON.stringify({ check_runs: [{ name: "gate", status: "completed" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: '"checks-v1"' },
+      }),
+    });
+    const request = {
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" as const },
+    };
+
+    await client.conditionalRest(request);
+    current = balance(0, 0);
+    const cached = await client.conditionalRest(request);
+
+    expect(cached).toMatchObject({
+      data: { check_runs: [{ name: "gate", status: "completed" }] },
+      quotaFree: true,
+      degraded: {
+        source: "cache",
+        ageMs: 30_000,
+        pool: "rest",
+        resetAt: "2026-08-05T12:00:00.000Z",
+      },
+    });
+  });
+
   it("publishes a threshold that rises with REST headroom relative to GraphQL", () => {
     expect(githubSingleObjectCoalescingThreshold(balance(4_000, 1_000))).toBe(4);
     expect(githubSingleObjectCoalescingThreshold(balance(500, 4_000))).toBe(1);

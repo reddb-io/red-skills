@@ -12,10 +12,10 @@
  * live Worker at the same instant.
  *
  * **The queue bounds the target, and the target bounds nothing else.** A project
- * asks for `min(target, depth) - live` Workers: a registration states how wide
- * the project may go, the queue states how much work exists to go wide on, and
- * the smaller of the two is the honest answer. A loop that asked for the target
- * regardless of depth would birth Workers for work that is not there.
+ * asks for `min(target - live, depth)` Workers: live Workers consume capacity,
+ * while the queue depth counts work still available for a new Worker. A loop
+ * that asked for the remaining capacity regardless of depth would birth Workers
+ * for work that is not there.
  *
  * **A depth is never invented.** `0` means the queue drained; an absent depth
  * means nobody counted it, and the two are told apart in the sentence a reader
@@ -255,9 +255,10 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
       continue;
     }
 
-    // The queue bounds the target: a project may be as wide as it registered
-    // for, but never wider than the work that exists to be done.
-    const wanted = Math.max(0, Math.min(Math.max(0, project.target), depth) - live);
+    // Live Workers consume project capacity, while queue depth counts work that
+    // remains available for new Workers. A Worker already busy on de-queued work
+    // therefore cannot consume a freshly queued item as well.
+    const wanted = Math.max(0, Math.min(Math.max(0, project.target - live), depth));
     if (wanted === 0) {
       intents.push({
         ...base,

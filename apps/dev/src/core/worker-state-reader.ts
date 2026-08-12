@@ -230,9 +230,9 @@ export interface WorkerStateReadOpts {
    */
   workerPidContent?: string;
   /**
-   * Raw text content of the per-attempt `identity.json` sidecar, for injection in
+   * Raw text content of the per-attempt `identity.toon` sidecar, for injection in
    * tests. When omitted and the isolation fallback fires (state.pid 0 + a live
-   * host worker.pid), the reader reads `{dirname(path)}/identity.json` from disk.
+   * host worker.pid), the reader reads `{dirname(path)}/identity.toon` from disk.
    * The durable write-once identity (issue #1219) that lets a live isolation
    * worker render its real worker_id/runner/origin/started_at instead of the
    * `?  run=-  00:00:00` ghost.
@@ -363,7 +363,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
         // Durable identity fallback (issue #1219): a live isolation worker whose
         // host-side afk.state.toon is still zeroed (pid 0, empty worker_id/runner)
         // must NOT render as the `?  run=-  00:00:00` ghost. Read the write-once
-        // identity.json sidecar and populate the zeroed identity fields from it —
+        // identity.toon sidecar and populate the zeroed identity fields from it —
         // never overwriting a value the state file already carries.
         const identity =
           opts.identityContent !== undefined

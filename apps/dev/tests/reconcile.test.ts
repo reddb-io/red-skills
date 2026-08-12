@@ -179,7 +179,7 @@ function harness(opts: HarnessOptions = {}): {
           branchUpdated = true;
           return { code: 0, stdout: "", stderr: "" };
         }
-        if (j.includes("pr merge") && !branchUpdated) {
+        if ((j.includes("pr merge") || /pulls\/\d+\/merge/.test(j)) && !branchUpdated) {
           return { code: 1, stdout: "", stderr: "Base branch was modified. Review and try the merge again." };
         }
         // The READINESS probe only: since #3030 the merge confirmation also asks
@@ -239,7 +239,7 @@ function harness(opts: HarnessOptions = {}): {
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
       // Inject a land failure on the admin merge.
-      if (opts.landFail && j.includes("pr merge")) {
+      if (opts.landFail && (j.includes("pr merge") || /pulls\/\d+\/merge/.test(j))) {
         return { code: 1, stdout: "", stderr: "merge rejected" };
       }
       return { code: 0, stdout: "", stderr: "" };
@@ -355,8 +355,9 @@ describe("reconcile — green → land", () => {
     const result = await reconcile(deps, input);
 
     expect(result.outcome).toBe("landed");
+    // The write-plan realizes the default merge on REST (#3663).
     expect(trace.mergeCalls.map((c) => c.join(" "))).toContain(
-      "gh -R o/r pr merge 42 --merge --subject fix: #9 Fix the thing",
+      "gh api -X PUT repos/o/r/pulls/42/merge -f merge_method=merge -f commit_title=fix: #9 Fix the thing",
     );
   });
 

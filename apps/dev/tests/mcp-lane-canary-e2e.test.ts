@@ -7,7 +7,7 @@
 //
 //   daemon up   -> green: a registration the daemon holds, and no process of
 //                  the project's own anywhere under it
-//   daemon down -> RED at `project_start`, naming the socket (ADR 0130 rule 6)
+//   daemon down -> green after the MCP lane auto-spawns the shipped daemon sibling
 //
 // Under ADR 0130 Amendment 3 (#2902) the project no longer resolves a slot entry
 // at all — it registers an argv and the host runs it. So #2677's byte-level
@@ -123,38 +123,28 @@ describe("MCP lane canary over the real transport", () => {
 
 describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () => {
   it(
-    "goes RED at project_start when no daemon answers, and starts nothing at all",
+    "auto-spawns the daemon from the MCP bundle's sibling and completes the walk",
     async () => {
       // Identical to the green walk in every byte except one: no daemon is
-      // listening on this sandbox's session socket.
-      //
-      // Before the cutover (#2851) this walk got as far as `daemon_reach`: the
-      // project spawned its own workers, so the lane produced a live worker it
-      // could not vouch for. Now that the daemon owns every birth, the failure
-      // moved EARLIER and got louder — the start itself refuses, because a
-      // project the host never registered is work nothing will ever drive.
-      // Failing at the start is the stronger signal: nothing was started, so
-      // there is no unvouched worker left running to reason about.
+      // listening on this sandbox's session socket. `project_start` therefore
+      // has to take the MCP-only cold-start path before the same public walk can
+      // register, poll, birth, read and stop.
       const { result, socketPath } = await walk("healthy", 3_000, "down");
 
-      expect(result.ok).toBe(false);
-      expect(result.inertStep).toBe("project_start");
-      const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
-      expect(byStep.get("connect")).toBe("ok");
-      expect(byStep.get("project_start")).toBe("inert");
-      // Nothing downstream ran, and nothing downstream needed to.
-      expect(byStep.get("registration_held")).toBe("skipped");
-      expect(byStep.get("no_project_process")).toBe("skipped");
-      expect(byStep.get("queue_polled")).toBe("skipped");
-      expect(byStep.get("worker_born")).toBe("skipped");
-      expect(result.workers).toHaveLength(0);
-      // Loudly, and naming the socket rather than the tool: the operator's next
-      // move is on that path, and "project_start failed" alone would send them
-      // to the wrong process entirely.
-      expect(result.summary).toContain("project_start");
-      expect(result.summary).toContain("redskilled");
+      expect(result.inertStep).toBeUndefined();
+      expect(result.ok).toBe(true);
+      expect(result.steps.map((step) => step.verdict)).toEqual([
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+      ]);
       expect(socketPath).toBeTruthy();
-      expect(result.summary).toContain(socketPath!);
+      expect(existsSync(socketPath!)).toBe(true);
     },
     TIMEOUT,
   );
@@ -208,9 +198,9 @@ describe("the shipped redskilled-mcp bundle carries the canary", () => {
 
 // Deliberately LAST in the file: the closing case runs the harness's own
 // cleanup, which drops the shared bundle cache every earlier test reuses.
-describe("the canary's daemon lives in a runtime directory the sandbox owns (#2884)", () => {
+describe("the canary's daemon runtime and home belong to the sandbox (#2884, #3707)", () => {
   it(
-    "writes its socket, lease and lane outside the operator's runtime directory",
+    "writes its socket, lease and durable event lane inside sandbox-owned roots",
     async () => {
       const sandbox = await createCanarySandbox("healthy");
       const paths = resolveRedskilledPaths({ env: sandbox.env });
@@ -220,6 +210,8 @@ describe("the canary's daemon lives in a runtime directory the sandbox owns (#28
       expect(paths.runtimeDir.startsWith(`${sandbox.runtimeRoot}/`)).toBe(true);
       expect(existsSync(paths.socketPath)).toBe(true);
       expect(existsSync(paths.leasePath)).toBe(true);
+      expect(paths.eventLanePath.startsWith(`${sandbox.root}/`)).toBe(true);
+      expect(paths.registrationIntentPath.startsWith(`${sandbox.root}/`)).toBe(true);
 
       // The path this sandbox WOULD have used before the fix: same session key,
       // the operator's real environment. Nothing may exist there. This is a pure

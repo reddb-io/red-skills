@@ -8,7 +8,7 @@ import {
 } from "../../core/triage-labels.js";
 import type { IssueOpenState } from "../../core/reclaim.js";
 import type { ReconcileSweepCandidate, UnblockCandidate } from "../../core/boot-sweep.js";
-import { repoArgs, runGh, type GhContext } from "./common.js";
+import { apiPath, runGithubRestRead, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
 
 export async function orphanState(
@@ -72,21 +72,10 @@ export async function blockerState(ctx: GhContext, issue: number): Promise<strin
 }
 
 export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
-  const r = await runGh(ctx,
-    [
-      "issue",
-      "list",
-      ...repoArgs(ctx),
-      "--label",
-      LABEL_DEPENDENCY,
-      "--state",
-      "open",
-      "--limit",
-      "200",
-      "--json",
-      "number,body,labels",
-    ],
-  );
+  const r = await runGithubRestRead(ctx, apiPath(ctx, "issues"), [
+    "--paginate", "--slurp", "-f", "state=open", "-f", `labels=${LABEL_DEPENDENCY}`,
+    "-f", "per_page=100", "--jq", "add | map(select(.pull_request == null) | {number, body, labels})",
+  ]);
   if (r.code !== 0) return [];
   try {
     const rows = JSON.parse(r.stdout) as Array<{
@@ -111,21 +100,10 @@ export async function listByLabel(
   ctx: GhContext,
   label: string,
 ): Promise<{ number: number; labels: string[] }[]> {
-  const r = await runGh(ctx, 
-    [
-      "issue",
-      "list",
-      ...repoArgs(ctx),
-      "--label",
-      label,
-      "--state",
-      "open",
-      "--limit",
-      "200",
-      "--json",
-      "number,labels",
-    ],
-  );
+  const r = await runGithubRestRead(ctx, apiPath(ctx, "issues"), [
+    "--paginate", "--slurp", "-f", "state=open", "-f", `labels=${label}`,
+    "-f", "per_page=100", "--jq", "add | map(select(.pull_request == null) | {number, labels})",
+  ]);
   if (r.code !== 0) return [];
   try {
     const rows = JSON.parse(r.stdout) as Array<{ number?: number; labels?: Array<{ name?: string }> }>;
@@ -174,18 +152,9 @@ export async function listParkedMechanicalCandidates(
 
 /** List open issues carrying `label` with number, title, body, and labels. */
 async function listIssuesByLabel(ctx: GhContext, label: string): Promise<ReconcileSweepCandidate[]> {
-  const r = await runGh(ctx, [
-    "issue",
-    "list",
-    ...repoArgs(ctx),
-    "--label",
-    label,
-    "--state",
-    "open",
-    "--limit",
-    "200",
-    "--json",
-    "number,title,body,labels",
+  const r = await runGithubRestRead(ctx, apiPath(ctx, "issues"), [
+    "--paginate", "--slurp", "-f", "state=open", "-f", `labels=${label}`,
+    "-f", "per_page=100", "--jq", "add | map(select(.pull_request == null) | {number, title, body, labels})",
   ]);
   if (r.code !== 0) return [];
   try {
@@ -219,16 +188,9 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
 export async function listOpenPullRequests(
   ctx: GhContext,
 ): Promise<Array<{ number: number; headRefName: string; body?: string }>> {
-  const r = await runGh(ctx, [
-    "pr",
-    "list",
-    ...repoArgs(ctx),
-    "--state",
-    "open",
-    "--limit",
-    "100",
-    "--json",
-    "number,headRefName,body",
+  const r = await runGithubRestRead(ctx, apiPath(ctx, "pulls"), [
+    "--paginate", "--slurp", "-f", "state=open", "-f", "per_page=100",
+    "--jq", "add | map({number, headRefName: .head.ref, body})",
   ]);
   if (r.code !== 0) return [];
   try {

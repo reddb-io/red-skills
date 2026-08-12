@@ -10,6 +10,7 @@
 // code and the workflow requests no `contents: write`.
 
 import { Writable } from "node:stream";
+import { planGithubWrite, routeGithubArgs } from "@reddb-io/github";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { Output } from "@reddb-io/red-castle";
 import { execTool } from "../runtime/exec.js";
@@ -22,6 +23,10 @@ import { makeExplain, explainAnswerSchema } from "../core/comment-respond-extrac
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { actorTrustSignals, type GhContext } from "../runtime/gh.js";
 import { reviewCommand } from "./review.js";
+import { createDevGithubClient } from "../runtime/github-merge-read.js";
+import { inferGitHubRepoSlug } from "../runtime/wire/github-slug.js";
+
+const REPO_VIEW_OPERATION = routeGithubArgs(["repo", "view"]);
 
 const RESPOND_FLAG_SCHEMA = {
   body: { kind: "value", coerce: (raw: string): string => raw },
@@ -39,8 +44,21 @@ function isRunner(value: string): value is AgentRunner {
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   if (explicit?.trim()) return explicit.trim();
-  const r = await execTool("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], { cwd });
-  return r.code === 0 ? r.stdout.trim() : "";
+  const inferred = inferGitHubRepoSlug(cwd);
+  const [owner, repo] = inferred.split("/");
+  if (!owner || !repo) return "";
+  try {
+    const answer = await createDevGithubClient(cwd).conditionalRest<{ full_name?: string }>({
+      cacheKey: `respond:repo:${inferred}`,
+      route: "GET /repos/{owner}/{repo}",
+      parameters: { owner, repo },
+      operation: REPO_VIEW_OPERATION,
+      actor: "respond",
+    });
+    return answer.data?.full_name?.trim() || "";
+  } catch {
+    return "";
+  }
 }
 
 /** The parsed comment event the MCP `respond` op and the CLI command both feed to the value core. */
@@ -102,7 +120,11 @@ export async function executeRespond(
     async reply(target, replyBody) {
       const flag = isPr ? "pr" : "issue";
       const repoArgs = repo ? ["--repo", repo] : [];
-      await execTool("gh", [flag, "comment", String(target), ...repoArgs, "--body", scrubOutbound(replyBody)], { cwd: root });
+      const plan = planGithubWrite([
+        "gh", flag, "comment", String(target), ...repoArgs, "--body", scrubOutbound(replyBody),
+      ]);
+      const [command, ...args] = plan.args;
+      await execTool(command!, args, { cwd: root });
     },
   };
 

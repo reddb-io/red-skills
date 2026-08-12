@@ -19,9 +19,10 @@
  * PURE: every input is passed in, the host's answer included.
  */
 
-/** What this module needs of a live Worker: the one id it is filed under. */
+/** What this module needs to prove a Worker is live and join its project id. */
 export interface AttributableWorker {
-  readonly state: { readonly worker_id: string };
+  readonly state: { readonly worker_id: string; readonly pid: number };
+  readonly pidLive?: boolean;
 }
 
 export interface ProjectAttributionInput<W extends AttributableWorker> {
@@ -34,6 +35,14 @@ export interface ProjectAttributionInput<W extends AttributableWorker> {
    * holds none.
    */
   readonly hostWorkerIds: readonly string[] | null;
+  /**
+   * Whether the held launch explicitly declares `RED_AFK_WORKER_ID`.
+   *
+   * Only `false` is evidence for the #3081 diagnosis. A missing registration or
+   * a launch that DID declare the env cannot prove that a disjoint id was minted
+   * because the declaration was absent.
+   */
+  readonly workerIdEnvDeclared?: boolean;
   /**
    * When the host says each of its Workers was born, by id.
    *
@@ -105,16 +114,25 @@ export function attributeProjectWorkers<W extends AttributableWorker>(
 ): ProjectAttribution<W> {
   const held = input.hostWorkerIds;
   const ourWorkerIds = new Set(held ?? []);
+  // A fresh heartbeat says a row was recently written; it does not make pid 0
+  // or a dead pid into a live process. Disproof (pid 0, explicit pidLive:false)
+  // only bars the LIVE claim — a caller that never checked stays claimable, or
+  // every unqualified caller would render its fleet empty. The worker itself
+  // stays VISIBLE: what liveness cannot prove lands in unattributed rather than
+  // vanishing, which is how a dead pid was listed as live in the first place
+  // (#3660) — the cure is honest placement, not a smaller report.
+  const running = (worker: W): boolean => worker.state.pid > 0 && worker.pidLive !== false;
+  const runningWorkers = input.workers.filter(running);
   const ours = (worker: W): boolean => ourWorkerIds.has(worker.state.worker_id);
-  const live = input.workers.filter(ours);
-  const unattributed = input.workers.filter((worker) => !ours(worker));
+  const live = runningWorkers.filter(ours);
+  const unattributed = input.workers.filter((worker) => !ours(worker) || !running(worker));
   const warnings: string[] = [];
   if (held == null) {
     warnings.push(
       "the redskilled daemon did not answer, so no live Worker could be attributed to this project: every one of " +
         "them is listed as unattributed because ownership is the host's answer, never a guess made from a pid",
     );
-  } else if (held.length > 0 && input.workers.length === 0 && allSettled(input, held)) {
+  } else if (held.length > 0 && runningWorkers.length === 0 && allSettled(input, held)) {
     // The #3123 signature: the host counts Workers this checkout can see no trace
     // of, and none of them is young enough for a birth in progress to explain it.
     // Silence here is what let `live_workers: []` sit beside `busy: 1` for two
@@ -125,15 +143,20 @@ export function attributeProjectWorkers<W extends AttributableWorker>(
         "not one of them is running here: the daemon's count and this project's own read disagree, which is a record " +
         "outliving its Worker — the host's liveness sweep reaps it, and `worker_stop <id>` releases it now (#3123)",
     );
-  } else if (held.length > 0 && input.workers.length > 0 && live.length === 0) {
+  } else if (
+    held.length > 0 &&
+    runningWorkers.length > 0 &&
+    live.length === 0 &&
+    input.workerIdEnvDeclared === false
+  ) {
     // The #3081 signature, stated where it is read. Two disjoint id spaces and a
     // genuinely-foreign Worker set produce the same empty list, and reporting
     // neither is how a project came to render its own busy fleet as idle.
     warnings.push(
-      `the host holds ${held.length} Worker(s) for this project and ${input.workers.length} live Worker(s) are ` +
+      `the host holds ${held.length} Worker(s) for this project and ${runningWorkers.length} live Worker(s) are ` +
         `running here, and not one of them matches: the host ids ` +
         `(${[...ourWorkerIds].slice(0, 3).join(", ")}) and the project ids ` +
-        `(${input.workers.slice(0, 3).map((w) => w.state.worker_id).join(", ")}) are disjoint, which means a Worker ` +
+        `(${runningWorkers.slice(0, 3).map((w) => w.state.worker_id).join(", ")}) are disjoint, which means a Worker ` +
         `was born without the \`RED_AFK_WORKER_ID\` its launch declared and minted a second identity (#3081)`,
     );
   }

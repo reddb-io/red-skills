@@ -125,7 +125,7 @@ describe("doLanding — serialized landing (#1337)", () => {
     expect(fs.files.size).toBe(0);
   });
 
-  it("native merge queue → no land-lock is taken and the PR is enqueued with --auto", async () => {
+  it("native merge queue → no land-lock is taken and the enqueue keeps its GraphQL-only form", async () => {
     let acquires = 0;
     const countingLock: LandLock = {
       acquire: async () => {
@@ -151,7 +151,10 @@ describe("doLanding — serialized landing (#1337)", () => {
     });
     // The forge serializes; double-serializing would only add latency.
     expect(acquires).toBe(0);
+    // The write-plan keeps `--auto` on the CLI: the merge-queue enqueue is a
+    // GraphQL-only mutation with no REST equivalent (#3663).
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge --auto"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pulls/42/merge"))).toBe(false);
   });
 
   it("native merge queue on the DIRECT path still takes the land-lock (no PR to enqueue)", async () => {
@@ -193,9 +196,10 @@ describe("doLanding — serialized landing (#1337)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The enqueue is not the merge (#2986). `gh pr merge --auto` exits 0 the moment
-// the PR joins the queue; the merge group's CI then runs for minutes and may
-// hand the PR back. The landing used to read that exit 0 as "landed" and let its
+// A merge request is not proof of the merge (#2986). The REST merge request can
+// return before the forge reports the PR merged; the merge group's CI may then
+// run for minutes and hand the PR back. Landing used to read that exit 0 as
+// "landed" and let its
 // caller close the issue, strip its labels and delete the remote branch — so a
 // rejected merge group left a closed issue whose code never reached the base.
 // Every result below is what gates those steps: only `ok: true` unlocks them.

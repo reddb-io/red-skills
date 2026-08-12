@@ -6,6 +6,7 @@
 
 export const INTEGRATION_TESTS: readonly string[] = [
   "cli.test.ts",
+  "command-boundary.test.ts",
   "cli-resident.test.ts",
   "cli-telemetry.test.ts",
   "cli-wait-show.test.ts",

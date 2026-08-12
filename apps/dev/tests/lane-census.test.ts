@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -75,19 +75,31 @@ describe("lane census operational probe", () => {
       const workerLog = join(projectRoot, ".red", "tmp", "workers", "wTEST", "worker.log.toonl");
       const unknown = join(projectRoot, ".red", "state", "unknown", "events.toonl");
       const deadTemp = `${projectDeaths}.rotate-42`;
+      const deadDrain = join(
+        projectRoot,
+        ".red",
+        "state",
+        "rsp",
+        "rsp-telemetry.spool.toonl.42.1783958744462.drain",
+      );
       const hostEvents = join(hostRoot, "redskilled.log.toonl");
+      const balanceHistory = join(hostRoot, "state", "github", "balance-history.toonl");
       await Promise.all([
         mkdir(join(projectRoot, ".red", "state", "deaths"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "tmp", "workers", "wTEST"), { recursive: true }),
         mkdir(join(projectRoot, ".red", "state", "unknown"), { recursive: true }),
+        mkdir(join(projectRoot, ".red", "state", "rsp"), { recursive: true }),
         mkdir(hostRoot, { recursive: true }),
+        mkdir(join(hostRoot, "state", "github"), { recursive: true }),
       ]);
       await Promise.all([
         writeFile(projectDeaths, "header\nrecord\n"),
         writeFile(workerLog, "[3]{msg}:\none\ntwo\nthree\n"),
         writeFile(unknown, "mystery\n"),
         writeFile(deadTemp, "partial"),
+        writeFile(deadDrain, "pending telemetry"),
         writeFile(hostEvents, "host-event\n"),
+        writeFile(balanceHistory, "[1]{pool}:\ngraphql\n"),
       ]);
 
       const input = await collectLaneCensusProbeInput({
@@ -117,6 +129,13 @@ describe("lane census operational probe", () => {
           path: "[host]/redskilled.log.toonl",
           lines: 1,
         }),
+        expect.objectContaining({
+          id: "github-balance-history",
+          tier: "host",
+          path: "[host]/state/github/balance-history.toonl",
+          maxBytes: 2 * 1024 * 1024,
+          lines: 1,
+        }),
       ]));
       expect(input.unregisteredToonl).toEqual([".red/state/unknown/events.toonl"]);
       expect(input.temps).toContainEqual({
@@ -124,6 +143,43 @@ describe("lane census operational probe", () => {
         pid: 42,
         pidAlive: false,
       });
+      expect(input.temps).toContainEqual({
+        path: ".red/state/rsp/rsp-telemetry.spool.toonl.42.1783958744462.drain",
+        pid: 42,
+        pidAlive: false,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a live Worker log over 256 MiB as red with its path and size", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lane-census-live-log-"));
+    const projectRoot = join(root, "project");
+    const hostRoot = join(root, "host");
+    const workerRoot = join(projectRoot, ".red", "tmp", "workers", "wLIVE");
+    const workerLog = join(workerRoot, "worker.log.toonl");
+    const warningBytes = 256 * 1024 * 1024;
+    try {
+      await mkdir(workerRoot, { recursive: true });
+      await writeFile(join(workerRoot, "worker.pid"), String(process.pid));
+      await writeFile(workerLog, "oversized\n");
+
+      const input = await collectLaneCensusProbeInput({
+        projectRoot,
+        hostRoot,
+        isPidAlive: (pid) => pid === process.pid,
+        readStat: async (path) => path === workerLog
+          ? { size: warningBytes + 1 }
+          : stat(path),
+      });
+      const result = runLaneCensusProbe(input);
+
+      expect(result).toMatchObject({ verdict: "red" });
+      expect(result.evidence).toContain(
+        ".red/tmp/workers/wLIVE/worker.log.toonl",
+      );
+      expect(result.evidence).toContain("268435457/268435456 bytes");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -169,7 +169,11 @@ export function redskilledBundleCacheRoot(env: NodeJS.ProcessEnv = process.env):
 }
 
 const VERSIONED_BUNDLE = /^([a-z0-9-]+)-(.+)\.bundle\.min\.mjs$/;
-const REDSKILLED_VERSIONED_BUNDLE = /^redskilled-(.+)\.bundle\.min\.mjs$/;
+// `(?!mcp[.-])` bars the one sibling that wears the daemon's name plus a
+// surface suffix rather than a version: `redskilled-mcp[...].bundle.min.mjs`.
+// Without it the MCP host recognized ITSELF as a daemon entry, spawned its own
+// bundle as the daemon, and the child exited 2 (#3652).
+const REDSKILLED_VERSIONED_BUNDLE = /^redskilled-(?!mcp[.-])(.+)\.bundle\.min\.mjs$/;
 const PLUGIN_ROOT_VARS = [
   "RED_SKILLS_DEV_PLUGIN_ROOT",
   "CLAUDE_PLUGIN_ROOT",
@@ -273,7 +277,11 @@ function* entryCandidates(
     const dir = dirname(resolve(callerEntry));
     yield [join(dir, REDSKILLED_BUNDLE_ASSET), "caller-sibling-bundle"];
     const versioned = VERSIONED_BUNDLE.exec(basename(callerEntry));
-    if (versioned) yield [join(dir, `redskilled-${versioned[2]}.bundle.min.mjs`), "caller-sibling-bundle"];
+    // A caller named `redskilled-mcp[...]` backtracks to suffix `mcp[...]`;
+    // yielding that sibling would be the caller spawning itself (#3652).
+    if (versioned && !/^mcp([.-]|$)/.test(versioned[2]!)) {
+      yield [join(dir, `redskilled-${versioned[2]}.bundle.min.mjs`), "caller-sibling-bundle"];
+    }
     yield [join(dir, "..", "dist", REDSKILLED_BUNDLE_ASSET), "caller-sibling-bundle"];
   }
   for (const variable of PLUGIN_ROOT_VARS) {

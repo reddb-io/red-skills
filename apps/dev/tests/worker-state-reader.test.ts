@@ -283,8 +283,8 @@ describe("worker-state-reader", () => {
   });
 
   // issue #1219 PART 2: a live isolation worker whose host-side state is zeroed
-  // renders its real identity from the durable identity.json sidecar.
-  it("isolation: hostPidLive + zeroed state → real worker_id/runner/origin/started_at from identity.json", async () => {
+  // renders its real identity from the durable identity.toon sidecar.
+  it("isolation: hostPidLive + zeroed state → real worker_id/runner/origin/started_at from identity.toon", async () => {
     const base = await mkdtemp(join(tmpdir(), "wsr-iso-identity-"));
     const attemptDir = join(base, "wISO", "1181-a1");
     // Fully zeroed host state (pre-sync isolation worker): pid 0, empty identity.
@@ -315,7 +315,7 @@ describe("worker-state-reader", () => {
   });
 
   // The identity sidecar never overwrites a value the state file already carries.
-  it("isolation: identity.json does not clobber a populated state field", async () => {
+  it("isolation: identity.toon does not clobber a populated state field", async () => {
     const base = await mkdtemp(join(tmpdir(), "wsr-iso-nonclobber-"));
     const attemptDir = join(base, "wISO", "1181-a1");
     const path = await writeState(attemptDir, { pid: 0, worker_id: "wKEEP", current: {} });

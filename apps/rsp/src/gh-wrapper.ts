@@ -4,6 +4,7 @@ import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { readGhConditionalJson } from "./gh-conditional.js";
 import { isGhBatchCommand, runGhBatchCommand } from "./gh-batch.js";
+import { runGhApiRead } from "./gh-api-wrapper.js";
 import { recoveryInstruction, type RecordedGitContract } from "./git-wrapper.js";
 import { extractQueryArg, filterRows, withHelp } from "./output-levers.js";
 import { classifyWrappedFailure, renderStructuredError } from "./structured-error.js";
@@ -74,10 +75,13 @@ const SELECTABLE_LIST_FIELDS: Record<`${GhKind}:list`, readonly string[]> = {
 
 export async function runGhWrapper(argv: readonly string[], options: GhRenderOptions): Promise<GhRenderResult> {
   if (isGhBatchCommand(argv)) return await runGhBatchCommand(argv);
+  if (argv[0] === "gh" && argv[1] === "api") return await runGhApiRead(argv);
   const command = parseGhCommand(argv);
   const contract = await collectGhContract(command);
   return renderGhContract(argv, contract, options);
 }
+
+export { parseGhApiRead } from "./gh-api-wrapper.js";
 
 export async function renderGhContract(
   commandArgv: readonly string[],

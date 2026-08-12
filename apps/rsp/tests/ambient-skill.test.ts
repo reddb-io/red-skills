@@ -39,7 +39,7 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("code files render an outline plus bounded content");
     expect(markdown).toContain("host pre-exec hook may rewrite bare `cat <file>`");
     expect(markdown).toContain("`rsp cat <file>`, large `rsp git diff`, and large `rsp git log` output may");
-    expect(markdown).toContain("call `rsp exec -- \"<command line>\"` directly");
+    expect(markdown).toContain("call `rsp exec -- \"<command line>\"`");
     expect(markdown).toContain("Bytes inside pipes remain untouched");
     expect(markdown).toContain("Bare `rsp` renders a live TOON dashboard");
     expect(markdown).toContain("Use `--help` after any subcommand for scoped flags, defaults, and examples.");
@@ -48,15 +48,18 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("`rsp show el:<id>` writes the original bytes verbatim to stdout");
   });
 
-  it("describes the resident as the core and every surface as a peer client", () => {
+  it("describes the synchronous data plane and lazy resident control plane", () => {
     const markdown = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES);
 
     expect(markdown).toContain("## Core model");
-    expect(markdown).toContain("The resident is the core");
+    expect(markdown).toContain("The command boundary is the synchronous data plane");
+    expect(markdown).toContain("Unknown simple argv runs");
+    expect(markdown).toContain("The resident is the lazy control plane");
+    expect(markdown).toContain("create no rsp state");
     expect(markdown).toContain(
-      "no surface is a privileged or canonical contact point",
+      "No surface is a privileged or canonical contact point",
     );
-    expect(markdown).toContain("no MCP server connected is fully supported");
+    expect(markdown).toContain("server connected is fully supported");
     expect(markdown).toContain(
       "An unreachable resident costs the elision, never the command",
     );

@@ -54,14 +54,14 @@ grep -qF 'ref: ${{ github.event.pull_request.base.sha }}' .github/workflows/arch
 for workflow in \
   .github/workflows/red-workspace-ci.yml \
   .github/workflows/red-rsp-benchmark-ci.yml; do
-  grep -qF 'https://api.github.com/repos/reddb-io/toon/contents/install.sh?ref=${TQ_VERSION}' "$workflow" ||
-    fail "$workflow must fetch the pinned tq installer through the GitHub API"
-  grep -qF 'Authorization: Bearer ${GH_TOKEN}' "$workflow" ||
-    fail "$workflow must authenticate the pinned tq installer fetch"
-  grep -qF 'GH_TOKEN: ${{ github.token }}' "$workflow" ||
-    fail "$workflow must source tq installer authentication from github.token"
-  if grep -qF 'raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh' "$workflow"; then
-    fail "$workflow must not fetch the pinned tq installer anonymously"
+  grep -qF 'cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked --root "$tq_root"' "$workflow" ||
+    fail "$workflow must install the pinned official reddb-io-tq crate"
+  grep -qF 'tq_root="$RUNNER_TEMP/tq"' "$workflow" ||
+    fail "$workflow must isolate the tq package-manager prefix under RUNNER_TEMP"
+  grep -qF '"$tq_root/bin/tq" --version' "$workflow" ||
+    fail "$workflow must verify the package-manager-installed tq binary"
+  if grep -qE '(\.\./toon|target/debug/tq|path = .*toon)' "$workflow"; then
+    fail "$workflow must not source tq from a sibling checkout or local build"
   fi
 done
 

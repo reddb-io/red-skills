@@ -17,7 +17,7 @@ import {
 } from "./aliased-query.js";
 import type { GithubAttributionLedger, GithubAttributedOperation } from "./attribution.js";
 import type { GithubBalance } from "./balance.js";
-import type { GithubApiSurface } from "./surface.js";
+import type { GithubApiSurface, GithubRateBudget } from "./surface.js";
 
 const Octokit = RestOctokit.plugin(retry, throttling);
 
@@ -28,6 +28,8 @@ export interface GithubEtagEntry {
   readonly etag: string;
   readonly data: unknown;
   readonly headers: GithubResponseHeaders;
+  /** When the held body was last confirmed by a 200 response. */
+  readonly storedAt?: string;
 }
 
 /** The ETag and answer are one entry: retaining only the validator makes 304 empty. */
@@ -66,6 +68,15 @@ export interface GithubRestAnswer<T> {
   readonly headers: GithubResponseHeaders;
   /** True when a 304 reused the held answer and consumed no REST request budget. */
   readonly quotaFree: boolean;
+  readonly degraded?: GithubCachedFallback;
+}
+
+export interface GithubCachedFallback {
+  readonly source: "cache";
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string;
+  readonly ageMs: number | null;
+  readonly reason: string;
 }
 
 export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly T[]> {
@@ -90,6 +101,8 @@ export interface GithubSingleObjectRequest extends GithubAliasedSingleObjectRead
   readonly cacheKey: string;
   readonly operation: GithubAttributedOperation;
   readonly actor?: string;
+  /** Force one API rail when it is available; an exhausted rail falls back to its declared equivalent. */
+  readonly rail?: GithubApiSurface;
   /** Project REST and GraphQL payloads into one caller-visible object shape. */
   readonly project?: (value: unknown, surface: GithubApiSurface) => unknown;
 }
@@ -99,6 +112,18 @@ export interface GithubSingleObjectAnswer<T> {
   readonly data: T;
   readonly surface: GithubApiSurface;
   readonly quotaFree: boolean;
+  /** Present for an explicit choice or a failover, so routing never becomes invisible. */
+  readonly routing?: GithubRailRouting;
+}
+
+export interface GithubRailRouting {
+  readonly requestedRail: GithubApiSurface;
+  readonly selectedRail: GithubApiSurface;
+  readonly rerouted: boolean;
+  /** The exhausted source pool when rerouted. */
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string | null;
+  readonly reason: string;
 }
 
 export interface GithubGraphqlAttribution {
@@ -114,6 +139,7 @@ export interface CreateGithubClientOptions {
   readonly attribution?: GithubAttributionLedger;
   /** The last authoritative token-wide balance; an unknown balance never diverts. */
   readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
+  readonly now?: () => string;
   /** Transient retries; the plugin default in production, overridable in tests. */
   readonly retryCount?: number;
   /** Disable plugin pacing only for a caller-supplied transport test. */
@@ -156,6 +182,22 @@ export class GithubCredentialError extends Error {
   }
 }
 
+/** A primary pool cannot serve this request and no equivalent/cache can answer it. */
+export class GithubPoolUnavailableError extends Error {
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string;
+
+  constructor(pool: GithubRateBudget, resetAt: string, detail?: string, options?: { readonly cause?: unknown }) {
+    super(
+      `${pool} pool is exhausted; parked until ${resetAt}${detail ? ` (${detail})` : ""}`,
+      options,
+    );
+    this.name = "GithubPoolUnavailableError";
+    this.pool = pool;
+    this.resetAt = resetAt;
+  }
+}
+
 /**
  * Build the typed GitHub transport decided by ADR 0133.
  *
@@ -166,6 +208,7 @@ export class GithubCredentialError extends Error {
  */
 export function createGithubClient(options: CreateGithubClientOptions): GithubClient {
   const etags = options.etags ?? createMemoryGithubEtagStore();
+  const now = options.now ?? (() => new Date().toISOString());
   const octokit = new Octokit({
     auth: options.token,
     // REST.js logs every non-2xx before the caller can classify it, including
@@ -191,8 +234,28 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         },
   });
 
+  const readBalance = async (): Promise<GithubBalance | null> => {
+    try {
+      return await options.balance?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const refuseSpentPool = (balance: GithubBalance | null, pool: GithubRateBudget): void => {
+    const observed = balance?.pools[pool] ?? null;
+    if (observed !== null && observed.remaining <= 0) {
+      throw new GithubPoolUnavailableError(pool, observed.reset_at);
+    }
+  };
+
   const conditionalRest = async <T>(input: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>> => {
       const held = etags.get(input.cacheKey);
+      const observed = (await readBalance())?.pools[input.operation.budget] ?? null;
+      if (observed !== null && observed.remaining <= 0) {
+        if (held !== undefined) return cachedAnswer<T>(held, input.operation.budget, observed.reset_at, now());
+        throw new GithubPoolUnavailableError(input.operation.budget, observed.reset_at);
+      }
       const parameters = { ...(input.parameters ?? {}) } as Record<string, unknown>;
       const callerHeaders = isRecord(parameters.headers) ? parameters.headers : {};
       parameters.headers = {
@@ -204,7 +267,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         const response = await octokit.request(input.route, parameters);
         const headers = response.headers as GithubResponseHeaders;
         const etag = header(headers, "etag");
-        if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers });
+        if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers, storedAt: now() });
         await options.attribution?.record({ operation: input.operation, cost: 1, actor: input.actor });
         return { data: response.data as T, headers, quotaFree: false };
       } catch (error) {
@@ -218,11 +281,18 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
           const responseHeaders = errorHeaders(error);
           const headers = { ...held.headers, ...responseHeaders };
           const etag = header(headers, "etag") ?? held.etag;
-          etags.set(input.cacheKey, { etag, data: held.data, headers });
+          etags.set(input.cacheKey, { etag, data: held.data, headers, ...(held.storedAt ? { storedAt: held.storedAt } : {}) });
           await options.attribution?.record({ operation: input.operation, cost: 0, actor: input.actor });
           return { data: held.data as T, headers, quotaFree: true };
         }
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
+        if (isGithubRateLimitError(error)) {
+          if (held !== undefined) {
+            const unavailable = unavailableFromError(input.operation.budget, error);
+            return cachedAnswer<T>(held, input.operation.budget, unavailable.resetAt, now());
+          }
+          throw unavailableFromError(input.operation.budget, error);
+        }
         throw error;
       }
     };
@@ -233,11 +303,12 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     readonly reject: (error: unknown) => void;
   }
 
-  const pendingSingleObjects = new Map<GithubSingleObjectRequest["kind"], PendingSingleObjectRead[]>();
+  const pendingSingleObjects = new Map<string, PendingSingleObjectRead[]>();
   let singleObjectFlushScheduled = false;
 
   const readSingleObjectRest = async (
     pending: PendingSingleObjectRead,
+    routing?: GithubRailRouting,
   ): Promise<void> => {
     const input = pending.input;
     const pull = input.kind === "pr";
@@ -259,6 +330,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         data: input.project ? input.project(answer.data, "rest") : answer.data,
         surface: "rest",
         quotaFree: answer.quotaFree,
+        ...(routing ? { routing } : {}),
       });
     } catch (error) {
       pending.reject(error);
@@ -267,6 +339,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
 
   const readSingleObjectBatch = async (
     group: readonly PendingSingleObjectRead[],
+    routing?: GithubRailRouting,
   ): Promise<void> => {
     try {
       const aliased = buildSingleObjectReadsQuery(group.map(({ input }) => input));
@@ -292,6 +365,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
               : row.value,
             surface: "graphql",
             quotaFree: false,
+            ...(routing ? { routing } : {}),
           });
         }
       });
@@ -302,20 +376,57 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
   };
 
   const flushSingleObjects = async (): Promise<void> => {
-    let balance: GithubBalance | null = null;
-    try {
-      balance = await options.balance?.() ?? null;
-    } catch {
-      // An unanswered ask is unknown, never a reason to strand the queue or
-      // infer pressure. Unknown keeps the original single-object REST route.
-    }
+    const balance = await readBalance();
     const threshold = githubSingleObjectCoalescingThreshold(balance);
     singleObjectFlushScheduled = false;
     const groups = [...pendingSingleObjects.values()];
     pendingSingleObjects.clear();
     await Promise.all(groups.map(async (group) => {
-      if (group.length > threshold) await readSingleObjectBatch(group);
-      else await Promise.all(group.map(readSingleObjectRest));
+      const explicit = group[0]!.input.rail;
+      const requested = explicit ?? "rest";
+      const source = balance?.pools[requested] ?? null;
+      const fallback: GithubApiSurface = requested === "rest" ? "graphql" : "rest";
+      const destination = balance?.pools[fallback] ?? null;
+      const requestedCache = requested === "rest" && group.every(({ input }) => etags.get(input.cacheKey) !== undefined);
+      const fallbackCache = fallback === "rest" && group.every(({ input }) => etags.get(input.cacheKey) !== undefined);
+      let selected = requested;
+      let routing: GithubRailRouting | undefined;
+
+      if (source !== null && source.remaining <= 0) {
+        if ((destination !== null && destination.remaining > 0) || fallbackCache) {
+          selected = fallback;
+          routing = {
+            requestedRail: requested,
+            selectedRail: selected,
+            rerouted: true,
+            pool: requested,
+            resetAt: source.reset_at,
+            reason: `${requested} pool is exhausted until ${source.reset_at}; used the equivalent ${selected} rail`,
+          };
+        } else if (!requestedCache) {
+          const error = new GithubPoolUnavailableError(requested, source.reset_at, "the equivalent rail has no known budget");
+          group.forEach((pending) => pending.reject(error));
+          return;
+        }
+      } else if (explicit !== undefined) {
+        routing = {
+          requestedRail: requested,
+          selectedRail: selected,
+          rerouted: false,
+          pool: requested,
+          resetAt: source?.reset_at ?? null,
+          reason: source === null
+            ? `${requested} pool balance is unknown, so the explicit rail is honored reactively`
+            : `${requested} pool has ${source.remaining} remaining, so the explicit rail is honored`,
+        };
+      }
+
+      const warm = group.some(({ input }) => etags.get(input.cacheKey) !== undefined);
+      if (selected === "graphql" || (explicit === undefined && !warm && group.length > threshold)) {
+        await readSingleObjectBatch(group, routing);
+      } else {
+        await Promise.all(group.map((pending) => readSingleObjectRest(pending, routing)));
+      }
     }));
   };
 
@@ -323,23 +434,15 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     // Rule 1 and its counter-rule stay together here: one object prefers REST,
     // while enough COLD peers may coalesce. A held validator can answer 304 for
     // zero primary quota, so it never gets traded for a charged GraphQL node.
-    if (etags.get(input.cacheKey) !== undefined) {
-      return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
-        void readSingleObjectRest({
-          input,
-          resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
-          reject,
-        });
-      });
-    }
     return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
-      const group = pendingSingleObjects.get(input.kind) ?? [];
+      const groupKey = `${input.kind}:${input.rail ?? "default"}`;
+      const group = pendingSingleObjects.get(groupKey) ?? [];
       group.push({
         input,
         resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
         reject,
       });
-      pendingSingleObjects.set(input.kind, group);
+      pendingSingleObjects.set(groupKey, group);
       if (!singleObjectFlushScheduled) {
         singleObjectFlushScheduled = true;
         // A zero-delay task collects reads started by adjacent promise jobs too;
@@ -385,6 +488,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       attribution?: GithubGraphqlAttribution,
     ): Promise<T> {
       try {
+        refuseSpentPool(await readBalance(), attribution?.operation.budget ?? "graphql");
         const answer = await octokit.graphql(query, variables) as T;
         if (attribution) {
           // Generic GraphQL does not expose the response's point cost. One is
@@ -399,10 +503,44 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         return answer;
       } catch (error) {
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
+        if (isGithubRateLimitError(error)) {
+          throw unavailableFromError(attribution?.operation.budget ?? "graphql", error);
+        }
         throw error;
       }
     },
   };
+}
+
+function cachedAnswer<T>(
+  held: GithubEtagEntry,
+  pool: GithubRateBudget,
+  resetAt: string,
+  now: string,
+): GithubRestAnswer<T> {
+  const current = Date.parse(now);
+  const stored = held.storedAt === undefined ? Number.NaN : Date.parse(held.storedAt);
+  return {
+    data: held.data as T,
+    headers: held.headers,
+    quotaFree: true,
+    degraded: {
+      source: "cache",
+      pool,
+      resetAt,
+      ageMs: Number.isFinite(current) && Number.isFinite(stored) ? Math.max(0, current - stored) : null,
+      reason: `${pool} pool is exhausted until ${resetAt}; serving the last-known answer instead of going dark`,
+    },
+  };
+}
+
+function unavailableFromError(pool: GithubRateBudget, error: unknown): GithubPoolUnavailableError {
+  const headers = errorHeaders(error);
+  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
+  const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0
+    ? new Date(resetSeconds * 1_000).toISOString()
+    : "an unknown reset instant";
+  return new GithubPoolUnavailableError(pool, resetAt, "GitHub refused the live request", { cause: error });
 }
 
 function hasNextPage(headers: GithubResponseHeaders): boolean {
@@ -412,11 +550,29 @@ function hasNextPage(headers: GithubResponseHeaders): boolean {
 
 /** Primary/secondary quota refusal, distinct from 304 and transport failure. */
 export function isGithubRateLimitError(error: unknown): boolean {
+  if (error instanceof GithubPoolUnavailableError) return true;
   const status = httpStatus(error);
   const headers = errorHeaders(error);
   return status === 429 ||
     (status === 403 && header(headers, "x-ratelimit-remaining") === "0") ||
     (error instanceof Error && /secondary rate|rate limit/i.test(error.message));
+}
+
+/** Reset instant carried by a primary or secondary rate-limit refusal. */
+export function githubRateLimitResetAt(error: unknown, nowMs = Date.now()): string | null {
+  const headers = errorHeaders(error);
+  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
+  if (Number.isFinite(resetSeconds) && resetSeconds >= 0) {
+    return new Date(resetSeconds * 1_000).toISOString();
+  }
+  const retryAfter = header(headers, "retry-after");
+  if (retryAfter == null) return null;
+  const delaySeconds = Number(retryAfter);
+  if (Number.isFinite(delaySeconds) && delaySeconds >= 0 && Number.isFinite(nowMs)) {
+    return new Date(nowMs + delaySeconds * 1_000).toISOString();
+  }
+  const retryAtMs = Date.parse(retryAfter);
+  return Number.isFinite(retryAtMs) ? new Date(retryAtMs).toISOString() : null;
 }
 
 function httpStatus(error: unknown): number | undefined {

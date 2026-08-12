@@ -49,15 +49,15 @@ const PINNED: ReadonlyArray<
   ["search repos", "read", "multi-repository", "one-shot", "rest", "search", null],
   ["api graphql", "read", "multi-node", "one-shot", "graphql", "graphql", null],
   ["api rest", "read", "single-object", "one-shot", "rest", "rest", null],
-  ["issue create", "write", "single-object", undefined, "graphql", "graphql", null],
-  ["issue edit", "write", "single-object", undefined, "graphql", "graphql", null],
-  ["issue close", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["issue create", "write", "single-object", undefined, "rest", "rest", null],
+  ["issue edit", "write", "single-object", undefined, "rest", "rest", null],
+  ["issue close", "write", "single-object", undefined, "rest", "rest", null],
   ["issue reopen", "write", "single-object", undefined, "graphql", "graphql", null],
   ["issue comment", "write", "single-object", undefined, "rest", "rest", null],
   ["issue develop", "write", "single-object", undefined, "graphql", "graphql", null],
   ["pr create", "write", "single-object", undefined, "rest", "rest", null],
   ["pr comment", "write", "single-object", undefined, "rest", "rest", null],
-  ["pr merge", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr merge", "write", "single-object", undefined, "rest", "rest", null],
   ["pr close", "write", "single-object", undefined, "graphql", "graphql", null],
   ["pr edit", "write", "single-object", undefined, "graphql", "graphql", null],
   ["pr ready", "write", "single-object", undefined, "graphql", "graphql", null],
@@ -261,9 +261,10 @@ describe("the router", () => {
 
   it("stops mislabelling the writes", () => {
     expect(routeGithubArgs(["issue", "comment", "42", "--body", "x"]).surface).toBe("rest");
-    expect(routeGithubArgs(["issue", "create", "--title", "x"]).surface).toBe("graphql");
+    expect(routeGithubArgs(["issue", "create", "--title", "x"]).surface).toBe("rest");
     expect(routeGithubArgs(["pr", "create", "--title", "x"]).surface).toBe("rest");
-    expect(routeGithubArgs(["issue", "edit", "42", "--add-label", "x"]).surface).toBe("graphql");
+    expect(routeGithubArgs(["pr", "merge", "42", "--merge"]).surface).toBe("rest");
+    expect(routeGithubArgs(["issue", "edit", "42", "--add-label", "x"]).surface).toBe("rest");
   });
 
   it("raises on an unclassified operation instead of defaulting to GraphQL", () => {

@@ -59,15 +59,29 @@ export interface GhQuotaBackoffOpts {
   capMs?: number;
   /**
    * How long to sleep between retries when no server-supplied reset time is
-   * available. Default: 60 seconds.
+   * available. Default: 60 seconds, DOUBLING each retry up to 10 minutes —
+   * a fixed 60s cadence turned six waiting Workers into ~9,000 retries in one
+   * evening (issue #3672's field data, 2026-08-11).
    */
   defaultWaitMs?: number;
+  /**
+   * Ask GitHub when the drained pool resets, in epoch ms, or null when the
+   * answer is unavailable. No default: the routed client owns the balance ask
+   * (`GET /rate_limit` through @reddb-io/github), so a caller with client
+   * access injects the probe and the wait becomes one well-aimed sleep.
+   * Absent a probe, the doubling fallback below paces the retries.
+   */
+  probeResetMs?: () => Promise<number | null>;
 }
 
 /** Maximum total wall-clock wait before the failing response is returned. */
 export const DEFAULT_CAP_MS = 30 * 60 * 1000; // 30 minutes
-/** Sleep between retries when no server-supplied reset time is available. */
+/** First sleep between retries when no reset time is known. */
 export const DEFAULT_WAIT_MS = 60 * 1000;      // 60 seconds
+/** Ceiling for the doubling fallback wait. */
+export const MAX_FALLBACK_WAIT_MS = 10 * 60 * 1000; // 10 minutes
+/** Safety margin added past the probed reset instant. */
+export const RESET_MARGIN_MS = 5 * 1000;
 
 /**
  * Emit the wait as operator-visible `quota-wait` activity. The exec helpers hold
@@ -124,6 +138,7 @@ export function defaultGhQuotaBackoff(
     onWait: overrides.onWait ?? ((remainingMs) => announceQuotaWait(remainingMs, Math.min(waitMs, remainingMs))),
     capMs,
     defaultWaitMs: waitMs,
+    ...(overrides.probeResetMs ? { probeResetMs: overrides.probeResetMs } : {}),
   };
 }
 
@@ -151,12 +166,13 @@ export async function withGhQuotaBackoff(
   opts: GhQuotaBackoffOpts,
 ): Promise<ExecOutput> {
   const capMs = opts.capMs ?? DEFAULT_CAP_MS;
-  const waitMs = opts.defaultWaitMs ?? DEFAULT_WAIT_MS;
+  const baseWaitMs = opts.defaultWaitMs ?? DEFAULT_WAIT_MS;
 
   let result = await fn();
   if (!isGhRateLimited(result)) return result;
 
   const deadlineMs = opts.nowMs() + capMs;
+  let fallbackWaitMs = baseWaitMs;
 
   while (isGhRateLimited(result)) {
     const remainingMs = deadlineMs - opts.nowMs();
@@ -165,7 +181,17 @@ export async function withGhQuotaBackoff(
       // explicit quota reason rather than looping forever.
       return result;
     }
-    const sleepForMs = Math.min(waitMs, remainingMs);
+    // One free probe per wait: sleeping until the pool actually refills turns
+    // the 60s hammer (~30 retries per window) into a single well-aimed retry.
+    const resetMs = (await opts.probeResetMs?.().catch(() => null)) ?? null;
+    const untilResetMs = resetMs === null ? null : resetMs + RESET_MARGIN_MS - opts.nowMs();
+    const sleepForMs = Math.min(
+      untilResetMs !== null && untilResetMs > 0 ? untilResetMs : fallbackWaitMs,
+      remainingMs,
+    );
+    if (untilResetMs === null || untilResetMs <= 0) {
+      fallbackWaitMs = Math.min(fallbackWaitMs * 2, MAX_FALLBACK_WAIT_MS);
+    }
     opts.onWait?.(remainingMs);
     await opts.sleepMs(sleepForMs);
     result = await fn();

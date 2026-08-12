@@ -15,7 +15,7 @@
 //                branch, open or reuse the PR, `gh pr merge --merge`), then
 //                fast-forward local <target> to the merge commit.
 
-import { planGithubRestRead } from "@reddb-io/github";
+import { planGithubRestRead, planGithubWrite } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import type { GithubMergeRead } from "./github-merge-read.js";
 import { retryAfterOrphanedIndexLock } from "./index-lock.js";
@@ -851,36 +851,9 @@ async function requiredCheckContexts(
   }
 }
 
-/**
- * Decide the merge readiness from the parsed merge state. `mergeable` is the
- * settled-vs-computing AUTHORITY: `mergeStateStatus` alone can read a transient
- * value (even a spurious `DIRTY`) before GitHub finishes computing mergeability,
- * and classifying that pre-settle read as a terminal `conflict` is exactly the
- * #2084/#2085 phantom-conflict concede-loop on a provably fast-forwardable
- * branch. Order matters:
- *   1. mergeable=CONFLICTING → a settled, genuine conflict → `conflict`.
- *   2. mergeable=UNKNOWN → GitHub is still computing mergeability → `pending`
- *      (re-poll until it settles; the poll budget accommodates it). A transient
- *      `mergeStateStatus` is never terminal while mergeability is unsettled.
- *   3. DIRTY → `conflict`. Fallback for callers/tests that did NOT fetch
- *      `mergeable` (it is empty). Unreachable once `mergeable` is fetched — case
- *      1 covers real conflicts — but kept for back-compat.
- *   4. any required check FAILED → `ci-failed` (never clears by waiting).
- *   5. BEHIND → out of date vs base but still MERGEABLE (unlike DIRTY);
- *      `preMergeRebase` already integrated the base, so a BEHIND at check time is
- *      a benign race → `pending` (re-poll).
- *   6. CLEAN → `merge`.
- *   7. any check still running → `pending`.
- *   8. BLOCKED with a required check that has NOT reported a verdict yet (#2747)
- *      → `pending`. *No verdict yet* is not *a blocking verdict*: right after a
- *      PR opens the rollup is still empty, and merging into that hole gets the
- *      merge REJECTED by branch protection, which the landing path parks as
- *      `blocked:ci` on a PR that was never red. Re-poll until the checks report.
- *   9. BLOCKED with every required check reported → likely a required REVIEW;
- *      attempts merge, surfacing as `merge-failed` if protection requires it → `merge`.
- *  10. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
- *  11. UNKNOWN / DRAFT / empty mergeStateStatus → `pending`.
- */
+/** Decide readiness from settled mergeability and observed check verdicts.
+ * UNKNOWN mergeability and missing required contexts are pending; BLOCKED is
+ * mergeable only after every required context reports (#2084, #2747, #3511). */
 export function classifyMergeState(view: MergeStateView, context: MergeClassifyContext = {}): MergeReadiness {
   const s = up(view.mergeStateStatus);
   const m = up(view.mergeable);
@@ -896,20 +869,16 @@ export function classifyMergeState(view: MergeStateView, context: MergeClassifyC
   return "pending";
 }
 
-/** Why the forge refused a `gh pr merge`, READ BACK from the PR instead of
- * guessed (#2807). */
+/** Why the forge refused `gh pr merge`, read back instead of guessed (#2807). */
 export type MergeRejectionCause =
-  /** Out of date vs base; branch protection requires branches to be up to date.
-   * The one cause the landing repairs itself: update the branch and merge. */
+  /** The landing repairs an out-of-date branch itself. */
   | "stale-branch"
   | "ci-failed"
   | "conflict"
-  /** BLOCKED with every check reported — an unsatisfied protection rule that is
-   * not a check (a required review, a code-owner gate, …). */
+  /** BLOCKED after required checks reported; the exact rule remains unknown. */
   | "protection-blocked"
   | "checks-pending"
-  /** The rejection is real but the PR state does not explain it (or could not be
-   * re-read). Named as unexplained rather than attributed to a probable cause. */
+  /** The rejection is real but the observed PR state does not explain it. */
   | "unknown";
 
 export interface MergeRejectionDiagnosis {
@@ -928,20 +897,11 @@ function mergeStateEvidence(view: MergeStateView): string {
   return `mergeStateStatus=${state} mergeable=${mergeable}`;
 }
 
-/**
- * Classify a merge rejection from the PR state observed AFTER it (#2807).
- *
- * The landing used to record every `gh pr merge` failure as "usually because
- * branch protection or CI is not satisfied" and park `blocked:ci`. Observed
- * twice in 40 minutes on PRs whose every required check was green and that were
- * `mergeable=true` / `CLEAN`: `<base>` had simply advanced between the readiness
- * poll and the merge call, so protection's *require branches to be up to date*
- * declined it. A stale base is the NORMAL condition of a busy lane — every land
- * moves `<base>` for every other in-flight worker — so it must be repaired in
- * the landing lane, not parked with an instruction naming a check that never
- * failed.
- */
-export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiagnosis {
+/** Classify a merge rejection only from PR state observed after it (#2807). */
+export function diagnoseMergeRejection(
+  view: MergeStateView,
+  context: MergeClassifyContext = {},
+): MergeRejectionDiagnosis {
   const s = up(view.mergeStateStatus);
   const m = up(view.mergeable);
   if (m === "CONFLICTING" || s === "DIRTY") {
@@ -980,13 +940,23 @@ export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiag
         : `a status check has not reported a verdict yet (${mergeStateEvidence(view)})`,
     };
   }
+  if (s === "BLOCKED" && blockedWithoutVerdict(view, context)) {
+    const missing = missingRequiredChecks(view, context.requiredChecks ?? []);
+    return {
+      cause: "checks-pending",
+      retryable: true,
+      summary: missing.length > 0
+        ? `required status checks have not reported yet: ${missing.join(", ")}`
+        : `required status checks have not reported yet (${mergeStateEvidence(view)})`,
+    };
+  }
   if (s === "BLOCKED") {
     return {
       cause: "protection-blocked",
       retryable: false,
       summary:
-        `branch protection blocks the PR with every check reported and none failing ` +
-        `(${mergeStateEvidence(view)}) — an unsatisfied non-check rule such as a required review`,
+        `the forge reports the PR blocked after every required check reported ` +
+        `(${mergeStateEvidence(view)}); the exact unsatisfied rule is unknown`,
     };
   }
   return {
@@ -996,25 +966,14 @@ export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiag
   };
 }
 
-/** Extra evidence {@link classifyMergeState} uses to tell *no verdict yet* apart
- * from *a blocking verdict* on a BLOCKED PR (#2747). */
+/** Evidence distinguishing no verdict yet from a blocking verdict (#2747). */
 export interface MergeClassifyContext {
-  /** Required status-check contexts on the base branch, when they could be read
-   * (empty / absent = unknown, never "there are none"). */
+  /** Empty or absent means unknown, never "there are none". */
   requiredChecks?: readonly string[];
 }
 
-/**
- * True when a BLOCKED rollup has not yet produced a verdict for the checks that
- * gate the merge — the state that must keep waiting rather than merge-and-park.
- *
- * With the required contexts known, a required check missing from EVERY rollup
- * bucket has simply not been created yet. With them unknown, an explicitly empty
- * rollup (`checkCount === 0`) is the same "not reported yet" hole; a rollup we
- * could not count at all (`checkCount` absent) keeps the historical behaviour.
- */
-function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyContext): boolean {
-  const required = context.requiredChecks ?? [];
+/** True while a BLOCKED rollup lacks any required check's verdict. */
+function missingRequiredChecks(view: MergeStateView, required: readonly string[]): string[] {
   if (required.length > 0) {
     const reported = new Set<string>([
       ...(view.successfulCheckNames ?? []),
@@ -1022,8 +981,14 @@ function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyConte
       ...(view.failedCheckNames ?? []),
       ...(view.pendingCheckNames ?? []),
     ]);
-    return required.some((name) => !reported.has(name));
+    return required.filter((name) => !reported.has(name));
   }
+  return [];
+}
+
+function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyContext): boolean {
+  const required = context.requiredChecks ?? [];
+  if (required.length > 0) return missingRequiredChecks(view, required).length > 0;
   return view.checkCount === 0;
 }
 
@@ -1588,30 +1553,25 @@ async function readMergeStateView(
 ): Promise<MergeStateView> {
   try {
     if (github) return parseMergeStateView(await github.mergeState(repo, prNumber));
-    // Compatibility for non-polling callers not yet supplied the routed read
-    // port. This one-shot rejection diagnosis remains in the shrink-only
-    // inventory; the two repeated wait paths never reach it.
-    const result = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json",
-      "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
-    ]);
-    return result.code === 0 ? parseMergeStateView(result.stdout) : emptyMergeStateView();
+    const plan = planGithubRestRead({
+      kind: "pr",
+      number: prNumber,
+      fields: ["mergeStateStatus", "mergeable", "baseRefOid", "headRefOid"],
+      repo,
+    });
+    if (plan.outcome !== "plan") return emptyMergeStateView();
+    const argv = ["gh", ...plan.args];
+    const result = await exec(argv);
+    return result.code === 0
+      ? parseMergeStateView(JSON.stringify(plan.decode(result.stdout)))
+      : emptyMergeStateView();
   } catch {
     return emptyMergeStateView();
   }
 }
 
-/**
- * Run the merge; on rejection, read the PR back and repair the one cause the
- * landing owns — an out-of-date branch (#2807).
- *
- * Returns `undefined` once the merge succeeds, or the failing {@link LandPrResult}
- * carrying the OBSERVED cause. A stale branch is updated (`gh pr update-branch`,
- * exactly what a human does) and, when CI-aware, re-waited to green before the
- * next merge, so a base that moved mid-landing never parks a green PR. Every
- * other cause is returned unretried: a failing check, a conflict, or a review
- * gate is genuinely refusable and no amount of retrying clears it.
- */
+/** Merge after repairing a stale branch or waiting out transient BLOCKED state.
+ * Returns the observed terminal rejection; never invents its cause (#2807). */
 async function mergeWithStaleBranchRecovery(
   exec: Exec,
   input: {
@@ -1625,14 +1585,51 @@ async function mergeWithStaleBranchRecovery(
   },
 ): Promise<LandPrResult | undefined> {
   const { repo, prNumber, mergeArgs, ciAwait } = input;
+  let requiredChecks: readonly string[] = [];
+  let requiredChecksRead = false;
   for (let round = 0; ; round += 1) {
     const merge = await exec(mergeArgs);
     if (merge.code === 0) return undefined;
-    const diagnosis = diagnoseMergeRejection(await readMergeStateView(exec, ciAwait?.github, repo, prNumber));
+    if (ciAwait && !requiredChecksRead) {
+      requiredChecks = await requiredCheckContexts(
+        ciAwait.github,
+        repo,
+        ciAwait.baseBranch ?? input.target,
+        ciAwait.probeTimeoutMs,
+      );
+      requiredChecksRead = true;
+    }
+    const diagnosis = diagnoseMergeRejection(
+      await readMergeStateView(exec, ciAwait?.github, repo, prNumber),
+      { requiredChecks },
+    );
+    if (diagnosis.cause === "checks-pending") {
+      if (!ciAwait) {
+        return {
+          ok: false,
+          prNumber,
+          reason: "merge-failed",
+          mergeFailure: { ...diagnosis, retryable: false },
+        };
+      }
+      if (round >= STALE_BRANCH_MERGE_ROUNDS) {
+        return { ok: false, prNumber, reason: "ci-pending" };
+      }
+      const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+        ...ciAwait,
+        baseBranch: ciAwait.baseBranch ?? input.target,
+      });
+      if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+      if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+      if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+      continue;
+    }
     if (!diagnosis.retryable || round >= STALE_BRANCH_MERGE_ROUNDS) {
       return { ok: false, prNumber, reason: "merge-failed", mergeFailure: diagnosis };
     }
-    const updated = await exec(["gh", "-R", repo, "pr", "update-branch", String(prNumber)]);
+    const updated = await exec([
+      ...planGithubWrite(["gh", "-R", repo, "pr", "update-branch", String(prNumber)]).args,
+    ]);
     if (updated.code !== 0) {
       return {
         ok: false,
@@ -2165,11 +2162,17 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
       return { ok: false, prNumber, reason: "before-merge-failed" };
     }
 
-    // 3. Merge: branch protection is honored rather than bypassed (#1103). With
-    // a native merge queue, `--auto` enqueues and the forge serializes the tail.
-    const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
-    if (mergeQueue) mergeArgs.push("--auto");
-    if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
+    // 3. Merge: branch protection is honored rather than bypassed (#1103). The
+    // call site states the CANONICAL argv; the client owns the rail (#3663):
+    // the default merge is realized on REST, and `--auto` — the GraphQL-only
+    // merge-queue enqueue — keeps its CLI form.
+    const mergeArgs = [
+      ...planGithubWrite([
+        "gh", "-R", repo, "pr", "merge", String(prNumber), "--merge",
+        ...(mergeQueue ? ["--auto"] : []),
+        ...(mergeTitle ? ["--subject", scrubOutbound(mergeTitle)] : []),
+      ]).args,
+    ];
     if (mergeQueue && input.queueHandoff) {
       const custody = await input.queueHandoff(prNumber, async () => {
         const rejected = await mergeWithStaleBranchRecovery(exec, {
@@ -2355,23 +2358,20 @@ async function ensurePr(
     // is a no-op on a PR that is already ready, so mark unconditionally rather
     // than paying a state read to decide. Best-effort: a forge that refuses the
     // flip must not abort a landing that is otherwise green.
-    await exec(["gh", "-R", repo, "pr", "ready", String(existing)]);
+    await exec([
+      ...planGithubWrite(["gh", "-R", repo, "pr", "ready", String(existing)]).args,
+    ]);
     return existing;
   }
+  // Canonical argv in, rail out: the client realizes the create on REST (#3663).
   const create = await exec([
-    "gh",
-    "-R",
-    repo,
-    "pr",
-    "create",
-    "--base",
-    target,
-    "--head",
-    branch,
-    "--title",
-    scrubOutbound(prTitle),
-    "--body",
-    scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
+    ...planGithubWrite([
+      "gh", "-R", repo, "pr", "create",
+      "--base", target,
+      "--head", branch,
+      "--title", scrubOutbound(prTitle),
+      "--body", scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
+    ]).args,
   ]);
   if (create.code !== 0) return undefined;
   return await listOpenPr(exec, repo, branch, target);
@@ -2389,6 +2389,8 @@ export interface OpenDraftPrInput {
   n: number;
   /** Issue title, for the PR title. */
   title: string;
+  /** Exact draft title when a caller owns a more specific custody label. */
+  prTitle?: string;
   /** The trail body the draft mirrors. */
   body: string;
 }
@@ -2404,24 +2406,18 @@ export interface OpenDraftPrInput {
  * Landing then reuses it and marks it ready; opening a second is a defect.
  */
 export async function openDraftPr(exec: Exec, input: OpenDraftPrInput): Promise<number | undefined> {
-  const { repo, branch, target, n, title, body } = input;
+  const { repo, branch, target, n, title, body, prTitle = `merge: #${n} ${title}` } = input;
   const existing = await listOpenPr(exec, repo, branch, target);
   if (existing !== undefined) return existing;
+  // Canonical argv in, rail out: the client realizes the create on REST (#3663).
   const create = await exec([
-    "gh",
-    "-R",
-    repo,
-    "pr",
-    "create",
-    "--draft",
-    "--base",
-    target,
-    "--head",
-    branch,
-    "--title",
-    scrubOutbound(`merge: #${n} ${title}`),
-    "--body",
-    scrubOutbound(body),
+    ...planGithubWrite([
+      "gh", "-R", repo, "pr", "create", "--draft",
+      "--base", target,
+      "--head", branch,
+      "--title", scrubOutbound(prTitle),
+      "--body", scrubOutbound(body),
+    ]).args,
   ]);
   if (create.code !== 0) return undefined;
   return await listOpenPr(exec, repo, branch, target);
@@ -2431,7 +2427,9 @@ export async function openDraftPr(exec: Exec, input: OpenDraftPrInput): Promise<
  * and the Attempt record already carry the trail, so a failed mirror costs
  * fidelity on a projection, never the round. */
 export async function editPrBody(exec: Exec, repo: string, prNumber: number, body: string): Promise<boolean> {
-  const r = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--body", scrubOutbound(body)]);
+  const r = await exec([
+    ...planGithubWrite(["gh", "-R", repo, "pr", "edit", String(prNumber), "--body", scrubOutbound(body)]).args,
+  ]);
   return r.code === 0;
 }
 
@@ -2440,7 +2438,9 @@ export async function editPrBody(exec: Exec, repo: string, prNumber: number, bod
  * Issue answer the same query, and a forge that refuses it costs that query a
  * row, never the park. */
 export async function labelPr(exec: Exec, repo: string, prNumber: number, label: string): Promise<boolean> {
-  const r = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", label]);
+  const r = await exec([
+    ...planGithubWrite(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", label]).args,
+  ]);
   return r.code === 0;
 }
 
@@ -2484,7 +2484,9 @@ export async function openReviewPr(exec: Exec, input: OpenReviewPrInput): Promis
   const prNumber = await ensurePr(exec, { repo, branch, target, n, title });
   if (prNumber === undefined) return { ok: false };
 
-  const label = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", reviewLabel]);
+  const label = await exec([
+    ...planGithubWrite(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", reviewLabel]).args,
+  ]);
   if (label.code !== 0) return { ok: false, prNumber };
 
   return { ok: true, prNumber };
@@ -2642,29 +2644,23 @@ export async function resolveMergeConflict(
 }
 
 /** Resolve the open PR number for `<branch>` → `<target>`, or undefined. */
-async function listOpenPr(
+export async function listOpenPr(
   exec: Exec,
   repo: string,
   branch: string,
   target: string,
 ): Promise<number | undefined> {
-  const res = await exec([
-    "gh",
-    "-R",
-    repo,
-    "pr",
-    "list",
-    "--head",
-    branch,
-    "--base",
-    target,
-    "--state",
-    "open",
-    "--json",
-    "number",
-    "--jq",
-    ".[0].number // empty",
-  ]);
+  const plan = planGithubRestRead({
+    kind: "rest",
+    path: `repos/${repo}/pulls`,
+    args: [
+      "-f", "state=open", "-f", "per_page=100", "--jq",
+      `map(select(.head.ref == ${JSON.stringify(branch)} and .base.ref == ${JSON.stringify(target)}))[0].number // empty`,
+    ],
+  });
+  if (plan.outcome !== "plan") return undefined;
+  const argv = ["gh", ...plan.args];
+  const res = await exec(argv);
   const text = res.stdout.trim();
   if (text === "") return undefined;
   const num = Number.parseInt(text, 10);

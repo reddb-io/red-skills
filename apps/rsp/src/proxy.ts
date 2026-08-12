@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { startChildProcessTimer } from "./overhead-budget.js";
+import { runCompletedChild } from "./completed-boundary.js";
 import { commandFamily, isEnvAssignment, isGhJsonJqSelection } from "./command-classifier.js";
 import { resolveRspInvocationPrefix } from "./rsp-cli.js";
+import { renderStructuredBoundary } from "./structured-boundary.js";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION, RSP_TELEMETRY_INVOCATIONS_COLLECTION } from "./telemetry.js";
 
 function shellQuoteIfNeeded(value: string): string {
@@ -134,25 +136,12 @@ async function appendProxySegmentDecision(rootDir: string, match: ProxySegmentMa
 }
 
 async function runShellVerbatim(commandLine: string): Promise<number> {
-  const child = spawn(commandLine, { shell: true, stdio: "inherit" });
+  const child = spawn(commandLine, { shell: true, stdio: ["inherit", "pipe", "pipe"] });
   // The wrapped command's own runtime is never rsp's overhead (#2746).
   const stopChildTimer = startChildProcessTimer();
   child.once("close", stopChildTimer);
   child.once("error", stopChildTimer);
-  return await new Promise((resolve) => {
-    child.on("error", (err) => {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      resolve(127);
-    });
-    child.on("close", (status, signal) => {
-      if (signal) {
-        process.kill(process.pid, signal);
-        resolve(128);
-        return;
-      }
-      resolve(status ?? 0);
-    });
-  });
+  return await runCompletedChild(child, renderStructuredBoundary);
 }
 
 function rewriteProxySegment(segment: string, level: ProxyLossLevel, rspPrefix: string[]): { text: string; match: ProxySegmentMatch } | null {
@@ -344,7 +333,11 @@ function parseShellWords(segment: string): ShellWord[] | null {
       push();
       continue;
     }
-    if (/[()<>`]/.test(char)) return null;
+    // Redirections remain raw shell tokens in the rewritten segment. The shell
+    // continues to own their byte flow; rsp only prefixes the command argv.
+    // Grouping and command substitution are not safely modeled here and keep
+    // the original shell path unchanged.
+    if (/[()`]/.test(char)) return null;
     raw += char;
     value += char;
     inWord = true;

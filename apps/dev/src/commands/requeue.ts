@@ -19,8 +19,9 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
+import { planGithubRestRead } from "@reddb-io/github";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
@@ -46,6 +47,7 @@ import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { Runner } from "../types/runner.js";
+import { inferGitHubRepoSlug } from "../runtime/wire/github-slug.js";
 
 export interface RequeueGh {
   view(issue: number): Promise<{ state: string; body: string; labels: string[] }>;
@@ -236,8 +238,7 @@ async function sweepRequeueClaims(gh: RequeueGh, issue: number): Promise<string[
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   if (explicit?.trim()) return explicit.trim();
-  const r = await execTool("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], { cwd });
-  return r.code === 0 ? r.stdout.trim() : "";
+  return inferGitHubRepoSlug(cwd);
 }
 
 /** Append one liveness-lane record so the (un-poisonable) liveness evaluator
@@ -249,7 +250,7 @@ function appendAdoptLivenessRecord(attemptDir: string): void {
     mkdirSync(attemptDir, { recursive: true });
     appendFileSync(
       join(attemptDir, LIVENESS_LANE_FILENAME),
-      encodeLines().push({ at: Date.now(), kind: "iteration-start" }),
+      encodeToonlLines().push({ at: Date.now(), kind: "iteration-start" }),
     );
   } catch {
     // best-effort: the presence row still renders on pid liveness alone.
@@ -368,8 +369,11 @@ async function runAdoptLanding(
     // us body+labels but not the title. The title is used in landing artifacts.
     let title = `Issue #${issue}`;
     try {
-      const r = await execTool("gh", ["issue", "view", String(issue), "--repo", repo, "--json", "title", "-q", ".title"], { cwd });
-      if (r.code === 0 && r.stdout.trim()) title = r.stdout.trim();
+      const read = planGithubRestRead({ kind: "issue", number: issue, fields: ["title"], repo });
+      if (read.outcome === "plan") {
+        const r = await execTool("gh", read.args, { cwd });
+        if (r.code === 0) title = String(read.decode(r.stdout).title ?? title);
+      }
     } catch { /* best-effort */ }
 
     const reconcileDeps: ReconcileDeps = {

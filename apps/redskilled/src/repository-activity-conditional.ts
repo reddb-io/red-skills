@@ -1,6 +1,7 @@
 /** Presence-driven conditional REST polling for repository activity. */
 
 import {
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type GithubAttributedOperation,
   type GithubResponseHeaders,
@@ -128,7 +129,7 @@ export async function fetchConditionalRepositoryActivity(
       const rateLimited = isGithubRateLimitError(error);
       rateLimit = mergeActivityRateLimit(rateLimit, {
         remaining: null,
-        reset_at: null,
+        reset_at: rateLimited ? githubRateLimitResetAt(error) : null,
         exhausted: rateLimited,
         point_cost: null,
       });

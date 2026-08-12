@@ -46,23 +46,40 @@ export {
 
 export {
   GithubCredentialError,
+  GithubPoolUnavailableError,
   createGithubClient,
   createMemoryGithubEtagStore,
   githubSingleObjectCoalescingThreshold,
+  githubRateLimitResetAt,
   isGithubRateLimitError,
   type CreateGithubClientOptions,
   type GithubClient,
+  type GithubCachedFallback,
   type GithubConditionalRestRequest,
   type GithubEtagEntry,
   type GithubEtagStore,
   type GithubGraphqlAttribution,
   type GithubRequestFetch,
+  type GithubRailRouting,
   type GithubPaginatedRestAnswer,
   type GithubResponseHeaders,
   type GithubRestAnswer,
   type GithubSingleObjectAnswer,
   type GithubSingleObjectRequest,
 } from "./conditional-client.js";
+
+export {
+  createGithubBalanceStore,
+  type CreateGithubBalanceStoreOptions,
+  type GithubBalanceStore,
+} from "./balance-store.js";
+
+export {
+  createGithubBalanceHistory,
+  type CreateGithubBalanceHistoryOptions,
+  type GithubBalanceHistory,
+  type GithubBalanceHistoryRow,
+} from "./balance-history.js";
 
 export {
   GITHUB_BALANCE_CADENCE,
@@ -123,6 +140,15 @@ export {
   type GithubRestRead,
   type GithubRestReadPlan,
   type GithubRestReadRequest,
+  type GithubRestEndpointReadRequest,
+  type GithubGraphqlReadRequest,
+  type GithubSingleObjectRestReadRequest,
   type GithubRestReadUnavailable,
   type GithubSingleObjectKind,
 } from "./rest-plan.js";
+
+export {
+  planGithubWrite,
+  type GithubWriteContext,
+  type GithubWritePlan,
+} from "./write-plan.js";

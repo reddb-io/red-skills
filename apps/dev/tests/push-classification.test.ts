@@ -226,7 +226,7 @@ describe("#2811 — work that reaches the remote is visible on the tracker", () 
           if (j.includes("rev-list") && j.includes("--count")) {
             return { code: 0, stdout: `${opts.ahead}\n`, stderr: "" };
           }
-          if (argv.includes("pr") && argv.includes("create")) {
+          if ((argv.includes("pr") && argv.includes("create")) || (argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a)))) {
             created = true;
             return { code: 0, stdout: "", stderr: "" };
           }
@@ -246,18 +246,18 @@ describe("#2811 — work that reaches the remote is visible on the tracker", () 
   it("opens a PR for a parked branch that carries commits on origin", async () => {
     const { c, calls } = stage({ ahead: "1" });
     await expect(ensureRemoteWorkVisible(c)).resolves.toBe(77);
-    expect(calls.some((a) => a.includes("pr") && a.includes("create"))).toBe(true);
+    expect(calls.some((a) => (a.includes("pr") && a.includes("create")) || (a.includes("POST") && a.some((x) => /repos\/.+\/pulls$/.test(x))))).toBe(true);
   });
 
   it("reuses the existing PR rather than minting a duplicate", async () => {
     const { c, calls } = stage({ ahead: "1", prExists: true });
     await expect(ensureRemoteWorkVisible(c)).resolves.toBe(77);
-    expect(calls.some((a) => a.includes("pr") && a.includes("create"))).toBe(false);
+    expect(calls.some((a) => (a.includes("pr") && a.includes("create")) || (a.includes("POST") && a.some((x) => /repos\/.+\/pulls$/.test(x))))).toBe(false);
   });
 
   it("opens nothing when the remote branch carries no commits", async () => {
     const { c, calls } = stage({ ahead: "0" });
     await expect(ensureRemoteWorkVisible(c)).resolves.toBeUndefined();
-    expect(calls.some((a) => a.includes("pr") && a.includes("create"))).toBe(false);
+    expect(calls.some((a) => (a.includes("pr") && a.includes("create")) || (a.includes("POST") && a.some((x) => /repos\/.+\/pulls$/.test(x))))).toBe(false);
   });
 });

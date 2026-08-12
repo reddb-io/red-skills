@@ -1,7 +1,9 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import { afterEach, describe, expect, it } from "vitest";
 import {
   runWithQuiescentWorkerLogTrim,
@@ -17,7 +19,7 @@ afterEach(async () => {
 });
 
 function lane(ids: readonly string[]): string {
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return ids
     .map((id) => writer.push({ id } satisfies ToonlRecord))
     .join("");

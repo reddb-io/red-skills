@@ -7,7 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GITHUB_RATE_LIMIT_PATH, createGithubBalanceTransport } from "@reddb-io/github";
+import { GITHUB_RATE_LIMIT_PATH, createGithubBalanceTransport, parseGithubBalance } from "@reddb-io/github";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
@@ -54,6 +54,34 @@ async function start(options: Parameters<typeof startRedskilledDaemon>[0]): Prom
 }
 
 describe("one poller, and the balance comes from the token", () => {
+  it("hydrates a dry pool from durable state without spending a discovery call", async () => {
+    let asks = 0;
+    let hydrated!: () => void;
+    const hydration = new Promise<void>((resolve) => { hydrated = resolve; });
+    const persisted = parseGithubBalance(answer(0), { askedAt: "2026-08-03T12:30:00.000Z" });
+    const daemon = await start({
+      paths: await paths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      githubBalance: {
+        transport: async () => {
+          asks += 1;
+          return answer(5_000);
+        },
+        store: { read: async () => { hydrated(); return persisted; }, write: async () => undefined },
+        intervalMsOverride: 3_600_000,
+      },
+    });
+
+    await hydration;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const balance = daemon.githubBalance();
+
+    expect(asks).toBe(0);
+    expect(balance?.pools.graphql?.remaining).toBe(0);
+    expect(balance?.pools.rest?.remaining).toBe(5_000);
+  });
+
   it("asks once per poll and stores what the token answered", async () => {
     let asks = 0;
     const daemon = await start({

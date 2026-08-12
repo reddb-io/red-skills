@@ -7,6 +7,8 @@
  * preflight would refuse a parked issue and the run would burn for nothing.
  */
 
+import { planGithubRestRead } from "@reddb-io/github";
+
 const PARKED_LABEL = "ready-for-human";
 const PARKED_PREFIX = "blocked:";
 
@@ -41,20 +43,16 @@ export function pickIssue(issues) {
  * @param {{ repo: string, label: string, exec: (cmd: string, args: string[]) => Promise<{code:number,stdout:string,stderr:string}> }} params
  */
 export async function listReadyIssues({ repo, label, exec }) {
-  const result = await exec("gh", [
-    "issue",
-    "list",
-    "--repo",
-    repo,
-    "--label",
-    label,
-    "--state",
-    "open",
-    "--limit",
-    "100",
-    "--json",
-    "number,createdAt,labels",
-  ]);
+  const plan = planGithubRestRead({
+    kind: "rest",
+    path: `repos/${repo}/issues`,
+    args: [
+      "-f", "state=open", "-f", `labels=${label}`, "-f", "per_page=100",
+      "--jq", 'map(select(.pull_request == null) | {number, createdAt: .created_at, labels})',
+    ],
+  });
+  if (plan.outcome !== "plan") throw new Error(plan.reason);
+  const result = await exec("gh", plan.args);
   if (result.code !== 0) {
     throw new Error(`gh issue list failed for ${repo} (exit ${result.code}): ${result.stderr.trim()}`);
   }

@@ -144,6 +144,43 @@ describe("rsp interception pure rewrite table", () => {
   });
 
   it.each([
+    [
+      "job-api-loop",
+      "for attempt in 1 2 3 4 5; do status=$(gh api repos/reddb-io/red-dev/actions/jobs/93918599356 --jq '.status'); [ \"$status\" = completed ] && break; sleep 10; done",
+      "rsp wait job 93918599356",
+      "wait:github-job",
+    ],
+    [
+      "run-api-loop",
+      "while true; do gh api repos/reddb-io/red-dev/actions/runs/31533509761 --jq .status; sleep 10; done",
+      "rsp wait run 31533509761",
+      "wait:github-run",
+    ],
+    [
+      "release-api-loop",
+      "for attempt in 1 2 3; do tag=$(gh api repos/reddb-io/red-dev/releases/tags/v0.23.5 --jq .tag_name 2>/dev/null || true); [ \"$tag\" = v0.23.5 ] && break; sleep 10; done",
+      "rsp wait release --tag v0.23.5 --existing",
+      "wait:github-release",
+    ],
+    ["gh-run-watch", "gh run watch 31533509761 --exit-status --interval 10", "rsp wait run 31533509761", "wait:github-run"],
+  ])("collapses %s into the resident GitHub wait surface", (_name, command, rewritten, capabilityId) => {
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+  });
+
+  it("routes a plain gh api GET through the resident while preserving writes and jq byte contracts", () => {
+    expect(rewriteCommand("gh api repos/reddb-io/red-dev/actions/runs/31533509761", [...RSP_PREFIX])).toEqual({
+      kind: "rewrite",
+      command: "rsp gh api repos/reddb-io/red-dev/actions/runs/31533509761",
+      capabilityId: "gh:api:read",
+    });
+    expect(rewriteCommand("gh api --method PUT repos/reddb-io/red-dev/pulls/108/merge -f merge_method=merge", [...RSP_PREFIX])).toEqual({ kind: "passthrough" });
+    expect(rewriteCommand("gh api repos/reddb-io/red-dev/actions/runs --jq '.workflow_runs[]'", [...RSP_PREFIX])).toEqual({
+      kind: "passthrough",
+      reason: "lossless-gh-json-jq",
+    });
+  });
+
+  it.each([
     ["interactive-editor", "vim ."],
     ["background-process", "sleep 10 &"],
     ["command-substitution-capture", "foo $(git log)"],

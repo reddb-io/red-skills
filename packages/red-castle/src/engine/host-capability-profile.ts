@@ -144,7 +144,7 @@ export async function writeHostCapabilityProfile(
   const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
   await writeFile(
     temporary,
-    encode(validated as unknown as JsonValue, { keyedMapCollapse: true }),
+    encode(validated as unknown as JsonValue),
     "utf8",
   );
   await rename(temporary, path);

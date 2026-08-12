@@ -28,6 +28,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test -f "$root/dist/opencode-host.bundle.min.mjs"
 test -f "$root/packaging/npm/dist/rsp.bundle.min.mjs"
+test -f "$root/packaging/npm/dist/rsp-core.bundle.min.mjs"
 INSTALL_OPENCODE
 chmod +x "$fixture/scripts/install-opencode.sh"
 printf '%s\n' '#!/usr/bin/env node' >"$fixture/packaging/npm/bin/rsp.mjs"
@@ -53,6 +54,7 @@ case "$url" in
   */archive/refs/tags/v9.9.9.tar.gz) cp "$FIXTURE_ARCHIVE" "$out" ;;
   */opencode-host.bundle.min.mjs) printf 'opencode bundle\n' >"$out" ;;
   */rsp.bundle.min.mjs) printf 'rsp bundle\n' >"$out" ;;
+  */rsp-core.bundle.min.mjs) printf 'rsp core bundle\n' >"$out" ;;
   */opencode-host.generated.tgz) exit 22 ;;
   *) printf 'unexpected URL: %s\n' "$url" >&2; exit 64 ;;
 esac
@@ -87,4 +89,5 @@ fi
 
 test -f "$tmp/install/current/dist/opencode-host.bundle.min.mjs"
 test -f "$tmp/install/current/packaging/npm/dist/rsp.bundle.min.mjs"
+test -f "$tmp/install/current/packaging/npm/dist/rsp-core.bundle.min.mjs"
 printf 'ok: release assets are present before Git Bash creates current\n'

@@ -1,10 +1,10 @@
 # 0097 — TOON/TOONL is the on-disk format doctrine — big-bang cutover, sole-publisher dependency, wave-2 gate on TOONL v0.2
 
-> **Amended by [Amendment 1 (2026-07-15)](#amendment-1-2026-07-15--toon-toolchain-version-sync-doctrine).** The pnpm catalog is the single version truth for the toon toolchain; derived pin sites are generated or guard-checked; routine upstream releases arrive through the Release watcher; red-castle keeps semver ranges and is re-pinned only by the consuming workspace lockfile.
+> **Amended by [Amendment 1 (2026-07-15)](#amendment-1-2026-07-15--toon-toolchain-version-sync-doctrine) and [Amendment 2 (2026-08-11)](#amendment-2-2026-08-11--official-package-channels-and-current-api-only).** The pnpm catalog is the single version truth for the toon toolchain; RedSkills consumes only the current public API from official package-manager releases; local paths, local builds and legacy codec subpaths are forbidden.
 
 ## Status
 
-Accepted, with Amendment 1 (2026-07-15). Decisions resolved in the wayfinder charting + grilling sessions of 2026-07-14 (map #1765, tickets #1766–#1770). Extends ADR 0089 (Amendment 2 rebinds the encoder authority) from stdout to disk: ADR 0089 governs what agent-facing CLIs *emit*; this ADR governs what RedSkills *writes and keeps*. The execution Spec is #1773.
+Accepted, with Amendments 1–2 (2026-07-15, 2026-08-11). Decisions resolved in the wayfinder charting + grilling sessions of 2026-07-14 (map #1765, tickets #1766–#1770), with the package-channel correction recorded while adopting toon 0.21.0 in Spec #3623. Extends ADR 0089 (Amendment 2 rebinds the encoder authority) from stdout to disk: ADR 0089 governs what agent-facing CLIs *emit*; this ADR governs what RedSkills *writes and keeps*. The original execution Spec is #1773.
 
 ## Context
 
@@ -103,3 +103,25 @@ Humans review and land the PR; AFK may fix a broken watcher PR. Humans and agent
 red-castle expresses compatibility with `@reddb-io/toon` as a caret range. The exact version that executes in a RedSkills attempt is the consuming workspace's resolved lockfile entry, not a red-castle source edit. Re-pinning red-castle means updating the consuming workspace lockfile through the same catalog/watcher lane, never force-pinning the vendored source to chase an upstream release.
 
 This keeps the producer contract and the consumer resolution separate: red-castle declares the range it supports; RedSkills decides the exact tested toolchain version at the workspace boundary.
+
+## Amendment 2 (2026-08-11) — official package channels and current API only
+
+The 0.21.0 adoption exposed two unsafe escape hatches in the original channel decision: CI referenced a GitHub release installer that was not published for the pinned version, while migration work could appear green by resolving a sibling toon checkout or the package's explicit legacy codec. Both make the tested implementation depend on machine-local state and allow RedSkills to keep producing an obsolete dialect.
+
+### 1. RedSkills consumes published artifacts, never a sibling checkout
+
+JavaScript imports resolve the catalog-pinned `@reddb-io/toon` package from the official npm registry. The `tq` binary is installed at the same catalog version from the official `reddb-io-tq` crate on crates.io using Cargo's locked install. A future immutable upstream release asset may become another official channel only when that exact tag and checksum-verified asset actually exist.
+
+Local `file:`/`link:` dependencies, `../toon` paths, `target/debug/tq`, workspace overrides and ad-hoc binaries are forbidden in development contracts and especially in CI/CD. Tests must run against the same published artifacts that users install.
+
+### 2. Only the current public codec is admissible
+
+All writers and readers import the public `@reddb-io/toon` entrypoint and emit the current canonical format. The `@reddb-io/toon/legacy` subpath, legacy keyed-map collapse options and frozen historical fixtures are not compatibility lanes: RedSkills upgrades its persisted snapshots and tests to the current representation instead of continuing to produce an old dialect.
+
+Canonical internal files carry the matching `.toon` or `.toonl` extension. Storing TOON bytes behind a `.json` or `.jsonl` filename is forbidden because the misleading contract causes tools and operators to select the wrong decoder.
+
+TOONL writers use the current incremental API (`encodeToonlLines()`); finite record collections use `encodeRecords(records, options)`. A toolchain bump is incomplete until typechecking, canonical round trips, `tq` interop and generated bundles all pass without a legacy import or local-path resolution.
+
+### 3. CI, setup and doctor enforce the same source of truth
+
+CI installs `reddb-io-tq` into a job-local Cargo root with an exact version derived from the catalog and verifies the resulting binary. `/red-setup` and `/red-doctor` prescribe the same official crate channel. Guard tests reject sibling paths, local build outputs, legacy codec imports and version drift so a developer machine cannot silently make a release pipeline pass.
