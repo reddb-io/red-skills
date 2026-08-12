@@ -70,7 +70,11 @@ import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-t
 import {
   createRedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
-import { mayRecoverRegistration, registrationHistory } from "../registration-recovery.js";
+import {
+  buildRegistrationLapse,
+  buildRegistrationStop,
+  mayRecoverRegistration,
+} from "../registration-recovery.js";
 import {
   buildProjectRegistration,
   renewProjectRegistration,
@@ -572,19 +576,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     detail?: string,
   ): void {
     const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
-    lapses.push({
-      project_label: registration.project_label,
-      registered_at: registration.registered_at,
-      at,
-      renew_by: registration.renew_by,
-      renewals: registration.renewals,
-      sustains: registration.sustains ?? 0,
-      ...registrationHistory(registration, lastQueue),
-      detail: detail ??
-        `redskilled dropped the registration for project ${JSON.stringify(registration.project_label)}: it stood ` +
-        `until ${registration.renew_by} and nothing renewed it — no session spoke for it, and no poll found it ` +
-        `work or a Worker to hold it up`,
-    });
+    lapses.push(buildRegistrationLapse(registration, lastQueue, at, detail));
     if (lapses.length > REDSKILLED_LAPSE_MEMORY) lapses.splice(0, lapses.length - REDSKILLED_LAPSE_MEMORY);
   }
 
@@ -1475,15 +1467,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const releasedRecoverable = recoverableRegistrations.delete(projectLabel);
     const released = releasedCurrent || releasedRecoverable;
     if (held != null) {
-      const detail = `redskilled released the registration for project ${JSON.stringify(projectLabel)}`;
       removeRegistrationHistory(projectLabel);
-      stops.push({
-        project_label: projectLabel,
-        registered_at: held.registered_at,
-        at: clock(),
-        ...registrationHistory(held, lastQueue),
-        detail,
-      });
+      stops.push(buildRegistrationStop(held, lastQueue, clock()));
       if (stops.length > REDSKILLED_LAPSE_MEMORY) stops.splice(0, stops.length - REDSKILLED_LAPSE_MEMORY);
     }
     if (released) persistRegistrationIntent();
