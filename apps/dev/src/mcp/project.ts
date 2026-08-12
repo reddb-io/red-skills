@@ -41,6 +41,7 @@ import {
 } from "../runtime/wire.js";
 import {
   loadConfig,
+  readStandingDrain,
   readValidationMoments,
 } from "../core/config.js";
 import { describeValidationMoments } from "../core/validation-moments.js";
@@ -136,9 +137,14 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
     pluginCacheVersion: newestInstalledPluginVersion(),
   });
   const target = held?.target ?? 0;
-  const validationSchedule = describeValidationMoments(readValidationMoments(
-    loadConfig(afkPaths(root).configPath, { warn: () => undefined }),
-  ));
+  const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
+  const validationSchedule = describeValidationMoments(readValidationMoments(config));
+  const standingStopped = held == null &&
+      readStandingDrain(config) !== null &&
+      lapse?.standing === true &&
+      (lapse.queue_depth ?? 0) > 0
+    ? `queue ${lapse.queue_depth}, drain STOPPED — `
+    : "";
   // The host's count, not the matched list's: a Worker born a moment ago holds
   // its slot before it has written any project-side state, and a `busy` that
   // waited for that file would read free while the daemon refused to fill it.
@@ -151,7 +157,8 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
           repair: noRepair("the daemon must answer before registration can be changed safely"),
         })
       : composeRepair({
-          state: lapse?.detail ?? "the host holds no registration for this project and recorded no lapse",
+          state: standingStopped +
+            (lapse?.detail ?? "the host holds no registration for this project and recorded no lapse"),
           repair: registrationRepair(),
         });
   return {
