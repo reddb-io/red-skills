@@ -15,6 +15,7 @@ import {
   readSetupCommands,
   readHitlTypeLabels,
   readValidationResourceBudget,
+  readStandingDrain,
   downgradeAfkModelTier,
   resolveTier,
   resolveCiTimeoutSeconds,
@@ -650,6 +651,42 @@ describe("config", () => {
 });
 
 describe("config — plugins.dev namespace (ADR 0042)", () => {
+  it("reads a declared standing drain and leaves an undeclared project explicit-only", () => {
+    const absent = loadConfig("/missing/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => undefined,
+    });
+    expect(readStandingDrain(absent)).toBeNull();
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => [
+        "plugins:",
+        "  dev:",
+        "    afk:",
+        "      standing:",
+        "        runner: codex",
+        "        target: 4",
+        "",
+      ].join("\n"),
+    });
+    expect(readStandingDrain(values)).toEqual({ runner: "codex", target: 4 });
+  });
+
+  it("refuses incomplete or invalid standing drain declarations", () => {
+    for (const standing of [
+      "runner: codex",
+      "runner: unknown\n        target: 4",
+      "runner: claude\n        target: 0",
+    ]) {
+      const values = loadConfig("/x/.red/config.yaml", {
+        ignoreActivationGate: true,
+        read: () => `plugins:\n  dev:\n    afk:\n      standing:\n        ${standing}\n`,
+      });
+      expect(readStandingDrain(values)).toBeNull();
+    }
+  });
+
   it("folds plugins.dev.afk.* down to the bare afk.* accessor keys", () => {
     const text = "plugins:\n  dev:\n    afk:\n      default_runner: codex\n      fleet:\n        target: 4\n";
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
