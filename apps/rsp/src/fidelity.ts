@@ -77,9 +77,10 @@ export async function renderFixture(
   options: FidelityRunOptions,
 ): Promise<GitRenderResult> {
   if (fixture.command[0] === "automatic" && fixture.command[1] === "output") {
+    const automaticLevel = options.level === "lossless" ? "automatic" : options.level;
     const result = await renderAutomaticOutput(Buffer.from(fixture.recorded.stdout), {
       command: fixture.command.slice(2).join(" "),
-      level: options.level,
+      level: automaticLevel,
       store: options.store,
       sizeThresholdBytes: fixture.automatic_policy?.size_threshold_bytes,
       repetitionThresholdRows: fixture.automatic_policy?.repetition_threshold_rows,
