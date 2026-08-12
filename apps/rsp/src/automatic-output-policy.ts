@@ -78,10 +78,6 @@ export async function renderAutomaticOutput(
       content: "disk-census",
       reduction: {
         reason: options.level === "terse" ? "explicit-terse" : "size-and-repetition-threshold",
-        input_bytes: original.length,
-        size_threshold_bytes: sizeThresholdBytes,
-        repetition_threshold_rows: repetitionThresholdRows,
-        columns: ["size_kib", "path"],
         rows_total: sorted.length,
         rows_kept: rowsKept,
         rows_omitted: rowsOmitted,
