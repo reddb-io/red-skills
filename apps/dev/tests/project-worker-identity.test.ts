@@ -183,7 +183,7 @@ describe("attributing live Workers to this project", () => {
     expect(attribution.warnings).toEqual([]);
   });
 
-  it("drops pid-zero and dead-pid rows before attribution", () => {
+  it("bars pid-zero and dead-pid rows from the live claim, but keeps them visible", () => {
     const attribution = attributeProjectWorkers({
       workers: [
         worker("pid-zero", 0, false),
@@ -193,8 +193,14 @@ describe("attributing live Workers to this project", () => {
       workerIdEnvDeclared: true,
     });
 
+    // Disproof bars LIVE; it never shrinks the report. A dead row rendered as
+    // live was the #3660 bug — a dead row vanishing entirely would be the
+    // opposite lie, so both land in unattributed.
     expect(attribution.live).toEqual([]);
-    expect(attribution.unattributed).toEqual([]);
+    expect(attribution.unattributed.map((w) => w.state.worker_id)).toEqual([
+      "pid-zero",
+      "dead-pid",
+    ]);
     expect(attribution.warnings).toEqual([]);
   });
 

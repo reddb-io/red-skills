@@ -115,14 +115,17 @@ export function attributeProjectWorkers<W extends AttributableWorker>(
   const held = input.hostWorkerIds;
   const ourWorkerIds = new Set(held ?? []);
   // A fresh heartbeat says a row was recently written; it does not make pid 0
-  // or a dead pid into a live process. Qualify the input before either rendering
-  // it or using it as evidence for an identity warning (#3660).
-  const runningWorkers = input.workers.filter(
-    (worker) => worker.state.pid > 0 && worker.pidLive === true,
-  );
+  // or a dead pid into a live process. Disproof (pid 0, explicit pidLive:false)
+  // only bars the LIVE claim — a caller that never checked stays claimable, or
+  // every unqualified caller would render its fleet empty. The worker itself
+  // stays VISIBLE: what liveness cannot prove lands in unattributed rather than
+  // vanishing, which is how a dead pid was listed as live in the first place
+  // (#3660) — the cure is honest placement, not a smaller report.
+  const running = (worker: W): boolean => worker.state.pid > 0 && worker.pidLive !== false;
+  const runningWorkers = input.workers.filter(running);
   const ours = (worker: W): boolean => ourWorkerIds.has(worker.state.worker_id);
   const live = runningWorkers.filter(ours);
-  const unattributed = runningWorkers.filter((worker) => !ours(worker));
+  const unattributed = input.workers.filter((worker) => !ours(worker) || !running(worker));
   const warnings: string[] = [];
   if (held == null) {
     warnings.push(
