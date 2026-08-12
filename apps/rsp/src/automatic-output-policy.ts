@@ -1,5 +1,8 @@
 import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { resolveRspConfig } from "./config.js";
 import type { RspLossLevel, RspMintMeta } from "./elision-store.js";
+import type { ResidentRspElisionStore } from "./resident-client.js";
+import { residentElisionStore } from "./resident-store.js";
 import { renderStructuredBoundary } from "./structured-boundary.js";
 
 export interface AutomaticOutputOptions {
@@ -20,6 +23,34 @@ export interface AutomaticOutputResult {
   readonly lossy: boolean;
   readonly handle?: string;
   readonly bytesElided?: number;
+}
+
+/** Agent-boundary adapter that opens the resident only when reduction mints a handle. */
+export async function renderAutomaticCommandOutput(
+  original: Buffer,
+  command: string,
+  level: RspLossLevel = "lossless",
+): Promise<Buffer> {
+  const config = resolveRspConfig(process.cwd(), process.env);
+  let resident: ResidentRspElisionStore | undefined;
+  const store = config.enabled
+    ? {
+      mint: async (bytes: Uint8Array | Buffer, meta: RspMintMeta) => {
+        resident ??= residentElisionStore(process.cwd(), config);
+        return await resident.mint(bytes, meta);
+      },
+    }
+    : undefined;
+  try {
+    return (await renderAutomaticOutput(original, {
+      command,
+      level,
+      store,
+      sizeThresholdBytes: config.heavyGitByteThreshold,
+    })).stdout;
+  } finally {
+    await resident?.close();
+  }
 }
 
 /** Apply the agent-facing output policy after a command has completed. */
@@ -124,10 +155,11 @@ export async function renderAutomaticOutput(
 
 async function mintBeforeReduction(original: Buffer, options: AutomaticOutputOptions): Promise<string> {
   try {
-    return await options.store?.mint(original, {
+    const handle = await options.store?.mint(original, {
       command: options.command,
       loss: { level: options.level === "lossless" ? "brief" : options.level, bytes_elided: original.length },
     }) ?? "";
+    return handle.startsWith("el:") ? handle : "";
   } catch {
     return "";
   }
