@@ -144,4 +144,8 @@ export {
   type GithubSingleObjectKind,
 } from "./rest-plan.js";
 
-export { planGithubWrite, type GithubWritePlan } from "./write-plan.js";
+export {
+  planGithubWrite,
+  type GithubWriteContext,
+  type GithubWritePlan,
+} from "./write-plan.js";

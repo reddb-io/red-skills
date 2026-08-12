@@ -70,7 +70,7 @@ export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineE
 export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
   { path: "apps/dev/src/commands/hitl-card.ts", count: 15, reason: "HITL actions still write comments, labels, issue state, and PR dispositions through gh" },
   { path: "apps/dev/src/core/merge.ts", count: 7, reason: "landing uses REST for create and merge, while draft readiness, labels, and update-branch still await routed mutations" },
-  { path: "apps/dev/src/runtime/gh/issues.ts", count: 9, reason: "issue, comment, and label mutations still use the legacy CLI adapter" },
+  { path: "apps/dev/src/runtime/gh/issues.ts", count: 7, reason: "issue body, state, and label edits now use the write plan; comment, create, sub-issue, and label-resource mutations remain" },
   { path: "apps/dev/src/runtime/gh/manager-map.ts", count: 3, reason: "manager-map issue creation still awaits the shared mutation surface" },
   { path: "apps/dev/src/runtime/merge-driver-io.ts", count: 2, reason: "the compatibility merge driver still shells out for update and merge" },
   { path: "apps/dev/src/runtime/review-gh.ts", count: 3, reason: "review comments and labels still await routed mutations" },
