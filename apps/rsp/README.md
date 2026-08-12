@@ -15,9 +15,10 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
 
 - `rsp <command> <args...>` accepts any non-interactive command. Unrecognized
   simple argv launches through the fast boundary without loading configuration,
-  telemetry, the store, or the resident. After completion, JSON, YAML, TOON, or
-  TOONL stdout becomes canonical TOON only after a decode/encode/decode proof;
-  all other bytes pass through unchanged.
+  telemetry, the store, or the resident. After completion, JSON, YAML, XML,
+  TOON, or TOONL stdout becomes canonical TOON only after a lossless round-trip
+  proof; all other bytes pass through unchanged. XML conversion uses the pinned
+  `tq` canonical tree instead of an RSP-owned representation.
 - `rsp git status`, `rsp git diff`, `rsp git log`, `rsp git show`,
   `rsp git blame`, `rsp git branch -av`, `rsp git commit`, and `rsp git push`
   render git output as compact TOON when that keeps the decision signal.
