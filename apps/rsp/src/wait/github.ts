@@ -12,7 +12,18 @@
  * interface. It is decoded at this boundary and never becomes internal state.
  */
 import { spawn } from "node:child_process";
-import { readGhConditionalJson } from "../gh-conditional.js";
+import { resolveRspConfig } from "../config.js";
+import {
+  readGhConditionalJson,
+  type GhConditionalRequest,
+  type GhConditionalResult,
+} from "../gh-conditional.js";
+import {
+  createCachedGithubBalanceReader,
+  createRspResidentGithubClient,
+  type RspResidentGithubClient,
+} from "../resident-github.js";
+import { resolveResidentPaths } from "../resident-client.js";
 import { arrayOfRecords, numberField, optionAfter, recordOf, stringField } from "./json.js";
 import { descendantPids, signalPids } from "./process-tree.js";
 
@@ -30,11 +41,73 @@ export interface GhCallOptions {
   timeoutMs: number;
 }
 
+const waitGithubClients = new Map<string, RspResidentGithubClient>();
+const unavailableResidents = new Set<string>();
+
+/**
+ * A wait is already long-lived, so it can own one packages/github client when
+ * rsp is disabled or its resident is unhealthy. ETags and the adaptive balance
+ * snapshot survive for the whole wait without falling back to raw gh.
+ */
+async function readWaitGithubJson(request: GhConditionalRequest): Promise<GhConditionalResult> {
+  const cwd = request.cwd ?? process.cwd();
+  const env = request.env ?? process.env;
+  const root = resolveResidentPaths(cwd).rootDir;
+  if (resolveRspConfig(root, env).enabled && !unavailableResidents.has(root)) {
+    const resident = await readGhConditionalJson(request);
+    if (!isResidentUnavailable(resident)) return resident;
+    unavailableResidents.add(root);
+  }
+  return await readGhConditionalJson({
+    ...request,
+    residentRead: async (input) => await (await waitGithubClient(root, env, request.signal)).read(input),
+  });
+}
+
+async function waitGithubClient(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal | undefined,
+): Promise<RspResidentGithubClient> {
+  const held = waitGithubClients.get(root);
+  if (held) return held;
+  let token = String(env.GH_TOKEN ?? env.GITHUB_TOKEN ?? "").trim();
+  if (!token) {
+    const credential = await runGhCommand(["auth", "token"], root, signal ?? AbortSignal.timeout(60_000));
+    if (credential.status !== 0) throw new Error(credential.stderr || "rsp wait could not obtain a GitHub credential");
+    token = credential.stdout.trim();
+  }
+  if (!token) throw new Error("rsp wait could not obtain a GitHub credential");
+  const baseUrl = String(env.GITHUB_API_URL ?? "").trim() || undefined;
+  const client = createRspResidentGithubClient({
+    rootDir: root,
+    token,
+    balance: createCachedGithubBalanceReader(token, baseUrl),
+    ...(baseUrl ? { baseUrl } : {}),
+  });
+  waitGithubClients.set(root, client);
+  return client;
+}
+
+function isResidentUnavailable(result: GhConditionalResult): boolean {
+  if (result.status !== 75) return false;
+  try {
+    return (JSON.parse(result.stderr) as { reason?: string }).reason === "rsp-github-resident-unavailable";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Run one `gh --json`-shaped query, preferring the ETag-conditional API path so
  * repeated polls stay quota-free.
  */
 export async function ghJson(args: readonly string[], options: GhCallOptions): Promise<GhResult> {
+  // Integration fixtures can exercise the published CLI against a fake `gh`
+  // executable without weakening the production conditional-client path.
+  if (process.env.RSP_WAIT_GITHUB_TEST_TRANSPORT === "gh") {
+    return await withProbeBound(options, async (signal) => await runGhCommand(args, options.cwd, signal));
+  }
   return await withProbeBound(options, async (signal) => {
     const conditional = await conditionalGhJson(args, options.cwd, signal);
     if (conditional) return conditional;
@@ -118,7 +191,7 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
     return await conditionalPrView(args[2], cwd, signal);
   }
   if (args[0] === "run" && args[1] === "view" && args[2]) {
-    const response = await readGhConditionalJson({
+    const response = await readWaitGithubJson({
       path: `repos/{owner}/{repo}/actions/runs/${args[2]}`,
       cwd,
       signal,
@@ -139,10 +212,32 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
       }),
     };
   }
+  if (args[0] === "job" && args[1] === "view" && args[2]) {
+    const response = await readWaitGithubJson({
+      path: `repos/{owner}/{repo}/actions/jobs/${args[2]}`,
+      args: ["run", "view", args[2]],
+      cwd,
+      signal,
+      command: `gh api repos/{owner}/{repo}/actions/jobs/${args[2]}`,
+    });
+    if (response.status !== 0) return response;
+    const row = recordOf(JSON.parse(response.stdout));
+    return {
+      status: 0,
+      stderr: response.stderr,
+      stdout: JSON.stringify({
+        databaseId: numberField(row, "id"),
+        name: stringField(row, "name"),
+        status: stringField(row, "status").toUpperCase(),
+        conclusion: stringField(row, "conclusion").toUpperCase(),
+        url: stringField(row, "html_url"),
+      }),
+    };
+  }
   if (args[0] === "run" && args[1] === "list") {
     const branch = optionAfter(args, "--branch");
     const limit = optionAfter(args, "--limit") ?? "20";
-    const response = await readGhConditionalJson({
+    const response = await readWaitGithubJson({
       path: "repos/{owner}/{repo}/actions/runs",
       params: { branch, per_page: limit },
       cwd,
@@ -157,7 +252,7 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
   }
   if (args[0] === "release" && args[1] === "list") {
     const limit = optionAfter(args, "--limit") ?? "20";
-    const response = await readGhConditionalJson({
+    const response = await readWaitGithubJson({
       path: "repos/{owner}/{repo}/releases",
       params: { per_page: limit },
       cwd,
@@ -172,6 +267,27 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
     }));
     return { status: 0, stdout: JSON.stringify(rows), stderr: response.stderr };
   }
+  if (args[0] === "release" && args[1] === "view" && args[2]) {
+    const tag = args[2];
+    const response = await readWaitGithubJson({
+      path: `repos/{owner}/{repo}/releases/tags/${encodeURIComponent(tag)}`,
+      args: ["release", "view", tag],
+      cwd,
+      signal,
+      command: `gh release view ${tag}`,
+    });
+    if (response.status !== 0) return response;
+    const row = recordOf(JSON.parse(response.stdout));
+    return {
+      status: 0,
+      stderr: response.stderr,
+      stdout: JSON.stringify({
+        tagName: stringField(row, "tag_name"),
+        publishedAt: stringField(row, "published_at"),
+        isDraft: row.draft === true,
+      }),
+    };
+  }
   return null;
 }
 
@@ -181,7 +297,7 @@ async function conditionalGhJson(args: readonly string[], cwd: string, signal: A
  * head SHA.
  */
 async function conditionalPrView(number: string, cwd: string, signal: AbortSignal): Promise<GhResult> {
-  const pr = await readGhConditionalJson({
+  const pr = await readWaitGithubJson({
     path: `repos/{owner}/{repo}/pulls/${number}`,
     cwd,
     signal,
@@ -193,13 +309,13 @@ async function conditionalPrView(number: string, cwd: string, signal: AbortSigna
   const sha = stringField(recordOf(row.head), "sha");
   const [combinedStatus, checkRuns] = sha
     ? await Promise.all([
-      readGhConditionalJson({
+      readWaitGithubJson({
         path: `repos/{owner}/{repo}/commits/${sha}/status`,
         cwd,
         signal,
         command: `gh pr view ${number} status`,
       }),
-      readGhConditionalJson({
+      readWaitGithubJson({
         path: `repos/{owner}/{repo}/commits/${sha}/check-runs`,
         cwd,
         signal,
@@ -230,12 +346,13 @@ async function conditionalPrView(number: string, cwd: string, signal: AbortSigna
 
 /**
  * Normalize REST's two mergeability fields into the one vocabulary the probes
- * read. `mergeable_state: clean` and `mergeable: true` say the same thing; only
- * an explicit `false` is a conflict, and everything else is genuinely UNKNOWN.
+ * read. REST calls a conflict `dirty`; GraphQL calls it `CONFLICTING`.
  */
 export function mergeableState(row: Record<string, unknown>): string {
   const state = stringField(row, "mergeable_state").toUpperCase();
-  if (state && state !== "UNKNOWN") return state === "CLEAN" ? "MERGEABLE" : state;
+  if (state === "CLEAN") return "MERGEABLE";
+  if (state === "DIRTY") return "CONFLICTING";
+  if (state && state !== "UNKNOWN") return state;
   if (row.mergeable === true) return "MERGEABLE";
   if (row.mergeable === false) return "CONFLICTING";
   return "UNKNOWN";

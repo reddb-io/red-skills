@@ -21,6 +21,9 @@
 // indistinguishable from the one-daemon-per-project failure ADR 0130 exists to
 // prevent. The sandbox therefore pins `XDG_RUNTIME_DIR` too: every process in
 // the lane derives the same runtime dir, and it is a temp dir cleanup removes.
+// Its HOME is pinned for the same reason: the durable event and death lanes and
+// stable bundles belong below the sandbox's `~/.red/redskilled`, never below the
+// operator's real home.
 
 import { build } from "esbuild";
 import { execFileSync, spawn } from "node:child_process";
@@ -32,6 +35,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminatePid } from "@reddb-io/shared/resident-core.js";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
+import { stopRedskilledDaemon } from "@reddb-io/redskilled/client";
 import { sendRedskilledRequest } from "@reddb-io/redskilled/protocol";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -130,6 +134,7 @@ interface BuiltBundles {
 let bundles: Promise<BuiltBundles> | undefined;
 const sandboxes: string[] = [];
 const daemonPids: number[] = [];
+const daemonPaths: ReturnType<typeof resolveRedskilledPaths>[] = [];
 const trackers: CanaryTracker[] = [];
 let sessions = 0;
 
@@ -154,7 +159,7 @@ export function buildCanaryBundles(): Promise<BuiltBundles> {
     const dir = await mkdtemp(join(tmpdir(), "mcp-canary-bundles-"));
     sandboxes.push(dir);
     const mcp = join(dir, "redskilled-mcp.bundle.min.mjs");
-    const redskilled = join(dir, "redskilled.bundle.mjs");
+    const redskilled = join(dir, "redskilled.bundle.min.mjs");
     const healthy = join(dir, "dev-healthy.bundle.min.mjs");
     const unroutable = join(dir, "dev-unroutable.bundle.min.mjs");
     await Promise.all([
@@ -209,6 +214,8 @@ export async function createCanarySandbox(
   });
   const mcpEntry = join(dist, "redskilled-mcp.bundle.min.mjs");
   await copyFile(built.mcp, mcpEntry);
+  const daemonSibling = join(dist, "redskilled.bundle.min.mjs");
+  await copyFile(built.redskilled, daemonSibling);
   await copyFile(built.dev[variant], join(dist, "dev.bundle.min.mjs"));
 
   // A session key nothing else on the host shares, so "no daemon" is a fact
@@ -236,6 +243,10 @@ export async function createCanarySandbox(
     // the machine-wide claim (ADR 0130 Amendment 3) that refuses a second daemon
     // on a real host cannot refuse the harness against the developer's own.
     REDSKILLED_MACHINE_DIR: join(root, "machine"),
+    // Durable daemon state is independently home-scoped. A unique socket and
+    // machine claim do not stop births and deaths crossing into the operator's
+    // real lane unless the whole child-process family shares this scratch HOME.
+    HOME: join(root, "home"),
   };
 
   // Loud, not hopeful: `runtimeSocketDir` silently falls back to `tmpdir()` when
@@ -253,6 +264,23 @@ export async function createCanarySandbox(
   const tracker = await startCanaryTracker();
   trackers.push(tracker);
   env.REDSKILLED_HOST_TOKEN = "canary-token";
+  env.GITHUB_GRAPHQL_URL = tracker.endpoint;
+  // The isolation pin points REDSKILLED_BIN at a named non-path so no operator
+  // bundle can answer for the sandbox. The DOWN walk wants exactly that cold
+  // start, so there — and only there — the pin is re-aimed at the sandbox's own
+  // daemon, as an executable shim because the env override is spawned directly
+  // as a command (#3652). The UP walk keeps the poison pin: its daemon is
+  // already running, and a spawnable override would hand every transient socket
+  // hiccup a second competing daemon.
+  if (daemon === "down") {
+    const daemonBin = join(dist, "redskilled-bin");
+    await writeFile(daemonBin, `#!/bin/sh\nexec "${process.execPath}" "${daemonSibling}" "$@"\n`, {
+      mode: 0o755,
+    });
+    env.REDSKILLED_BIN = daemonBin;
+  }
+
+  daemonPaths.push(resolveRedskilledPaths({ env }));
 
   if (daemon === "up") await startCanaryDaemon(built.redskilled, env, tracker);
 
@@ -327,6 +355,11 @@ async function pings(socketPath: string): Promise<boolean> {
  */
 export async function cleanupCanarySandboxes(): Promise<void> {
   bundles = undefined;
+  await Promise.all(
+    daemonPaths.splice(0).map((paths) =>
+      stopRedskilledDaemon(paths, { settleTimeoutMs: 2_000 }).catch(() => undefined),
+    ),
+  );
   await Promise.all(daemonPids.splice(0).map((pid) => terminatePid(pid, 2_000)));
   // After the daemons: a tracker closed while one still polls it would answer a
   // live poller with a connection error, which is a fact about this cleanup

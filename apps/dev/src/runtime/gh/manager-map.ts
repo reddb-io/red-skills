@@ -15,7 +15,8 @@
 //                             evidence (never a directive; Decision #2184).
 
 import { scrubOutbound } from "../outbound-redaction.js";
-import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
+import { planGithubRestRead, planGithubWrite } from "@reddb-io/github";
+import { apiPath, githubReadClient, githubRepo, repoArgs, runGh, type GhContext } from "./common.js";
 import {
   buildMapBody,
   buildMapTitle,
@@ -37,6 +38,17 @@ export interface ManagerMapIssue {
   labels: string[];
 }
 
+function createdIssueNumber(stdout: string): number {
+  const urlMatch = stdout.match(/\/issues\/(\d+)\b/);
+  if (urlMatch) return Number(urlMatch[1]);
+  try {
+    const parsed = JSON.parse(stdout) as { number?: unknown };
+    return Number(parsed.number ?? 0);
+  } catch {
+    return NaN;
+  }
+}
+
 /**
  * Search for an existing Manager map by the effort-ID marker in its body.
  * Returns null when none is found or when the search fails — the caller then
@@ -47,24 +59,23 @@ export async function findManagerMapByEffortId(
   ctx: GhContext,
   effortId: string,
 ): Promise<ManagerMapIssue | null> {
-  const r = await runGh(ctx, [
-    "issue",
-    "list",
-    ...repoArgs(ctx),
-    "--search",
-    `in:body "manager-map effort-id=${effortId}"`,
-    "--state",
-    "all",
-    "--limit",
-    "10",
-    "--json",
-    "number,title,body,labels",
-  ]);
-  if (r.code !== 0) return null;
+  const repo = githubRepo(ctx);
+  if (!repo) return null;
   let rows: Array<{ number?: unknown; title?: unknown; body?: unknown; labels?: unknown }>;
   try {
-    const parsed = JSON.parse(r.stdout || "[]");
-    rows = Array.isArray(parsed) ? parsed : [];
+    const answer = await githubReadClient(ctx).conditionalRest<{
+      items?: Array<{ number?: unknown; title?: unknown; body?: unknown; labels?: unknown }>;
+    }>({
+      cacheKey: `manager-map:search:${ctx.repo}:${effortId}`,
+      route: "GET /search/issues",
+      parameters: {
+        q: `repo:${ctx.repo} in:body "manager-map effort-id=${effortId}"`,
+        per_page: 10,
+      },
+      operation: { key: "issue list", budget: "rest" },
+      actor: "manager-map",
+    });
+    rows = Array.isArray(answer.data.items) ? answer.data.items : [];
   } catch {
     return null;
   }
@@ -82,27 +93,22 @@ export async function findManagerMapByEffortId(
 
 /** List the native sub-issues of a Manager map by paginated GitHub API. */
 async function listMapChildren(ctx: GhContext, mapNumber: number): Promise<number[]> {
-  const r = await runGh(ctx, [
-    "api",
-    "--paginate",
-    apiPath(ctx, `issues/${mapNumber}/sub_issues`),
-    "--jq",
-    ".[] | {number}",
-  ]);
-  if (r.code !== 0) return [];
-  const out: number[] = [];
-  for (const line of (r.stdout ?? "").split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    try {
-      const parsed = JSON.parse(t) as { number?: unknown };
-      const n = Number(parsed.number ?? 0);
-      if (Number.isInteger(n) && n > 0) out.push(n);
-    } catch {
-      // tolerate malformed jq lines; the reconciler retries on the next run
-    }
+  const repo = githubRepo(ctx);
+  if (!repo) return [];
+  try {
+    const answer = await githubReadClient(ctx).conditionalPaginate<{ number?: unknown }>({
+      cacheKey: `manager-map:children:${ctx.repo}:${mapNumber}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues",
+      parameters: { ...repo, issue_number: mapNumber, per_page: 100 },
+      operation: { key: "api rest", budget: "rest" },
+      actor: "manager-map",
+    });
+    return answer.data
+      .map((child) => Number(child.number ?? 0))
+      .filter((number) => Number.isInteger(number) && number > 0);
+  } catch {
+    return [];
   }
-  return out;
 }
 
 /**
@@ -128,7 +134,7 @@ export async function publishAndReconcileManagerMap(
   if (!existing) {
     // Step 2: create
     const labelArgs = computeDesiredLabels().flatMap((l) => ["--label", l]);
-    const r = await runGh(ctx, [
+    const write = planGithubWrite(["gh",
       "issue",
       "create",
       ...repoArgs(ctx),
@@ -138,8 +144,8 @@ export async function publishAndReconcileManagerMap(
       scrubOutbound(buildMapBody(effort)),
       ...labelArgs,
     ]);
-    const urlMatch = (r.stdout ?? "").match(/\/issues\/(\d+)\b/);
-    const num = urlMatch ? Number(urlMatch[1]) : NaN;
+    const r = await runGh(ctx, write.args.slice(1));
+    const num = createdIssueNumber(r.stdout ?? "");
     if (r.code !== 0 || !Number.isInteger(num) || num <= 0) {
       throw new Error(
         `gh: failed to create manager map for effort ${effort.effort_id} (code ${r.code})`,
@@ -151,9 +157,10 @@ export async function publishAndReconcileManagerMap(
     // Step 3: apply missing labels
     const toAdd = computeLabelsToAdd(existing.labels, computeDesiredLabels());
     if (toAdd.length > 0) {
-      const args = ["issue", "edit", String(mapNumber), ...repoArgs(ctx)];
+      const args = ["gh", "issue", "edit", String(mapNumber), ...repoArgs(ctx)];
       for (const label of toAdd) args.push("--add-label", label);
-      await runGh(ctx, args);
+      const write = planGithubWrite(args, { currentIssueLabels: existing.labels });
+      await runGh(ctx, write.args.slice(1));
     }
   }
 
@@ -184,7 +191,7 @@ export async function dispatchExecutionIssue(
   const body = scrubOutbound(
     `${buildEffortMarker(effort.effort_id)}\n\n**Intent:** ${effort.intent}`,
   );
-  const r = await runGh(ctx, [
+  const create = planGithubWrite(["gh",
     "issue",
     "create",
     ...repoArgs(ctx),
@@ -195,8 +202,8 @@ export async function dispatchExecutionIssue(
     "--label",
     LABEL_READY,
   ]);
-  const urlMatch = (r.stdout ?? "").match(/\/issues\/(\d+)\b/);
-  const num = urlMatch ? Number(urlMatch[1]) : NaN;
+  const r = await runGh(ctx, create.args.slice(1));
+  const num = createdIssueNumber(r.stdout ?? "");
   if (r.code !== 0 || !Number.isInteger(num) || num <= 0) {
     throw new Error(
       `gh: failed to create execution issue for effort ${effort.effort_id} (code ${r.code})`,
@@ -204,7 +211,7 @@ export async function dispatchExecutionIssue(
   }
   // Link the execution issue as a sub-issue of the map when available.
   if (mapNumber !== null) {
-    await runGh(ctx, [
+    const link = planGithubWrite(["gh",
       "api",
       "-X",
       "POST",
@@ -212,6 +219,7 @@ export async function dispatchExecutionIssue(
       "-F",
       `sub_issue_id=${num}`,
     ]);
+    await runGh(ctx, link.args.slice(1));
   }
   return num;
 }
@@ -235,18 +243,25 @@ export async function readExecutionArtifact(
   ctx: GhContext,
   issueNumber: number,
 ): Promise<ExecutionArtifact | null> {
-  const r = await runGh(ctx, [
-    "issue",
-    "view",
-    String(issueNumber),
-    ...repoArgs(ctx),
-    "--json",
-    "number,state,labels",
-  ]);
-  if (r.code !== 0) return null;
+  const repo = githubRepo(ctx);
+  if (!repo) return null;
+  const plan = planGithubRestRead({
+    kind: "issue",
+    number: issueNumber,
+    fields: ["number", "state", "labels"],
+    repo: ctx.repo,
+  });
+  if (plan.outcome !== "plan") return null;
   let parsed: { number?: unknown; state?: unknown; labels?: unknown };
   try {
-    parsed = JSON.parse(r.stdout || "{}") as typeof parsed;
+    const answer = await githubReadClient(ctx).conditionalRest<unknown>({
+      cacheKey: `manager-map:execution:${ctx.repo}:${issueNumber}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}",
+      parameters: { ...repo, issue_number: issueNumber },
+      operation: { key: "issue view", budget: "rest" },
+      actor: "manager-map",
+    });
+    parsed = plan.decode(JSON.stringify(answer.data)) as typeof parsed;
   } catch {
     return null;
   }

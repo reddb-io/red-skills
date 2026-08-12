@@ -9,6 +9,8 @@ import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 
 const LEAK_ENV_KEY = "RED_SKILLS_TEST_TOKEN";
 const LEAK_ENV_VALUE = "red-skills-test-token-123456";
+const isRestCreatePullCall = (args: readonly string[]): boolean =>
+  args.includes("POST") && args.some((arg) => /\/pulls$/.test(arg));
 const LEAK_TEXT = [
   "session https://claude.ai/code/session_abc123_X-y",
   `literal ${LEAK_ENV_VALUE}`,
@@ -107,8 +109,15 @@ describe("GitHub outbound write seams", () => {
     const exec: ExecFn = async (cmd, args): Promise<ExecOutput> => {
       calls.push({ cmd, args: [...args] });
       if (args.includes("--jq")) return { code: 0, stdout: "123\n", stderr: "" };
-      if (args[0] === "issue" && args[1] === "create") {
-        return { code: 0, stdout: "https://github.com/acme/widgets/issues/77\n", stderr: "" };
+      // Issue creation rides REST now (#3663): `gh api -X POST repos/{o}/{r}/issues
+      // -f title=... -f body=...`. `createIssue` reads the new issue's number back
+      // out of the `html_url` gh prints as part of the response body.
+      if (args.includes("POST") && args.some((a) => /repos\/.+\/issues$/.test(a))) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ number: 77, html_url: "https://github.com/acme/widgets/issues/77" }),
+          stderr: "",
+        };
       }
       return { code: 0, stdout: "", stderr: "" };
     };
@@ -157,7 +166,7 @@ describe("GitHub outbound write seams", () => {
     const exec: Exec = async (args) => {
       calls.push([...args]);
       if (args.includes("list")) {
-        const previousCreates = calls.filter((call) => call.includes("create")).length;
+        const previousCreates = calls.filter(isRestCreatePullCall).length;
         return { code: 0, stdout: previousCreates > 0 ? "88\n" : "", stderr: "" };
       }
       return { code: 0, stdout: "", stderr: "" };
@@ -178,7 +187,7 @@ describe("GitHub outbound write seams", () => {
       mergeQueueWait: { sleep: async () => {}, maxPolls: 1 },
     });
 
-    const create = calls.find((args) => args.includes("create"));
+    const create = calls.find(isRestCreatePullCall);
     expect(create).toBeTruthy();
     expectScrubbed(create!.join("\n"));
     expect(create!.join("\n")).toContain("Closes #1365");

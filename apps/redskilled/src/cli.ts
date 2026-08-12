@@ -43,6 +43,10 @@ import {
 } from "./daemon.js";
 import {
   createGithubAttributionLedger,
+  createGithubBalanceHistory,
+  createGithubBalanceStore,
+  DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
+  createTimedGithubFetch,
   createGithubBalanceTransport,
   type GithubAttributionLedger,
   type GithubRateBudget,
@@ -338,7 +342,14 @@ export function resolveServeGithubBalance(
   if (host == null) return null;
   const origin = env.GITHUB_API_URL;
   return {
-    transport: createGithubBalanceTransport({ token: host.token, ...(origin ? { origin } : {}) }),
+    // Bounded, so a stalled ask cannot outlive the poll that issued it and the
+    // re-arm keeps happening (#3768). The poller's own remote-call deadline is
+    // the second bound; this one tears the socket down rather than abandoning it.
+    transport: createGithubBalanceTransport({
+      token: host.token,
+      ...(origin ? { origin } : {}),
+      fetchImpl: createTimedGithubFetch({ timeoutMs: DEFAULT_GITHUB_BALANCE_TIMEOUT_MS }),
+    }),
   };
 }
 
@@ -455,7 +466,16 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       readTrackerCliToken,
       githubAttribution,
     );
-    const githubBalance = resolveServeGithubBalance(values);
+    const resolvedGithubBalance = resolveServeGithubBalance(values);
+    const githubBalance = resolvedGithubBalance == null
+      ? null
+      : {
+          ...resolvedGithubBalance,
+          store: createGithubBalanceStore({ path: join(hostStateRoot, "github", "balance.toon") }),
+          history: createGithubBalanceHistory({
+            path: join(hostStateRoot, "github", "balance-history.toonl"),
+          }),
+        };
     // Before this daemon anchors itself, it speaks for whatever the last one
     // could not (slice #3028). The host singleton is the only process guaranteed
     // to boot after a machine freeze, so an un-trap-able death on this lane has

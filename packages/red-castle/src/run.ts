@@ -5,7 +5,7 @@ import { styleText } from "node:util";
 import { Effect, Layer } from "effect";
 import { resolveCwd } from "./resolveCwd.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import type { AgentProvider } from "./AgentProvider.js";
 import {
   ClackDisplay,
@@ -382,7 +382,7 @@ const buildVerboseRawLineSink = (
         // emitted only when this sink is the very first writer.
         const payload = toonl
           ? `${FILE_LOG_TOONL_HEADER}\n` +
-            encodeLines()
+            encodeToonlLines()
               .push({
                 at: new Date().toISOString(),
                 kind: logging.kindPrefix ? `${logging.kindPrefix}.verbose` : "verbose",

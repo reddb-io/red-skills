@@ -240,16 +240,18 @@ const SURFACE: ReadonlyArray<{
     name: "merge_arm",
     title: "Arm PR for the merge driver",
     description:
-      "MUTATING: hand one open PR to the project merge driver — it owns the PR to a terminal state " +
+      "MUTATING: hand one open PR to a live project merge-driver process — it owns the PR to a terminal state " +
       "(update-branch when BEHIND, merge-commit once green at head, bounded retries, " +
-      "needs-medic/needs-human classification) without GitHub native auto-merge.",
+      "needs-medic/needs-human classification) without GitHub native auto-merge. " +
+      "Refuses when the merge-driver process is missing so custody cannot become orphaned.",
     schema: ["pr"],
   },
   {
     name: "merge_status",
     title: "Read merge driver state",
     description:
-      "Return the driver's durable per-PR records: armed set, attempts, last observed state, " +
+      "Return whether the merge-driver process is ticking plus durable per-PR records: " +
+      "armed records labeled driver-ticking or orphaned, attempts, last observed state, " +
       "and terminal classifications.",
     schema: [],
   },

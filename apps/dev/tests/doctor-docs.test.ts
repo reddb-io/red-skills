@@ -194,19 +194,19 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("apt");
     expect(skill).toContain("brew");
     expect(skill).toContain("direct binary");
-    expect(skill).toContain("TQ_VERSION");
+    expect(skill).toContain("cargo install reddb-io-tq");
     expect(skill).toContain("Absence or version drift is a red finding");
     expect(skill).toContain("floor rather than an equality");
     expect(skill).toContain("toolchain-drift");
     expect(skill).toContain("apps/dev/src/core/host-binary-doctor.ts");
-    expect(skill).toContain("never run installer scripts during Pass 1");
+    expect(skill).toContain("never run package-manager installs during Pass 1");
     expect(skill).toContain("never execute an upgrade or installer during Pass 1");
 
     const apply = await readDoctorApply();
     expect(apply).toContain("Host toolchain `❌` (check 18)");
     expect(apply).toContain("asdf install github-cli latest && asdf global github-cli latest && asdf reshim github-cli");
     expect(apply).toContain("apt, brew, and direct-binary gh remedies remain printed instructions");
-    expect(apply).toContain("install pinned `tq` with the canonical checksum-verified toon installer");
+    expect(apply).toContain("install pinned `tq` from the official `reddb-io-tq` crate with Cargo");
     expect(apply).toContain("confirm each");
   });
 

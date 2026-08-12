@@ -9,6 +9,8 @@ description: Interview the user relentlessly about a plan or design until reachi
 
 Walk down each branch of the decision tree, resolving dependencies between decisions one-by-one. For each question, include your recommended answer with a one-sentence reason.
 
+**Read [`/start`'s INTERVIEW-ROUNDS.md](../../engineering/start/INTERVIEW-ROUNDS.md) and follow its question format for every question you ask** — the `❓ **Q##**` block, per-line branches, the `➡️` recommendation, evidence above the ask. This skill's cadence stays its own: one question per turn is a one-question round, which the convention allows.
+
 Ask the questions one at a time. Wait for the user's reply before proceeding.
 
 If a question can be answered by exploring the codebase, explore the codebase instead of asking.

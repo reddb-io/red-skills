@@ -1,23 +1,20 @@
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
 export function encodeDevSnapshotToon(value: JsonValue): string {
-  return encode(value, { keyedMapCollapse: true });
+  return encode(value);
 }
 
 /**
  * Sniff-decode a converted snapshot document: legacy raw JSON first, TOON
- * fallback. This is the in-place migration reader every castle-engine snapshot
- * surface uses (wave-1 convention — the filename is retained and only the
- * content flips to TOON, so a bundle written before the flip still reads). TOON
- * `decode` throws on the JSON `{`/`[` header shapes, so the JSON-first order
- * never mis-parses a TOON document as JSON.
+ * fallback. This is the migration reader every castle-engine snapshot surface
+ * uses. A JSON-looking header is committed to JSON parsing: malformed legacy
+ * JSON must fail instead of being accepted as a permissive TOON object whose
+ * unknown fields the state schema would silently default away.
  */
 export function decodeDevSnapshotSniff(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return decode(text);
-  }
+  const first = text.trimStart()[0];
+  if (first === "{" || first === "[") return JSON.parse(text);
+  return decode(text);
 }
 
 export function assertDevSnapshotToonLossless(value: JsonValue): string {

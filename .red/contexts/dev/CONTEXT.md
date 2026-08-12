@@ -429,8 +429,8 @@ The append-only streaming extension of TOON (`github:reddb-io/toon`, spec v0.1):
 _Avoid_: TOON lines, JSONL replacement (it replaces JSONL here, but the term names the format, not the migration)
 
 **tq**:
-The jq-for-TOON CLI shipped by `github:reddb-io/toon`: query, convert (TOON/TOONL/JSON any-to-any), and stream. A required host binary — `/red-setup` installs it via the toon repo's checksum-verified, version-pinned `install.sh`, and `/red-doctor` red-flags absence or drift. Skills docs teach `tq` pipelines with no jq fallback lane.
-_Avoid_: jq (for TOON/TOONL files), the toon CLI
+The jq-for-TOON CLI published from `github:reddb-io/toon`: query, convert (TOON/TOONL/JSON any-to-any), and stream. A required host binary — `/red-setup`, CI and `/red-doctor` use the exact catalog version from the official `reddb-io-tq` crate on crates.io. The installed binary must come from an official package channel; sibling checkout paths, local `target/` builds and unpublished release installers are forbidden. Skills docs teach `tq` pipelines with no jq fallback lane.
+_Avoid_: jq (for TOON/TOONL files), the toon CLI, local tq build, sibling toon checkout
 
 **Release watcher**:
 The automation that observes upstream `github:reddb-io/toon` releases and opens the RedSkills auto-bump PR for the toon toolchain. It updates the pnpm catalog version and every derived or guard-checked `tq`/`@reddb-io/toon` pin site together; the catalog remains the single version truth, and the watcher PR is the normal route for routine upstream releases.

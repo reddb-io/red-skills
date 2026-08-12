@@ -519,14 +519,14 @@ export function harness(opts: HarnessOptions = {}): {
       if (j.includes("merge-base --is-ancestor origin/")) {
         return { code: 1, stdout: "", stderr: "" };
       }
-      // `gh pr list` is the ONE reuse probe every PR path shares (#2731): it
-      // answers empty until a PR has actually been created, so a test can tell
-      // a lazily-minted draft from a landing that opened its own.
-      if (argv.includes("pr") && argv.includes("create")) {
+      // The PR reuse probe — legacy `gh pr list` or the routed REST list
+      // (#3663) — is the ONE probe every PR path shares (#2731): it answers
+      // empty until a PR exists, as a bare jq-projected number, never JSON.
+      if ((argv.includes("pr") && argv.includes("create")) || (argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a)))) {
         prOpen = true;
-        return { code: 0, stdout: "", stderr: "" };
+        return { code: 0, stdout: JSON.stringify({ number: 42 }), stderr: "" };
       }
-      if (argv.includes("pr") && argv.includes("list")) {
+      if ((argv.includes("pr") && argv.includes("list")) || (argv.includes("api") && argv.some((a) => /repos\/.+\/pulls$/.test(a)) && argv.includes("state=open"))) {
         return { code: 0, stdout: prOpen ? "42\n" : "", stderr: "" };
       }
       if (argv.includes("pr") && argv.includes("diff")) {
@@ -611,7 +611,7 @@ export function harness(opts: HarnessOptions = {}): {
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
-      if (j.includes("pr merge")) {
+      if (j.includes("pr merge") || /pulls\/\d+\/merge/.test(j)) {
         return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
       return { code: 0, stdout: "", stderr: "" };

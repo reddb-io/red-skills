@@ -131,6 +131,8 @@ export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCa
 }
 
 export function rewriteCommand(command: string, rspPrefix: string[] = resolveRspInvocationPrefix()): RewriteDecision {
+  const githubWait = rewriteGithubPollingCommand(command, rspPrefix);
+  if (githubWait) return githubWait;
   const losslessGh = losslessGhJsonJqPassthrough(command);
   if (losslessGh) return losslessGh;
 
@@ -141,6 +143,9 @@ export function rewriteCommand(command: string, rspPrefix: string[] = resolveRsp
 
   const fileRead = rewriteFileReadCommand(parsed, rspPrefix);
   if (fileRead) return fileRead;
+
+  const githubApi = rewriteGithubApiRead(parsed, rspPrefix);
+  if (githubApi) return githubApi;
 
   if (parsed.tokens.some((token) => token.quoted)) return rewriteCompoundCommand(command, rspPrefix);
 
@@ -155,6 +160,50 @@ export function rewriteCommand(command: string, rspPrefix: string[] = resolveRsp
     command: [...rewritten.map(shellQuoteIfNeeded), ...redirectSuffix].join(" "),
     capabilityId: capability.id,
   };
+}
+
+function rewriteGithubApiRead(parsed: ParsedSimpleCommand, rspPrefix: string[]): RewriteDecision | null {
+  const tokens = parsed.tokens.map((token) => token.text);
+  if (tokens[0] !== "gh" || tokens[1] !== "api" || !tokens[2]) return null;
+  if (tokens.some((token) => ["--jq", "-q", "--template", "-t", "--paginate", "--slurp", "--input"].includes(token))) return null;
+  const methodIndex = tokens.findIndex((token) => token === "--method" || token === "-X");
+  if (methodIndex >= 0 && (tokens[methodIndex + 1] ?? "").toUpperCase() !== "GET") return null;
+  if (tokens[2] === "graphql") return null;
+  return {
+    kind: "rewrite",
+    command: [...rspPrefix, ...tokens].map(shellQuoteIfNeeded).join(" "),
+    capabilityId: "gh:api:read",
+  };
+}
+
+/**
+ * Collapse the GitHub polling idioms agents tend to hand-write into rsp's
+ * resident, ETag-aware wait surface. One unchanged conditional response is
+ * quota-free; more importantly, the shell no longer owns a request loop.
+ */
+function rewriteGithubPollingCommand(command: string, rspPrefix: string[]): RewriteDecision | null {
+  const prefix = rspPrefix.map(shellQuoteIfNeeded).join(" ");
+  const tokens = shellTokens(command.trim()).map((token) => token.text);
+  if (tokens[0] === "gh" && tokens[1] === "run" && tokens[2] === "watch" && /^[1-9][0-9]*$/.test(tokens[3] ?? "")) {
+    return { kind: "rewrite", command: `${prefix} wait run ${tokens[3]}`, capabilityId: "wait:github-run" };
+  }
+  if (!/\b(?:for|while)\b/.test(command) || !/\bsleep\b/.test(command)) return null;
+
+  const job = /\bgh\s+api\s+(?:--method\s+GET\s+)?(?:["']?)(?:https:\/\/api\.github\.com\/)?repos\/[^\s/'"]+\/[^\s/'"]+\/actions\/jobs\/([1-9][0-9]*)/.exec(command);
+  if (job) return { kind: "rewrite", command: `${prefix} wait job ${job[1]}`, capabilityId: "wait:github-job" };
+
+  const run = /\bgh\s+api\s+(?:--method\s+GET\s+)?(?:["']?)(?:https:\/\/api\.github\.com\/)?repos\/[^\s/'"]+\/[^\s/'"]+\/actions\/runs\/([1-9][0-9]*)/.exec(command);
+  if (run) return { kind: "rewrite", command: `${prefix} wait run ${run[1]}`, capabilityId: "wait:github-run" };
+
+  const release = /\bgh\s+api\s+(?:--method\s+GET\s+)?(?:["']?)(?:https:\/\/api\.github\.com\/)?repos\/[^\s/'"]+\/[^\s/'"]+\/releases\/tags\/([^\s'";|]+)/.exec(command);
+  if (release) {
+    return {
+      kind: "rewrite",
+      command: `${prefix} wait release --tag ${shellQuoteIfNeeded(release[1]!)} --existing`,
+      capabilityId: "wait:github-release",
+    };
+  }
+  return null;
 }
 
 function rewriteFileReadCommand(parsed: ParsedSimpleCommand, rspPrefix: string[]): RewriteDecision | null {

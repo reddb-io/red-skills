@@ -2,7 +2,6 @@
 import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { encode, type JsonValue } from "@reddb-io/toon";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,11 +47,15 @@ import { startResidentSelfUpdate } from "./resident-self-update.js";
 import { createRedskilledBirthPort } from "./runtime/redskilled-birth.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
 import { renewRegistrationDelivery } from "./runtime/registration-delivery.js";
+import { maintainStandingDrain } from "./runtime/standing-drain.js";
 import { workerLogPathTemplate } from "./runtime/redskilled-worker-log.js";
 import {
   newestInstalledPluginVersion,
   refreshPublishedBundleVersion,
 } from "./core/published-version.js";
+import { encodeRedskilledMcpToon } from "./mcp-toon.js";
+import { loadConfig, readStandingDrain } from "./core/config.js";
+import { drain } from "./mcp/project.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
 const REGISTRATION_DELIVERY_RENEW_MS = 150_000;
@@ -69,27 +72,28 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
   const tick = async () => {
     const port = createRedskilledBirthPort({ root });
     const installed = readBuildInfo("dev").version;
-    await renewRegistrationDelivery({
-      port,
-      publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
-      publishedArgv: (version) => publishedBundleArgv({
-        installedVersion: installed,
-        resolvePublished: () => version,
+    await maintainStandingDrain({
+      standing: () => readStandingDrain(loadConfig(join(root, ".red", "config.yaml"), {
+        warn: () => undefined,
+      })),
+      registration: () => port.registration(),
+      register: (standing) => drain(root, standing, { standing: true }),
+      renew: () => renewRegistrationDelivery({
+        port,
+        publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
+        publishedArgv: (version) => publishedBundleArgv({
+          installedVersion: installed,
+          resolvePublished: () => version,
+        }),
+        pluginCacheVersion: () => newestInstalledPluginVersion(),
+        logPath: workerLogPathTemplate(root),
       }),
-      pluginCacheVersion: () => newestInstalledPluginVersion(),
-      logPath: workerLogPathTemplate(root),
     });
   };
   void tick().catch(() => undefined);
   const timer = setInterval(() => void tick().catch(() => undefined), REGISTRATION_DELIVERY_RENEW_MS);
   timer.unref();
   return { stop: () => clearInterval(timer) };
-}
-
-function toon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
-    keyedMapCollapse: true,
-  });
 }
 
 export function createRedskilledMcpServer(root = process.cwd()): McpServer {
@@ -115,7 +119,10 @@ export function createRedskilledMcpServer(root = process.cwd()): McpServer {
       },
       async (input) => ({
         content: [
-          { type: "text" as const, text: toon(await tool.invoke(input)) },
+          {
+            type: "text" as const,
+            text: encodeRedskilledMcpToon(await tool.invoke(input)),
+          },
         ],
       }),
     );

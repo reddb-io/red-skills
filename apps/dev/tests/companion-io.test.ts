@@ -48,6 +48,21 @@ function ghRouter(opts: { body?: string; comments?: string[]; labels?: string[] 
   const ok = (stdout: string): ExecOutput => ({ code: 0, stdout, stderr: "" });
   const exec: ExecFn = (_cmd, argv) => {
     const a = [...argv];
+    // Single-object + comment-list reads route through REST (`gh api repos/...`,
+    // #3730) rather than `gh issue view`; match on the REST path shape instead.
+    if (a[0] === "api" && typeof a[1] === "string" && a[1].endsWith("/comments")) {
+      const comments = (opts.comments ?? []).map((b) => ({
+        body: b,
+        author: { login: "someone", is_bot: false },
+        authorAssociation: "NONE",
+        createdAt: undefined,
+      }));
+      return Promise.resolve(ok(JSON.stringify({ comments })));
+    }
+    if (a[0] === "api" && typeof a[1] === "string" && /\/issues\/\d+$/.test(a[1])) {
+      const labels = (opts.labels ?? []).map((name) => ({ name }));
+      return Promise.resolve(ok(JSON.stringify({ number: 7, title: "t", body: opts.body ?? "", labels })));
+    }
     if (a[0] === "issue" && a[1] === "view" && a.includes("comments") && !a.includes("body")) {
       const comments = (opts.comments ?? []).map((b) => ({ body: b }));
       return Promise.resolve(ok(JSON.stringify({ comments })));
@@ -55,6 +70,20 @@ function ghRouter(opts: { body?: string; comments?: string[]; labels?: string[] 
     if (a[0] === "issue" && a[1] === "view") {
       const labels = (opts.labels ?? []).map((name) => ({ name }));
       return Promise.resolve(ok(JSON.stringify({ number: 7, title: "t", body: opts.body ?? "", labels })));
+    }
+    // Writes route through REST too (#3734): `gh api -X PATCH/POST <path> …`
+    // replaces the old `gh issue edit/comment` CLI forms.
+    if (a[0] === "api" && a[1] === "-X" && a[2] === "POST" && typeof a[3] === "string" && a[3].endsWith("/comments")) {
+      writes.push({ kind: "comment", args: a });
+      return Promise.resolve(ok(""));
+    }
+    if (a[0] === "api" && a[1] === "-X" && a[2] === "PATCH" && a.some((arg) => typeof arg === "string" && arg.startsWith("body="))) {
+      writes.push({ kind: "editBody", args: a });
+      return Promise.resolve(ok(""));
+    }
+    if (a[0] === "api" && a[1] === "-X" && a[2] === "PATCH" && a.some((arg) => typeof arg === "string" && arg.startsWith("labels[]"))) {
+      writes.push({ kind: "editLabels", args: a });
+      return Promise.resolve(ok(""));
     }
     if (a[0] === "issue" && a[1] === "edit" && a.includes("--body")) {
       writes.push({ kind: "editBody", args: a });
@@ -178,8 +207,10 @@ describe("runCompanionPass (#921)", () => {
     expect(body?.args.join(" ")).toContain("<!-- red:agent-brief v1 -->");
     const comment = gh.writes.find((w) => w.kind === "comment");
     expect(comment?.args.join(" ")).toContain(companionFingerprint(7, "iteration-churn"));
+    // The label write routes through REST (#3734): the final label SET is sent
+    // as one `-F labels[]=<name>` pair per label, replacing `--add-label`.
     const labels = gh.writes.find((w) => w.kind === "editLabels");
-    expect(labels?.args).toContain("ready-for-agent");
+    expect(labels?.args).toContain("labels[]=ready-for-agent");
   });
 
   it("is idempotent — an existing fingerprint suppresses a second write", async () => {
@@ -210,10 +241,12 @@ describe("runCompanionPass (#921)", () => {
     expect(outcomes[0]?.disposition).toBe("escalated");
     const body = gh.writes.find((w) => w.kind === "editBody");
     expect(body?.args.join(" ")).toContain("## Current blocker");
+    // REST replaces the WHOLE label set in one PATCH (#3734): the removal of
+    // the present ready-for-agent shows up as its ABSENCE from the sent set,
+    // not as a separate --remove-label flag.
     const labels = gh.writes.find((w) => w.kind === "editLabels");
-    expect(labels?.args).toContain("ready-for-human");
-    expect(labels?.args).toContain("--remove-label");
-    expect(labels?.args).toContain("ready-for-agent");
+    expect(labels?.args).toContain("labels[]=ready-for-human");
+    expect(labels?.args).not.toContain("labels[]=ready-for-agent");
   });
 
   it("escalation does not emit a one-sided remove for an absent ready-for-agent", async () => {
@@ -228,9 +261,12 @@ describe("runCompanionPass (#921)", () => {
       cap: 1,
       readStates: async () => [record(7, 1, churn)],
     });
+    // No ready-for-agent was present to begin with, so the REST full-set write
+    // (#3734) naturally omits it — there is no separate --remove-label flag to
+    // fire one-sidedly in the first place.
     const labels = gh.writes.find((w) => w.kind === "editLabels");
-    expect(labels?.args).toContain("ready-for-human");
-    expect(labels?.args).not.toContain("--remove-label");
+    expect(labels?.args).toContain("labels[]=ready-for-human");
+    expect(labels?.args).not.toContain("labels[]=ready-for-agent");
   });
 
   it("skips a dead worker (the reaper's job, not the companion's)", async () => {

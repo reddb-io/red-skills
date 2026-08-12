@@ -271,6 +271,9 @@ export interface RedskilledRegistrationLapse {
   readonly renewals: number;
   /** How many times the project's own work had held it up (Amendment 7). */
   readonly sustains: number;
+  /** Standing policy and last counted backlog, absent on older records. */
+  readonly standing?: boolean;
+  readonly queue_depth?: number;
   readonly detail: string;
 }
 
@@ -279,6 +282,8 @@ export interface RedskilledRegistrationStop {
   readonly project_label: string;
   readonly registered_at: string;
   readonly at: string;
+  readonly standing?: boolean;
+  readonly queue_depth?: number;
   readonly detail: string;
 }
 
@@ -286,6 +291,17 @@ export interface RedskilledRegistrationStop {
 export interface RedskilledOrphanedRegistration {
   readonly project_label: string;
   readonly registered_at?: string;
+}
+
+/** The daemon's independent proof that its request lane still answers. */
+export interface RedskilledRequestHealth {
+  readonly status: "healthy" | "degraded";
+  readonly consecutive_misses: number;
+  readonly miss_threshold: number;
+  readonly last_probe_at: string | null;
+  readonly last_success_at: string | null;
+  readonly last_failure_at: string | null;
+  readonly detail: string;
 }
 
 export interface RedskilledHostState {
@@ -306,6 +322,7 @@ export interface RedskilledHostState {
    * state its own scope would leave a second one detectable only by its damage.
    */
   readonly scope?: RedskilledScopeState;
+  readonly request_health?: RedskilledRequestHealth;
   readonly workers: readonly RedskilledWorkerView[];
   readonly projects: readonly RedskilledProjectView[];
   /**
@@ -356,6 +373,8 @@ export interface BuildHostStateInput {
   readonly ceiling?: RedskilledHostCeiling;
   /** The scope block; absent leaves the document without one rather than inventing it. */
   readonly scope?: RedskilledScopeState;
+  /** Independent socket self-ping state; absent for older daemons. */
+  readonly requestHealth?: RedskilledRequestHealth;
   readonly workers?: readonly RedskilledWorkerView[];
   /**
    * The host memory ceiling the accounting is judged against; `null` is unbounded.
@@ -426,6 +445,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     started_at: input.startedAt,
     ...(input.ceiling == null ? {} : { ceiling: input.ceiling }),
     ...(input.scope == null ? {} : { scope: input.scope }),
+    ...(input.requestHealth == null ? {} : { request_health: input.requestHealth }),
     workers,
     projects: [...counts.entries()]
       .map(([project_label, worker_count]) => ({ project_label, worker_count }))
@@ -558,6 +578,7 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // Same tolerance the upgrade block gets, for the same reason: a daemon from a
     // bundle that predates the scope block still answers completely.
     (state.scope === undefined || isRedskilledScopeState(state.scope)) &&
+    (state.request_health === undefined || isRedskilledRequestHealth(state.request_health)) &&
     // The same tolerance again, and for the same reason: a daemon from a bundle
     // that predates Amendment 4 answers completely without a registrations block,
     // while a block that IS there and is the wrong shape still fails closed.
@@ -577,6 +598,18 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // make an older daemon's complete answer read as malformed — while a field
     // that IS there and is the wrong shape still fails closed.
     (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade));
+}
+
+function isRedskilledRequestHealth(value: unknown): value is RedskilledRequestHealth {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const health = value as Record<string, unknown>;
+  return (health.status === "healthy" || health.status === "degraded") &&
+    Number.isInteger(health.consecutive_misses) &&
+    Number.isInteger(health.miss_threshold) &&
+    (health.last_probe_at === null || typeof health.last_probe_at === "string") &&
+    (health.last_success_at === null || typeof health.last_success_at === "string") &&
+    (health.last_failure_at === null || typeof health.last_failure_at === "string") &&
+    typeof health.detail === "string";
 }
 
 function isBirthLatch(value: unknown): value is RedskilledBirthLatch {
@@ -604,6 +637,8 @@ function isRegistrationLapse(value: unknown): value is RedskilledRegistrationLap
     typeof record.renew_by === "string" &&
     Number.isInteger(record.renewals) &&
     Number.isInteger(record.sustains) &&
+    (record.standing === undefined || typeof record.standing === "boolean") &&
+    (record.queue_depth === undefined || Number.isInteger(record.queue_depth)) &&
     typeof record.detail === "string";
 }
 
@@ -613,6 +648,8 @@ function isRegistrationStop(value: unknown): value is RedskilledRegistrationStop
   return typeof record.project_label === "string" &&
     typeof record.registered_at === "string" &&
     typeof record.at === "string" &&
+    (record.standing === undefined || typeof record.standing === "boolean") &&
+    (record.queue_depth === undefined || Number.isInteger(record.queue_depth)) &&
     typeof record.detail === "string";
 }
 

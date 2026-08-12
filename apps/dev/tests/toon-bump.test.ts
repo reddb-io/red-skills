@@ -85,15 +85,14 @@ async function writeRegisteredSites(root: string, version: string): Promise<void
   await write(
     root,
     "plugins/dev/skills/engineering/red-setup/INTERVIEW.md",
-    `TQ_VERSION=v${version}
-curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
-The installed version must be \`${version}\`.
+    `cargo install reddb-io-tq --version ${version} --locked --force
+The installed version must be at least \`${version}\`.
 `,
   );
   await write(
     root,
     "plugins/dev/skills/engineering/red-setup/REFERENCE.md",
-    `TQ_VERSION=v${version}
+    `install \`tq\` at or above \`${version}\`
 host binary is at or above the \`${version}\` floor.
 `,
   );
@@ -101,8 +100,7 @@ host binary is at or above the \`${version}\` floor.
     root,
     "plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md",
     `host_binaries.tq.version: ${version}
-TQ_VERSION=v${version}
-curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
+cargo install reddb-io-tq --version ${version} --locked --force
 \`tq --version\` reports \`${version}\`
 host_binaries:
   tq:
@@ -121,8 +119,7 @@ host_binaries:
     root,
     "plugins/dev/skills/engineering/red-doctor/SKILL.md",
     `host_binaries.tq.version\` (floor \`${version}\`)
-TQ_VERSION=v${version}
-curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
+cargo install reddb-io-tq --version ${version} --locked --force
 `,
   );
 }

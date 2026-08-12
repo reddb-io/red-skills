@@ -2,7 +2,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import { afterEach, describe, expect, it } from "vitest";
 import {
   LANE_RETENTION_REGISTRY,
@@ -21,7 +23,7 @@ afterEach(async () => {
 });
 
 function encodedLane(ids: readonly string[]): string {
-  const writer = encodeLines({ trailer: false });
+  const writer = encodeToonlLines({ trailer: false });
   return ids.map((id, index) => writer.push({ id, ordinal: index } satisfies ToonlRecord)).join("");
 }
 
@@ -33,6 +35,8 @@ describe("shared lane retention", () => {
       targetRatio: 0.5,
     });
     expect(LANE_RETENTION_REGISTRY["github-spend"].maxBytes).toBe(8 * 1024 * 1024);
+    expect(LANE_RETENTION_REGISTRY["github-balance"].maxBytes).toBe(64 * 1024);
+    expect(LANE_RETENTION_REGISTRY["github-balance-history"].maxBytes).toBe(2 * 1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["castle-singleton-events"].maxBytes).toBe(2 * 1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["rsp-telemetry-corrections"].maxBytes).toBe(1024 * 1024);
     expect(LANE_RETENTION_REGISTRY["death-attributions"].maxAgeMs).toBe(14 * 24 * 60 * 60 * 1_000);
@@ -85,25 +89,30 @@ describe("shared lane retention", () => {
     expect(parseRecords(raw).map((row) => row.id)).toEqual(["two", "three"]);
   });
 
-  it("sweeps only rotate and retaining temps owned by dead pids", async () => {
+  it("sweeps only rotate, retaining, and rsp drain temps owned by dead pids", async () => {
     const root = await mkdtemp(join(tmpdir(), "lane-retention-sweep-"));
     roots.push(root);
     const liveRotate = join(root, "host.toonl.rotate-222");
     const deadRotate = join(root, "host.toonl.rotate-111");
     const deadRetaining = join(root, "deaths.toonl.retaining-111");
+    const deadDrain = join(root, "rsp-telemetry.spool.toonl.111.1783958744462.drain");
+    const liveDrain = join(root, "rsp-telemetry.spool.toonl.222.1783958744463.drain");
     const unrelated = join(root, "notes.tmp-111");
     await Promise.all([
       writeFile(liveRotate, "live"),
       writeFile(deadRotate, "dead"),
       writeFile(deadRetaining, "dead"),
+      writeFile(deadDrain, "dead"),
+      writeFile(liveDrain, "live"),
       writeFile(unrelated, "not a lane temp"),
     ]);
 
     const result = await sweepLaneTemps(root, { isPidAlive: (pid) => pid === 222 });
 
-    expect(result.removed.sort()).toEqual([deadRetaining, deadRotate].sort());
-    expect(result.preserved).toEqual([liveRotate]);
+    expect(result.removed.sort()).toEqual([deadDrain, deadRetaining, deadRotate].sort());
+    expect(result.preserved.sort()).toEqual([liveDrain, liveRotate].sort());
     await expect(readFile(liveRotate, "utf8")).resolves.toBe("live");
+    await expect(readFile(liveDrain, "utf8")).resolves.toBe("live");
     await expect(readFile(unrelated, "utf8")).resolves.toBe("not a lane temp");
   });
 });

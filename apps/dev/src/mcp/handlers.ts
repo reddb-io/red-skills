@@ -5,6 +5,7 @@ import {
   armPr,
   createEnginePaths,
   createFileMergeDriverStore,
+  createSingletonLeaseStore,
   releasePr,
 } from "@reddb-io/red-castle/engine";
 import { resolveHitlDecision } from "../core/hitl-resolve.js";
@@ -58,6 +59,21 @@ import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
 
 import type { DevAfkMcpOperations, DevAfkMcpRuntime } from "./operations.js";
 import { dispatchArgs, buildWaitArgs, defaultMcpRuntime, resolveConfiguredBase, latestClaimPerWorker } from "./operations.js";
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function mergeDriverIsTicking(root: string): Promise<boolean> {
+  const paths = createEnginePaths(join(root, ".red"));
+  const lease = await createSingletonLeaseStore(paths).read("merge-driver");
+  return lease !== undefined && isProcessAlive(lease.pid);
+}
 
 export function buildMcpLandingFireHook(
   root: string,
@@ -425,6 +441,11 @@ export function createDefaultDevAfkMcpOperations(
       };
     },
     async mergeArm(input: { pr: number }) {
+      if (!(await mergeDriverIsTicking(root))) {
+        throw new Error(
+          `merge_arm refused for PR #${input.pr}: missing live merge-driver process; no tick source will act on this record`,
+        );
+      }
       const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
       const record = await armPr(store, input.pr, Math.floor(Date.now() / 1000));
       return { armed: { pr: record.pr, status: record.status, armed_at_epoch: record.armedAtEpoch } };
@@ -432,10 +453,15 @@ export function createDefaultDevAfkMcpOperations(
     async mergeStatus() {
       const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
       const state = await store.read();
+      const ticking = await mergeDriverIsTicking(root);
       return {
+        driver: { process: "merge-driver", status: ticking ? "ticking" : "missing" },
         prs: Object.values(state.prs).map((record) => ({
           pr: record.pr,
           status: record.status,
+          ...(record.status === "armed"
+            ? { actionability: ticking ? "driver-ticking" : "orphaned" }
+            : {}),
           attempts: record.attempts,
           armed_at_epoch: record.armedAtEpoch,
           updated_at_epoch: record.updatedAtEpoch,
@@ -578,4 +604,3 @@ export function createDefaultDevAfkMcpOperations(
     deadendAudit: () => collectDeadendAuditReport(root),
   };
 }
-

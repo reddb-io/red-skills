@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendTelemetryEventSync } from "../src/telemetry.js";
 import {
   appendTelemetryEvent,
   calibratedTelemetryTiming,
@@ -88,6 +90,32 @@ describe("rsp telemetry spool", () => {
     })).resolves.toBeUndefined();
   });
 
+  it("retries an append whose inode is renamed away during the write", async () => {
+    const root = await tempRoot();
+    const spool = telemetrySpoolPath(root);
+    const draining = `${spool}.999999.1783958744462.drain`;
+    let raced = false;
+
+    appendTelemetryEventSync(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "rename-race",
+      command: "git status",
+    }, undefined, {
+      afterWrite(path, attempt) {
+        if (attempt !== 1) return;
+        raced = true;
+        renameSync(path, draining);
+        writeFileSync(path, "", { mode: 0o600 });
+        rmSync(draining);
+      },
+    });
+
+    expect(raced).toBe(true);
+    await expect(readSpoolRows(root)).resolves.toEqual([
+      expect.objectContaining({ event: expect.objectContaining({ id: "rename-race" }) }),
+    ]);
+  });
+
   it("trims an overflowing spool and corrects the drain with the dropped byte count", async () => {
     const root = await tempRoot();
     const retention = { maxBytes: 1_024 };
@@ -167,7 +195,7 @@ describe("rsp telemetry spool", () => {
 
     expect(drained.join("\n")).toContain('"id":"legacy-jsonl"');
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
-    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).resolves.toBe("");
+    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("ingests orphaned .drain files left behind by a crashed drain", async () => {

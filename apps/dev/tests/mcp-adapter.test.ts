@@ -8,8 +8,10 @@ import { waitsDir } from "@reddb-io/shared/red-paths.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appendCastleLaneRecord,
+  armPr,
   castleLanePath,
   createEnginePaths,
+  createFileMergeDriverStore,
 } from "@reddb-io/red-castle/engine";
 import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
 import { afkPaths } from "../src/runtime/wire.js";
@@ -80,6 +82,35 @@ describe("redskilled MCP host adapter", () => {
   // published-entry path (`resolveDevScriptPath`, covered by its own suite): the
   // adapter's copy existed only to hand a bundle to its own `spawn`, and since
   // #2976 the daemon is the one that runs it.
+
+  it("reports an armed PR as orphaned when no merge-driver process is ticking", async () => {
+    const cwd = await root();
+    const store = createFileMergeDriverStore(createEnginePaths(join(cwd, ".red")));
+    await armPr(store, 3577, 1_800_000_000);
+
+    const status = (await createCastleMcpDependencies(cwd).mergeStatus()) as {
+      driver: { process: string; status: string };
+      prs: Array<{ pr: number; actionability: string }>;
+    };
+
+    expect(status.driver).toEqual({ process: "merge-driver", status: "missing" });
+    expect(status.prs).toContainEqual(
+      expect.objectContaining({
+        pr: 3577,
+        actionability: "orphaned",
+      }),
+    );
+  });
+
+  it("refuses to arm a PR when the merge-driver process is missing", async () => {
+    const cwd = await root();
+    const deps = createCastleMcpDependencies(cwd);
+
+    await expect(deps.mergeArm({ pr: 3577 })).rejects.toThrow(
+      "missing live merge-driver process",
+    );
+    await expect(deps.mergeStatus()).resolves.toMatchObject({ prs: [] });
+  });
 
   // Three consecutive dispatches died silently leaving only `worker.pid` — the
   // spawn discarded stdout/stderr, so a boot death left zero evidence (#2385).

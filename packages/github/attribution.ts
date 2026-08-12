@@ -14,9 +14,11 @@ import {
   trimLaneKeepLast,
   type LaneRetentionPolicy,
 } from "@reddb-io/shared/lane-retention.js";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 
 import type { GithubRateBudget } from "./surface.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 /** The two routing facts attribution consumes, without re-stating policy. */
 export interface GithubAttributedOperation {
@@ -109,8 +111,15 @@ export function createGithubAttributionLedger(
   return {
     record(input): Promise<void> {
       const observation = makeObservation(input.operation, input.cost, input.observedAt ?? now(), input.actor);
-      const segment = encodeLines().push(toToonlRecord(observation));
-      pendingWrite = pendingWrite.then(async () => {
+      const segment = encodeToonlLines().push(toToonlRecord(observation));
+      // A FAILED write must not become every later caller's failure. Chaining the
+      // tail onto the raw promise meant one rejection — the lane-ceiling throw
+      // below, an ENOSPC — poisoned the chain permanently: every subsequent
+      // `record` returned an already-rejected promise, its body never ran, and
+      // because a GitHub read awaits this ledger, the whole client stopped
+      // reading for the life of the process. The tail therefore carries ordering
+      // only; the failure travels to the ONE caller that caused it.
+      const settled = pendingWrite.then(async () => {
         await mkdir(dirname(options.path), { recursive: true });
         const incomingBytes = Buffer.byteLength(segment);
         if (await laneOverCeiling(options.path, incomingBytes, retentionPolicy)) {
@@ -127,7 +136,8 @@ export function createGithubAttributionLedger(
         }
         await appendFile(options.path, segment, "utf8");
       });
-      return pendingWrite;
+      pendingWrite = settled.then(() => undefined, () => undefined);
+      return settled;
     },
 
     async report(input): Promise<GithubSpendAttributionReport> {
@@ -205,7 +215,7 @@ function keepLastWithin(
 }
 
 function encodeRows(rows: readonly ToonlRecord[]): string {
-  return rows.map((row) => encodeLines({ trailer: false }).push(row)).join("");
+  return rows.map((row) => encodeToonlLines({ trailer: false }).push(row)).join("");
 }
 
 function makeObservation(

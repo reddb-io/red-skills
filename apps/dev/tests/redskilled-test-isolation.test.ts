@@ -39,6 +39,10 @@ describe("the test host is the sandbox's, not the operator's", () => {
     // The machine claim lives in a SHARED directory by design, so an unpinned
     // read finds the live claim of the operator's daemon rather than nothing.
     expect(paths.machineClaimPath.startsWith(ISOLATED_REDSKILLED_HOST_ROOT)).toBe(true);
+    // The durable host lane is derived from the daemon's home, independently
+    // of its runtime and machine scope. Leaving HOME ambient lets sandbox
+    // births and deaths cross into the operator's real daemon history.
+    expect(paths.eventLanePath.startsWith(ISOLATED_REDSKILLED_HOST_ROOT)).toBe(true);
   });
 
   it("resolves an auto-spawn entry that cannot start a daemon", () => {

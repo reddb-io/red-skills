@@ -86,7 +86,7 @@ If the decision is ambiguous, ask the maintainer to state the pending decision d
 
 **Step 4 — Answer.** Get the maintainer's response and determine whether the issue is now delegable.
 
-Ask for the answer to the pending decision.
+Ask for the answer to the pending decision. **Read [`/start`'s INTERVIEW-ROUNDS.md](../start/INTERVIEW-ROUNDS.md) and follow its question format for every question this step asks the maintainer** — the ask is a `❓ **Q##**` block with the extracted options as branches and your recommendation marked `➡️`.
 
 Then decide whether the answer makes the Issue delegable:
 

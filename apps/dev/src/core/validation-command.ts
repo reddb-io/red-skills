@@ -51,6 +51,25 @@ export const SUSPECT_INFRA_MARKER = "suspect-infra";
  */
 export const SUITE_MIN_PLAUSIBLE_MS = 1000;
 
+const CONCRETE_DIAGNOSTIC_PATTERNS: readonly RegExp[] = [
+  /\berror\s+TS\d{4}\b/,
+  /\berror\[E\d{4}\]/,
+  /^\s*FAIL\s+\S.*$/m,
+  /^\s*\S.*\.{3}\s+FAILED\s*$/m,
+  /^\s*----\s+\S.*\s+stdout\s+----\s*$/m,
+];
+
+function diagnosticNamesBranchFile(output: string, branchFiles: readonly string[]): boolean {
+  if (!CONCRETE_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(output))) return false;
+  const normalizedOutput = output.replaceAll("\\", "/");
+  return branchFiles.some((file) => {
+    const normalizedFile = file.replace(/^\.\//, "").replaceAll("\\", "/");
+    const parts = normalizedFile.split("/").filter(Boolean);
+    const suffixes = parts.map((_, index) => parts.slice(index).join("/"));
+    return suffixes.some((suffix) => suffix.includes("/") && normalizedOutput.includes(suffix));
+  });
+}
+
 /**
  * What the `worktree` token IS.
  *
@@ -240,8 +259,18 @@ export function recordedValidationCommand(
 export function isSuspectInfraFailure(input: {
   status: string;
   durationMs?: number;
+  /** Captured compiler/test output, inspected before duration can classify it. */
+  output?: string;
+  /** Repo-relative files changed by the branch being judged. */
+  branchFiles?: readonly string[];
 }): boolean {
   if (input.status !== "failed") return false;
+  if (
+    input.output !== undefined &&
+    diagnosticNamesBranchFile(input.output, input.branchFiles ?? [])
+  ) {
+    return false;
+  }
   const { durationMs } = input;
   if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return false;
   return durationMs < SUITE_MIN_PLAUSIBLE_MS;

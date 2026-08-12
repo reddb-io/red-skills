@@ -38,7 +38,7 @@ describe("host toolchain doctor", () => {
     ]);
     expect(report.findings).toEqual([
       expect.objectContaining({ tool: "gh", kind: "outdated", remediation: "asdf install github-cli latest && asdf global github-cli latest && asdf reshim github-cli" }),
-      expect.objectContaining({ tool: "tq", kind: "missing", remediation: `TQ_VERSION=v${TQ_PINNED_VERSION} curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v${TQ_PINNED_VERSION}/install.sh | sh` }),
+      expect.objectContaining({ tool: "tq", kind: "missing", remediation: `cargo install reddb-io-tq --version ${TQ_PINNED_VERSION} --locked --force` }),
     ]);
   });
 

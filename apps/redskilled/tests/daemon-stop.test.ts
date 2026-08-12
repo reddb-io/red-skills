@@ -3,12 +3,13 @@
 // stop command states the Workers that survive it, writes the intent to the host
 // event lane so a successor can tell a handover from a crash, and answers a
 // machine with no daemon on it with a reason instead of an error.
-import { mkdtemp, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
-import { decode } from "@reddb-io/toon";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { runStop } from "../src/cli.js";
 import {
@@ -49,6 +50,45 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await mkdtemp(join(tmpdir(), "redskilled-stop-"));
   roots.push(root);
   return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
+}
+
+async function startSilentHolder(paths: RedskilledPaths): Promise<number> {
+  const child = spawn(process.execPath, [
+    "-e",
+    `
+      const { unlinkSync } = require("node:fs");
+      const { createServer } = require("node:net");
+      const [socketPath, leasePath] = process.argv.slice(1);
+      const server = createServer(() => {});
+      server.listen(socketPath, () => process.stdout.write("ready\\n"));
+      process.on("SIGTERM", () => {
+        try { unlinkSync(leasePath); } catch {}
+        process.exit(0);
+      });
+      setInterval(() => {}, 1_000);
+    `,
+    paths.socketPath,
+    paths.leasePath,
+  ], { stdio: ["ignore", "pipe", "inherit"] });
+  if (child.pid == null) throw new Error("silent holder did not start");
+  const pid = child.pid;
+  spawnedPids.push(pid);
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => reject(new Error(`silent holder exited before ready (${code})`)));
+    child.stdout!.once("data", () => resolve());
+  });
+  await writeFile(paths.leasePath, `${encode({
+    version: 1,
+    pid,
+    start_time: new Date().toISOString(),
+    session_key_hash: paths.sessionKeyHash,
+    machine_id_hash: paths.machineIdHash,
+    socket_path: paths.socketPath,
+    acquired_at: new Date().toISOString(),
+    renewed_at: new Date().toISOString(),
+  } as JsonValue)}\n`, "utf8");
+  return pid;
 }
 
 function clientConfig(paths: RedskilledPaths) {
@@ -264,6 +304,22 @@ describe("redskilled stop", () => {
     expect(report.stopped).toBe(false);
     expect(report.reason).toBe("not-running");
     // And it never births the very daemon it was asked to remove.
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+
+  it("signals an alive socket holder that does not answer and distinguishes it from absence", async () => {
+    const paths = await sessionPaths();
+    const pid = await startSilentHolder(paths);
+
+    const report = await stopRedskilledDaemon(paths, { settleTimeoutMs: 2_000 });
+
+    expect(report.running).toBe(true);
+    expect(report.stopped).toBe(true);
+    expect(report.reason).toBe("unreachable");
+    expect(report.pid).toBe(pid);
+    expect(report.daemon_version).toBeNull();
+    expect(report.detail).toContain("did not answer");
+    expect(isPidAlive(pid)).toBe(false);
     expect(await socketAnswers(paths.socketPath)).toBe(false);
   });
 

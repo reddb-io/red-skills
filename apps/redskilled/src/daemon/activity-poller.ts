@@ -17,6 +17,7 @@
  * next cadence question rather than to the next daemon.
  */
 import {
+  activityRateLimitBackoffMs,
   activityPollComesForward,
   interactiveSessionsHolding,
   nextActivityPollMs,
@@ -35,6 +36,8 @@ export interface RedskilledActivityPollerOptions {
   readonly armed: boolean;
   /** Whether the daemon has begun letting go of its session. */
   readonly stopping: () => boolean;
+  /** Last remote quota answer; exhaustion parks the next cycle until reset. */
+  readonly rateLimit?: () => { readonly exhausted: boolean; readonly reset_at: string | null } | null;
 }
 
 export interface RedskilledActivityPoller {
@@ -61,6 +64,7 @@ export function createRedskilledActivityPoller(
   // mid-window can be told whether the wait it found is longer than the one
   // presence now asks for. `null` whenever no poll is armed.
   let armedWindowMs: number | null = null;
+  let polling = false;
 
   function cadenceMs(): number {
     return nextActivityPollMs({
@@ -69,17 +73,24 @@ export function createRedskilledActivityPoller(
     });
   }
 
+  function nextDelayMs(): number {
+    const cadence = cadenceMs();
+    return activityRateLimitBackoffMs(options.rateLimit?.() ?? null, cadence, Date.parse(options.clock()));
+  }
+
   function schedule(delayMs: number): void {
     if (options.stopping()) return;
     armedWindowMs = delayMs;
     timer = setTimeout(() => {
       timer = undefined;
       armedWindowMs = null;
+      polling = true;
       void options.poll()
         .catch(() => undefined)
         .finally(() => {
+          polling = false;
           if (options.stopping()) return;
-          schedule(cadenceMs());
+          schedule(nextDelayMs());
         });
     }, delayMs);
     timer.unref();
@@ -87,9 +98,15 @@ export function createRedskilledActivityPoller(
 
   return {
     arm() {
-      if (options.stopping() || timer != null || !options.armed || options.attendedMs <= 0) return;
-      void options.poll().catch(() => undefined);
-      schedule(cadenceMs());
+      if (options.stopping() || timer != null || polling || !options.armed || options.attendedMs <= 0) return;
+      polling = true;
+      void options.poll()
+        .catch(() => undefined)
+        .finally(() => {
+          polling = false;
+          if (options.stopping()) return;
+          schedule(nextDelayMs());
+        });
     },
 
     cadenceMs,

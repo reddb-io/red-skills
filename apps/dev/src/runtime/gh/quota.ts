@@ -20,6 +20,7 @@
 
 import { isGithubQuotaText } from "@reddb-io/shared/github-quota.js";
 
+import { createDaemonQuotaResetProbe } from "./quota-reset-probe.js";
 import type { ExecOutput } from "../exec.js";
 
 // The quota taxonomy itself — primary limits, secondary/abuse limits, GraphQL
@@ -59,15 +60,40 @@ export interface GhQuotaBackoffOpts {
   capMs?: number;
   /**
    * How long to sleep between retries when no server-supplied reset time is
-   * available. Default: 60 seconds.
+   * available. Default: 60 seconds, DOUBLING each retry up to one minute —
+   * a fixed 60s cadence turned six waiting Workers into ~9,000 retries in one
+   * evening (issue #3672's field data, 2026-08-11).
    */
   defaultWaitMs?: number;
+  /**
+   * When the drained pool resets, in epoch ms, or null when the answer is
+   * unavailable. **Defaulted by `defaultGhQuotaBackoff` to the daemon's
+   * host-wide balance** — an option documented as having no default is one
+   * production never exercises, which is how every real wait here came to pace
+   * blind (#3768). An injected probe still wins; `null` still falls through to
+   * the doubling fallback below.
+   */
+  probeResetMs?: () => Promise<number | null>;
 }
 
 /** Maximum total wall-clock wait before the failing response is returned. */
 export const DEFAULT_CAP_MS = 30 * 60 * 1000; // 30 minutes
-/** Sleep between retries when no server-supplied reset time is available. */
+/** First sleep between retries when no reset time is known. */
 export const DEFAULT_WAIT_MS = 60 * 1000;      // 60 seconds
+/**
+ * Ceiling for the doubling fallback wait.
+ *
+ * Sixty seconds, not ten minutes (#3768). The fallback is what paces a wait that
+ * could not learn the real reset instant, and a rung that long is indistinguishable
+ * from a hang to whoever is holding the call: the fifteen-minute `queue_status`
+ * was four of these rungs and nothing else. With the reset probe installed by
+ * default the fallback is now the rare path, and a rare path is exactly the one
+ * that must stay short — an aimed wait sleeps until the pool refills, a blind one
+ * checks back every minute.
+ */
+export const MAX_FALLBACK_WAIT_MS = 60 * 1000; // 60 seconds
+/** Safety margin added past the probed reset instant. */
+export const RESET_MARGIN_MS = 5 * 1000;
 
 /**
  * Emit the wait as operator-visible `quota-wait` activity. The exec helpers hold
@@ -124,6 +150,12 @@ export function defaultGhQuotaBackoff(
     onWait: overrides.onWait ?? ((remainingMs) => announceQuotaWait(remainingMs, Math.min(waitMs, remainingMs))),
     capMs,
     defaultWaitMs: waitMs,
+    // Installed BY DEFAULT (#3768). A probe whose only populator was a test is a
+    // probe that never ran, and the aimed sleep this option exists for was the
+    // thing production never got — every real wait paced blind instead. The
+    // daemon already holds the reset instant host-wide, so this costs a socket
+    // read rather than a request, and an absent daemon still yields the fallback.
+    probeResetMs: overrides.probeResetMs ?? createDaemonQuotaResetProbe(),
   };
 }
 
@@ -151,12 +183,13 @@ export async function withGhQuotaBackoff(
   opts: GhQuotaBackoffOpts,
 ): Promise<ExecOutput> {
   const capMs = opts.capMs ?? DEFAULT_CAP_MS;
-  const waitMs = opts.defaultWaitMs ?? DEFAULT_WAIT_MS;
+  const baseWaitMs = opts.defaultWaitMs ?? DEFAULT_WAIT_MS;
 
   let result = await fn();
   if (!isGhRateLimited(result)) return result;
 
   const deadlineMs = opts.nowMs() + capMs;
+  let fallbackWaitMs = baseWaitMs;
 
   while (isGhRateLimited(result)) {
     const remainingMs = deadlineMs - opts.nowMs();
@@ -165,7 +198,17 @@ export async function withGhQuotaBackoff(
       // explicit quota reason rather than looping forever.
       return result;
     }
-    const sleepForMs = Math.min(waitMs, remainingMs);
+    // One free probe per wait: sleeping until the pool actually refills turns
+    // the 60s hammer (~30 retries per window) into a single well-aimed retry.
+    const resetMs = (await opts.probeResetMs?.().catch(() => null)) ?? null;
+    const untilResetMs = resetMs === null ? null : resetMs + RESET_MARGIN_MS - opts.nowMs();
+    const sleepForMs = Math.min(
+      untilResetMs !== null && untilResetMs > 0 ? untilResetMs : fallbackWaitMs,
+      remainingMs,
+    );
+    if (untilResetMs === null || untilResetMs <= 0) {
+      fallbackWaitMs = Math.min(fallbackWaitMs * 2, MAX_FALLBACK_WAIT_MS);
+    }
     opts.onWait?.(remainingMs);
     await opts.sleepMs(sleepForMs);
     result = await fn();

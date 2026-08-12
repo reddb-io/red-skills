@@ -41,6 +41,7 @@ import {
 } from "../runtime/wire.js";
 import {
   loadConfig,
+  readStandingDrain,
   readValidationMoments,
 } from "../core/config.js";
 import { describeValidationMoments } from "../core/validation-moments.js";
@@ -103,9 +104,9 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
   ]);
   const held = registrationState?.held;
   const lapse = registrationState?.lapse;
-  const allLiveWorkers = monitor.workers.filter(
-    (worker) => worker.pidLive === true || worker.live,
-  );
+  // No pre-filter: attribution owns the liveness qualification, and a worker
+  // liveness cannot prove must land in unattributed, not vanish (#3660).
+  const allLiveWorkers = monitor.workers;
   // Attribution is the HOST's, never a pid map of our own: a Worker is ours when
   // the daemon says its project is ours. A stamp for another project — or none
   // at all — lands in the unattributed bucket even when the pid looks familiar.
@@ -136,9 +137,14 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
     pluginCacheVersion: newestInstalledPluginVersion(),
   });
   const target = held?.target ?? 0;
-  const validationSchedule = describeValidationMoments(readValidationMoments(
-    loadConfig(afkPaths(root).configPath, { warn: () => undefined }),
-  ));
+  const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
+  const validationSchedule = describeValidationMoments(readValidationMoments(config));
+  const standingStopped = held == null &&
+      readStandingDrain(config) !== null &&
+      lapse?.standing === true &&
+      (lapse.queue_depth ?? 0) > 0
+    ? `queue ${lapse.queue_depth}, drain STOPPED — `
+    : "";
   // The host's count, not the matched list's: a Worker born a moment ago holds
   // its slot before it has written any project-side state, and a `busy` that
   // waited for that file would read free while the daemon refused to fill it.
@@ -151,7 +157,8 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
           repair: noRepair("the daemon must answer before registration can be changed safely"),
         })
       : composeRepair({
-          state: lapse?.detail ?? "the host holds no registration for this project and recorded no lapse",
+          state: standingStopped +
+            (lapse?.detail ?? "the host holds no registration for this project and recorded no lapse"),
           repair: registrationRepair(),
         });
   return {
@@ -257,7 +264,11 @@ function startWarnings(input: ProjectStartInput, unexpressed: readonly string[])
  * machine that no host admitted, no host counts and no host can stop — precisely
  * the shape the registration exists to end.
  */
-export async function projectStart(root: string, rawInput: ProjectStartInput) {
+export async function projectStart(
+  root: string,
+  rawInput: ProjectStartInput,
+  options: { readonly standing?: boolean } = {},
+) {
   const input: ProjectStartInput = {
     ...rawInput,
     ...(rawInput.selector
@@ -348,6 +359,7 @@ export async function projectStart(root: string, rawInput: ProjectStartInput) {
       env: launch.env ?? {},
       ...(launch.log_path == null ? {} : { log_path: launch.log_path }),
       target: input.target,
+      ...(options.standing === true ? { standing: true } : {}),
     });
   } catch (err) {
     throw new Error(redskilledRegistrationRefusal(port.socketPath, err));
@@ -396,7 +408,11 @@ function registrationRunner(registration: {
  * replaces the registration while leaving its Workers alone; if replacement
  * fails, the old registration is restored before the error escapes.
  */
-export async function drain(root: string, input: ProjectDrainInput) {
+export async function drain(
+  root: string,
+  input: ProjectDrainInput,
+  options: { readonly standing?: boolean } = {},
+) {
   const port = createRedskilledBirthPort({ root });
   try {
     await port.reach();
@@ -427,6 +443,7 @@ export async function drain(root: string, input: ProjectDrainInput) {
     return { ...plan, outcome: "refused" as const };
   }
 
+  let registrationReplaced = false;
   for (const action of plan.actions) {
     if (action.kind === "reach-daemon") {
       await port.reach();
@@ -436,7 +453,7 @@ export async function drain(root: string, input: ProjectDrainInput) {
       await projectStart(root, {
         runner: action.runner,
         target: action.target,
-      });
+      }, options);
       continue;
     }
 
@@ -450,6 +467,7 @@ export async function drain(root: string, input: ProjectDrainInput) {
       env: { ...held.env },
       ...(held.log_path == null ? {} : { log_path: held.log_path }),
       target: action.target,
+      ...(options.standing === true || held.standing === true ? { standing: true } : {}),
       renew_within_ms: held.renew_within_ms,
     };
     await port.deregister();
@@ -457,6 +475,33 @@ export async function drain(root: string, input: ProjectDrainInput) {
       await port.register(request);
     } catch (err) {
       await port.register({ ...request, target: held.target }).catch(() => undefined);
+      throw err;
+    }
+    registrationReplaced = true;
+  }
+
+  // A standing policy may be declared over an already-running explicit drain.
+  // Restate that record without stopping its Workers so daemon recovery sees the
+  // new policy even when runner and target were already identical.
+  if (held != null && options.standing === true && held.standing !== true && !registrationReplaced) {
+    const request = {
+      selector: held.selector,
+      ...(held.queue_poll == null ? {} : { queue_poll: held.queue_poll }),
+      argv: [...held.argv],
+      workspace_path: held.workspace_path,
+      ...(held.trunk == null ? {} : { trunk: held.trunk }),
+      env: { ...held.env },
+      ...(held.log_path == null ? {} : { log_path: held.log_path }),
+      target: held.target,
+      standing: true,
+      renew_within_ms: held.renew_within_ms,
+    };
+    await port.deregister();
+    try {
+      await port.register(request);
+    } catch (err) {
+      const { standing: _standing, ...explicit } = request;
+      await port.register(explicit).catch(() => undefined);
       throw err;
     }
   }
@@ -571,4 +616,3 @@ export async function projectResize(root: string, rawInput: ProjectResizeInput) 
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
-

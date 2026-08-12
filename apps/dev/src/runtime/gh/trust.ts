@@ -1,7 +1,26 @@
 import { LABEL_READY, EXTERNAL_APPROVAL_MARKER } from "../../core/triage-labels.js";
 import { classifySourceTrust, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { RepoVisibility } from "../../core/trust-gate.js";
-import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
+import { githubReadClient, githubRepo, type GhContext } from "./common.js";
+
+interface GithubUser {
+  readonly login?: string;
+  readonly type?: string;
+}
+
+function authorLogin(user: GithubUser | null | undefined): string | undefined {
+  const login = String(user?.login ?? "");
+  if (login === "") return undefined;
+  return String(user?.type ?? "").toLowerCase() === "bot" && login.endsWith("[bot]")
+    ? `app/${login.slice(0, -5)}`
+    : login;
+}
+
+function errorStatus(error: unknown): number | undefined {
+  return typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : undefined;
+}
 
 export async function issueTrust(
   ctx: GhContext,
@@ -37,10 +56,17 @@ export async function issueAuthor(ctx: GhContext, issue: number): Promise<string
  * as NON-public → the permissive default is preserved when visibility is unknown.
  */
 export async function repoVisibility(ctx: GhContext): Promise<RepoVisibility | undefined> {
-  const r = await runGh(ctx, ["repo", "view", ...(ctx.repo ? [ctx.repo] : []), "--json", "visibility"]);
-  if (r.code !== 0) return undefined;
+  const repo = githubRepo(ctx);
+  if (!repo) return undefined;
   try {
-    const raw = (JSON.parse(r.stdout) as { visibility?: string }).visibility;
+    const answer = await githubReadClient(ctx).conditionalRest<{ visibility?: string }>({
+      cacheKey: `gh:repo-visibility:${repo.owner}/${repo.repo}`,
+      route: "GET /repos/{owner}/{repo}",
+      parameters: { ...repo },
+      operation: { key: "repo view", budget: "rest" },
+      actor: "dev:trust",
+    });
+    const raw = answer.data.visibility;
     const v = String(raw ?? "").trim().toLowerCase();
     return v === "public" || v === "private" || v === "internal" ? v : undefined;
   } catch {
@@ -57,38 +83,26 @@ async function issueAuthorProfile(
   ctx: GhContext,
   issue: number,
 ): Promise<{ login?: string; sourceTrust?: SourceTrustLevel }> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author,authorAssociation"]);
-  if (r.code !== 0) return issueAuthorProfileLegacy(ctx, issue);
+  const repo = githubRepo(ctx);
+  if (!repo) return {};
   try {
-    const parsed = JSON.parse(r.stdout) as {
-      author?: { login?: string; is_bot?: boolean; type?: string };
-      authorAssociation?: string;
-    };
-    const login = parsed.author?.login ? String(parsed.author.login) : undefined;
-    if (!login) return issueAuthorProfileLegacy(ctx, issue);
-    const authorType = String(parsed.author?.type ?? "").toLowerCase();
-    const isBot = parsed.author?.is_bot === true || authorType === "bot";
+    const answer = await githubReadClient(ctx).conditionalRest<{
+      user?: GithubUser | null;
+      author_association?: string;
+    }>({
+      cacheKey: `gh:issue-author:${repo.owner}/${repo.repo}:${issue}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}",
+      parameters: { ...repo, issue_number: issue },
+      operation: { key: "issue view", budget: "rest" },
+      actor: "dev:trust",
+    });
+    const login = authorLogin(answer.data.user);
+    if (!login) return {};
+    const isBot = String(answer.data.user?.type ?? "").toLowerCase() === "bot";
     return {
       login,
-      sourceTrust: classifySourceTrust({ authorAssociation: parsed.authorAssociation, isBot }),
+      sourceTrust: classifySourceTrust({ authorAssociation: answer.data.author_association, isBot }),
     };
-  } catch {
-    return issueAuthorProfileLegacy(ctx, issue);
-  }
-}
-
-async function issueAuthorProfileLegacy(
-  ctx: GhContext,
-  issue: number,
-): Promise<{ login?: string; sourceTrust?: SourceTrustLevel }> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author"]);
-  if (r.code !== 0) return {};
-  try {
-    const parsed = JSON.parse(r.stdout) as { author?: { login?: string; is_bot?: boolean; type?: string } };
-    const login = parsed.author?.login ? String(parsed.author.login) : undefined;
-    const authorType = String(parsed.author?.type ?? "").toLowerCase();
-    const isBot = parsed.author?.is_bot === true || authorType === "bot";
-    return { login, sourceTrust: login ? classifySourceTrust({ isBot }) : undefined };
   } catch {
     return {};
   }
@@ -101,25 +115,24 @@ async function issueAuthorProfileLegacy(
  * claim was selected under (`ready-for-agent`, `lane:go`, `lane:scout`), so the
  * lane label's applier is the promoter analog for the isolated lanes (#2602). */
 async function labelActor(ctx: GhContext, issue: number, label: string): Promise<string | undefined> {
-  const r = await runGh(ctx, [
-    "api",
-    `repos/{owner}/{repo}/issues/${issue}/timeline`,
-    "--paginate",
-    "-H",
-    "Accept: application/vnd.github+json",
-  ]);
-  if (r.code !== 0) return undefined;
+  const repo = githubRepo(ctx);
+  if (!repo) return undefined;
   try {
-    // `--paginate` concatenates pages; tolerate either one array or several.
-    const text = r.stdout.trim();
-    const events = text.startsWith("[")
-      ? (JSON.parse(text) as unknown[])
-      : (JSON.parse(`[${text.replace(/\]\s*\[/g, ",")}]`) as unknown[]);
+    const answer = await githubReadClient(ctx).conditionalPaginate<{
+      event?: string;
+      label?: { name?: string };
+      actor?: GithubUser | null;
+    }>({
+      cacheKey: `gh:issue-timeline:${repo.owner}/${repo.repo}:${issue}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline",
+      parameters: { ...repo, issue_number: issue, per_page: 100 },
+      operation: { key: "api rest", budget: "rest" },
+      actor: "dev:trust",
+    });
     let actor: string | undefined;
-    for (const ev of events) {
-      const e = ev as { event?: string; label?: { name?: string }; actor?: { login?: string } };
-      if (e.event === "labeled" && e.label?.name === label && e.actor?.login) {
-        actor = String(e.actor.login); // keep the last (most recent) match
+    for (const event of answer.data) {
+      if (event.event === "labeled" && event.label?.name === label && event.actor?.login) {
+        actor = String(event.actor.login); // keep the last (most recent) match
       }
     }
     return actor;
@@ -137,18 +150,24 @@ async function labelActor(ctx: GhContext, issue: number, label: string): Promise
  * Trust of each returned login is decided by the caller through `resolveActorTrust`.
  */
 export async function externalApprovalActors(ctx: GhContext, issue: number): Promise<string[]> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
-  if (r.code !== 0) return [];
+  const repo = githubRepo(ctx);
+  if (!repo) return [];
   try {
-    const parsed = JSON.parse(r.stdout) as {
-      comments?: Array<{ body?: string; author?: { login?: string } }>;
-    };
-    if (!Array.isArray(parsed.comments)) return [];
+    const answer = await githubReadClient(ctx).conditionalPaginate<{
+      body?: string;
+      user?: GithubUser | null;
+    }>({
+      cacheKey: `gh:issue-comments:${repo.owner}/${repo.repo}:${issue}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      parameters: { ...repo, issue_number: issue, per_page: 100 },
+      operation: { key: "api rest", budget: "rest" },
+      actor: "dev:trust",
+    });
     const seen = new Set<string>();
     const actors: string[] = [];
-    for (const c of parsed.comments) {
-      const login = c.author?.login ? String(c.author.login) : "";
-      if (!login || !commentBearsApprovalMarker(c.body ?? "")) continue;
+    for (const comment of answer.data) {
+      const login = authorLogin(comment.user) ?? "";
+      if (!login || !commentBearsApprovalMarker(comment.body ?? "")) continue;
       if (seen.has(login)) continue;
       seen.add(login);
       actors.push(login);
@@ -198,46 +217,91 @@ const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
  * actor's permission is write-or-higher. undefined on a transient/auth failure;
  * a definitive 404 (not a collaborator) resolves to `false`. */
 async function actorWriteAccess(ctx: GhContext, actor: string): Promise<boolean | undefined> {
-  const r = await runGh(ctx, [
-    "api",
-    apiPath(ctx, `collaborators/${actor}/permission`),
-    "--jq",
-    ".permission",
-  ]);
-  if (r.code !== 0) {
-    if (/not found|404|no such|could not resolve/i.test(`${r.stdout}\n${r.stderr}`)) return false;
-    return undefined;
+  const repo = githubRepo(ctx);
+  if (!repo) return undefined;
+  try {
+    const answer = await githubReadClient(ctx).conditionalRest<{ permission?: string }>({
+      cacheKey: `gh:collaborator-permission:${repo.owner}/${repo.repo}:${actor}`,
+      route: "GET /repos/{owner}/{repo}/collaborators/{username}/permission",
+      parameters: { ...repo, username: actor },
+      operation: { key: "api rest", budget: "rest" },
+      actor: "dev:trust",
+    });
+    const permission = String(answer.data.permission ?? "").trim().toLowerCase();
+    return permission === "" ? undefined : WRITE_PERMISSIONS.has(permission);
+  } catch (error) {
+    return errorStatus(error) === 404 ? false : undefined;
   }
-  const permission = (r.stdout ?? "").trim().toLowerCase();
-  if (!permission) return undefined;
-  return WRITE_PERMISSIONS.has(permission);
 }
 
 /** The GitHub-recognised CODEOWNERS locations, in resolution order. */
 const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
 
-/** Resolve whether `@actor` is an owner token in the repo CODEOWNERS file. Reads
- * the recognised locations in order; the first that resolves is parsed. undefined
- * when no read succeeded (transient/auth) and `false` when a file was read but
- * the actor is absent (or no CODEOWNERS exists at all). */
-async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean | undefined> {
+/**
+ * The CODEOWNERS file resolved once per repository per process.
+ *
+ * The file is a REPOSITORY fact, but the trust gate asks it per candidate: a
+ * boot listing 14 candidates re-read the same three locations 14 times. In a
+ * repo that has no CODEOWNERS, every one of those was three 404s, which is why
+ * this cache is load-bearing rather than an optimization. `null` records the
+ * definitive absence; a read that FAILED is never cached, so one blip cannot
+ * poison the trust signal for the rest of the process.
+ */
+const codeownersByRepo = new Map<string, Promise<string | null | undefined>>();
+
+/** Read the first CODEOWNERS location that resolves. `null` when every
+ * recognised location answered a definitive 404, `undefined` when no read
+ * succeeded (transient/auth). */
+async function readRepoCodeowners(
+  ctx: GhContext,
+  repo: { owner: string; repo: string },
+): Promise<string | null | undefined> {
   let sawDefinitiveMiss = false;
   for (const path of CODEOWNERS_PATHS) {
-    const r = await runGh(ctx, [
-      "api",
-      apiPath(ctx, `contents/${path}`),
-      "-H",
-      "Accept: application/vnd.github.raw",
-    ]);
-    if (r.code === 0) return codeownersHasOwner(r.stdout ?? "", actor);
-    if (/not found|404|could not resolve/i.test(`${r.stdout}\n${r.stderr}`)) {
-      sawDefinitiveMiss = true;
-      continue; // this location is absent; try the next one
+    try {
+      const answer = await githubReadClient(ctx).conditionalRest<string>({
+        cacheKey: `gh:codeowners:${repo.owner}/${repo.repo}:${path}`,
+        route: "GET /repos/{owner}/{repo}/contents/{path}",
+        parameters: { ...repo, path, mediaType: { format: "raw" } },
+        operation: { key: "api rest", budget: "rest" },
+        actor: "dev:trust",
+      });
+      return String(answer.data ?? "");
+    } catch (error) {
+      if (errorStatus(error) === 404) {
+        sawDefinitiveMiss = true;
+        continue; // this location is absent; try the next one
+      }
+      return undefined; // transient/auth failure — signal not available
     }
-    return undefined; // transient/auth failure — signal not available
   }
-  // Every location returned a definitive 404 → there is no CODEOWNERS file.
-  return sawDefinitiveMiss ? false : undefined;
+  return sawDefinitiveMiss ? null : undefined;
+}
+
+/** Resolve whether `@actor` is an owner token in the repo CODEOWNERS file.
+ * undefined when no read succeeded (transient/auth) and `false` when a file was
+ * read but the actor is absent (or no CODEOWNERS exists at all). */
+async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean | undefined> {
+  const repo = githubRepo(ctx);
+  if (!repo) return undefined;
+  const key = `${repo.owner}/${repo.repo}`;
+  let pending = codeownersByRepo.get(key);
+  if (pending === undefined) {
+    pending = readRepoCodeowners(ctx, repo);
+    codeownersByRepo.set(key, pending);
+  }
+  const content = await pending;
+  if (content === undefined) {
+    codeownersByRepo.delete(key); // an unavailable signal is not an answer to keep
+    return undefined;
+  }
+  return content === null ? false : codeownersHasOwner(content, actor);
+}
+
+/** Forget the per-process CODEOWNERS resolutions. Tests only: a cache that
+ * survives between cases would answer the next case's first read. */
+export function resetCodeownersCache(): void {
+  codeownersByRepo.clear();
 }
 
 /** True when `@actor` (case-insensitive) appears as an owner token on any

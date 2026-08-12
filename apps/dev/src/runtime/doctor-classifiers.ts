@@ -65,6 +65,7 @@ import {
 import { collectDocsSweepInput } from "./wire/docs.js";
 import type { RepoContext } from "./wire/paths.js";
 import { listDependencyEdgeTickets, type GhContext } from "./gh.js";
+import { createDevGithubMergeRead } from "./github-merge-read.js";
 import {
   judgePluginVersion,
   readInstalledPluginVersions,
@@ -831,17 +832,15 @@ async function readRequiredStatusChecks(
   trunk: string,
 ): Promise<readonly string[] | null> {
   if (!ctx.repo) return null;
-  const { execTool } = await import("./exec.js");
-  const endpoint = `repos/${ctx.repo}/branches/${encodeURIComponent(trunk)}/protection/required_status_checks/contexts`;
-  const result = await execTool("gh", ["api", endpoint], { cwd: ctx.root, timeoutMs: 20_000 });
-  if (result.code !== 0) return result.code === 1 && /404|not found/i.test(result.stderr) ? [] : null;
   try {
-    const parsed: unknown = JSON.parse(result.stdout);
+    const stdout = await createDevGithubMergeRead(ctx.root, "red-doctor")
+      .requiredCheckContexts(ctx.repo, trunk);
+    const parsed: unknown = JSON.parse(stdout);
     return Array.isArray(parsed)
       ? parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
       : null;
-  } catch {
-    return null;
+  } catch (error) {
+    return /404|not found/i.test(message(error)) ? [] : null;
   }
 }
 

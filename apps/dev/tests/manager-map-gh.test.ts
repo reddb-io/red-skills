@@ -21,6 +21,14 @@ const EFFORT: EffortRecord = {
 
 const CTX_BASE = { repo: "acme/widgets", cwd: "/repo" };
 
+function isIssueCreate(args: readonly string[]): boolean {
+  return args[0] === "api" && args[1] === "-X" && args[2] === "POST" && args[3] === `repos/${CTX_BASE.repo}/issues`;
+}
+
+function isIssueEdit(args: readonly string[]): boolean {
+  return args[0] === "api" && args[1] === "-X" && args[2] === "PATCH" && String(args[3]).startsWith(`repos/${CTX_BASE.repo}/issues/`);
+}
+
 function makeMap(overrides: Partial<{ number: number; labels: string[] }> = {}): object {
   return {
     number: overrides.number ?? 99,
@@ -83,7 +91,7 @@ describe("publishAndReconcileManagerMap — create path", () => {
     const calls: string[][] = [];
     const exec: ExecFn = (_tool, args) => {
       calls.push([...args]);
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       const isSubIssues = String(args[2] ?? "").includes("sub_issues");
       const out: ExecOutput = isCreate
         ? { code: 0, stdout: "https://github.com/acme/widgets/issues/101", stderr: "" }
@@ -96,13 +104,13 @@ describe("publishAndReconcileManagerMap — create path", () => {
     const derived = await publishAndReconcileManagerMap(ctx, EFFORT);
     expect(derived.map_issue).toBe(101);
     expect(derived.child_count).toBe(0);
-    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create");
+    const createCall = calls.find(isIssueCreate);
     expect(createCall).toBeDefined();
   });
 
   it("throws when issue creation fails", async () => {
     const exec: ExecFn = (_tool, args) => {
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       return Promise.resolve({
         code: isCreate ? 1 : 0,
         stdout: isCreate ? "" : "[]",
@@ -117,7 +125,7 @@ describe("publishAndReconcileManagerMap — create path", () => {
     const calls: string[][] = [];
     const exec: ExecFn = (_tool, args) => {
       calls.push([...args]);
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       return Promise.resolve({
         code: 0,
         stdout: isCreate ? "https://github.com/acme/widgets/issues/55" : "[]",
@@ -126,10 +134,9 @@ describe("publishAndReconcileManagerMap — create path", () => {
     };
     const ctx = { ...CTX_BASE, exec };
     await publishAndReconcileManagerMap(ctx, EFFORT);
-    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create") ?? [];
-    const labelIdx = createCall.indexOf("--label");
+    const createCall = calls.find(isIssueCreate) ?? [];
+    const labelIdx = createCall.indexOf(`labels[]=${LABEL_MANAGER_MAP}`);
     expect(labelIdx).toBeGreaterThan(-1);
-    expect(createCall[labelIdx + 1]).toBe(LABEL_MANAGER_MAP);
   });
 });
 
@@ -140,7 +147,7 @@ describe("publishAndReconcileManagerMap — existing map path (idempotence)", ()
   ): ExecFn {
     return (_tool, args) => {
       const isList = args[0] === "issue" && args[1] === "list";
-      const isEdit = args[0] === "issue" && args[1] === "edit";
+      const isEdit = isIssueEdit(args);
       const isSubIssues = String(args[2] ?? "").includes("sub_issues");
       let stdout = "[]";
       if (isList) stdout = JSON.stringify([makeMap({ labels: existingLabels })]);
@@ -158,7 +165,7 @@ describe("publishAndReconcileManagerMap — existing map path (idempotence)", ()
     };
     const ctx = { ...CTX_BASE, exec };
     await publishAndReconcileManagerMap(ctx, EFFORT);
-    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create");
+    const createCall = calls.find(isIssueCreate);
     expect(createCall).toBeUndefined();
   });
 
@@ -178,11 +185,10 @@ describe("publishAndReconcileManagerMap — existing map path (idempotence)", ()
     };
     const ctx = { ...CTX_BASE, exec };
     await publishAndReconcileManagerMap(ctx, EFFORT);
-    const editCall = calls.find((c) => c[0] === "issue" && c[1] === "edit");
+    const editCall = calls.find(isIssueEdit);
     expect(editCall).toBeDefined();
-    expect(editCall).toContain("--add-label");
-    expect(editCall).toContain(LABEL_MANAGER_MAP);
-    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create");
+    expect(editCall).toContain(`labels[]=${LABEL_MANAGER_MAP}`);
+    const createCall = calls.find(isIssueCreate);
     expect(createCall).toBeUndefined();
   });
 
@@ -195,7 +201,7 @@ describe("publishAndReconcileManagerMap — existing map path (idempotence)", ()
     };
     const ctx = { ...CTX_BASE, exec };
     await publishAndReconcileManagerMap(ctx, EFFORT);
-    const editCall = calls.find((c) => c[0] === "issue" && c[1] === "edit");
+    const editCall = calls.find(isIssueEdit);
     expect(editCall).toBeUndefined();
   });
 
@@ -225,7 +231,7 @@ describe("publishAndReconcileManagerMap — partial-failure convergence", () => 
     // The map is still found and returned; the next run re-applies the label.
     const execWithFailingEdit: ExecFn = (_tool, args) => {
       const isList = args[0] === "issue" && args[1] === "list";
-      const isEdit = args[0] === "issue" && args[1] === "edit";
+      const isEdit = isIssueEdit(args);
       const isSubIssues = String(args[2] ?? "").includes("sub_issues");
       if (isEdit) return Promise.resolve({ code: 1, stdout: "", stderr: "transient" });
       return Promise.resolve({
@@ -284,7 +290,7 @@ describe("dispatchExecutionIssue (slice #2295)", () => {
     const calls: string[][] = [];
     const exec: ExecFn = (_tool, args) => {
       calls.push([...args]);
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       return Promise.resolve({
         code: 0,
         stdout: isCreate ? "https://github.com/acme/widgets/issues/200" : "",
@@ -294,17 +300,16 @@ describe("dispatchExecutionIssue (slice #2295)", () => {
     const ctx = { ...CTX_BASE, exec };
     const num = await dispatchExecutionIssue(ctx, EFFORT, null);
     expect(num).toBe(200);
-    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create");
+    const createCall = calls.find(isIssueCreate);
     expect(createCall).toBeDefined();
-    expect(createCall).toContain("--label");
-    expect(createCall).toContain("ready-for-agent");
+    expect(createCall).toContain("labels[]=ready-for-agent");
   });
 
   it("links the execution issue as a sub-issue when a map number is given", async () => {
     const calls: string[][] = [];
     const exec: ExecFn = (_tool, args) => {
       calls.push([...args]);
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       return Promise.resolve({
         code: 0,
         stdout: isCreate ? "https://github.com/acme/widgets/issues/201" : "",
@@ -323,7 +328,7 @@ describe("dispatchExecutionIssue (slice #2295)", () => {
     const calls: string[][] = [];
     const exec: ExecFn = (_tool, args) => {
       calls.push([...args]);
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       return Promise.resolve({
         code: 0,
         stdout: isCreate ? "https://github.com/acme/widgets/issues/202" : "",
@@ -346,7 +351,7 @@ describe("dispatchExecutionIssue (slice #2295)", () => {
     const calls: string[][] = [];
     const exec: ExecFn = (_tool, args) => {
       calls.push([...args]);
-      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isCreate = isIssueCreate(args);
       return Promise.resolve({
         code: 0,
         stdout: isCreate ? "https://github.com/acme/widgets/issues/203" : "",
@@ -355,10 +360,10 @@ describe("dispatchExecutionIssue (slice #2295)", () => {
     };
     const ctx = { ...CTX_BASE, exec };
     await dispatchExecutionIssue(ctx, EFFORT, null);
-    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create") ?? [];
-    const bodyIdx = createCall.indexOf("--body");
+    const createCall = calls.find(isIssueCreate) ?? [];
+    const bodyIdx = createCall.findIndex((arg) => arg.startsWith("body="));
     expect(bodyIdx).toBeGreaterThan(-1);
-    expect(createCall[bodyIdx + 1]).toContain(EFFORT.effort_id);
+    expect(createCall[bodyIdx]).toContain(EFFORT.effort_id);
   });
 });
 

@@ -56,6 +56,18 @@ describe("planHostDemand — how many Workers each project may ask for", () => {
     expect(plan.intents[0]!.wanted).toBe(1);
   });
 
+  it("does not let a live Worker on de-queued work suppress a fresh queue item", () => {
+    const plan = planHostDemand({
+      projects: [project("acme/widgets", { target: 2 })],
+      queue: { "acme/widgets": 1 },
+      live: { "acme/widgets": 1 },
+      nowMs: NOW_MS,
+    });
+
+    expect(plan.births).toHaveLength(1);
+    expect(plan.intents[0]!.wanted).toBe(1);
+  });
+
   it("counts the Workers a project already holds against its target", () => {
     const plan = planHostDemand({
       projects: [project("acme/widgets", { target: 3 })],

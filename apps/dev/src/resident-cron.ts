@@ -190,7 +190,7 @@ export function createResidentCron(options: ResidentCronOptions): ResidentCron {
     const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
     await fs.writeFile(
       temporary,
-      encode(schedule as unknown as JsonValue, { keyedMapCollapse: true }),
+      encode(schedule as unknown as JsonValue),
       { encoding: "utf8" },
     );
     await fs.rename(temporary, path);

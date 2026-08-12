@@ -581,9 +581,9 @@ jobs:
           console.log('benchmark-code-understanding bundle manifest:', JSON.stringify(manifest));
           EOF
 
-      # The rsp CLI ships its single bundle (dist/rsp.bundle.min.mjs) inside the
-      # npm package (bin/rsp.mjs resolves it) and as a GitHub Release asset for
-      # standalone installs. It needs no checksum manifest. Every other runtime
+      # The rsp CLI ships its fast launcher and lazy core inside the npm package
+      # and as GitHub Release assets for standalone installs. They need no
+      # checksum manifest. Every other runtime
       # app has its own per-app bundle step; rsp had a bin + prepare/verify entry
       # but no build step, so the pack contract check failed on a genuinely-
       # missing bundle.
@@ -690,6 +690,7 @@ jobs:
             package/dist/memory.bundle.min.mjs \
             package/dist/brain.bundle.min.mjs \
             package/dist/rsp.bundle.min.mjs \
+            package/dist/rsp-core.bundle.min.mjs \
             package/dist/redskilled.bundle.min.mjs; do
             if ! grep -qxF "$expected" <<<"$listing"; then
               echo "::error::npm tarball missing $expected"
@@ -899,6 +900,7 @@ jobs:
             dist/brain-mcp.bundle.min.mjs
             dist/brain-runtime-manifest.json
             dist/rsp.bundle.min.mjs
+            dist/rsp-core.bundle.min.mjs
             dist/redskilled.bundle.min.mjs
           )
           # The Release standard owns the Release; this job only ever attaches to

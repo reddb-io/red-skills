@@ -41,7 +41,7 @@ export interface HostBinaryReport {
 
 function canonicalInstallerFix(name: string, catalog: CatalogToonVersion): string {
   if (name === "tq") {
-    return `install pinned tq with: TQ_VERSION=${catalog.tag} curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/${catalog.tag}/install.sh | sh`;
+    return `install pinned tq from crates.io with: cargo install reddb-io-tq --version ${catalog.version} --locked --force`;
   }
   return `install pinned ${name} version ${catalog.version}`;
 }

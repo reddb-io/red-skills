@@ -2,7 +2,7 @@ import * as clack from "@clack/prompts";
 import { FileSystem } from "@effect/platform";
 import { dirname } from "node:path";
 import { Context, Effect, Layer, Ref } from "effect";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import { styleText } from "node:util";
 
 export type Severity = "info" | "success" | "warn" | "error";
@@ -157,7 +157,7 @@ export const FILE_LOG_TOONL_HEADER = "[]{at,kind,msg}:";
 
 /** Encode one narrative line as a self-describing TOONL segment. */
 const toonlSegment = (kind: string, msg: string, kindPrefix?: string): string => {
-  const chunk = encodeLines().push({
+  const chunk = encodeToonlLines().push({
     at: new Date().toISOString(),
     kind: kindPrefix ? `${kindPrefix}.${kind}` : kind,
     msg,

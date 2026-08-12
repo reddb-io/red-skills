@@ -175,3 +175,31 @@ describe("the GitHub spend attribution ledger", () => {
     expect(report.total_cost).toBe(rows.reduce((sum, row) => sum + Number(row.cost), 0));
   });
 });
+
+describe("a failed ledger write (#3768)", () => {
+  it("fails its own caller and no one else", async () => {
+    // A record larger than the whole lane can never be appended: the ledger
+    // throws rather than trimming everything away. Before this, that one throw
+    // poisoned the shared write chain, so every LATER record rejected without
+    // running — and because a GitHub read awaits the ledger, the client stopped
+    // reading for the life of the process.
+    const path = await ledgerPath();
+    const ledger = createGithubAttributionLedger({ path, maxBytes: 4_096 });
+    const operation = routeGithubArgs(["issue", "view", "7"]);
+
+    const refused = await ledger
+      .record({ operation, cost: 1, actor: "x".repeat(8_192), observedAt: HOUR_START })
+      .then(() => null, (thrown: unknown) => thrown);
+    expect(String(refused)).toContain("lane ceiling");
+
+    await expect(
+      ledger.record({ operation, cost: 1, actor: "worker:w1", observedAt: HOUR_START }),
+    ).resolves.toBeUndefined();
+    await expect(
+      ledger.record({ operation, cost: 1, actor: "worker:w2", observedAt: HOUR_START }),
+    ).resolves.toBeUndefined();
+
+    const report = await ledger.report({ from: HOUR_START, to: HOUR_END });
+    expect(report.total_count).toBe(2);
+  });
+});

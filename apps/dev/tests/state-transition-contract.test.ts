@@ -170,7 +170,7 @@ const ALLOWLIST = new Map<string, string>([
     "fleet-stop operator reconcile; runs under explicit human intent",
   ],
   [
-    'apps/dev/src/commands/hitl-card.ts :: await exec(["gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--remove-label", LABEL_HUMAN]);',
+    'apps/dev/src/commands/hitl-card.ts :: "gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--remove-label", LABEL_HUMAN, ]));',
     "HITL reject sheds the human gate with NO automated next state — the one shape a one-state-role plan cannot express (#2663)",
   ],
   // --- policy dispose sets applied through a planner-backed wrapper ---

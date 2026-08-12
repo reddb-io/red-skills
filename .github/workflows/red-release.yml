@@ -27,6 +27,8 @@ jobs:
       - name: Enable the repository package manager
         run: corepack enable
       - name: Install workspace dependencies
+        env:
+          REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
       - name: Maintain Version PR
         env:
@@ -51,6 +53,8 @@ jobs:
       - name: Enable the repository package manager
         run: corepack enable
       - name: Install workspace dependencies
+        env:
+          REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
       - name: Publish Release
         env:

@@ -77,7 +77,7 @@ describe("rsp cli", () => {
     const exports = await import("../src/cli.js");
 
     expect(lineCount).toBeLessThanOrEqual(1200);
-    expect(Object.keys(exports).sort()).toEqual(["main", "renderSetupResult", "renderStats"]);
+    expect(Object.keys(exports).sort()).toEqual(["isDirectExecution", "main", "renderSetupResult", "renderStats"]);
   });
 
   it("prints unknown rsp flags as structured usage errors", async () => {
@@ -197,6 +197,7 @@ describe("rsp cli", () => {
       "resident_liveness",
       "store_provisioning",
       "recent_degradation_rate",
+      "overhead_budget",
     ]);
     expect(decoded.probes.find((probe) => probe.name === "config_gate_resolution")).toMatchObject({
       pass: true,

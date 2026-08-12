@@ -290,7 +290,7 @@ describe("check 18 — required host binary pins", () => {
         reason:
           "required host binary tq 0.0.9 is older than the floor 0.3.0, so it cannot read what this workspace writes",
         remediation:
-          "install pinned tq with: TQ_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh | sh",
+          "install pinned tq from crates.io with: cargo install reddb-io-tq --version 0.3.0 --locked --force",
       },
     ]);
   });

@@ -10,17 +10,38 @@ import type {
 } from "../../core/operational-probes.js";
 import type { ExecOutput } from "../exec.js";
 import { listCandidates } from "./candidates.js";
-import { apiPath, isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
+import { githubReadClient, githubRepo, isRecord, repoArgs, runRsp, type GhContext } from "./common.js";
 import { readGhGraphql, readGhJsonRows } from "./read.js";
 
-async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
-  const r = await runGh(ctx, 
-    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number", ...args],
-  );
-  if (r.code !== 0) return 0;
+interface RestIssue {
+  readonly number?: number;
+  readonly labels?: readonly unknown[];
+  readonly pull_request?: unknown;
+}
+
+async function listIssuesViaClient(
+  ctx: GhContext,
+  cacheKey: string,
+  parameters: Readonly<Record<string, unknown>>,
+): Promise<readonly RestIssue[]> {
+  const repo = githubRepo(ctx);
+  if (!repo) throw new Error("GitHub issue listing needs an owner/repository slug");
+  const answer = await githubReadClient(ctx).conditionalPaginate<RestIssue>({
+    cacheKey: `gh:issues:${repo.owner}/${repo.repo}:${cacheKey}`,
+    route: "GET /repos/{owner}/{repo}/issues",
+    parameters: { ...repo, per_page: 100, ...parameters },
+    operation: { key: "issue list", budget: "rest" },
+    actor: "dev:queue",
+  });
+  return answer.data.filter((issue) => issue.pull_request == null).slice(0, 500);
+}
+
+async function countIssues(ctx: GhContext, label?: string): Promise<number> {
   try {
-    const parsed = JSON.parse(r.stdout) as unknown[];
-    return Array.isArray(parsed) ? parsed.length : 0;
+    return (await listIssuesViaClient(ctx, `open:${label ?? "all"}`, {
+      state: "open",
+      ...(label ? { labels: label } : {}),
+    })).length;
   } catch {
     return 0;
   }
@@ -49,27 +70,32 @@ function queueVisibilityError(
   });
 }
 
+function githubFailure(error: unknown): ExecOutput {
+  const value = typeof error === "object" && error !== null
+    ? error as { status?: unknown; message?: unknown }
+    : {};
+  return {
+    code: Number(value.status ?? 1),
+    stdout: "",
+    stderr: String(value.message ?? error ?? "GitHub request failed"),
+  };
+}
+
 async function listOpenIssuesByLabelViaRest(ctx: GhContext, label: string): Promise<number[]> {
   if (!ctx.repo) return [];
-  const r = await runGh(ctx, [
-    "api",
-    "--paginate",
-    "--method",
-    "GET",
-    apiPath(ctx, "issues"),
-    "-f",
-    "state=open",
-    "-f",
-    `labels=${label}`,
-    "-f",
-    "per_page=100",
-    "--jq",
-    ".[] | select(.pull_request == null) | .number",
-  ]);
-  if (r.code !== 0) throw queueVisibilityError("rest", r, "gh api REST issue listing failed");
-  const issues = r.stdout.trim() === "" ? [] : r.stdout.trim().split(/\s+/).map(Number);
+  let rows: readonly RestIssue[];
+  try {
+    rows = await listIssuesViaClient(ctx, `queue:${label}`, { state: "open", labels: label });
+  } catch (error) {
+    throw queueVisibilityError("rest", githubFailure(error), "GitHub REST issue listing failed");
+  }
+  const issues = rows.map((row) => Number(row.number ?? 0));
   if (issues.some((issue) => !Number.isInteger(issue) || issue <= 0)) {
-    throw queueVisibilityError("rest", r, "gh api REST issue listing returned a non-numeric issue number");
+    throw queueVisibilityError(
+      "rest",
+      { code: 1, stdout: JSON.stringify(rows), stderr: "" },
+      "GitHub REST issue listing returned a non-numeric issue number",
+    );
   }
   return issues;
 }
@@ -158,13 +184,8 @@ export async function countStatuslineQueueCounts(ctx: GhContext): Promise<Status
 
 /** Count issues that carry NO labels (the unlabeled straggler bucket). */
 export async function countUnlabeled(ctx: GhContext): Promise<number> {
-  const r = await runGh(ctx, 
-    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number,labels"],
-  );
-  if (r.code !== 0) return 0;
   try {
-    const rows = JSON.parse(r.stdout) as Array<{ labels?: unknown[] }>;
-    if (!Array.isArray(rows)) return 0;
+    const rows = await listIssuesViaClient(ctx, "open:unlabeled", { state: "open" });
     return rows.filter((row) => !Array.isArray(row.labels) || row.labels.length === 0).length;
   } catch {
     return 0;
@@ -173,24 +194,24 @@ export async function countUnlabeled(ctx: GhContext): Promise<number> {
 
 /** Count open `ready-for-agent` issues (the 📋 statusline queue count). */
 export function countReadyForAgent(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, ["--label", LABEL_READY]);
+  return countIssues(ctx, LABEL_READY);
 }
 
 /** Count open `ready-for-human` issues (the 🆘 statusline count). */
 export function countReadyForHuman(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, ["--label", LABEL_HUMAN]);
+  return countIssues(ctx, LABEL_HUMAN);
 }
 
 /** Count `needs-triage` straggler issues. */
 export function countNeedsTriage(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, ["--label", "needs-triage"]);
+  return countIssues(ctx, "needs-triage");
 }
 
 /** Count ALL open issues — the repo-global `is` statusline count (no label
  * filter). Capped at 500 like {@link countIssues}; a busier repo undercounts,
  * which is acceptable for a glanceable badge. */
 export function countOpenIssues(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, []);
+  return countIssues(ctx);
 }
 
 /** Count open pull requests — the repo-global `pr` statusline count.
@@ -246,5 +267,5 @@ export async function countPrsCreatedToday(
 
 /** Count `needs-info` straggler issues. */
 export function countNeedsInfo(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, ["--label", "needs-info"]);
+  return countIssues(ctx, "needs-info");
 }

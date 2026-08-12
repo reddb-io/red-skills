@@ -17,7 +17,17 @@ describe("gh queue visibility input", () => {
           stderr: "",
         };
       }
-      return { code: 0, stdout: "2448\n2449\n", stderr: "" };
+      // The REST fallback (#3730): a routed `gh api --paginate` issue list,
+      // full rows — the caller filters `pull_request == null` and projects
+      // `.number` itself.
+      return {
+        code: 0,
+        stdout: JSON.stringify([
+          { number: 2448, labels: [], pull_request: null },
+          { number: 2449, labels: [], pull_request: null },
+        ]),
+        stderr: "",
+      };
     };
     const input = queueVisibilityProbeInput({ cwd: "/repo", repo: "o/r", exec });
 
@@ -29,6 +39,5 @@ describe("gh queue visibility input", () => {
     expect(calls[1]?.tool).toBe("gh");
     expect(calls[1]?.args).toContain("--paginate");
     expect(calls[1]?.args).toContain("repos/o/r/issues");
-    expect(calls[1]?.args).toContain(".[] | select(.pull_request == null) | .number");
   });
 });

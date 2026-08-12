@@ -108,7 +108,7 @@ export function createFileQueueCustodyStore(path: string): QueueCustodyStore {
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
       await writeFile(
         temporary,
-        encode(decodeCustody(state) as unknown as JsonValue, { keyedMapCollapse: true }),
+        encode(decodeCustody(state) as unknown as JsonValue),
         "utf8",
       );
       await rename(temporary, path);

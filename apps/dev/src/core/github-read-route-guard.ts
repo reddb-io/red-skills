@@ -1,8 +1,7 @@
-// github-read-route-guard — a shrink-only migration ratchet for raw `gh` reads.
+// github-read-route-guard — absolute prohibition on raw `gh` I/O.
 //
 // The destination is cardinal: every GitHub read crosses @reddb-io/github. The
-// baseline records unfinished source files, not permission for new call sites;
-// an entry may only be removed or have its count lowered as reads migrate.
+// Every call site must cross one of the shared package's routed doors.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative } from "node:path";
@@ -25,7 +24,7 @@ export const GITHUB_READ_EXEMPTIONS: readonly GithubReadRouteExemption[] = [
   },
   {
     id: "unsupported-mutation",
-    reason: "writes remain on gh until @reddb-io/github exposes their mutation; this ratchet constrains reads only",
+    reason: "writes are excluded from the read inventory and constrained independently by the write ratchet",
   },
   {
     id: "shared-client",
@@ -39,31 +38,11 @@ export interface GithubReadShelloutBaselineEntry {
   readonly reason: string;
 }
 
-/**
- * Unfinished migration inventory. SHRINK ONLY: lower a count or delete an entry
- * when a site moves; never raise one to admit a fresh shell-out.
- */
-export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
-  { path: "apps/dev/src/commands/hitl-card.ts", count: 6, reason: "HITL card discovery still needs routed repo, issue, PR, comment, and list surfaces" },
-  { path: "apps/dev/src/commands/requeue.ts", count: 2, reason: "requeue still resolves repository and issue state through the CLI" },
-  { path: "apps/dev/src/commands/respond.ts", count: 2, reason: "respond still resolves repository and comment state through the CLI" },
-  { path: "apps/dev/src/commands/review.ts", count: 1, reason: "review still resolves repository identity through the CLI" },
-  { path: "apps/dev/src/commands/ship.ts", count: 2, reason: "ship still reads PR checks and PR state through the CLI" },
-  { path: "apps/dev/src/core/merge.ts", count: 2, reason: "one-shot merge rejection diagnosis and queued-PR discovery remain after the two hot waits moved" },
-  { path: "apps/dev/src/runtime/doctor-classifiers.ts", count: 1, reason: "doctor still probes one GitHub REST resource through gh api" },
-  { path: "apps/dev/src/runtime/etag-transport.ts", count: 1, reason: "the legacy ETag transport still resolves one PR head through the CLI" },
-  { path: "apps/dev/src/runtime/gh/candidates.ts", count: 3, reason: "candidate discovery still has three routed-list migrations pending" },
-  { path: "apps/dev/src/runtime/gh/comments.ts", count: 4, reason: "comment reads still need shared conditional REST projections" },
-  { path: "apps/dev/src/runtime/gh/issues.ts", count: 10, reason: "issue list, view, and REST helper reads remain the largest dev migration cluster" },
-  { path: "apps/dev/src/runtime/gh/manager-map.ts", count: 3, reason: "Manager map issue list/view reads still use the CLI boundary" },
-  { path: "apps/dev/src/runtime/gh/queue.ts", count: 3, reason: "queue discovery still has three conditional-list migrations pending" },
-  { path: "apps/dev/src/runtime/gh/sweeps.ts", count: 4, reason: "sweep issue/PR listings still need shared conditional pagination" },
-  { path: "apps/dev/src/runtime/gh/trust.ts", count: 7, reason: "trust probes still need shared repo, issue, permission, and raw-content projections" },
-  { path: "apps/dev/src/runtime/medic-io.ts", count: 3, reason: "medic PR/run observations still need routed client methods" },
-  { path: "apps/dev/src/runtime/review-gh.ts", count: 2, reason: "review PR metadata and diff reads still use gh" },
-  { path: "apps/dev/src/runtime/wire/docs.ts", count: 1, reason: "the docs wire still reads one created PR result through gh" },
-  { path: "apps/dev/src/runtime/wire/paths.ts", count: 1, reason: "path wiring still resolves repository identity through gh" },
-  { path: "packages/red-castle/src/engine/tracker/github/adapter.ts", count: 2, reason: "the castle adapter still has two REST response reads awaiting client injection" },
+/** No grandfathered GitHub reads exist or may be added. */
+export const GITHUB_READ_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [];
+
+/** Raw mutation inventory. SHRINK ONLY: writes share the routed-client destination. */
+export const GITHUB_WRITE_SHELLOUT_BASELINE: readonly GithubReadShelloutBaselineEntry[] = [
 ];
 
 export interface GithubReadSourceFile {
@@ -86,7 +65,7 @@ export interface GithubReadRouteReport {
 }
 
 const SOURCE_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".tsx"]);
-const SCAN_ROOTS = ["apps/dev/src", "apps/redskilled/src", "packages/red-castle/src"] as const;
+export const GITHUB_ROUTE_SCAN_ROOTS = ["apps", "packages"] as const;
 const SKIP_DIRS = new Set(["dist", "generated", "node_modules", "test", "tests", "__tests__", "fixtures"]);
 const GUARD_PATH = "apps/dev/src/core/github-read-route-guard.ts";
 
@@ -120,6 +99,9 @@ function shellWords(value: string): string[] {
 
 function candidateWords(call: ts.CallExpression): string[] | null {
   const name = calleeName(call.expression);
+  // An argv handed to the client's write planner IS the required route: the
+  // canonical spelling exists so @reddb-io/github decides the rail (#3663).
+  if (name === "planGithubWrite") return null;
   const arrays = call.arguments.filter(ts.isArrayLiteralExpression);
   for (const array of arrays) {
     const words = arrayWords(array);
@@ -160,6 +142,10 @@ function exempt(words: readonly string[], path: readonly string[]): boolean {
   return path[0] === "api" && apiMutation(words);
 }
 
+function writeCommand(words: readonly string[], path: readonly string[]): boolean {
+  return WRITE_COMMANDS.has(path.join(" ")) || (path[0] === "api" && apiMutation(words));
+}
+
 function replacement(path: readonly string[]): string {
   const key = path.join(" ") || "GitHub read";
   if (["issue view", "pr view", "repo view", "run view", "release view"].includes(key)) {
@@ -168,7 +154,7 @@ function replacement(path: readonly string[]): string {
   return "createGithubClient(...).conditionalRest / singleObject through @reddb-io/github";
 }
 
-function collectFile(file: GithubReadSourceFile): GithubReadShelloutFinding[] {
+function collectFile(file: GithubReadSourceFile, kind: "read" | "write"): GithubReadShelloutFinding[] {
   if (file.relativePath === GUARD_PATH) return [];
   const source = ts.createSourceFile(file.relativePath, file.sourceText, ts.ScriptTarget.Latest, true);
   const findings: GithubReadShelloutFinding[] = [];
@@ -177,13 +163,17 @@ function collectFile(file: GithubReadSourceFile): GithubReadShelloutFinding[] {
       const words = candidateWords(node);
       if (words) {
         const path = commandPath(words);
-        if (path.length > 0 && !exempt(words, path)) {
+        const isWrite = writeCommand(words, path);
+        const selected = kind === "write" ? isWrite : !isWrite && !exempt(words, path);
+        if (path.length > 0 && selected) {
           const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
           findings.push({
             path: file.relativePath,
             line,
             command: path.join(" "),
-            route: replacement(path),
+            route: kind === "write"
+              ? "createGithubClient(...).mutation through @reddb-io/github"
+              : replacement(path),
             snippet: node.getText(source).replace(/\s+/g, " ").slice(0, 180),
           });
         }
@@ -198,7 +188,13 @@ function collectFile(file: GithubReadSourceFile): GithubReadShelloutFinding[] {
 export function collectGithubReadShelloutsFromFiles(
   files: readonly GithubReadSourceFile[],
 ): GithubReadShelloutFinding[] {
-  return files.flatMap(collectFile).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+  return files.flatMap((file) => collectFile(file, "read")).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+}
+
+export function collectGithubWriteShelloutsFromFiles(
+  files: readonly GithubReadSourceFile[],
+): GithubReadShelloutFinding[] {
+  return files.flatMap((file) => collectFile(file, "write")).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 }
 
 function readTree(root: string): GithubReadSourceFile[] {
@@ -214,7 +210,7 @@ function readTree(root: string): GithubReadSourceFile[] {
       files.push({ relativePath: relative(root, path).replaceAll("\\", "/"), sourceText: readFileSync(path, "utf8") });
     }
   };
-  for (const scanRoot of SCAN_ROOTS) walk(join(root, scanRoot));
+  for (const scanRoot of GITHUB_ROUTE_SCAN_ROOTS) walk(join(root, scanRoot));
   return files;
 }
 
@@ -222,6 +218,14 @@ export function collectGithubReadRouteReport(root: string): GithubReadRouteRepor
   return {
     findings: collectGithubReadShelloutsFromFiles(readTree(root)),
     baseline: GITHUB_READ_SHELLOUT_BASELINE,
+    exemptions: GITHUB_READ_EXEMPTIONS,
+  };
+}
+
+export function collectGithubWriteRouteReport(root: string): GithubReadRouteReport {
+  return {
+    findings: collectGithubWriteShelloutsFromFiles(readTree(root)),
+    baseline: GITHUB_WRITE_SHELLOUT_BASELINE,
     exemptions: GITHUB_READ_EXEMPTIONS,
   };
 }
@@ -243,16 +247,31 @@ export function githubReadRouteViolations(report: GithubReadRouteReport): string
   return violations;
 }
 
+export const githubWriteRouteViolations = githubReadRouteViolations;
+
+const ROUTING_DOORS =
+  "Use createGithubClient, planGithubRestRead, or planGithubWrite from @reddb-io/github.";
+
 export function formatGithubReadRouteFailure(
   report: GithubReadRouteReport,
   violations: readonly string[],
 ): string {
   if (violations.length === 0) return "";
   return [
-    `github-read-routing ratchet: ${report.findings.length} GitHub read shell-out(s) remain; ` +
-      `${violations.length} exceed the shrink-only baseline.`,
-    "Route reads through createGithubClient(...).conditionalRest / singleObject in @reddb-io/github.",
+    `github-read-routing guard: ${report.findings.length} raw GitHub read shell-out(s) found.`,
+    ROUTING_DOORS,
     ...violations.map((violation) => `  - ${violation}`),
-    "Baseline: apps/dev/src/core/github-read-route-guard.ts (GITHUB_READ_SHELLOUT_BASELINE); lower only.",
+  ].join("\n");
+}
+
+export function formatGithubWriteRouteFailure(
+  report: GithubReadRouteReport,
+  violations: readonly string[],
+): string {
+  if (violations.length === 0) return "";
+  return [
+    `github-write-routing guard: ${report.findings.length} raw GitHub write shell-out(s) found.`,
+    ROUTING_DOORS,
+    ...violations.map((violation) => `  - ${violation}`),
   ].join("\n");
 }

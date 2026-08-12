@@ -52,8 +52,13 @@ async function sessionPaths(): Promise<RedskilledPaths> {
 }
 
 /** A tracker that answers every conditional REST search with one depth. */
-async function trackerStandingIn(depth: number): Promise<{ url: string; requests: string[] }> {
+async function trackerStandingIn(depth: number): Promise<{
+  url: string;
+  requests: string[];
+  setDepth(depth: number): void;
+}> {
   const requests: string[] = [];
+  let currentDepth = depth;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://tracker.invalid");
     const query = url.searchParams.get("q") ?? "";
@@ -63,11 +68,17 @@ async function trackerStandingIn(depth: number): Promise<{ url: string; requests
       etag: `"${Buffer.from(query).toString("base64url")}"`,
       "x-ratelimit-remaining": "4900",
     });
-    res.end(JSON.stringify(Array.from({ length: depth }, (_, index) => ({ number: index + 1 }))));
+    res.end(JSON.stringify(Array.from({ length: currentDepth }, (_, index) => ({ number: index + 1 }))));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/graphql`, requests };
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/graphql`,
+    requests,
+    setDepth(nextDepth: number) {
+      currentDepth = nextDepth;
+    },
+  };
 }
 
 function registration(label: string, workspace: string, target = 1) {
@@ -84,6 +95,40 @@ function registration(label: string, workspace: string, target = 1) {
 }
 
 describe("whatever registers a project reaches the tracker for it", () => {
+  it("confirms the direct label depth before birthing from an older positive sample", async () => {
+    const tracker = await trackerStandingIn(4);
+    const paths = await sessionPaths();
+    const workspace = await scratch("redskilled-workspace-");
+    const launched: unknown[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      idleMs: 60_000,
+      demandMs: 0,
+      launch: (options) => {
+        launched.push(options);
+        throw new Error("a stale queue witness must not reach Worker birth");
+      },
+      queueDiscovery: {
+        ...resolveServeQueueDiscovery({ "queue-endpoint": tracker.url }, { [REDSKILLED_HOST_TOKEN_ENV]: "t" }),
+        intervalMs: 0,
+      },
+    });
+    running.push(daemon);
+
+    await registerRedskilledProject(paths, registration("acme/widgets", workspace, 4), { readyTimeoutMs: 5_000 });
+    await daemon.pollQueueDiscovery();
+    tracker.setDepth(0);
+
+    const tick = await daemon.driveDemand();
+
+    expect(tracker.requests).toHaveLength(2);
+    expect(tick.requested).toBe(0);
+    expect(tick.granted).toEqual([]);
+    expect(launched).toEqual([]);
+  });
+
   it("births a Worker for a registered project with a matching queue, end to end", async () => {
     const tracker = await trackerStandingIn(3);
     const paths = await sessionPaths();
@@ -109,7 +154,8 @@ describe("whatever registers a project reaches the tracker for it", () => {
     await daemon.pollQueueDiscovery();
     const tick = await daemon.driveDemand();
 
-    expect(tracker.requests).toHaveLength(1);
+    // The periodic sample is followed by the demand tick's direct pre-birth confirmation.
+    expect(tracker.requests).toHaveLength(2);
     expect(tick.granted).toHaveLength(1);
     expect(daemon.workerCount()).toBe(1);
     // The Worker really ran: the machine has a process's output on it.

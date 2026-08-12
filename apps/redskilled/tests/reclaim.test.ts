@@ -47,7 +47,7 @@ async function session(root: string, name: string, pid: number | null): Promise<
         socket_path: join(dir, "redskilled.sock"),
         acquired_at: "2026-07-30T11:00:00.000Z",
         renewed_at: "2026-07-30T11:30:00.000Z",
-      }, { keyedMapCollapse: true })}\n`,
+      })}\n`,
       "utf8",
     );
   }

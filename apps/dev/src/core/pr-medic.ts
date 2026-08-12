@@ -201,7 +201,7 @@ export function createFileMedicStore(paths: EnginePaths): MedicStore {
     async write(state) {
       await mkdir(dirname(path), { recursive: true });
       const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
-      await writeFile(temporary, encode(validateMedicState(state) as unknown as JsonValue, { keyedMapCollapse: true }), "utf8");
+      await writeFile(temporary, encode(validateMedicState(state) as unknown as JsonValue), "utf8");
       await rename(temporary, path);
     },
   };

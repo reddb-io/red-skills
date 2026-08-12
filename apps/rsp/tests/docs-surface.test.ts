@@ -174,6 +174,8 @@ describe("rsp docs surface", () => {
 
     expect(bench).toContain("pnpm --filter @reddb-io/rsp bench:two-axis");
     expect(bench).toContain("pnpm --filter @reddb-io/rsp bench:two-axis:check");
+    expect(bench).toContain("pnpm --filter @reddb-io/rsp bench:boundary");
+    expect(bench).toContain("rsp-command-boundary.md");
     expect(bench).toContain("decision-oracle capture");
     expect(bench).toContain("fidelity-first score");
     expect(bench).toContain("bench/results/rsp-two-axis.md");

@@ -23,7 +23,9 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { managerLeaseFile } from "@reddb-io/shared/red-paths.js";
-import { encodeRecords, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeRecords, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import {
   ManagerSchemaError,
   ManagerStoreError,
@@ -69,7 +71,7 @@ export function encodeLeaseDocument(lease: EffortLease): string {
     version: MANAGER_LEASE_SCHEMA_VERSION,
   };
   const body: ToonlRecord = { kind: "manager.lease", ...lease };
-  return encodeRecords([header, body]);
+  return encodeRecords([header, body], {});
 }
 
 function requireString(row: ToonlRecord, field: string): string {

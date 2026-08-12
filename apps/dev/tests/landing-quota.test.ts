@@ -1,5 +1,5 @@
 // landing-quota.test.ts — verifies that the admin-PR landing path survives a
-// GitHub quota window. The `gh pr merge` call fails once with a REST rate-limit,
+// GitHub quota window. The REST pull-request merge fails once with a rate-limit,
 // the quota backoff waits (fake clock), and the retry succeeds so the landing
 // completes without the attempt being discarded or the issue misrouted.
 
@@ -15,6 +15,9 @@ const BRANCH = "afk/w1/42-fix";
 const BASE = "main";
 const ISSUE = 42;
 
+const isRestMergeCall = (args: readonly string[]): boolean =>
+  args.includes("PUT") && args.some((arg) => /\/pulls\/\d+\/merge$/.test(arg));
+
 /**
  * Build a fake ExecFn that handles the minimal gh / git calls landPr issues.
  * `prMergeResponses` is drained in order so we can inject a rate-limit first.
@@ -29,12 +32,18 @@ function buildFakeExec(prMergeResponses: ExecOutput[]): {
     calls.push([cmd, ...args]);
     const j = [cmd, ...args].join(" ");
 
-    // gh pr list → return existing PR 77 so create is skipped
-    if (cmd === "gh" && args.includes("list")) {
+    // The routed open-PR probe (#3730): `gh api repos/.../pulls -f state=open
+    // ...` → return existing PR 77 so create is skipped.
+    if (
+      cmd === "gh" &&
+      args.includes("api") &&
+      args.some((a) => /repos\/.+\/pulls$/.test(a)) &&
+      args.includes("state=open")
+    ) {
       return { code: 0, stdout: "77\n", stderr: "" };
     }
-    // gh pr merge — drain the provided response queue
-    if (cmd === "gh" && args.includes("merge")) {
+    // REST pull-request merge — drain the provided response queue
+    if (cmd === "gh" && isRestMergeCall(args)) {
       const resp = prMergeResponses[mergeIdx++] ?? { code: 0, stdout: "", stderr: "" };
       return resp;
     }
@@ -69,7 +78,7 @@ function buildFakeExec(prMergeResponses: ExecOutput[]): {
 }
 
 describe("landing survives a github quota window", () => {
-  it("retries gh pr merge after a rate-limit and lands successfully (fake clock)", async () => {
+  it("retries the REST merge after a rate-limit and lands successfully (fake clock)", async () => {
     const { exec, calls } = buildFakeExec([
       // First attempt: REST 403 rate-limited
       { code: 1, stdout: "", stderr: "HTTP 403: API rate limit exceeded" },
@@ -110,7 +119,7 @@ describe("landing survives a github quota window", () => {
     expect(result.ok).toBe(true);
     expect(result.prNumber).toBe(77);
 
-    // Exactly one sleep fired (the quota wait between the two pr merge calls).
+    // Exactly one sleep fired (the quota wait between the two REST merge calls).
     expect(sleptMs.length).toBe(1);
     // onWait was called to signal 'quota-wait' activity.
     expect(onWaitMs.length).toBe(1);
@@ -118,8 +127,8 @@ describe("landing survives a github quota window", () => {
     // The merged commit sha was resolved and returned.
     expect("mergeSha" in result && result.mergeSha).toBe("deadbeef");
 
-    // Exactly two gh pr merge calls: the rate-limited one and the retry.
-    const mergeCalls = calls.filter((c) => c[0] === "gh" && c.includes("merge"));
+    // Exactly two REST merge calls: the rate-limited one and the retry.
+    const mergeCalls = calls.filter((c) => c[0] === "gh" && isRestMergeCall(c));
     expect(mergeCalls.length).toBe(2);
   });
 

@@ -257,11 +257,10 @@ describe("red-setup docs", () => {
 
     // Derived from the catalog, never restated: a second literal pin here is exactly the kind of
     // site that ages out of step with the one source of the toon version (ADR 0097).
-    const { version, tag } = readCatalogToonVersion(ROOT);
+    const { version } = readCatalogToonVersion(ROOT);
 
     expect(skill).toContain("**Section E2 — Required host binaries");
-    expect(skill).toContain(`TQ_VERSION=${tag}`);
-    expect(skill).toContain(`https://raw.githubusercontent.com/reddb-io/toon/${tag}/install.sh`);
+    expect(skill).toContain(`cargo install reddb-io-tq --version ${version} --locked --force`);
     expect(skill).toContain("no jq fallback");
     expect(skill).toContain("host_binaries:");
     expect(template).toContain("host_binaries:");
