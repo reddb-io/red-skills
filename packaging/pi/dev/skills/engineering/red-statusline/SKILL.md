@@ -38,7 +38,7 @@ disable-model-invocation: true
 
 ## 5. Report The Worker Modes
 
-**Keep one host producer.** The dev bundle renders the local bedrock, performs one bounded local socket read, and appends the daemon's finished Worker tail. Configure only that dev command in Claude Code; running `redskilled statusline` beneath it duplicates the daemon document (#3559). Use `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` only for direct inspection: `global` names every project's owner, and `--verbose` adds the last line each Worker published.
+**Keep one host producer.** The dev bundle renders the local bedrock, performs one bounded local socket read, and appends the daemon's finished Worker tail. Configure only that dev command in Claude Code; running a second daemon CLI beneath it duplicates the daemon document (#3559). Use `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` only for direct inspection: `global` names every project's owner, and `--verbose` adds the last line each Worker published.
 
 **State the mode and the declared defaults, do not guess them.** Read `plugins.dev.statusline.*` from `.red/config.yaml` and report what it declares; the keys are in [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
 
