@@ -396,4 +396,18 @@ describe("rsp universal command boundary", () => {
     expect(complete.stdout.toString("utf8")).not.toContain("el:");
     expect(decode(complete.stdout.toString("utf8"))).toHaveLength(180);
   });
+
+  it("honors --full after a modeled proxy compound completes", async () => {
+    const root = await tempRoot();
+    const setup = rsp(root, ["setup"]);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const script = "process.stdout.write(JSON.stringify(Array.from({length:180},(_,id)=>({id,state:'steady',detail:'x'.repeat(80)}))))";
+    const command = `git status >/dev/null 2>&1 || true; ${process.execPath} -e ${JSON.stringify(script)}`;
+
+    const complete = rsp(root, ["proxy", "--full", "--", command]);
+
+    expect(complete.status, complete.stderr.toString("utf8")).toBe(0);
+    expect(complete.stdout.toString("utf8")).not.toContain("el:");
+    expect(decode(complete.stdout.toString("utf8"))).toHaveLength(180);
+  });
 });
