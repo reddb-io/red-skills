@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { planGithubWrite } from "@reddb-io/github";
 import { CURATE_CATEGORIES, type ArchiveCandidate, type CurateCategory } from "./types.js";
 
 const CATEGORY_HEADERS: Record<CurateCategory, string> = {
@@ -124,9 +125,10 @@ export async function fileBackgroundIssue(
   const bodyPath = join(tmp, "body.md");
   try {
     await writeFile(bodyPath, body, "utf8");
+    const plan = planGithubWrite(["gh", "issue", "create", "--title", title, "--body-file", bodyPath, "--label", label]);
     const proc = spawn(
-      "gh",
-      ["issue", "create", "--title", title, "--body-file", bodyPath, "--label", label],
+      plan.args[0]!,
+      plan.args.slice(1),
       { cwd: opts.cwd, encoding: "utf8" },
     );
     if (proc.status !== 0) {
