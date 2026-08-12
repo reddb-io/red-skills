@@ -11,14 +11,27 @@ import {
   GITHUB_REST_CONCURRENCY,
   parseAliasedRepositoryResponse,
 } from "@reddb-io/shared/github-batch.js";
+import { planGithubWrite } from "@reddb-io/github";
 import { scrubOutbound } from "../outbound-redaction.js";
 import { repoArgs, runGh, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
 
-export async function viewLabels(ctx: GhContext, issue: number): Promise<string[]> {
+async function readLabelsForEdit(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ ok: true; labels: string[] } | { ok: false }> {
   const read = await readSingleObject(ctx, "issue", issue, ["labels"]);
+  if (read.out.code !== 0 || !read.row) return { ok: false };
   const parsed = (read.row ?? {}) as { labels?: Array<{ name?: string }> };
-  return Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
+  return {
+    ok: true,
+    labels: Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [],
+  };
+}
+
+export async function viewLabels(ctx: GhContext, issue: number): Promise<string[]> {
+  const read = await readLabelsForEdit(ctx, issue);
+  return read.ok ? read.labels : [];
 }
 
 /**
@@ -63,11 +76,11 @@ export async function editLabels(
   remove: string[],
   add: string[],
 ): Promise<boolean> {
+  const current = await readLabelsForEdit(ctx, issue);
   if (add.includes(LABEL_READY)) {
-    const current = await viewLabels(ctx, issue);
     // Judge the RESULTING label set, so an edit that genuinely leaves the lane
     // (removing it in the same call) is not refused for a label it just shed.
-    const next = [...current.filter((label) => !remove.includes(label)), ...add];
+    const next = [...(current.ok ? current.labels : []).filter((label) => !remove.includes(label)), ...add];
     const refusal = laneIsolationRefusal("direct label write", next);
     if (refusal !== null) {
       process.stderr.write(`refused: #${issue} ${refusal.message}\n`);
@@ -77,7 +90,8 @@ export async function editLabels(
   const args = ["issue", "edit", String(issue), ...repoArgs(ctx)];
   for (const label of remove) args.push("--remove-label", label);
   for (const label of add) args.push("--add-label", label);
-  const r = await runGh(ctx, args);
+  const plan = planGithubWrite(["gh", ...args], current.ok ? { currentIssueLabels: current.labels } : {});
+  const r = await runGh(ctx, plan.args.slice(1));
   return r.code === 0;
 }
 
@@ -165,7 +179,10 @@ export async function listClaimComments(
 
 /** `gh issue edit --body …`. */
 export async function editBody(ctx: GhContext, issue: number, body: string): Promise<boolean> {
-  const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
+  const plan = planGithubWrite([
+    "gh", "issue", "edit", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body),
+  ]);
+  const r = await runGh(ctx, plan.args.slice(1));
   return r.code === 0;
 }
 
@@ -529,7 +546,10 @@ export async function ensureLabel(
 
 /** `gh issue close --reason completed`. */
 export async function closeIssue(ctx: GhContext, issue: number): Promise<void> {
-  await runGh(ctx, ["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"]);
+  const plan = planGithubWrite([
+    "gh", "issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed",
+  ]);
+  await runGh(ctx, plan.args.slice(1));
 }
 
 /** Full metadata for a single issue (`gh issue view --json number,title,body,labels`).
