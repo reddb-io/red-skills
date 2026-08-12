@@ -54,6 +54,7 @@ describe("rsp two-axis benchmark report", () => {
       brief: { fidelity_pass_rate_pct: 100 },
       terse: { fidelity_pass_rate_pct: 100 },
     });
+    expect(report.filters.find((row) => row.filter === "automatic:output")?.brief.median_delta_pct).toBeGreaterThan(0);
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
     expect(report.method.oracle_ceiling_source).toBe("fixture-adjacent hand-reviewed compact TOON renderings");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
