@@ -197,15 +197,37 @@ function commentBearsApprovalMarker(body: string): boolean {
  *     → `admin` / `maintain` / `write` count as write-or-higher;
  *   - CODEOWNERS: fetch the repo CODEOWNERS file (the three GitHub-recognised
  *     locations) and test whether `@actor` appears as an owner token.
- * Bound to an `ActorTrustLookup` by the caller as `(actor) => actorTrustSignals(ctx, actor)`.
+ * A one-off call is one independent evaluation. Callers judging several actors
+ * together use {@link createActorTrustLookup} so those actors share one
+ * CODEOWNERS resolution without carrying it into a later evaluation.
  */
 export async function actorTrustSignals(
   ctx: GhContext,
   actor: string,
 ): Promise<{ hasWriteAccess?: boolean; inCodeowners?: boolean }> {
+  return createActorTrustLookup(ctx)(actor);
+}
+
+/**
+ * Bind one trust evaluation to a repository context. CODEOWNERS is resolved at
+ * most once per repository for the returned lookup, including a definitive
+ * absence, and is forgotten when the caller releases the lookup.
+ */
+export function createActorTrustLookup(
+  ctx: GhContext,
+): (actor: string) => Promise<{ hasWriteAccess?: boolean; inCodeowners?: boolean }> {
+  const codeownersByRepo = new Map<string, Promise<string | null | undefined>>();
+  return (actor) => actorTrustSignalsInEvaluation(ctx, actor, codeownersByRepo);
+}
+
+async function actorTrustSignalsInEvaluation(
+  ctx: GhContext,
+  actor: string,
+  codeownersByRepo: Map<string, Promise<string | null | undefined>>,
+): Promise<{ hasWriteAccess?: boolean; inCodeowners?: boolean }> {
   const [hasWriteAccess, inCodeowners] = await Promise.all([
     actorWriteAccess(ctx, actor),
-    actorInCodeowners(ctx, actor),
+    actorInCodeowners(ctx, actor, codeownersByRepo),
   ]);
   return { hasWriteAccess, inCodeowners };
 }
@@ -236,18 +258,6 @@ async function actorWriteAccess(ctx: GhContext, actor: string): Promise<boolean 
 
 /** The GitHub-recognised CODEOWNERS locations, in resolution order. */
 const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
-
-/**
- * The CODEOWNERS file resolved once per repository per process.
- *
- * The file is a REPOSITORY fact, but the trust gate asks it per candidate: a
- * boot listing 14 candidates re-read the same three locations 14 times. In a
- * repo that has no CODEOWNERS, every one of those was three 404s, which is why
- * this cache is load-bearing rather than an optimization. `null` records the
- * definitive absence; a read that FAILED is never cached, so one blip cannot
- * poison the trust signal for the rest of the process.
- */
-const codeownersByRepo = new Map<string, Promise<string | null | undefined>>();
 
 /** Read the first CODEOWNERS location that resolves. `null` when every
  * recognised location answered a definitive 404, `undefined` when no read
@@ -281,7 +291,11 @@ async function readRepoCodeowners(
 /** Resolve whether `@actor` is an owner token in the repo CODEOWNERS file.
  * undefined when no read succeeded (transient/auth) and `false` when a file was
  * read but the actor is absent (or no CODEOWNERS exists at all). */
-async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean | undefined> {
+async function actorInCodeowners(
+  ctx: GhContext,
+  actor: string,
+  codeownersByRepo: Map<string, Promise<string | null | undefined>>,
+): Promise<boolean | undefined> {
   const repo = githubRepo(ctx);
   if (!repo) return undefined;
   const key = `${repo.owner}/${repo.repo}`;
@@ -296,12 +310,6 @@ async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean
     return undefined;
   }
   return content === null ? false : codeownersHasOwner(content, actor);
-}
-
-/** Forget the per-process CODEOWNERS resolutions. Tests only: a cache that
- * survives between cases would answer the next case's first read. */
-export function resetCodeownersCache(): void {
-  codeownersByRepo.clear();
 }
 
 /** True when `@actor` (case-insensitive) appears as an owner token on any

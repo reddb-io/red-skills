@@ -27,6 +27,7 @@ const EXPECTED_GH_EXPORTS = [
   "countStatuslineQueueCounts",
   "countUnlabeled",
   "crashedClaimState",
+  "createActorTrustLookup",
   "createIssue",
   "editBody",
   "editComment",

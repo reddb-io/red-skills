@@ -255,15 +255,13 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
     request: { fetch: timedFetch as unknown as GithubRequestFetch },
     retry: {
-      // A 404 is an ANSWER, not a failure: the resource is absent and asking
-      // again cannot change that. Retrying one cost 93s of exponential backoff
-      // per CODEOWNERS lookup in a repo that has no CODEOWNERS file, and the
-      // trust gate asks per candidate — a boot that froze for ~22 minutes with
-      // no child, no log and `live=true` on every surface. Issue point reads
-      // are strongly consistent by number, so nothing legitimate depends on
-      // re-asking a 404; a caller awaiting eventual consistency must say so
-      // with its own bounded loop rather than paying this on every read.
-      doNotRetry: [304, 403, 404, 429],
+      // A definitive HTTP answer is not a transient transport failure. In
+      // particular, retrying an absent CODEOWNERS path cost 93s of backoff per
+      // lookup. Read-after-write consistency belongs to the caller that knows
+      // it just wrote: /go owns a targeted bounded issue read-back, while the
+      // shared transport preserves Octokit's full definitive set plus 304,
+      // 410, 429 and 451 rather than retrying every ordinary point read.
+      doNotRetry: [304, 400, 401, 403, 404, 410, 422, 429, 451],
       ...(options.retryCount === undefined ? {} : { retries: options.retryCount }),
     },
     throttle: options.throttle === false

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createGithubAttributionLedger } from "./attribution.js";
 import {
@@ -795,6 +795,39 @@ describe("the balance watches; by default it stops nothing (#3768)", () => {
 });
 
 describe("a 404 is an answer, not a failure", () => {
+  it.each([304, 400, 401, 403, 404, 410, 422, 429, 451])(
+    "asks once when GitHub gives the definitive status %i",
+    async (status) => {
+      vi.useFakeTimers();
+      let calls = 0;
+      const client = createGithubClient({
+        token: "test-token",
+        retryCount: 3,
+        throttle: false,
+        fetchImpl: async () => {
+          calls += 1;
+          return new Response(status === 304 ? null : JSON.stringify({ message: "definitive answer" }), {
+            status,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      });
+
+      const answer = client.conditionalRest({
+        cacheKey: `definitive:${status}`,
+        route: "GET /repos/{owner}/{repo}/contents/{path}",
+        parameters: { owner: "acme", repo: "widgets", path: "CODEOWNERS" },
+        operation: { key: "api rest", budget: "rest" },
+      }).catch(() => undefined);
+      await vi.runAllTimersAsync();
+      await answer;
+      vi.useRealTimers();
+
+      expect(calls).toBe(1);
+    },
+    60_000,
+  );
+
   it("asks once for an absent resource instead of retrying it", async () => {
     let calls = 0;
     const client = createGithubClient({
