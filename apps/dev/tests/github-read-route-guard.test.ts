@@ -33,6 +33,18 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     );
   });
 
+  it("routes the trust and queue cluster entirely through the shared client (#3729)", () => {
+    const migrated = new Set([
+      "apps/dev/src/runtime/gh/trust.ts",
+      "apps/dev/src/runtime/gh/queue.ts",
+      "apps/dev/src/runtime/gh/candidates.ts",
+    ]);
+    const report = collectGithubReadRouteReport(ROOT);
+
+    expect(report.findings.filter((finding) => migrated.has(finding.path))).toEqual([]);
+    expect(GITHUB_READ_SHELLOUT_BASELINE.filter((entry) => migrated.has(entry.path))).toEqual([]);
+  });
+
   it("declares every exemption with its reason", () => {
     expect(GITHUB_READ_EXEMPTIONS.map((entry) => entry.id)).toEqual(expect.arrayContaining([
       "authentication-bootstrap",
