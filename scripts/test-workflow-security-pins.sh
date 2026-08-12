@@ -51,15 +51,23 @@ grep -qF 'ref: ${{ github.event.pull_request.base.sha || github.event.repository
 grep -qF 'ref: ${{ github.event.pull_request.base.sha }}' .github/workflows/archive/red-hitl-card.yml ||
   fail "red-hitl-card.yml must checkout the base PR SHA before running the launcher"
 
+# The pinned official tq, from its GitHub release rather than crates.io.
+# The crates publish runs on a token that lapses independently of the
+# release itself — it did, at 0.21.0, with a 403 nobody saw, and
+# `cargo install` took every branch of this repository down with it.
+# What the pin has to guarantee is unchanged: one official binary, one
+# pinned tag, checksum-verified, no fallback and no sibling checkout.
 for workflow in \
   .github/workflows/red-workspace-ci.yml \
   .github/workflows/red-rsp-benchmark-ci.yml; do
-  grep -qF 'cargo install reddb-io-tq --version "${TQ_VERSION#v}" --locked --root "$tq_root"' "$workflow" ||
-    fail "$workflow must install the pinned official reddb-io-tq crate"
+  grep -qF 'https://github.com/reddb-io/tq/releases/download/${TQ_VERSION}' "$workflow" ||
+    fail "$workflow must install the pinned official tq release"
+  grep -qF 'sha256sum -c -' "$workflow" ||
+    fail "$workflow must verify the downloaded tq binary against its published checksum"
   grep -qF 'tq_root="$RUNNER_TEMP/tq"' "$workflow" ||
-    fail "$workflow must isolate the tq package-manager prefix under RUNNER_TEMP"
+    fail "$workflow must isolate the tq install prefix under RUNNER_TEMP"
   grep -qF '"$tq_root/bin/tq" --version' "$workflow" ||
-    fail "$workflow must verify the package-manager-installed tq binary"
+    fail "$workflow must verify the installed tq binary runs"
   if grep -qE '(\.\./toon|target/debug/tq|path = .*toon)' "$workflow"; then
     fail "$workflow must not source tq from a sibling checkout or local build"
   fi

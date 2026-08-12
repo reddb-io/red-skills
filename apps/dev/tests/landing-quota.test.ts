@@ -32,8 +32,14 @@ function buildFakeExec(prMergeResponses: ExecOutput[]): {
     calls.push([cmd, ...args]);
     const j = [cmd, ...args].join(" ");
 
-    // gh pr list → return existing PR 77 so create is skipped
-    if (cmd === "gh" && args.includes("list")) {
+    // The routed open-PR probe (#3730): `gh api repos/.../pulls -f state=open
+    // ...` → return existing PR 77 so create is skipped.
+    if (
+      cmd === "gh" &&
+      args.includes("api") &&
+      args.some((a) => /repos\/.+\/pulls$/.test(a)) &&
+      args.includes("state=open")
+    ) {
       return { code: 0, stdout: "77\n", stderr: "" };
     }
     // REST pull-request merge — drain the provided response queue

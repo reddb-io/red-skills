@@ -105,6 +105,7 @@ function harness(opts: HarnessOptions = {}): {
 
   /** #2864: flipped by the landing's `gh pr update-branch` repair. */
   let branchUpdated = false;
+    let behindMerged = false;
 
   const deps: ReconcileDeps = {
     ...HOST_RECONCILE_PORTS,
@@ -175,12 +176,29 @@ function harness(opts: HarnessOptions = {}): {
         }
       }
       if (opts.behindBase) {
-        if (j.includes("pr update-branch")) {
+        if (j.includes("pr update-branch") || /pulls\/\d+\/update-branch/.test(j)) {
           branchUpdated = true;
           return { code: 0, stdout: "", stderr: "" };
         }
-        if ((j.includes("pr merge") || /pulls\/\d+\/merge/.test(j)) && !branchUpdated) {
+        if ((j.includes("pr merge") || /pulls\/\d+\/merge(?!-)/.test(j)) && !branchUpdated) {
           return { code: 1, stdout: "", stderr: "Base branch was modified. Review and try the merge again." };
+        }
+        if ((j.includes("pr merge") || /pulls\/\d+\/merge(?!-)/.test(j)) && branchUpdated) {
+          behindMerged = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        // The routed single-object probe (#3726) answers BEHIND until the
+        // update repairs it, then CLEAN, then the merged confirmation.
+        if (readsPull(argv) && !behindMerged) {
+          return {
+            code: 0,
+            stdout: JSON.stringify(restPullBody({
+              state: "OPEN", mergedAt: null,
+              mergeStateStatus: branchUpdated ? "CLEAN" : "BEHIND",
+              mergeable: "MERGEABLE",
+            })),
+            stderr: "",
+          };
         }
         // The READINESS probe only: since #3030 the merge confirmation also asks
         // for `mergeStateStatus`, and answering it with a payload carrying no
@@ -210,8 +228,12 @@ function harness(opts: HarnessOptions = {}): {
       if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
         return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
       }
-      // landPr reuses an open PR via `gh pr list`; reply with a number.
-      if (argv.includes("pr") && argv.includes("list")) {
+      // landPr reuses an open PR via the routed REST pulls probe (#3726) or
+      // the legacy `gh pr list`; reply with a number either way.
+      if (
+        (argv.includes("pr") && argv.includes("list")) ||
+        (argv.includes("api") && argv.some((a) => /repos\/.+\/pulls$/.test(a)) && argv.includes("state=open"))
+      ) {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
       // #2986 merge confirmation: this forge merges on the spot, so the probe
@@ -226,6 +248,8 @@ function harness(opts: HarnessOptions = {}): {
               mergedAt: "2026-08-01T00:00:00Z",
               mergeCommitOid: "abc1234",
               autoMerge: false,
+              mergeStateStatus: "CLEAN",
+              mergeable: "MERGEABLE",
             }),
           ),
           stderr: "",
@@ -526,7 +550,7 @@ describe("reconcile — red → park", () => {
 
     // One `gh pr update-branch` — exactly what a human does — then it merges.
     expect(result.outcome).toBe("landed");
-    expect(trace.mergeCalls.some((c) => c.join(" ").includes("pr update-branch"))).toBe(true);
+    expect(trace.mergeCalls.some((c) => /pr update-branch|pulls\/\d+\/update-branch/.test(c.join(" ")))).toBe(true);
     expect(trace.closed).toEqual([9]);
     expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);

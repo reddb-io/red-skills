@@ -9,6 +9,7 @@ import {
   placementEnabled,
   planWorkerPlacement,
   REDSKILLED_PLACEMENT_ENV,
+  REDSKILLED_WORKER_STOP_TIMEOUT_SEC,
   workerUnitName,
   type WorkerPlacementProbes,
 } from "../src/worker-placement.js";
@@ -109,6 +110,20 @@ describe("worker placement — Linux with a user session", () => {
         "--property=LimitCORE=0",
       ]);
     }
+  });
+
+  it("states its own stop timeout rather than inheriting systemd's ninety seconds", () => {
+    // A runner that ignores SIGTERM is the common case here, so a unit left on
+    // the default sits in `deactivating` for a minute and a half whenever
+    // anything on the host stops it. The unit carries the shorter escalation
+    // itself, so it holds for an operator's `systemctl stop` and for a daemon
+    // that is no longer there — not only for the path the daemon drives.
+    const placement = plan(LINUX_WITH_SESSION);
+    const placementArgs = placement.args.slice(0, placement.args.indexOf("--"));
+    expect(placementArgs.filter((arg) => arg.startsWith("--property=TimeoutStopSec="))).toEqual([
+      `--property=TimeoutStopSec=${REDSKILLED_WORKER_STOP_TIMEOUT_SEC}`,
+    ]);
+    expect(REDSKILLED_WORKER_STOP_TIMEOUT_SEC).toBeLessThan(90);
   });
 
   it("carries max_processes as TasksMax exactly when it is declared", () => {

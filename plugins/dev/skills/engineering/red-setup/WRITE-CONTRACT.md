@@ -7,7 +7,7 @@ Show the user a draft of:
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
 - The Section H development-workflow changes: `plugins.dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
-- The Section E2 required-host-binary record: `host_binaries.tq.version: 0.22.0`
+- The Section E2 required-host-binary record: `host_binaries.tq.version: 0.26.2`
 - The Section E3 daemon provisioning: the `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` run, and — only if the user asked for it — the text of the optional `redskilled.service` user unit
 - The Section G Worktree setup facts and the exact confirmed `plugins.dev.afk.setup` command(s), including any `LEFTHOOK=0` / `HUSKY=0` opt-out
 - The Section G harness inventory (package/path plus discovered `test`, `typecheck`, `lint`, and `build` scripts), CI/merge-queue evidence, and the exact confirmed `plugins.dev.afk.validation` block
@@ -95,16 +95,16 @@ Install and record required host binaries (Section E2):
 1. Install the pinned official crate exactly as documented:
 
    ```bash
-   cargo install reddb-io-tq --version 0.22.0 --locked --force
+   cargo install reddb-io-tq --version 0.26.2 --locked --force
    ```
 
-2. Verify `tq --version` reports `0.22.0` or newer. If it is older, stop and report the mismatch; do not offer a jq fallback.
+2. Verify `tq --version` reports `0.26.2` or newer. If it is older, stop and report the mismatch; do not offer a jq fallback.
 3. Ensure `.red/config.yaml` records the pin:
 
    ```yaml
    host_binaries:
      tq:
-       version: 0.22.0
+       version: 0.26.2
    ```
 
    If `.red/config.yaml` already exists, merge only that `host_binaries.tq.version` entry and preserve unrelated content.

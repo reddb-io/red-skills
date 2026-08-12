@@ -308,6 +308,17 @@ describe("the statusline Worker table (#3151)", () => {
     expect(row).toContain("ctx=108k");
     expect(row).toContain("hb=3s");
   });
+
+  it("keeps loc on the row at the default width — annotations yield first", () => {
+    // The regression this pins: at maxWidth 120 the positional tail-pop ate
+    // loc/tls/rsn/txt while keeping eta and base, so a Worker deep in a big
+    // diff rendered as if it had produced nothing.
+    const doc = payload({ workers: [worker({ display: display({ added: 1394, removed: 7397 }) })] });
+    const row = stripAnsi(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 120 }).lines[1]!);
+    expect(row).toContain("loc=+1394 -7397");
+    expect(row).toContain("hb=3s");
+    expect(row).toContain("iss=3096");
+  });
 });
 
 describe("the coloured panel and dashboard (#3152)", () => {

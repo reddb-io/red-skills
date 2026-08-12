@@ -376,23 +376,35 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     // wrong-cwd binding would surface here.
     expect(trace).toEqual([
       { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
+      // editLabels reads the current set, then PATCHes the FULL set (#3728).
+      { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
+      { cmd: "gh", args: ["api", "-X", "PATCH", "repos/acme/widgets/issues/42", "-F", "labels[]=running"], cwd: root },
       {
         cmd: "gh",
-        args: ["issue", "edit", "42", "--repo", "acme/widgets", "--remove-label", "ready-for-agent", "--add-label", "running"],
+        args: [
+          "api", "repos/acme/widgets/issues/42/comments", "--paginate", "--slurp", "--jq",
+          '{comments: (add | map({body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}))}',
+        ],
         cwd: root,
       },
-      { cmd: "gh", args: ["issue", "view", "42", "--repo", "acme/widgets", "--json", "comments"], cwd: root },
       { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
       { cmd: "git", args: ["-C", root, "push", "origin", `${branch}:refs/heads/${branch}`], cwd: root },
       { cmd: "git", args: ["-C", root, "merge", "--ff-only", "origin/main"], cwd: root },
       { cmd: "git", args: ["rev-parse", "--short", "HEAD"], cwd: root },
-      { cmd: "gh", args: ["issue", "close", "42", "--repo", "acme/widgets", "--reason", "completed"], cwd: root },
-      { cmd: "gh", args: ["issue", "edit", "42", "--repo", "acme/widgets", "--remove-label", "running"], cwd: root },
+      { cmd: "gh", args: ["api", "-X", "PATCH", "repos/acme/widgets/issues/42", "-f", "state=closed", "-f", "state_reason=completed"], cwd: root },
+      // The label drop re-reads the set; the fake always answers
+      // ready-for-agent, so the full-set PATCH restates it (#3728).
+      { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
+      { cmd: "gh", args: ["api", "-X", "PATCH", "repos/acme/widgets/issues/42", "-F", "labels[]=ready-for-agent"], cwd: root },
       { cmd: "git", args: ["-C", root, "push", "origin", "--delete", branch], cwd: root },
       { cmd: "git", args: ["branch", "-D", branch], cwd: root },
       {
         cmd: "gh",
-        args: ["issue", "list", "--repo", "acme/widgets", "--label", "req:42", "--state", "open", "--limit", "200", "--json", "number,labels"],
+        args: [
+          "api", "repos/acme/widgets/issues", "--method", "GET", "--paginate", "--slurp",
+          "-f", "state=open", "-f", "labels=req:42", "-f", "per_page=100",
+          "--jq", "add | map(select(.pull_request == null) | {number, labels})",
+        ],
         cwd: root,
       },
     ]);

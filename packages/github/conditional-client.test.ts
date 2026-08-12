@@ -150,9 +150,10 @@ describe("the conditional GitHub client", () => {
     expect(seen.every((url) => !url.includes("/graphql"))).toBe(true);
   });
 
-  it("parks an operation with no equivalent by naming its pool and reset", async () => {
+  it("parks an operation with no equivalent by naming its pool and reset, with the gate ON", async () => {
     const client = createGithubClient({
       token: "test-token",
+      budgetGate: "on",
       balance: () => balance(0, 4_883),
       retryCount: 0,
       throttle: false,
@@ -179,6 +180,7 @@ describe("the conditional GitHub client", () => {
     const instants = ["2026-08-05T11:00:00.000Z", "2026-08-05T11:00:30.000Z"];
     const client = createGithubClient({
       token: "test-token",
+      budgetGate: "on",
       balance: () => current,
       now: () => instants.shift() ?? "2026-08-05T11:00:30.000Z",
       retryCount: 0,
@@ -315,6 +317,7 @@ describe("the conditional GitHub client", () => {
     const seen: string[] = [];
     const client = createGithubClient({
       token: "test-token",
+      budgetGate: "on",
       balance: () => pendingBalance,
       retryCount: 0,
       throttle: false,
@@ -650,4 +653,171 @@ describe("the conditional GitHub client", () => {
 
     expect(isGithubRateLimitError(error)).toBe(true);
   });
+});
+
+describe("the balance watches; by default it stops nothing (#3768)", () => {
+  it("issues a read a spent pool would have refused, because the gate is off", async () => {
+    const seen: string[] = [];
+    const client = createGithubClient({
+      token: "test-token",
+      // Spent on both rails: the gate, when on, refuses this before transport.
+      balance: () => balance(0, 0),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify({ check_runs: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const answer = await client.conditionalRest({
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" },
+    });
+
+    expect(answer.data).toEqual({ check_runs: [] });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("never waits on the balance it will not consult", async () => {
+    let asked = 0;
+    const client = createGithubClient({
+      token: "test-token",
+      // A provider that never settles: the wedge shape of #3768.
+      balance: () => {
+        asked += 1;
+        return new Promise<never>(() => undefined);
+      },
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async () => new Response(JSON.stringify({ check_runs: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+
+    const startedAt = Date.now();
+    const answer = await client.conditionalRest({
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" },
+    });
+
+    expect(answer.data).toEqual({ check_runs: [] });
+    expect(asked).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it("bounds the balance a coalescing flush DOES consult, so one stall is not every read", async () => {
+    const seen: string[] = [];
+    const client = createGithubClient({
+      token: "test-token",
+      balanceTimeoutMs: 25,
+      // The flush reads the balance to pick a rail; a stalled ask must degrade to
+      // unknown rather than hold every joined read.
+      balance: () => new Promise<never>(() => undefined),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify({ number: 7, state: "open" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    const read = (number: number) => client.singleObject<{ number: number }>({
+      cacheKey: `pr:acme/widgets:${number}`,
+      kind: "pr",
+      owner: "acme",
+      repo: "widgets",
+      number,
+      selection: "number",
+      operation: { key: "pr view", budget: "rest" },
+    });
+
+    const startedAt = Date.now();
+    const answers = await Promise.all([read(7), read(8)]);
+
+    expect(answers.map(({ surface }) => surface)).toEqual(["rest", "rest"]);
+    expect(seen).toHaveLength(2);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it("still refuses a spent pool when the operator turned the gate on", async () => {
+    const client = createGithubClient({
+      token: "test-token",
+      budgetGate: "on",
+      balance: () => balance(0, 0),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async () => {
+        throw new Error("a gated dry pool must be refused before transport");
+      },
+    });
+
+    const error = await client.conditionalRest({
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" },
+    }).then(() => null, (thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GithubPoolUnavailableError);
+  });
+
+  it("times a read out loudly instead of hanging on a silent transport", async () => {
+    const client = createGithubClient({
+      token: "test-token",
+      timeoutMs: 25,
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: () => new Promise<Response>(() => undefined),
+    });
+
+    const startedAt = Date.now();
+    const error = await client.conditionalRest({
+      cacheKey: "checks:acme/widgets:abc123",
+      route: "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      parameters: { owner: "acme", repo: "widgets", ref: "abc123" },
+      operation: { key: "pr checks", budget: "rest" },
+    }).then(() => null, (thrown: unknown) => thrown);
+
+    expect(String(error)).toContain("deadline");
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+  });
+});
+
+describe("a 404 is an answer, not a failure", () => {
+  it("asks once for an absent resource instead of retrying it", async () => {
+    let calls = 0;
+    const client = createGithubClient({
+      token: "test-token",
+      throttle: false,
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ message: "Not Found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const error = await client.conditionalRest({
+      cacheKey: "codeowners:acme/widgets:.github/CODEOWNERS",
+      route: "GET /repos/{owner}/{repo}/contents/{path}",
+      parameters: { owner: "acme", repo: "widgets", path: ".github/CODEOWNERS" },
+      operation: { key: "api rest", budget: "rest" },
+    }).then(() => null, (thrown: unknown) => thrown);
+
+    expect((error as { status?: number }).status).toBe(404);
+    // Retrying cost 93s of backoff per CODEOWNERS lookup and froze Worker boot.
+    expect(calls).toBe(1);
+  }, 60_000);
 });

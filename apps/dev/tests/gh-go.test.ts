@@ -19,17 +19,19 @@ function recording(stdout: string, code = 0, stderr = ""): Recorder {
 
 describe("createIssue", () => {
   it("resolves the new number from the issues URL gh prints", async () => {
-    const rec = recording("https://github.com/acme/widgets/issues/4242\n");
+    // The routed REST write (#3730): `gh api -X POST repos/.../issues`, and the
+    // create response's `html_url` field is the URL the number is pulled from.
+    const rec = recording(JSON.stringify({ html_url: "https://github.com/acme/widgets/issues/4242" }));
     const ctx: GhContext = { cwd: "/r", repo: "acme/widgets", exec: rec.exec };
     const num = await createIssue(ctx, { title: "/go: x", body: "demand", labels: ["lane:go"] });
     expect(num).toBe(4242);
     const args = rec.calls[0]!.args;
-    expect(args.slice(0, 2)).toEqual(["issue", "create"]);
-    expect(args).toContain("--title");
-    expect(args).toContain("/go: x");
-    // Each label is its own --label so a comma in a value is never split.
-    expect(args.filter((a) => a === "--label")).toHaveLength(1);
-    expect(args).toContain("lane:go");
+    expect(args.slice(0, 3)).toEqual(["api", "-X", "POST"]);
+    expect(args).toContain("repos/acme/widgets/issues");
+    expect(args).toContain("-f");
+    expect(args).toContain("title=/go: x");
+    // Each label is its own -F labels[]= so a comma in a value is never split.
+    expect(args.filter((a) => a === "labels[]=lane:go")).toHaveLength(1);
   });
 
   it("throws when gh exits non-zero (a failed mint is never a created issue)", async () => {

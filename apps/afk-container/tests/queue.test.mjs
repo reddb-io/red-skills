@@ -59,18 +59,18 @@ describe("listReadyIssues", () => {
 
     expect(issues).toHaveLength(1);
     expect(exec).toHaveBeenCalledWith("gh", [
-      "issue",
-      "list",
-      "--repo",
-      "owner/name",
-      "--label",
-      "ready-for-agent",
-      "--state",
-      "open",
-      "--limit",
-      "100",
-      "--json",
-      "number,createdAt,labels",
+      "api",
+      "repos/owner/name/issues",
+      "--method",
+      "GET",
+      "-f",
+      "state=open",
+      "-f",
+      "labels=ready-for-agent",
+      "-f",
+      "per_page=100",
+      "--jq",
+      "map(select(.pull_request == null) | {number, createdAt: .created_at, labels})",
     ]);
   });
 

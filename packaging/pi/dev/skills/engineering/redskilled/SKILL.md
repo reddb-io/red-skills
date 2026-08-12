@@ -203,6 +203,32 @@ Use the ADR 0091 npm direct-run form for every daemon operation. The published
 binary is `red-skills-redskilled`; `redskilled` is only the daemon's name, and a
 bare invocation is not installed on an operator's machine by default.
 
+## GitHub budget gate — off by default, opt-in by config
+
+**The quota belongs to the operator, so nothing is refused on budget posture.**
+By default no read or write is blocked, deferred, or held waiting for a fresh
+balance: if you want to spend the whole token, the client lets you. What stays on
+in both modes is the *telemetry* — the balance-history lane, the spend ledger and
+the rate-limit reporting all keep recording. The gate controls exactly one thing:
+whether an observation is allowed to become a refusal.
+
+**Turn it on with `github.budget_gate`.** The key is read from the project's
+`.red/config.yaml` first, then the operator's host `~/.red/config.yaml`; the
+env var `RED_GITHUB_BUDGET_GATE` overrides both for a single run. Anything other
+than `on` — including an absent key and an unparseable file — is `off`, because a
+typo must never be the thing that starts refusing your own reads.
+
+```yaml
+# .red/config.yaml (this project) or ~/.red/config.yaml (this machine)
+github:
+  budget_gate: on
+```
+
+**Turn it on when you share one token across projects and want the claim to
+outlive the convenience reads** — with the gate on, a pool inside its reserved
+band refuses convenience reads first and keeps admitting the claim, a landing and
+a finishing Worker's closing comment. Leave it off for a token you alone spend.
+
 ## Where the evidence lives
 
 | Surface | Path | What it answers |

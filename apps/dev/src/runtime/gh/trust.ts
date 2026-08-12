@@ -237,13 +237,25 @@ async function actorWriteAccess(ctx: GhContext, actor: string): Promise<boolean 
 /** The GitHub-recognised CODEOWNERS locations, in resolution order. */
 const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
 
-/** Resolve whether `@actor` is an owner token in the repo CODEOWNERS file. Reads
- * the recognised locations in order; the first that resolves is parsed. undefined
- * when no read succeeded (transient/auth) and `false` when a file was read but
- * the actor is absent (or no CODEOWNERS exists at all). */
-async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean | undefined> {
-  const repo = githubRepo(ctx);
-  if (!repo) return undefined;
+/**
+ * The CODEOWNERS file resolved once per repository per process.
+ *
+ * The file is a REPOSITORY fact, but the trust gate asks it per candidate: a
+ * boot listing 14 candidates re-read the same three locations 14 times. In a
+ * repo that has no CODEOWNERS, every one of those was three 404s, which is why
+ * this cache is load-bearing rather than an optimization. `null` records the
+ * definitive absence; a read that FAILED is never cached, so one blip cannot
+ * poison the trust signal for the rest of the process.
+ */
+const codeownersByRepo = new Map<string, Promise<string | null | undefined>>();
+
+/** Read the first CODEOWNERS location that resolves. `null` when every
+ * recognised location answered a definitive 404, `undefined` when no read
+ * succeeded (transient/auth). */
+async function readRepoCodeowners(
+  ctx: GhContext,
+  repo: { owner: string; repo: string },
+): Promise<string | null | undefined> {
   let sawDefinitiveMiss = false;
   for (const path of CODEOWNERS_PATHS) {
     try {
@@ -254,7 +266,7 @@ async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean
         operation: { key: "api rest", budget: "rest" },
         actor: "dev:trust",
       });
-      return codeownersHasOwner(String(answer.data ?? ""), actor);
+      return String(answer.data ?? "");
     } catch (error) {
       if (errorStatus(error) === 404) {
         sawDefinitiveMiss = true;
@@ -263,8 +275,33 @@ async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean
       return undefined; // transient/auth failure — signal not available
     }
   }
-  // Every location returned a definitive 404 → there is no CODEOWNERS file.
-  return sawDefinitiveMiss ? false : undefined;
+  return sawDefinitiveMiss ? null : undefined;
+}
+
+/** Resolve whether `@actor` is an owner token in the repo CODEOWNERS file.
+ * undefined when no read succeeded (transient/auth) and `false` when a file was
+ * read but the actor is absent (or no CODEOWNERS exists at all). */
+async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean | undefined> {
+  const repo = githubRepo(ctx);
+  if (!repo) return undefined;
+  const key = `${repo.owner}/${repo.repo}`;
+  let pending = codeownersByRepo.get(key);
+  if (pending === undefined) {
+    pending = readRepoCodeowners(ctx, repo);
+    codeownersByRepo.set(key, pending);
+  }
+  const content = await pending;
+  if (content === undefined) {
+    codeownersByRepo.delete(key); // an unavailable signal is not an answer to keep
+    return undefined;
+  }
+  return content === null ? false : codeownersHasOwner(content, actor);
+}
+
+/** Forget the per-process CODEOWNERS resolutions. Tests only: a cache that
+ * survives between cases would answer the next case's first read. */
+export function resetCodeownersCache(): void {
+  codeownersByRepo.clear();
 }
 
 /** True when `@actor` (case-insensitive) appears as an owner token on any

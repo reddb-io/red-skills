@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
+import { createWorkerTeardownLedger } from "./worker-teardown.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
   appendRedskilledMetricObservation,
@@ -337,6 +338,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const liveness = options.liveness ?? detectWorkerLiveness;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
+  /** Exactly-once Worker teardown: a second ask joins the stop already in flight. */
+  const endWorkerOnce = createWorkerTeardownLedger(stopProbe);
   const unitInventory = options.unitInventory ??
     (() =>
       maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost)
@@ -1497,15 +1500,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   /** Stop one Worker the daemon holds, and record its death. */
   async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
-    let confirmed = false;
-    // A refused stop still releases the daemon's claim; the event names that the
-    // process group may survive rather than forging host confirmation.
-    try { confirmed = (await stopProbe(worker)) === true; } catch {}
-    forgetWorker(worker.worker_id);
-    const pgid = worker.pgid ?? worker.pid;
-    record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
-      `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
-    armIdleTimer();
+    await endWorkerOnce(worker, (confirmed) => {
+      forgetWorker(worker.worker_id);
+      const pgid = worker.pgid ?? worker.pid;
+      record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
+        `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
+      armIdleTimer();
+    });
     return true;
   }
 
@@ -1714,16 +1715,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   async function killWorkerOverBudget(workerId: string, detail: string): Promise<boolean> {
     const worker = workers.get(workerId);
     if (!worker) return false;
-    try {
-      await stopProbe(worker);
-    } catch {
-      // The kill is recorded either way: a stop the host refused still ends the
-      // daemon's claim on the budget, and a silent failure would leave the
-      // accounting holding room for a Worker nobody is tracking any more.
-    }
-    forgetWorker(workerId);
-    record("worker-budget-kill", worker, detail);
-    armIdleTimer();
+    // The kill is recorded either way: a stop the host refused still ends the
+    // daemon's claim on the budget, and a silent failure would leave the
+    // accounting holding room for a Worker nobody is tracking any more. It joins
+    // a teardown already in flight rather than starting a second one, so a floor
+    // tick that lands on a Worker a project is already stopping writes no second
+    // death and gives no second slot back.
+    await endWorkerOnce(worker, () => {
+      forgetWorker(workerId);
+      record("worker-budget-kill", worker, detail);
+      armIdleTimer();
+    });
     return true;
   }
 

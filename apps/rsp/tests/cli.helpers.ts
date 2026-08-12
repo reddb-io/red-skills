@@ -184,7 +184,7 @@ function normalizedDeadlineMs(durationMs = 5_000): number {
 }
 
 const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(TEST_NODE_NOOP_BASELINE_MS, 250, 2_000);
-const TEST_RESIDENT_READY_TIMEOUT_MS = normalizedDurationMs(10_000);
+export const TEST_RESIDENT_READY_TIMEOUT_MS = normalizedDurationMs(10_000);
 
 function testChildEnv(env: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {

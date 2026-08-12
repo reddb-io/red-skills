@@ -57,7 +57,8 @@ function fakeGh(
     // `<name>[bot]` where gh normalizes it to `app/<name>`, a difference the
     // trust check would read as a different actor.
     if (readsIssue(args)) {
-      return Promise.resolve(ok(JSON.stringify(restIssueBody({ labels, body }))));
+      // The routed REST issue body carries the author as `user.login` (#3729).
+      return Promise.resolve(ok(JSON.stringify({ ...restIssueBody({ labels, body }), user: { login: author } })));
     }
     if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "comments") {
       return Promise.resolve(ok(JSON.stringify({
@@ -86,6 +87,32 @@ function fakeGh(
       const id = Number(idArg.match(/issues\/comments\/(\d+)/)?.[1] ?? 0);
       const bodyArg = args.find((arg) => arg.startsWith("body=")) ?? "body=";
       commentEdits.push({ id, body: bodyArg.slice("body=".length) });
+      return Promise.resolve(ok());
+    }
+    // Routed REST writes (#3728): label PATCH carries the FULL set; diff it
+    // against the fixture's original labels to recover add/remove semantics.
+    if (has("PATCH") && args.some((a) => /repos\/.+\/issues\/\d+$/.test(a))) {
+      const set = args.filter((a) => a.startsWith("labels[]=")).map((a) => a.slice("labels[]=".length));
+      const stateClosed = args.some((a) => a === "state=closed");
+      if (stateClosed) {
+        const path = args.find((a) => /repos\/.+\/issues\/\d+$/.test(a))!;
+        closes.push(Number(path.split("/").pop()));
+        return Promise.resolve(ok());
+      }
+      if (args.some((a) => a === "labels[]" || a.startsWith("labels[]="))) {
+        edits.push({
+          remove: labels.filter((l) => !set.includes(l)),
+          add: set.filter((l) => !labels.includes(l)),
+        });
+        return Promise.resolve(ok());
+      }
+    }
+    if (has("POST") && args.some((a) => /repos\/.+\/issues\/\d+\/comments$/.test(a))) {
+      const body = args.find((a) => a.startsWith("body="));
+      comments.push(body ? body.slice(5) : "");
+      return Promise.resolve(ok());
+    }
+    if (has("POST") && args.some((a) => /repos\/.+\/labels$/.test(a))) {
       return Promise.resolve(ok());
     }
     if (has("edit")) {
@@ -237,6 +264,7 @@ describe("runTriage — ready-for-agent acceptance criteria lint", () => {
 
   it("holds without writes when the issue body cannot be read", async () => {
     const fake = fakeGh("alice", ["ready-for-agent"]);
+    let issueReads = 0;
     const failing: GhContext = {
       cwd: "/r",
       repo: "acme/widgets",
@@ -245,8 +273,15 @@ describe("runTriage — ready-for-agent acceptance criteria lint", () => {
         // The body read is one issue by number, so it addresses REST (#3094) —
         // the same path the label read uses, which is why this fake refuses the
         // whole single-object read rather than one `--json` selection of it.
+        // The author now rides the same single-object read (#3729), so the
+        // FIRST read succeeds (trust resolves) and later reads fail (the lint
+        // body read) — preserving this test's intent: trusted author, body
+        // unreadable.
         if (readsIssue(args)) {
-          return Promise.resolve({ code: 1, stdout: "", stderr: "network unavailable" });
+          issueReads += 1;
+          if (issueReads > 1) {
+            return Promise.resolve({ code: 1, stdout: "", stderr: "network unavailable" });
+          }
         }
         return fake.exec(cmd, argv, { cwd: "/r" });
       },

@@ -668,9 +668,12 @@ describe("rsp binary resolution guard", () => {
     });
 
     expect(res.status).toBe(0);
+    // The self-entry fallback keeps the runtime flags this process was
+    // started with (`--import` tsx here): without them the re-invocation of
+    // a loader-dependent entry cannot even load.
     expect(JSON.parse(res.stdout.toString("utf8"))).toMatchObject({
       hookSpecificOutput: {
-        updatedInput: { command: `${process.execPath} ${cli} proxy -- 'git status'` },
+        updatedInput: { command: `${process.execPath} --import ${tsxLoader} ${cli} proxy -- 'git status'` },
       },
     });
     const events = await readSpoolEvents(root);

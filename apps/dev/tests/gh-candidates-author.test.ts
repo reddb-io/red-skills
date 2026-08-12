@@ -31,7 +31,9 @@ describe("listCandidates author projection (territory --user facet)", () => {
     const calls: Array<{ tool: string; args: readonly string[] }> = [];
     const exec: ExecFn = async (tool, args) => {
       calls.push({ tool, args });
-      // rsp fast path unavailable → fall back to gh issue list.
+      // rsp fast path unavailable → fall back to the routed REST issue list
+      // (#3730): `gh api --paginate repos/{o}/{r}/issues`, whose rows carry
+      // the author under `user`, not `author` (REST dialect).
       if (tool === "rsp") return { code: 1, stdout: "", stderr: "" };
       return {
         code: 0,
@@ -41,7 +43,7 @@ describe("listCandidates author projection (territory --user facet)", () => {
             title: "fallback",
             body: "",
             labels: [{ name: "ready-for-agent" }],
-            author: { login: "octocat" },
+            user: { login: "octocat" },
           },
         ]),
         stderr: "",
@@ -58,6 +60,11 @@ describe("listCandidates author projection (territory --user facet)", () => {
       },
     ]);
     const ghCall = calls.find((c) => c.tool === "gh");
-    expect(ghCall?.args).toContain("number,title,labels,body,author");
+    expect(ghCall?.args).toEqual([
+      "api", "--paginate", "repos/o/r/issues",
+      "-f", "state=open",
+      "-f", "labels=ready-for-agent",
+      "-f", "per_page=100",
+    ]);
   });
 });

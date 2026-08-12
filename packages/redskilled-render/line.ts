@@ -539,6 +539,17 @@ function stalenessMark(payload: RedskilledRenderPayload): string {
 }
 
 /**
+ * Which columns yield first when a Worker row exceeds the width budget.
+ * Free-text tallies go before whole-run counters, and `loc` — the diff the
+ * Worker produced, the one cell that answers "what did it do?" — outlives
+ * every other vital. Identity/liveness columns (wid, iss, phase, hb) are
+ * deliberately absent: they fall only to the positional fallback.
+ */
+const WORKER_COLUMN_DROP_ORDER: readonly RedskilledDashboardColumn[] = [
+  "txt", "rsn", "ctx", "tks", "tls", "eta", "base", "elapsed", "run", "org", "loc",
+];
+
+/**
  * One coloured, aligned Worker row. The values come from the dashboard's cell
  * composer; this density owns only colour and width.
  */
@@ -562,6 +573,16 @@ function renderWorkerRows(
     rows.some((row) => width(row[column]) > 0));
   const columns = [...populated];
   let widths = workerWidths(rows, columns);
+  // Width pressure sheds annotations before results: the positional tail-pop
+  // this replaces ate `loc` — the Worker's actual work product — while keeping
+  // free-text counters, because the vitals happen to sit last in column order.
+  for (const drop of WORKER_COLUMN_DROP_ORDER) {
+    if (columns.length <= 1 || workerRowWidth(widths, columns) <= options.maxWidth) break;
+    const at = columns.indexOf(drop);
+    if (at < 0) continue;
+    columns.splice(at, 1);
+    widths = workerWidths(rows, columns);
+  }
   while (columns.length > 1 && workerRowWidth(widths, columns) > options.maxWidth) {
     columns.pop();
     widths = workerWidths(rows, columns);
