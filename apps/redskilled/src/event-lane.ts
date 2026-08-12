@@ -34,18 +34,22 @@ import {
   buildDaemonDeathEvent,
   buildDaemonStartEvent,
   buildDaemonStopEvent,
+  buildDaemonTakeoverFailedEvent,
   type RecordDaemonDeathInput,
   type RecordDaemonStartInput,
   type RecordDaemonStopInput,
+  type RecordDaemonTakeoverFailedInput,
 } from "./daemon-events.js";
 export {
   buildDaemonDeathEvent,
   buildDaemonStartEvent,
   buildDaemonStopEvent,
+  buildDaemonTakeoverFailedEvent,
   REDSKILLED_DAEMON_EVENT_PREFIX,
   type RecordDaemonDeathInput,
   type RecordDaemonStartInput,
   type RecordDaemonStopInput,
+  type RecordDaemonTakeoverFailedInput,
 } from "./daemon-events.js";
 import { decodeLaneRows } from "./event-lane-decode.js";
 import {
@@ -267,14 +271,6 @@ export interface RecordDemandRefusalInput {
   readonly detail: string;
 }
 
-/** One successor that failed its boot handshake while the incumbent stayed live. */
-export interface RecordDaemonTakeoverFailedInput {
-  readonly ts: string;
-  readonly pid: number;
-  readonly socketPath: string;
-  readonly detail: string;
-}
-
 /** Build one event from a Worker view. PURE. */
 export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput): RedskilledHostEvent {
   const budget = input.worker.budget ?? {};
@@ -348,43 +344,6 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     exit_code: null,
     signal: null,
     reason: null,
-  };
-}
-
-/** Build a failed takeover without forging a daemon departure. PURE. */
-export function buildDaemonTakeoverFailedEvent(
-  input: RecordDaemonTakeoverFailedInput,
-): RedskilledHostEvent {
-  return {
-    version: 1,
-    ts: input.ts,
-    kind: "daemon-takeover-failed",
-    event: "daemon-takeover-failed",
-    worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
-    project_label: "",
-    pid: input.pid,
-    workspace_path: input.socketPath,
-    fork_sha: null,
-    log_path: null,
-    isolated: false,
-    unit: null,
-    memory_high: null,
-    memory_max: null,
-    cpu_weight: null,
-    admission_verdict: null,
-    phase: null,
-    step: null,
-    tokens: null,
-    tools: null,
-    runner: null,
-    model: null,
-    base_head_sha: null,
-    base_commits_ahead: null,
-    heal_kind: null,
-    detail: input.detail,
-    exit_code: null,
-    signal: null,
-    reason: "successor-boot-failed",
   };
 }
 
