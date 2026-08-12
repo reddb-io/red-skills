@@ -47,7 +47,7 @@ import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { Runner } from "../types/runner.js";
-import { inferGithubRepoSlug } from "../runtime/wire/github-slug.js";
+import { inferGitHubRepoSlug } from "../runtime/wire/github-slug.js";
 
 export interface RequeueGh {
   view(issue: number): Promise<{ state: string; body: string; labels: string[] }>;
@@ -238,7 +238,7 @@ async function sweepRequeueClaims(gh: RequeueGh, issue: number): Promise<string[
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   if (explicit?.trim()) return explicit.trim();
-  return inferGithubRepoSlug(cwd);
+  return inferGitHubRepoSlug(cwd);
 }
 
 /** Append one liveness-lane record so the (un-poisonable) liveness evaluator
