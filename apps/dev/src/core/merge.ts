@@ -15,7 +15,7 @@
 //                branch, open or reuse the PR, `gh pr merge --merge`), then
 //                fast-forward local <target> to the merge commit.
 
-import { planGithubRestRead } from "@reddb-io/github";
+import { planGithubRestRead, planGithubWrite } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import type { GithubMergeRead } from "./github-merge-read.js";
 import { retryAfterOrphanedIndexLock } from "./index-lock.js";
@@ -2165,10 +2165,17 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
       return { ok: false, prNumber, reason: "before-merge-failed" };
     }
 
-    // 3. Merge: branch protection is honored rather than bypassed (#1103). With
-    // a native merge queue, `--auto` enqueues and the forge serializes the tail.
-    const mergeArgs = ["gh", "api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/merge`, "-f", "merge_method=merge"];
-    if (mergeTitle) mergeArgs.push("-f", `commit_title=${scrubOutbound(mergeTitle)}`);
+    // 3. Merge: branch protection is honored rather than bypassed (#1103). The
+    // call site states the CANONICAL argv; the client owns the rail (#3663):
+    // the default merge is realized on REST, and `--auto` — the GraphQL-only
+    // merge-queue enqueue — keeps its CLI form.
+    const mergeArgs = [
+      ...planGithubWrite([
+        "gh", "-R", repo, "pr", "merge", String(prNumber), "--merge",
+        ...(mergeQueue ? ["--auto"] : []),
+        ...(mergeTitle ? ["--subject", scrubOutbound(mergeTitle)] : []),
+      ]).args,
+    ];
     if (mergeQueue && input.queueHandoff) {
       const custody = await input.queueHandoff(prNumber, async () => {
         const rejected = await mergeWithStaleBranchRecovery(exec, {
@@ -2357,17 +2364,15 @@ async function ensurePr(
     await exec(["gh", "-R", repo, "pr", "ready", String(existing)]);
     return existing;
   }
+  // Canonical argv in, rail out: the client realizes the create on REST (#3663).
   const create = await exec([
-    "gh", "api", "-X", "POST",
-    `repos/${repo}/pulls`,
-    "-f",
-    `base=${target}`,
-    "-f",
-    `head=${branch}`,
-    "-f",
-    `title=${scrubOutbound(prTitle)}`,
-    "-f",
-    `body=${scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`)}`,
+    ...planGithubWrite([
+      "gh", "-R", repo, "pr", "create",
+      "--base", target,
+      "--head", branch,
+      "--title", scrubOutbound(prTitle),
+      "--body", scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
+    ]).args,
   ]);
   if (create.code !== 0) return undefined;
   return await listOpenPr(exec, repo, branch, target);
@@ -2405,19 +2410,15 @@ export async function openDraftPr(exec: Exec, input: OpenDraftPrInput): Promise<
   const { repo, branch, target, n, title, body, prTitle = `merge: #${n} ${title}` } = input;
   const existing = await listOpenPr(exec, repo, branch, target);
   if (existing !== undefined) return existing;
+  // Canonical argv in, rail out: the client realizes the create on REST (#3663).
   const create = await exec([
-    "gh", "api", "-X", "POST",
-    `repos/${repo}/pulls`,
-    "-F",
-    "draft=true",
-    "-f",
-    `base=${target}`,
-    "-f",
-    `head=${branch}`,
-    "-f",
-    `title=${scrubOutbound(prTitle)}`,
-    "-f",
-    `body=${scrubOutbound(body)}`,
+    ...planGithubWrite([
+      "gh", "-R", repo, "pr", "create", "--draft",
+      "--base", target,
+      "--head", branch,
+      "--title", scrubOutbound(prTitle),
+      "--body", scrubOutbound(body),
+    ]).args,
   ]);
   if (create.code !== 0) return undefined;
   return await listOpenPr(exec, repo, branch, target);

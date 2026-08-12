@@ -2201,7 +2201,9 @@ describe("landPr on a merge-queue base (#2986)", () => {
       mergeQueueWait: { sleep: async () => {}, maxPolls: 2 },
     });
     expect(r).toEqual({ ok: false, prNumber: 42, reason: "queue-pending" });
-    expect(calls.some((c) => c.join(" ").includes("pulls/42/merge"))).toBe(true);
+    // A merge-queue base enqueues through the GraphQL-only `--auto` form; the
+    // REST PUT is the DEFAULT merge's rail, never the queue's (#3663).
+    expect(calls.some((c) => c.join(" ").includes("pr merge 42 --merge --auto"))).toBe(true);
   });
 
   it("reports ok with the queue's merge commit once the PR reports merged=true", async () => {

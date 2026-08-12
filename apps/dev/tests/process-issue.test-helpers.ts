@@ -522,9 +522,9 @@ export function harness(opts: HarnessOptions = {}): {
       // `gh pr list` is the ONE reuse probe every PR path shares (#2731): it
       // answers empty until a PR has actually been created, so a test can tell
       // a lazily-minted draft from a landing that opened its own.
-      if (argv.includes("pr") && argv.includes("create")) {
+      if ((argv.includes("pr") && argv.includes("create")) || (argv.includes("POST") && argv.some((a) => /repos\/.+\/pulls$/.test(a)))) {
         prOpen = true;
-        return { code: 0, stdout: "", stderr: "" };
+        return { code: 0, stdout: JSON.stringify({ number: 42 }), stderr: "" };
       }
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: prOpen ? "42\n" : "", stderr: "" };
@@ -611,7 +611,7 @@ export function harness(opts: HarnessOptions = {}): {
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
-      if (j.includes("pr merge")) {
+      if (j.includes("pr merge") || /pulls\/\d+\/merge/.test(j)) {
         return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
       return { code: 0, stdout: "", stderr: "" };

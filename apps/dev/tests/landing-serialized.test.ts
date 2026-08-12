@@ -125,7 +125,7 @@ describe("doLanding — serialized landing (#1337)", () => {
     expect(fs.files.size).toBe(0);
   });
 
-  it("native merge queue → no land-lock is taken and the PR merge rides REST", async () => {
+  it("native merge queue → no land-lock is taken and the enqueue keeps its GraphQL-only form", async () => {
     let acquires = 0;
     const countingLock: LandLock = {
       acquire: async () => {
@@ -151,10 +151,10 @@ describe("doLanding — serialized landing (#1337)", () => {
     });
     // The forge serializes; double-serializing would only add latency.
     expect(acquires).toBe(0);
-    expect(joined(h.mergeCalls).some((c) =>
-      c.includes("gh api -X PUT repos/o/r/pulls/42/merge") && c.includes("merge_method=merge")
-    )).toBe(true);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+    // The write-plan keeps `--auto` on the CLI: the merge-queue enqueue is a
+    // GraphQL-only mutation with no REST equivalent (#3663).
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge --auto"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pulls/42/merge"))).toBe(false);
   });
 
   it("native merge queue on the DIRECT path still takes the land-lock (no PR to enqueue)", async () => {

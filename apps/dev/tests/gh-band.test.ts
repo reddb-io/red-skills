@@ -58,7 +58,8 @@ describe("the band refuses convenience, never the claim", () => {
   });
 
   it("refuses everything once the pool has nothing left, GitHub would too", async () => {
-    const refusal = await gate(balance(0)).admit(["pr", "merge", "7"], "essential");
+    // `pr merge` rides REST since #3663, so ITS pool is the one that must be dry.
+    const refusal = await gate(balance(0, 0)).admit(["pr", "merge", "7"], "essential");
 
     expect(refusal).not.toBeNull();
     expect(refusal!.admission.posture).toBe("spent");
