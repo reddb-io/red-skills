@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { PROJECT_SUPERVISOR_LANE } from "@reddb-io/red-castle/engine";
-import { inferGithubRepoSlug } from "./github-slug.js";
+import { inferGitHubRepoSlug } from "./github-slug.js";
 
 export interface RepoContext {
   /** Primary checkout dir. */
@@ -14,7 +14,7 @@ export interface RepoContext {
 
 /** Resolve owner/repo from the configured git remote, best-effort. */
 export async function resolveRepoSlug(root: string): Promise<string> {
-  return inferGithubRepoSlug(root);
+  return inferGitHubRepoSlug(root);
 }
 
 export async function resolveRepoContext(root = process.cwd()): Promise<RepoContext> {
