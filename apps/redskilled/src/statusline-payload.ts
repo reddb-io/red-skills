@@ -28,7 +28,7 @@ import {
 } from "@reddb-io/github";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
-import type { RedskilledHostState, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledHostState, RedskilledRegistrationLapse, RedskilledRegistrationStop, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
 import { isRedskilledStatuslineMetrics, type RedskilledStatuslineMetrics } from "./live-metrics.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
 import {
@@ -134,6 +134,8 @@ export interface RedskilledStatuslineVitals {
   readonly rss_source?: RedskilledRssSource | null;
 }
 
+export type RedskilledStatuslineLapse = Pick<RedskilledRegistrationLapse, "project_label" | "at" | "registered_at" | "standing" | "queue_depth"> & { readonly reason: string };
+export type RedskilledStatuslineStop = Pick<RedskilledRegistrationStop, "project_label" | "at" | "standing" | "queue_depth">;
 /** What this Worker was promised, and how much of it the daemon has seen it take. */
 export interface RedskilledStatuslineWorkerBudget {
   /** The budget the floor enforces, by its own name; `null` when there is none. */
@@ -315,21 +317,9 @@ export interface RedskilledStatuslinePayload {
    * block lets the shared renderer say `lapsed` rather than the less actionable
    * `unregistered`, and lets a re-registration outrank an older lapse record.
    */
-  readonly lapsed_projects?: readonly {
-    readonly project_label: string;
-    readonly at: string;
-    readonly registered_at?: string;
-    readonly reason: string;
-    readonly standing?: boolean;
-    readonly queue_depth?: number;
-  }[];
+  readonly lapsed_projects?: readonly RedskilledStatuslineLapse[];
   /** Registrations deliberately released through `project_stop`. */
-  readonly stopped_projects?: readonly {
-    readonly project_label: string;
-    readonly at: string;
-    readonly standing?: boolean;
-    readonly queue_depth?: number;
-  }[];
+  readonly stopped_projects?: readonly RedskilledStatuslineStop[];
   /** Registrations held by a live daemon beyond the socket that answered. */
   readonly orphaned_projects?: readonly string[];
   readonly workers: readonly RedskilledStatuslineWorker[];
