@@ -36,6 +36,7 @@ describe("the App is a payer, never an author", () => {
     expect(uses.length, "the App credential is resolved and passed, not spread around").toBeGreaterThan(0);
     // The one construction that may receive it.
     expect(withoutComments).toContain("createGithubClient({");
+    expect(withoutComments).toContain("identity: githubIdentityRef({ kind: \"app\", app })");
     // The exec surface must never see it: `runGh` builds its argv and options
     // from the context alone.
     const runGh = withoutComments.slice(withoutComments.indexOf("export function runGh"));

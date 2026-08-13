@@ -3,7 +3,7 @@
 // answer without interpreting it, never invents a full budget for a balance
 // nobody asked for, and puts the posture on the payload so "the queue looks
 // empty" and "we are out of quota" are never the same screen.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import { renderRedskilledStatusline } from "@reddb-io/redskilled-render";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledStatuslinePayload } from "../src/statusline-payload.js";
+import { resolveServeGithubBalance } from "../src/cli.js";
 
 let daemons: RedskilledDaemon[] = [];
 let dirs: string[] = [];
@@ -216,6 +217,29 @@ describe("the ask reaches the authoritative endpoint", () => {
     expect(seen[0]!.url).toContain(`/${GITHUB_RATE_LIMIT_PATH}`);
     expect(seen[0]!.method).toBe("GET");
     expect(payload).toBeTruthy();
+  });
+
+  it("adds the optional App as a separately named observer", async () => {
+    const home = await mkdtemp(join(tmpdir(), "redskilled-app-balance-"));
+    dirs.push(home);
+    const privateKey = join(home, "github-app.pem");
+    await writeFile(privateKey, "test-only-private-key");
+
+    const registration = resolveServeGithubBalance(
+      {},
+      {},
+      () => "personal-token",
+      { app_id: "4575633", installation_id: "153309957", private_key: privateKey },
+      home,
+    );
+
+    expect(registration?.observers?.map((observer) => observer.identity)).toEqual(["app:153309957"]);
+  });
+
+  it("keeps the App optional", () => {
+    const registration = resolveServeGithubBalance({}, {}, () => "personal-token", undefined, "/home/operator");
+
+    expect(registration?.observers).toBeUndefined();
   });
 });
 

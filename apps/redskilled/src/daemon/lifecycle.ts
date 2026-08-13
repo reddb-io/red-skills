@@ -787,13 +787,27 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         if (stored !== null) lastBalance = stored;
         return stored;
       }).finally(() => { balanceHydration = null; });
-      if ((await balanceHydration) !== null) return lastBalance;
+      if ((await balanceHydration) !== null) {
+        await pollGithubBalanceObservers();
+        return lastBalance;
+      }
     }
     lastBalance = await remotePoll("GitHub balance poll", () =>
       fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() }));
     await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
     await balanceRegistration.history?.append(lastBalance).catch(() => undefined);
+    await pollGithubBalanceObservers();
     return lastBalance;
+  }
+
+  /** Observe optional payers without replacing the personal balance used by policy. */
+  async function pollGithubBalanceObservers(): Promise<void> {
+    for (const observer of balanceRegistration?.observers ?? []) {
+      const observed = await remotePoll(`GitHub balance poll (${observer.identity})`, () =>
+        fetchGithubBalance({ transport: observer.transport, now: clock() }));
+      await observer.store?.write(observed).catch(() => undefined);
+      await observer.history?.append(observed).catch(() => undefined);
+    }
   }
 
   /**

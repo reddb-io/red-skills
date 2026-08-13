@@ -118,6 +118,7 @@ export {
   balanceFromReport,
   buildGithubBalanceReport,
   createGithubBalanceTransport,
+  createGithubAppBalanceTransport,
   fetchGithubBalance,
   githubBalanceCadenceMs,
   githubBalancePosture,

@@ -42,6 +42,10 @@ describe("the daemon-owned host config", () => {
       "      memory_ceiling: 8G",
       "      validation_ceiling: 3",
       "      idle_ms: 61000",
+      "      github_app:",
+      "        app_id: '4575633'",
+      "        installation_id: '153309957'",
+      "        private_key: ~/.red/redskilled/github-app.pem",
       "      hooks:",
       "        worker-birth:",
       "          argv: [/usr/local/bin/redwall, refresh]",
@@ -58,6 +62,11 @@ describe("the daemon-owned host config", () => {
       memoryCeiling: "8G",
       validationCeiling: "3",
       idleMs: "61000",
+      githubApp: {
+        app_id: "4575633",
+        installation_id: "153309957",
+        private_key: "~/.red/redskilled/github-app.pem",
+      },
       hooks: {
         "worker-birth": {
           argv: ["/usr/local/bin/redwall", "refresh"],

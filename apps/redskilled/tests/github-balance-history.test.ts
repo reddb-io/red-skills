@@ -83,4 +83,34 @@ describe("redskilled GitHub balance history", () => {
       0,
     ]);
   });
+
+  it("records the person and the optional App as two independent series", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-identity-balance-history-"));
+    roots.push(root);
+    const historyPath = join(root, "state", "github", "balance-history.toonl");
+    const daemon = await startRedskilledDaemon({
+      paths: resolveRedskilledPaths({
+        env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+        runtimeDir: root,
+      }),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      githubBalance: {
+        transport: async () => answer(4_400),
+        history: createGithubBalanceHistory({ path: historyPath, identity: "pat" }),
+        observers: [{
+          identity: "app:153309957",
+          transport: async () => answer(4_900),
+          history: createGithubBalanceHistory({ path: historyPath, identity: "app:153309957" }),
+        }],
+        intervalMsOverride: 3_600_000,
+      },
+    });
+    daemons.push(daemon);
+
+    await daemon.pollGithubBalance();
+
+    const rows = parseRecords(await readFile(historyPath, "utf8"));
+    expect(new Set(rows.map((row) => row.identity))).toEqual(new Set(["pat", "app:153309957"]));
+  });
 });

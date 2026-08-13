@@ -47,11 +47,14 @@ import {
 } from "./daemon.js";
 import {
   createGithubAttributionLedger,
+  createGithubAppBalanceTransport,
   createGithubBalanceHistory,
   createGithubBalanceStore,
   DEFAULT_GITHUB_BALANCE_TIMEOUT_MS,
   createTimedGithubFetch,
   createGithubBalanceTransport,
+  githubIdentityRef,
+  resolveGithubAppCredential,
   type GithubAttributionLedger,
   type GithubRateBudget,
 } from "@reddb-io/github";
@@ -341,10 +344,17 @@ export function resolveServeGithubBalance(
   values: { readonly "queue-endpoint"?: string },
   env: NodeJS.ProcessEnv = process.env,
   readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+  githubAppBlock?: unknown,
+  homeDir: string = homedir(),
 ): RedskilledBalanceRegistration | null {
   const host = resolveRedskilledHostToken(env, readTrackerToken);
   if (host == null) return null;
   const origin = env.GITHUB_API_URL;
+  const app = resolveGithubAppCredential({
+    env,
+    configBlock: githubAppBlock,
+    expandHome: (path) => path.startsWith("~/") ? join(homeDir, path.slice(2)) : path,
+  });
   return {
     // Bounded, so a stalled ask cannot outlive the poll that issued it and the
     // re-arm keeps happening (#3768). The poller's own remote-call deadline is
@@ -353,6 +363,16 @@ export function resolveServeGithubBalance(
       token: host.token,
       ...(origin ? { origin } : {}),
       fetchImpl: createTimedGithubFetch({ timeoutMs: DEFAULT_GITHUB_BALANCE_TIMEOUT_MS }),
+    }),
+    ...(app === null ? {} : {
+      observers: [{
+        identity: githubIdentityRef({ kind: "app", app }),
+        transport: createGithubAppBalanceTransport({
+          app,
+          ...(origin ? { origin } : {}),
+          fetchImpl: createTimedGithubFetch({ timeoutMs: DEFAULT_GITHUB_BALANCE_TIMEOUT_MS }),
+        }),
+      }],
     }),
   };
 }
@@ -474,7 +494,12 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       readTrackerCliToken,
       githubAttribution,
     );
-    const resolvedGithubBalance = resolveServeGithubBalance(values);
+    const resolvedGithubBalance = resolveServeGithubBalance(
+      values,
+      process.env,
+      readTrackerCliToken,
+      hostConfig.githubApp,
+    );
     const githubBalance = resolvedGithubBalance == null
       ? null
       : {
@@ -482,7 +507,15 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
           store: createGithubBalanceStore({ path: join(hostStateRoot, "github", "balance.toon") }),
           history: createGithubBalanceHistory({
             path: join(hostStateRoot, "github", "balance-history.toonl"),
+            identity: "pat",
           }),
+          observers: resolvedGithubBalance.observers?.map((observer) => ({
+            ...observer,
+            history: createGithubBalanceHistory({
+              path: join(hostStateRoot, "github", "balance-history.toonl"),
+              identity: observer.identity,
+            }),
+          })),
         };
     // Before this daemon anchors itself, it speaks for whatever the last one
     // could not (slice #3028). The host singleton is the only process guaranteed

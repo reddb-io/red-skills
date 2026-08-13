@@ -30,6 +30,8 @@ export interface RedskilledHostConfig {
   readonly memoryCeiling?: string;
   readonly validationCeiling?: string;
   readonly idleMs?: string;
+  /** Optional GitHub App payer; validation stays in @reddb-io/github. */
+  readonly githubApp?: Readonly<Record<string, unknown>>;
   /** Operator-scoped programs fired for public Worker lifecycle changes. */
   readonly hooks?: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>>;
   /** Public Worker lifecycle changes also surfaced through the native desktop sink. */
@@ -86,6 +88,7 @@ export async function readRedskilledHostConfig(
       ...scalarAt(redskilled, "memory_ceiling", "memoryCeiling"),
       ...scalarAt(redskilled, "validation_ceiling", "validationCeiling"),
       ...scalarAt(redskilled, "idle_ms", "idleMs"),
+      ...mappingPropertyAt(redskilled, "github_app", "githubApp"),
       ...hooksAt(redskilled),
       ...notificationsAt(redskilled),
     };
@@ -95,6 +98,17 @@ export async function readRedskilledHostConfig(
     warn(`redskilled: malformed host config ${JSON.stringify(path)}; using environment and defaults instead: ${errorMessage(error)}`);
     return {};
   }
+}
+
+function mappingPropertyAt<K extends keyof RedskilledHostConfig>(
+  values: Readonly<Record<string, unknown>>,
+  path: string,
+  key: K,
+): Pick<RedskilledHostConfig, K> | Record<never, never> {
+  const value = values[path];
+  if (value === undefined || value === null) return {};
+  if (!isMapping(value)) throw new Error(`${path} must be a map`);
+  return { [key]: value } as Pick<RedskilledHostConfig, K>;
 }
 
 /** Resolve every daemon-owned setting under one explicit precedence table. */

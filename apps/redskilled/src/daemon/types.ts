@@ -301,11 +301,21 @@ export interface RedskilledBalanceRegistration {
   readonly store?: GithubBalanceStore;
   /** Append-only forensic pool curve written from the same answers as the snapshot. */
   readonly history?: GithubBalanceHistory;
+  /** Additional credential ceilings observed on the same host cadence. */
+  readonly observers?: readonly RedskilledBalanceObserver[];
   /**
    * A hard window, for a test that needs one. Production leaves this absent and
    * lets the balance decide — that is the whole decision.
    */
   readonly intervalMsOverride?: number;
+}
+
+export interface RedskilledBalanceObserver {
+  /** Stable payer label written into history, e.g. `app:153309957`. */
+  readonly identity: string;
+  readonly transport: GithubBalanceTransport;
+  readonly store?: GithubBalanceStore;
+  readonly history?: GithubBalanceHistory;
 }
 
 /**

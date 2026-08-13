@@ -8,6 +8,7 @@ import {
   createGithubClient,
   createGithubInstallationLookup,
   githubCoveragePath,
+  githubIdentityRef,
   openGithubCoverageCache,
   planGithubRestRead,
   resolveGithubAppCredential,
@@ -219,6 +220,7 @@ export function githubReadClient(
     ...(app === null ? {} : { app }),
     attribution: createGithubAttributionLedger({
       path: join(stateDir(ctx.cwd), "github", "spend.toonl"),
+      ...(app === null ? {} : { identity: githubIdentityRef({ kind: "app", app }) }),
     }),
   });
   routedClients.set(ctx, client);

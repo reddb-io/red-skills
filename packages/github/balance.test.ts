@@ -9,6 +9,7 @@ import {
   admitGithubCall,
   admitGithubOperation,
   buildGithubBalanceReport,
+  createGithubAppBalanceTransport,
   fetchGithubBalance,
   githubBalanceCadenceMs,
   githubBalancePosture,
@@ -97,6 +98,27 @@ describe("the balance is asked, never derived", () => {
     expect(calls).toBe(1);
     expect(balance.request_count).toBe(1);
     expect(balance.outcome).toBe("asked");
+  });
+
+  it("asks the App installation's independent balance with a renewable token", async () => {
+    const authorizations: string[] = [];
+    let authentications = 0;
+    const transport = createGithubAppBalanceTransport({
+      app: { appId: "4575633", installationId: "153309957", privateKeyPath: "/not-read-in-test.pem" },
+      authenticate: async () => {
+        authentications += 1;
+        return "installation-token";
+      },
+      fetchImpl: (async (_url: string, init?: RequestInit) => {
+        authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+        return { ok: true, status: 200, json: async () => payload() } as Response;
+      }) as typeof fetch,
+    });
+
+    await transport();
+
+    expect(authentications).toBe(1);
+    expect(authorizations).toEqual(["bearer installation-token"]);
   });
 
   it("has no accumulator to seed: an unasked balance knows nothing", () => {
