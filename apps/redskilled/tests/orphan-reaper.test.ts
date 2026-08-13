@@ -56,15 +56,15 @@ function processRow(overrides: Partial<RedskilledProcessCensusRow> = {}): Redski
 }
 
 describe("the orphan reaper candidate selector", () => {
-  it("selects an unknown stamped process-group leader after the orphan grace", () => {
+  it("reports an unknown stamped process-group leader after the orphan grace", () => {
     expect(selectOrphanReaperCandidates({
       processes: [processRow()],
       held_worker_ids: new Set(),
       live_birth_ids: new Set(),
     })).toEqual([{
-      kind: "reap",
+      kind: "stranger",
       process: processRow(),
-      detail: "stamped Worker hLOST has no live birth and is at least 10 minutes old",
+      detail: "stamped Worker hLOST has no birth record in this daemon and will never be signalled",
     }]);
   });
 
@@ -192,7 +192,7 @@ describe("stamped orphan teardown", () => {
       },
     });
 
-    await expect(runtime.sweep()).resolves.toEqual({ adopted: 2, reaped: 1, suspects: 0 });
+    await expect(runtime.sweep()).resolves.toEqual({ adopted: 1, reaped: 0, suspects: 1 });
     expect(adopted).toEqual([
       {
         worker_id: "hLIVE",
@@ -200,13 +200,8 @@ describe("stamped orphan teardown", () => {
         started_at: "2026-08-11T10:09:59.000Z",
         unit: activeUnit,
       },
-      {
-        worker_id: "hLOST",
-        record_birth: true,
-        started_at: "2026-08-11T10:00:00.000Z",
-      },
     ]);
-    expect(killed).toEqual([4_242]);
+    expect(killed).toEqual([]);
     expect(reports.join(" ")).not.toMatch(/census withheld/);
   });
 
@@ -246,7 +241,7 @@ describe("stamped orphan teardown", () => {
       },
     });
 
-    await expect(runtime.sweep()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 0 });
+    await expect(runtime.sweep()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 1 });
     expect(mutations).toEqual({ adopt: 0, kill: 0, laneWrites: 0 });
   });
 
@@ -294,13 +289,14 @@ describe("stamped orphan teardown", () => {
     expect(signalled).toEqual([]);
   });
 
-  it("writes adopted birth before orphan-reaped death", async () => {
+  it("reports a stamped Worker with no birth record without adopting or signalling it", async () => {
     const root = await scratch("redskilled-orphan-daemon-");
     const paths = resolveRedskilledPaths({
       env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
       runtimeDir: root,
     });
     const killed: number[] = [];
+    const reports: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 60_000,
@@ -312,21 +308,22 @@ describe("stamped orphan teardown", () => {
         killed.push(pgid);
         return true;
       },
+      orphanReport: (detail) => reports.push(detail),
     });
     daemons.push(daemon);
 
-    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 1, reaped: 1, suspects: 0 });
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 1 });
     await daemon.flushEvents();
 
-    expect(killed).toEqual([4_242]);
+    expect(killed).toEqual([]);
     expect(daemon.workerCount()).toBe(0);
-    const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
-    expect(events[0]!.detail).toMatch(/adopted stamped orphan/);
-    expect(events[1]!.detail).toMatch(/orphan-reaped/);
+    expect(await readRedskilledEvents(paths.eventLanePath)).toEqual([]);
+    expect(reports).toEqual([
+      "stamped Worker hLOST has no birth record in this daemon and will never be signalled",
+    ]);
   });
 
-  it("closes an adopted birth when the process group survives teardown", async () => {
+  it("never invents an adoption when an unknown stamped process group survives", async () => {
     const root = await scratch("redskilled-orphan-survivor-");
     const paths = resolveRedskilledPaths({
       env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
@@ -347,14 +344,12 @@ describe("stamped orphan teardown", () => {
     });
     daemons.push(daemon);
 
-    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 1, reaped: 0, suspects: 0 });
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 1 });
     await daemon.flushEvents();
 
-    expect(killed).toEqual([4_242]);
+    expect(killed).toEqual([]);
     expect(daemon.workerCount()).toBe(0);
-    const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
-    expect(events[1]!.detail).toMatch(/group-survived: process group 4242/);
+    expect(await readRedskilledEvents(paths.eventLanePath)).toEqual([]);
   });
 
   it("adopts a stamped process whose live birth has no holder", async () => {
@@ -426,7 +421,7 @@ describe("stamped orphan teardown", () => {
     });
     daemons.push(daemon);
 
-    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 1 });
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 2 });
     expect(signalled).toEqual([]);
     expect(reports).toHaveLength(2);
     expect(reports.join(" ")).toMatch(/never be signalled/);

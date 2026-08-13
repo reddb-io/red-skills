@@ -72,7 +72,7 @@ describe("redskilled reap --report", () => {
         unstamped_suspects: 1,
         dump_files: 1,
       },
-      actions: { adopted: 0, reaped: 0, suspects: 1 },
+      actions: { adopted: 0, reaped: 0, suspects: 2 },
     });
     expect(signalled).toEqual([]);
   });
