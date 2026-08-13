@@ -85,6 +85,8 @@ export type RedskilledWorkerEventKind =
   | "worker-resource"
   | "worker-drift"
   | "worker-heal"
+  | "worker-budget-verdict"
+  | "worker-budget-grace"
   | "worker-death"
   | "worker-budget-kill";
 
@@ -95,6 +97,8 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-resource",
   "worker-drift",
   "worker-heal",
+  "worker-budget-verdict",
+  "worker-budget-grace",
   "worker-death",
   "worker-budget-kill",
 ] as const as readonly [
@@ -104,6 +108,8 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-resource",
   "worker-drift",
   "worker-heal",
+  "worker-budget-verdict",
+  "worker-budget-grace",
   "worker-death",
   "worker-budget-kill",
 ] & {
