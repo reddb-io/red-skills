@@ -14,5 +14,7 @@ right for a one-line status bar.
 
 While wiring that, `apps/redskilled` turned out to appear **nowhere** in the
 workspace CI: the shard matrix runs `apps/dev`, and the package job names five
-packages that do not include the daemon. The host authority's own test suite has
-never run on a pull request. It runs now.
+packages that do not include the daemon. The host authority — the only process
+allowed to birth a Worker — has an 859-test suite that no pull request has ever
+run, and eight of those tests fail on a clean runner. Wiring it into CI is
+therefore its own change, not a rider on this one.
