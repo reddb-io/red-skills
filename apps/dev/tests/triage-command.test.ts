@@ -71,16 +71,20 @@ function fakeGh(
       })));
     }
     if (has("api") && has("--paginate") && args.some((arg) => arg.includes("issues/") && arg.endsWith("/comments"))) {
-      return Promise.resolve(ok(existingComments.map((comment, index) => {
+      // Raw REST rows, as the paginated client returns them. The previous
+      // shape was the hand-rolled jq projection this read used to build its
+      // argv for — a projection `gh` produced only because the pipeline asked
+      // for it, and which the routed client never sees.
+      return Promise.resolve(ok(JSON.stringify(existingComments.map((comment, index) => {
         const item: FakeComment = typeof comment === "string" ? { body: comment } : comment;
-        return JSON.stringify({
+        return {
           id: item.id ?? index + 1,
           body: item.body,
-          author: { login: "red-skills-bot", is_bot: item.isBot ?? true },
-          authorAssociation: item.authorAssociation ?? "MEMBER",
-          createdAt: "2026-07-22T00:00:00Z",
-        });
-      }).join("\n")));
+          user: { login: "red-skills-bot", type: (item.isBot ?? true) ? "Bot" : "User" },
+          author_association: item.authorAssociation ?? "MEMBER",
+          created_at: "2026-07-22T00:00:00Z",
+        };
+      }))));
     }
     if (has("api") && has("PATCH") && args.some((arg) => arg.includes("issues/comments/"))) {
       const idArg = args.find((arg) => arg.includes("issues/comments/")) ?? "";

@@ -34,7 +34,7 @@ export {
 } from "./gh/issues.js";
 export type { DependencyEdgeTicketRow, DependencyEdgeTicketScan } from "./gh/issues.js";
 export type { CommentTrustResolver } from "./gh/comments.js";
-export { issueComments, readIssueComments, prComments, prReviewComments } from "./gh/comments.js";
+export { issueComments, readIssueComments } from "./gh/comments.js";
 export type { StatuslineQueueCounts } from "./gh/queue.js";
 export {
   queueVisibilityProbeInput,

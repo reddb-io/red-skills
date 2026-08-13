@@ -58,8 +58,6 @@ const EXPECTED_GH_EXPORTS = [
   "listUnblockCandidates",
   "orphanState",
   "postClaimComment",
-  "prComments",
-  "prReviewComments",
   "queueVisibilityProbeInput",
   "readIssueBody",
   "readIssueComments",
