@@ -11,6 +11,7 @@
  */
 
 import { parseRecords } from "@reddb-io/toon";
+import type { RedskilledEventKind, RedskilledHostEvent } from "./event-lane.js";
 
 type ToonlRecord = Record<string, string | number | boolean | null>;
 
@@ -44,4 +45,57 @@ export function decodeLaneRows(lines: readonly string[]): RedskilledDecodedLane 
     }
   }
   return { records, malformed };
+}
+
+/** Project one versioned lane row into the current total event shape. PURE. */
+export function decodeHostEventRow(record: ToonlRecord): RedskilledHostEvent {
+  const kind = (record.kind ?? record.event) as RedskilledEventKind;
+  return {
+    version: 1,
+    ts: String(record.ts),
+    kind,
+    event: kind,
+    worker_id: String(record.worker_id),
+    project_label: text(record.project_label) ?? "",
+    pid: Number(record.pid ?? 0),
+    ...(record.pgid == null || record.pgid === "" ? {} : { pgid: Number(record.pgid) }),
+    ...(text(record.proc_start_time) == null ? {} : { proc_start_time: text(record.proc_start_time)! }),
+    workspace_path: text(record.workspace_path) ?? "",
+    fork_sha: text(record.fork_sha),
+    log_path: text(record.log_path),
+    isolated: record.isolated === true || record.isolated === "true",
+    unit: text(record.unit),
+    memory_high: text(record.memory_high),
+    memory_max: text(record.memory_max),
+    cpu_weight: numberOrNull(record.cpu_weight),
+    admission_verdict: text(record.admission_verdict),
+    phase: text(record.phase),
+    step: text(record.step),
+    tokens: numberOrNull(record.tokens),
+    tools: numberOrNull(record.tools),
+    runner: text(record.runner),
+    model: text(record.model),
+    base_head_sha: text(record.base_head_sha),
+    base_commits_ahead: numberOrNull(record.base_commits_ahead),
+    heal_kind: text(record.heal_kind),
+    detail: text(record.detail),
+    // Legacy rows read exit facts as absent, never as a clean zero exit.
+    exit_code: numberOrNull(record.exit_code),
+    signal: text(record.signal),
+    systemd_result: text(record.systemd_result),
+    memory_peak_bytes: numberOrNull(record.memory_peak_bytes),
+    memory_swap_peak_bytes: numberOrNull(record.memory_swap_peak_bytes),
+    journal_tail: text(record.journal_tail),
+    // Legacy rows predate daemon stop reasons; absence remains honest.
+    reason: text(record.reason),
+  };
+}
+
+function text(value: ToonlRecord[string]): string | null {
+  if (value == null || value === "") return null;
+  return String(value);
+}
+
+function numberOrNull(value: ToonlRecord[string]): number | null {
+  return value == null || value === "" ? null : Number(value);
 }
