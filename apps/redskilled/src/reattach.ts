@@ -171,8 +171,13 @@ export function detectUnitExitFacts(unit: string): RedskilledUnitExitFacts | nul
     { encoding: "utf8" },
   );
   if (probe.error != null || probe.status !== 0) return null;
+  return parseUnitExitFacts(probe.stdout ?? "");
+}
+
+/** Decode `systemctl show`'s stable `Property=value` surface. PURE. */
+export function parseUnitExitFacts(stdout: string): RedskilledUnitExitFacts {
   const properties = new Map(
-    (probe.stdout ?? "")
+    stdout
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.includes("="))
