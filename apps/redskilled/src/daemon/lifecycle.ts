@@ -461,6 +461,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     refuse: (detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel: "redskilled/host-events", detail }).catch(() => undefined),
   });
   let workerBirthTail: Promise<void> = Promise.resolve();
+  let observedExitTail: Promise<void> = Promise.resolve();
   function startAfterProjectHooks<T>(start: () => T | Promise<T>): Promise<T> {
     const turn = workerBirthTail.then(async () => { await projectHooks.waitForSettled(); const result = await start();
       await projectHooks.waitForSettled(); return result; });
@@ -1647,7 +1648,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           armIdleTimer();
           return;
         }
-        void resolveObservedExit(worker, code, signal).catch(() => undefined);
+        observedExitTail = observedExitTail
+          .then(() => resolveObservedExit(worker, code, signal))
+          .catch(() => undefined);
       },
     });
     const forkSha = grant.forkSha ?? launched.fork_sha ?? launched.worker.fork_sha;
@@ -2494,7 +2497,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     sweepOrphanProcesses: () => stopping ? Promise.resolve({ adopted: 0, reaped: 0, suspects: 0 }) : orphanReaper.sweep(), censusOrphanProcesses: () => orphanReaper.census(),
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
-    flushEvents: async () => { await workerBirthTail; await projectHooks.waitForSettled(); await eventLane.flush(); },
+    flushEvents: async () => {
+      await workerBirthTail;
+      await observedExitTail;
+      await projectHooks.waitForSettled();
+      await eventLane.flush();
+    },
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
       record("worker-birth", worker, null);
