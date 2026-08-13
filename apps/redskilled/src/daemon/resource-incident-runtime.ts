@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import type { RedskilledResourceIncidentState } from "../host-state.js";
 import {
   ResourceIncidentTracker,
@@ -20,6 +21,36 @@ export const DISABLED_RESOURCE_INCIDENT_RUNTIME: ResourceIncidentRuntime = {
   state: () => ({ source: "cgroup-v2-preferred", active: 0, retained: 0, latest: [] }),
   hasActiveIncident: () => false,
 };
+
+/**
+ * The incident runtime this daemon gets, decided from its sampling cadence.
+ *
+ * A daemon that does not sample cannot observe an incident, so it holds the
+ * disabled runtime rather than a live one that never ticks. Assembled HERE
+ * rather than at the call site because the lifecycle module is the one place
+ * that must not grow: the store path is derived from the event lane, and that
+ * derivation belongs beside the store it names.
+ */
+export async function resolveResourceIncidentRuntime(
+  eventLanePath: string,
+  pid: number,
+  sampleMs: number,
+  overrides: {
+    resourceIncidentStore?: ResourceIncidentStore;
+    resourceIncidentTracker?: ResourceIncidentTracker;
+    daemonResourceSampler?: DaemonResourceSampler;
+  },
+): Promise<ResourceIncidentRuntime> {
+  if (sampleMs <= 0) return DISABLED_RESOURCE_INCIDENT_RUNTIME;
+  return await createResourceIncidentRuntime({
+    root: join(dirname(eventLanePath), "state", "incidents"),
+    pid,
+    normalCadenceMs: sampleMs,
+    store: overrides.resourceIncidentStore,
+    tracker: overrides.resourceIncidentTracker,
+    daemonSampler: overrides.daemonResourceSampler,
+  });
+}
 
 export async function createResourceIncidentRuntime(options: {
   root: string;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
@@ -59,7 +59,7 @@ import {
   type RedskilledRssReading,
   type RedskilledTreeReading,
 } from "../memory-sampler.js";
-import { createResourceIncidentRuntime, DISABLED_RESOURCE_INCIDENT_RUNTIME } from "./resource-incident-runtime.js";
+import { resolveResourceIncidentRuntime } from "./resource-incident-runtime.js";
 import { recordWorkerCpuReadings } from "./worker-cpu.js";
 import {
   createRedskilledMachineClaimStore,
@@ -354,14 +354,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const treeSampler = options.treeSampler ?? sampleWorkerTrees;
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
-  const resourceIncidents = sampleMs <= 0 ? DISABLED_RESOURCE_INCIDENT_RUNTIME : await createResourceIncidentRuntime({
-    root: join(dirname(paths.eventLanePath), "state", "incidents"),
-    pid: owner.pid,
-    normalCadenceMs: sampleMs > 0 ? sampleMs : DEFAULT_REDSKILLED_SAMPLE_MS,
-    store: options.resourceIncidentStore,
-    tracker: options.resourceIncidentTracker,
-    daemonSampler: options.daemonResourceSampler,
-  });
+  const resourceIncidents = await resolveResourceIncidentRuntime(paths.eventLanePath, owner.pid, sampleMs, options);
   const leaseRenewMs = options.leaseRenewMs ?? DEFAULT_REDSKILLED_LEASE_RENEW_MS;
   const registrationSustainMs = options.registrationSustainMs ?? DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS;
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
