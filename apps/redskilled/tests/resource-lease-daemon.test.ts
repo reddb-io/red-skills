@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireRedskilledResourceLease,
   releaseRedskilledResourceLease,
-} from "../src/client.js";
+} from "../src/resource-lease-client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
 
