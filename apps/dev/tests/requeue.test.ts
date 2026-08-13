@@ -30,6 +30,13 @@ const infraBlocker = {
   next: "Retry after the transient infrastructure fault clears.",
 };
 
+const validationInfraBlocker = {
+  status: "blocked" as const,
+  kind: "validation-infra",
+  summary: "The validation environment exhausted its retry budget.",
+  next: "Retry after the validation infrastructure recovers.",
+};
+
 const baseStaleBlocker = {
   status: "blocked" as const,
   kind: "base-stale",
@@ -58,6 +65,10 @@ const decisionBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${forma
 
 const infraBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
   infraBlocker,
+)}\n`;
+
+const validationInfraBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
+  validationInfraBlocker,
 )}\n`;
 
 const baseStaleBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
@@ -159,6 +170,21 @@ describe("requeue — supported kinds (validation, spec, infra, base-stale)", ()
     expect(plan.refuseForHitl).toBe(false);
     expect(plan.activeBlocker?.kind).toBe("infra");
     expect(plan.removeLabels).toEqual(expect.arrayContaining(["ready-for-human", "blocked:infra"]));
+    expect(plan.addLabels).toEqual(["ready-for-agent"]);
+  });
+
+  it("requeues a guided blocked:validation-infra park through the standard tool", () => {
+    const plan = planRequeue({
+      body: validationInfraBody,
+      labels: ["ready-for-human", "blocked:validation-infra"],
+      guidance: "Validation infrastructure recovered; retry the declared gate.",
+    });
+    expect(plan.requeueable).toBe(true);
+    expect(plan.refuseForHitl).toBe(false);
+    expect(plan.activeBlocker?.kind).toBe("validation-infra");
+    expect(plan.removeLabels).toEqual(
+      expect.arrayContaining(["ready-for-human", "blocked:validation-infra"]),
+    );
     expect(plan.addLabels).toEqual(["ready-for-agent"]);
   });
 
