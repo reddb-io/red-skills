@@ -91,6 +91,9 @@ function buildDaemonLifecycleEvent(
     detail: input.detail,
     exit_code: null,
     signal: signal ?? null,
+    systemd_result: null,
+    memory_peak_bytes: null,
+    memory_swap_peak_bytes: null,
     reason,
   };
 }
