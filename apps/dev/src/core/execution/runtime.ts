@@ -437,7 +437,24 @@ export interface RunAgentResult {
    * the text sentinel alone (the coexistence fallback).
    */
   agentOutput?: AgentOutput;
+  /** Runner-owned persisted session artifact discovered by red-castle. This is
+   * a location only; AFK neither copies nor moves the runner's file. */
+  sessionArtifact?: string;
   stdout: string;
+}
+
+function latestSessionArtifact(result: Pick<RunResult, "iterations">): string | undefined {
+  for (let index = result.iterations.length - 1; index >= 0; index -= 1) {
+    const path = result.iterations[index]?.sessionFilePath;
+    if (path) return path;
+  }
+  return undefined;
+}
+
+function errorSessionArtifact(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const path = (error as { sessionFilePath?: unknown }).sessionFilePath;
+  return typeof path === "string" && path !== "" ? path : undefined;
 }
 
 // Re-exported so process-issue / callers can consume the structured completion
@@ -1100,6 +1117,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     const options = buildRunOptions(deps, agentEventSink ? { ...input, onAgentEvent: agentEventSink } : input);
     result = await deps.run(controller ? { ...options, signal: controller.signal } : options);
   } catch (error) {
+    const sessionArtifact = errorSessionArtifact(error);
     // The lane-idle reaper aborted: agent lane silent past the kill threshold
     // with no active build/test descendant + flat cpu → genuinely stuck. Map to
     // no-sentinel so it flows through the existing no-sentinel terminal policy.
@@ -1108,6 +1126,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         outcome: "no-sentinel",
         branch: input.branch,
         commits: [],
+        ...(sessionArtifact ? { sessionArtifact } : {}),
         stdout: `afk: attempt reaped — agent lane idle past ${input.laneIdleKillThresholdSeconds}s with no active build/test (stalled)`,
       };
     }
@@ -1121,17 +1140,25 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         outcome: "goal-moot",
         branch: input.branch,
         commits: [],
+        ...(sessionArtifact ? { sessionArtifact } : {}),
         stdout: "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)",
       };
     }
     if (isExhaustionError(error)) {
-      return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
+      return {
+        outcome: "exhausted",
+        branch: input.branch,
+        commits: [],
+        ...(sessionArtifact ? { sessionArtifact } : {}),
+        stdout: "",
+      };
     }
     if (isHostConfigRunnerError(error)) {
       return {
         outcome: "host-config",
         branch: input.branch,
         commits: [],
+        ...(sessionArtifact ? { sessionArtifact } : {}),
         stdout: hostConfigOperatorMessage(error),
       };
     }
@@ -1140,6 +1167,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         outcome: "runner-transient",
         branch: input.branch,
         commits: [],
+        ...(sessionArtifact ? { sessionArtifact } : {}),
         stdout: error instanceof Error ? error.message : String(error),
       };
     }
@@ -1155,6 +1183,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         outcome: "signal-killed",
         branch: input.branch,
         commits: [],
+        ...(sessionArtifact ? { sessionArtifact } : {}),
         stdout: `afk: inner agent killed by ${signalKill.signal} (exit code ${signalKill.exitCode})`,
       };
     }
@@ -1171,6 +1200,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       outcome: "no-sentinel",
       branch: input.branch,
       commits: [],
+      ...(sessionArtifact ? { sessionArtifact } : {}),
       stdout: error instanceof Error ? error.message : String(error),
     };
   } finally {
@@ -1181,7 +1211,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   // A run that completed but surfaced exhaustion text on stdout (rather than
   // throwing) is also exhaustion — match the stdout the same way run_inner does.
   if (result.completionSignal === undefined && isRunnerExhausted(result.stdout ?? "")) {
-    return { outcome: "exhausted", branch: result.branch, commits: result.commits, stdout: result.stdout };
+    const sessionArtifact = latestSessionArtifact(result);
+    return {
+      outcome: "exhausted",
+      branch: result.branch,
+      commits: result.commits,
+      ...(sessionArtifact ? { sessionArtifact } : {}),
+      stdout: result.stdout,
+    };
   }
   // Structured-output completion adapter (ADR 0090): prefer a valid AgentOutput
   // block over the text sentinel. A run that emitted the structured block but no
@@ -1195,12 +1232,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   if (enforced.rejectedReason) {
     warn(`[afk] warn: AgentOutput ${enforced.rejectedReason} — downgraded to ${enforced.outcome}`);
   }
+  const sessionArtifact = latestSessionArtifact(result);
   return {
     outcome: enforced.outcome,
     branch: result.branch,
     commits: result.commits,
     completionSignal: result.completionSignal,
     ...(agentOutput ? { agentOutput } : {}),
+    ...(sessionArtifact ? { sessionArtifact } : {}),
     stdout: result.stdout,
   };
 }
