@@ -31,6 +31,7 @@ import type { RedskilledQueueDiscovery, RedskilledQueueOutcome } from "./queue-d
 import type { RedskilledMajorHold, RedskilledReplacementHoldReason } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 import type { ResourceIncidentSummary } from "./resource-incidents.js";
+import { isRedskilledHostTopology, type RedskilledHostTopology } from "./host-topology.js";
 
 export interface RedskilledResourceIncidentState {
   readonly source: "cgroup-v2-preferred";
@@ -320,6 +321,8 @@ export interface RedskilledHostState {
   readonly session_key_hash: string;
   readonly pid: number;
   readonly started_at: string;
+  /** The OS boundary that owns this daemon and its file-backed event lane. */
+  readonly topology?: RedskilledHostTopology;
   /** The machine-wide limits this daemon enforces, including each origin. */
   readonly ceiling?: RedskilledHostCeiling;
   /**
@@ -379,6 +382,8 @@ export interface BuildHostStateInput {
   readonly sessionKeyHash: string;
   readonly pid: number;
   readonly startedAt: string;
+  /** Explicit daemon-side topology; absent only for callers predating the fact. */
+  readonly topology?: RedskilledHostTopology;
   /** The resolved host policy. Older callers may still provide only its bytes. */
   readonly ceiling?: RedskilledHostCeiling;
   /** The scope block; absent leaves the document without one rather than inventing it. */
@@ -454,6 +459,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     session_key_hash: input.sessionKeyHash,
     pid: input.pid,
     started_at: input.startedAt,
+    ...(input.topology == null ? {} : { topology: input.topology }),
     ...(input.ceiling == null ? {} : { ceiling: input.ceiling }),
     ...(input.scope == null ? {} : { scope: input.scope }),
     ...(input.requestHealth == null ? {} : { request_health: input.requestHealth }),
@@ -583,6 +589,7 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     typeof state.session_key_hash === "string" &&
     Number.isInteger(state.pid) &&
     typeof state.started_at === "string" &&
+    (state.topology === undefined || isRedskilledHostTopology(state.topology)) &&
     (state.ceiling === undefined || isHostCeiling(state.ceiling)) &&
     Array.isArray(state.workers) &&
     Array.isArray(state.projects) &&

@@ -88,6 +88,7 @@ import {
 } from "../project-registration.js";
 import { createRedskilledProjectHookRuntime } from "../project-hook.js";
 import { createRedskilledHostEventSinkRuntime } from "../host-event-sink.js";
+import { detectRedskilledHostTopology } from "../host-topology.js";
 import { pingAnswer } from "./ping-answer.js";
 import {
   detectUnitExitFacts,
@@ -228,6 +229,7 @@ export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
 export async function startRedskilledDaemon(options: RedskilledDaemonOptions): Promise<RedskilledDaemon> {
   const { paths } = options;
   const daemonVersion = options.daemonVersion ?? "0.0.0-dev";
+  const hostTopology = options.hostTopology ?? detectRedskilledHostTopology();
   const idleMs = options.idleMs ?? DEFAULT_REDSKILLED_IDLE_MS;
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;
@@ -681,6 +683,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       sessionKeyHash: paths.sessionKeyHash,
       pid: owner.pid,
       startedAt,
+      topology: hostTopology,
       ceiling,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       requestHealth: selfPingMonitor.health(),

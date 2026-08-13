@@ -66,6 +66,20 @@ describe("redskilled host state", () => {
     });
   });
 
+  it("reports the daemon's WSL topology as an explicit host-state fact", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      hostTopology: { platform: "linux", environment: "wsl" },
+    });
+    running.push(daemon);
+
+    const state = await readRedskilledHostState(paths, { readyTimeoutMs: 5_000 });
+
+    expect(state.topology).toEqual({ platform: "linux", environment: "wsl" });
+    expect(isRedskilledHostState(state)).toBe(true);
+  });
+
   it("carries the host identity as a label, never as the socket's key", async () => {
     // Two sessions on the same host share the machine id and differ in socket.
     const first = await sessionPaths();
