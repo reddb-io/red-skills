@@ -695,6 +695,7 @@ export function harness(opts: HarnessOptions = {}): {
           if (opts.adversarialExtractError) throw new Error(opts.adversarialExtractError);
           return opts.adversarialFindingsSequence?.[trace.adversarialReviewContexts.length - 1] ?? opts.adversarialFindings ?? {
             summary: "Stubbed adversarial review summary.",
+            score: 0.5,
             findings: [
               {
                 path: "packages/x/src/a.ts",
