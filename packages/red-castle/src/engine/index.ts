@@ -44,6 +44,7 @@ export * from "./runner-types.js";
 export * from "./state-transition.js";
 export * from "./singleton-event-lane.js";
 export * from "./singleton-lease.js";
+export * from "./spin-evaluator.js";
 export {
   CLAIM_MARKER_VERSION,
   ClaimVerificationError,
