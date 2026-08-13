@@ -21,6 +21,7 @@
     "./project-registration": "./src/project-registration.ts",
     "./resource-incidents": "./src/resource-incidents.ts",
     "./resource-lease": "./src/resource-lease.ts",
+    "./resource-lease-client": "./src/resource-lease-client.ts",
     "./protocol": "./src/protocol.ts",
     "./queue-discovery": "./src/queue-discovery.ts",
     "./reattach": "./src/reattach.ts",
