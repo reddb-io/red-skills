@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveServeGithubCompanions } from "../src/github-companions.js";
+import {
+  resolveServeGithubBalanceRegistration,
+  resolveServeGithubCompanions,
+} from "../src/github-companions.js";
 import { readRedskilledHostGithubApp } from "../src/host-config.js";
 
 /**
@@ -86,5 +89,32 @@ describe("two buckets are measured apart", () => {
     // consumer plotting the machine separates them by identity rather than by
     // guessing which file was current.
     expect(companion?.identity).toBe("app:153309957");
+  });
+});
+
+describe("a host that declares no App pays for nothing it did not adopt", () => {
+  const transport = async () => ({});
+  const app = { appId: "4575633", installationId: "153309957", privateKeyPath: "/k.pem" };
+
+  it("declares one companion when the host declares an App", () => {
+    const registration = resolveServeGithubBalanceRegistration({ transport }, app, "/state", {});
+
+    expect(registration?.companions?.map((c) => c.identity)).toEqual(["app:153309957"]);
+  });
+
+  it("declares NO companions when it does not", () => {
+    // The arm that matters most, and the one an inline ternary hid: a host with
+    // no App must produce the registration it produced before companions
+    // existed. `undefined` and `[]` are not the same answer — an empty array
+    // would still send the poller round a loop for a payer nobody declared.
+    const registration = resolveServeGithubBalanceRegistration({ transport }, null, "/state", {});
+
+    expect(registration?.companions).toBeUndefined();
+    expect(registration?.store).toBeDefined();
+    expect(registration?.history).toBeDefined();
+  });
+
+  it("answers null when there is no credential to ask with at all", () => {
+    expect(resolveServeGithubBalanceRegistration(null, app, "/state", {})).toBeNull();
   });
 });
