@@ -23,6 +23,7 @@ import {
 import { isRunnerExhausted } from "../runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "../lane-idle-reaper.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "../runner-spec.js";
+import type { SpinOutcome } from "../worker-outcome.js";
 import {
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
@@ -105,7 +106,8 @@ export type AgentOutcome =
   | "exhausted"
   | "runner-transient"
   | "host-config"
-  | "goal-moot";
+  | "goal-moot"
+  | SpinOutcome;
 
 /** Unix signal exit-code convention: exit code = 128 + signal number. */
 const SIGNAL_EXIT_NAMES: Record<number, string> = {
