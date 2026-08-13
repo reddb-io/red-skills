@@ -49,6 +49,50 @@ describe("buildFeedbackSubprocessEnv resource budget (#1758)", () => {
   });
 });
 
+describe("validation host-resource classification (#3802)", () => {
+  it("marks only root/workspace test, typecheck and build as heavy", async () => {
+    const calls: Array<{ argv: string[]; weight: string | undefined }> = [];
+    const exec: Exec = async (argv, options) => {
+      calls.push({ argv, weight: options?.weight });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const layout = fakeLayout({
+      packages: [".", "apps/dev"],
+      scripts: {
+        ".": ["test", "typecheck", "lint", "build"],
+        "apps/dev": ["test", "typecheck", "lint", "build"],
+      },
+    });
+
+    await runFeedback(exec, {
+      worktree: "/repo",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+      root: "/repo",
+      worktreeKind: "checkout",
+      dirExists: () => true,
+    });
+    await runFeedback(exec, {
+      worktree: "/repo",
+      scopes: ["."],
+      layout,
+      now: fakeClock(),
+      root: "/repo",
+      worktreeKind: "checkout",
+      dirExists: () => true,
+    });
+
+    const classified = new Map(calls.map((call) => [call.argv.join(" "), call.weight]));
+    expect(classified.get("pnpm -C /repo/apps/dev test")).toBe("light");
+    expect(classified.get("pnpm -C /repo/apps/dev build")).toBe("light");
+    expect(classified.get("pnpm -C /repo typecheck")).toBe("heavy");
+    expect(classified.get("pnpm -C /repo test")).toBe("heavy");
+    expect(classified.get("pnpm -C /repo build")).toBe("heavy");
+    expect(classified.get("pnpm -C /repo lint")).toBe("light");
+  });
+});
+
 /**
  * Fake package layout: `packages` is the set of dirs that carry a package.json
  * (the root is `"."`), `scripts` maps each scope to the scripts it declares.
@@ -284,6 +328,26 @@ describe("runFeedback", () => {
     expect(check?.record.summary).toContain("validation child stalled");
     expect(verdictIsEnvironment(result)).toBe(true);
     expect(calls).toHaveLength(1);
+  });
+
+  it("records heavy admission timeout as infrastructure and never branch fault", async () => {
+    const result = await runFeedback(async () => ({
+      code: 1,
+      stdout: "",
+      stderr: "host heavy-validation admission timed out",
+      infraEvidence: { kind: "admission-timeout", wallTimeMs: 60_000 },
+    }), {
+      worktree: "/repo",
+      scopes: ["."],
+      layout: fakeLayout({ packages: ["."], scripts: { ".": ["test"] } }),
+      now: fakeClock(),
+      root: "/repo",
+      worktreeKind: "checkout",
+      dirExists: () => true,
+    });
+
+    expect(result.checks[0]?.record.infra).toBe("admission-timeout");
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("produces the exact red.afk.validation.v1 sidecar record shape", async () => {
