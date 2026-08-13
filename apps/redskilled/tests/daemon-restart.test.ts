@@ -5,7 +5,7 @@ import { appendFile, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRecords } from "@reddb-io/toon";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildBudgetAccounting, parseMemoryBudget } from "../src/budget-accounting.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import {
@@ -321,16 +321,33 @@ describe("the host event lane", () => {
     expect(daemon.hostState().workers.map((worker) => worker.worker_id)).toEqual(["w-live"]);
   });
 
-  it("keeps a half-written trailing line out, and a malformed middle line in view", async () => {
-    // Only an unterminated FINAL line is a crash. A broken line in the middle is
-    // a format bug, and swallowing it would hide the very thing that needs fixing.
+  it("keeps a half-written trailing line out, and names a malformed middle line rather than dying on it", async () => {
+    // Only an unterminated FINAL line is a crash. A broken line in the MIDDLE is
+    // a format bug — and #3651 is what treating it as fatal actually costs: one
+    // mixed-arity row a previous daemon generation had written took every
+    // `worker_dispatch` on the machine down, reported as "the daemon did not
+    // answer", pointing the operator at `provision` — the wrong repair for a
+    // healthy daemon. An append-only lane spanning generations WILL hold rows an
+    // older reader wrote differently, so a malformed row is skipped and COUNTED
+    // out loud. Skipping silently is what the warning exists to refuse.
     const lane = createRedskilledEventLane(join(await scratch("redskilled-lane-"), "lane.toonl"));
     await lane.record({ event: "worker-birth", worker: workerView({ worker_id: "w-1" }), ts: "2026-07-29T00:00:00.000Z" });
     const whole = await readFile(lane.path, "utf8");
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    expect(parseEventLane(`${whole}birth,w-2,`)).toHaveLength(1);
-    expect(() => parseEventLane(`${whole}birth,w-2,\nfine\n`)).toThrow();
-    expect(parseEventLane("")).toEqual([]);
+    try {
+      expect(parseEventLane(`${whole}birth,w-2,`)).toHaveLength(1);
+      expect(warned).not.toHaveBeenCalled();
+
+      // The good row before the ruins still comes back, and the ruins are named.
+      const survivors = parseEventLane(`${whole}birth,w-2,\nfine\n`);
+      expect(survivors.map((event) => event.worker_id)).toEqual(["w-1"]);
+      expect(warned.mock.calls.flat().join(" ")).toMatch(/malformed/);
+
+      expect(parseEventLane("")).toEqual([]);
+    } finally {
+      warned.mockRestore();
+    }
   });
 
   it("replays into the Workers still alive, last event per Worker winning", () => {

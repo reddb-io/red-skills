@@ -8,6 +8,15 @@ import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import type { RedskilledProcessCensusRow } from "../src/orphan-reaper.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
 
+import { permitUnitDiscoveryForThisSuite } from "./support/test-host-isolation.js";
+
+// The sweep is what this suite tests, so the sandbox default that refuses it
+// would turn every assertion into "found nothing, expected nothing". Every
+// verdict below rests on a process fixture this file builds, never on what
+// the machine running it happens to hold.
+permitUnitDiscoveryForThisSuite();
+
+
 const roots: string[] = [];
 const daemons: RedskilledDaemon[] = [];
 

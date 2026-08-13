@@ -283,9 +283,16 @@ describe("the verdict is decided over live process state", () => {
   });
 });
 
+// The machine these assertions are ABOUT, stated rather than inherited.
+// `resolveHostCeiling` already accepts the CPU count; the tests just never
+// passed it, so `validation_count` derived from whatever host ran them — 3 on a
+// 12-core developer machine, something else on a 4-core CI runner. A test that
+// reads the machine it runs on is a test that only holds on that machine.
+const HOST = { availableParallelism: 12 } as const;
+
 describe("the ceiling a host admits against", () => {
   it("takes an operator's declaration over the derived share", () => {
-    expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "6G", REDSKILLED_WORKER_CEILING: "4" }, 16 * GIB))
+    expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "6G", REDSKILLED_WORKER_CEILING: "4" }, 16 * GIB, HOST))
       .toEqual({
         memory_bytes: 6 * GIB,
         worker_count: 4,
@@ -299,12 +306,12 @@ describe("the ceiling a host admits against", () => {
   });
 
   it("reads a percentage of the host, and `infinity` as no ceiling at all", () => {
-    expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "50%" }, 16 * GIB).memory_bytes).toBe(8 * GIB);
-    expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "infinity" }, 16 * GIB).memory_bytes).toBeNull();
+    expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "50%" }, 16 * GIB, HOST).memory_bytes).toBe(8 * GIB);
+    expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "infinity" }, 16 * GIB, HOST).memory_bytes).toBeNull();
   });
 
   it("still holds a real ceiling on a host nobody configured", () => {
-    const ceiling = resolveHostCeiling({}, 16 * GIB);
+    const ceiling = resolveHostCeiling({}, 16 * GIB, HOST);
 
     expect(ceiling.source).toBe("host-fraction");
     expect(ceiling.memory_bytes).toBeLessThan(16 * GIB);
@@ -313,7 +320,7 @@ describe("the ceiling a host admits against", () => {
   });
 
   it("lets the host configure a small interactive reservation", () => {
-    expect(resolveHostCeiling({ [REDSKILLED_INTERACTIVE_RESERVATION_ENV]: "2" }, 16 * GIB)
+    expect(resolveHostCeiling({ [REDSKILLED_INTERACTIVE_RESERVATION_ENV]: "2" }, 16 * GIB, HOST)
       .interactive_reservation).toBe(2);
   });
 });
