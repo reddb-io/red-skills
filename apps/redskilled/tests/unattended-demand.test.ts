@@ -111,13 +111,15 @@ describe("a registration drains with no session alive behind it", () => {
     // No poll is asked for, no tick is driven, no session stays alive.
     await registerRedskilledProject(paths, registration("acme/widgets", workspace), { readyTimeoutMs: 5_000 });
 
+    // Same deadline reasoning as its sibling below: this waits on a real Worker
+    // reaching disk, so it is sized for a loaded machine rather than a quiet one.
     await expect
-      .poll(async () => await readFile(join(workspace, "proof.txt"), "utf8").catch(() => ""), { timeout: 10_000 })
+      .poll(async () => await readFile(join(workspace, "proof.txt"), "utf8").catch(() => ""), { timeout: 30_000 })
       .toBe(workspace);
     // Asked for by the loop, not by this test: the daemon's own tick holds the
     // depth it planned against, from a poll nobody in this process requested.
     expect(daemon.demand()?.projects[0]?.queue_depth).toBe(3);
-  });
+  }, 60_000);
 });
 
 describe("a daemon that could not arm at start arms itself when it can", () => {
@@ -152,17 +154,24 @@ describe("a daemon that could not arm at start arms itself when it can", () => {
     expect(queueDiscovery.transport).toBeUndefined();
     await registerRedskilledProject(paths, registration("acme/widgets", workspace), { readyTimeoutMs: 5_000 });
     await expect
-      .poll(() => daemon.hostState().registrations?.[0]?.last_poll?.outcome, { timeout: 5_000 })
+      .poll(() => daemon.hostState().registrations?.[0]?.last_poll?.outcome, { timeout: 15_000 })
       .toBe("unconfigured");
     expect(daemon.workerCount()).toBe(0);
 
     credential = "a-token-that-exists-now";
 
+    // This waits on a real Worker being born and reaching disk, not on a state
+    // transition in memory — so the deadline has to fit the slowest machine that
+    // runs it, not the quietest. At 10s it passed alone and failed about one full
+    // suite run in four, which is the worst way for a gate to behave: red for
+    // reasons that have nothing to do with the change under review. Waiting
+    // longer costs nothing when it passes — the poll returns the moment the file
+    // is there.
     await expect
-      .poll(async () => await readFile(join(workspace, "proof.txt"), "utf8").catch(() => ""), { timeout: 10_000 })
+      .poll(async () => await readFile(join(workspace, "proof.txt"), "utf8").catch(() => ""), { timeout: 30_000 })
       .toBe(workspace);
     expect(daemon.hostState().registrations?.[0]?.last_poll?.outcome).toBe("counted");
-  });
+  }, 60_000);
 });
 
 describe("the sustain and the idle exit follow the poll outcome", () => {

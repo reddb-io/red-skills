@@ -465,6 +465,26 @@ jobs:
       # The vendored herdr plugin (ADR 0131). Its `test` script is the manifest
       # check and the `node --test` suite in that order, so the manifest a pane
       # is opened from is validated by the same command as the code behind it.
+      # `tq` is the query surface the /redskilled skill documents an operator
+      # into, and one test runs those exact recipes against a fixture lane — so
+      # the doc and the tool are checked by the same command. It is an external
+      # Rust binary, not a workspace dependency, so CI installs it: the
+      # PREBUILT static binary against its published checksum, never
+      # `cargo install`, which would spend minutes compiling on every run.
+      - name: Install tq (event-lane query recipes)
+        if: contains(fromJSON(env.PACKAGES), 'apps/redskilled')
+        env:
+          TQ_VERSION: v0.28.2
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$TQ_VERSION" -R reddb-io/toon \
+            -p 'tq-linux-x86_64-static*' -D "$RUNNER_TEMP/tq"
+          cd "$RUNNER_TEMP/tq"
+          awk '{print $1"  tq-linux-x86_64-static"}' tq-linux-x86_64-static.sha256 | sha256sum -c -
+          install -m 0755 tq-linux-x86_64-static "$RUNNER_TEMP/tq/tq"
+          echo "$RUNNER_TEMP/tq" >> "$GITHUB_PATH"
+
       - name: Test apps/redskilled
         if: contains(fromJSON(env.PACKAGES), 'apps/redskilled')
         run: pnpm -C apps/redskilled test
