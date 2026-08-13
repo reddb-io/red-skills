@@ -250,13 +250,15 @@ fails loudly unless a live recovery process owns the `merge-driver` singleton;
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `queue_status` | read | Trust-partitioned `ready-for-agent` candidates (`eligible` and `held_for_summon`) plus `ready-for-human`. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
+| `queue_status` | read | Trust-partitioned `ready-for-agent` candidates (`eligible` and `held_for_summon`) plus `ready-for-human`. `degraded: true` names partial trust-read failures in `errors` while retaining successfully read candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
 | `events_since` | read | AFK history events and Worker lane records after an opaque cursor, plus the next cursor. |
 | `deadend_audit` | read | Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
 
 `help` is the first call when operating a drain. Use `queue_status` when its
 answer calls for the tracker-backed queue census: zero eligible `ready-for-agent`
 entries with a non-empty open backlog is a flow bug to census, not a clean stop.
+Treat `degraded: true` as a failed census, even when both candidate arrays are
+empty; use the named `errors` instead of concluding that the queue is empty.
 That rule includes a non-empty queue whose every entry is `held_for_summon`;
 release it with `triage:summon`, `dev triage --summon`, or
 `afk.trust-gate.allowlist`.

@@ -422,6 +422,14 @@ export const queueStatusOutputSchema = z.object({
     ready_for_agent_held: z.number(),
     ready_for_human: z.number(),
   }),
+  degraded: z.boolean(),
+  errors: z.array(
+    z.object({
+      kind: z.literal("trust-read"),
+      number: z.number(),
+      message: z.string(),
+    }),
+  ),
 });
 
 export type QueueStatusOutput = z.infer<typeof queueStatusOutputSchema>;

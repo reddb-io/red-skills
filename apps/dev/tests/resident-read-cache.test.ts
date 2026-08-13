@@ -95,6 +95,8 @@ function makeFakeDeps(): Pick<
           ready_for_agent_held: 0,
           ready_for_human: 0,
         },
+        degraded: false,
+        errors: [],
       };
     }),
     claimStatus: vi.fn(async () => { count("claimStatus"); return { issue: 2370, records: [], holders: [] }; }),

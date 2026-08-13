@@ -22,6 +22,8 @@ command renders the same truth for a human terminal. See [`MCP.md`](./MCP.md).
 a non-empty open backlog is a flow bug to diagnose, never a clean stop. A
 non-empty `held_for_summon` bucket is still zero drainable work; release it with
 `triage:summon`, `dev triage --summon`, or `afk.trust-gate.allowlist`.
+When it reports `degraded: true`, treat the census as failed and read its named
+`errors`; empty candidate arrays in a degraded answer do not mean an empty queue.
 
 ## The binding mirror rule (authoritative — stated once)
 
