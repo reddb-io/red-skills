@@ -24,7 +24,10 @@ import {
   githubIdentityRef,
   type GithubAppCredential,
 } from "@reddb-io/github";
-import type { RedskilledBalanceCompanion } from "./daemon/types.js";
+import type {
+  RedskilledBalanceCompanion,
+  RedskilledBalanceRegistration,
+} from "./daemon/types.js";
 
 /**
  * The companions a declared App contributes. One entry today; the shape is a
@@ -75,4 +78,34 @@ export async function measureGithubCompanions(
       // Measured or not, the host keeps serving.
     }
   }
+}
+
+/**
+ * Compose the whole balance registration: the operator's own ceiling, plus a
+ * companion for each declared payer.
+ *
+ * Extracted from `serve` so BOTH arms can be judged. The absent-App arm is the
+ * one that matters most and the one an inline ternary hid: a host that declares
+ * no App must produce a registration byte-identical to the one it produced
+ * before companions existed, or every operator without an App pays for a
+ * feature they did not adopt.
+ */
+export function resolveServeGithubBalanceRegistration(
+  resolved: { readonly transport: RedskilledBalanceRegistration["transport"] } | null,
+  app: GithubAppCredential | null,
+  hostStateRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+): RedskilledBalanceRegistration | null {
+  if (resolved === null) return null;
+  return {
+    ...resolved,
+    // The operator's own ceiling keeps the unsuffixed name and the default
+    // `pat` stamp: this is the floor every surface already renders, and
+    // renaming it would move a file other processes read.
+    store: createGithubBalanceStore({ path: join(hostStateRoot, "github", "balance.toon") }),
+    history: createGithubBalanceHistory({
+      path: join(hostStateRoot, "github", "balance-history.toonl"),
+    }),
+    ...(app === null ? {} : { companions: resolveServeGithubCompanions(app, hostStateRoot, env) }),
+  };
 }
