@@ -59,6 +59,7 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
+  isSpinOutcome,
   type WorkerOutcome,
 } from "../worker-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
@@ -216,6 +217,13 @@ export function oneLine(value: string | undefined, fallback: string): string {
   return line ?? fallback;
 }
 export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): CurrentBlocker | null {
+  if (isSpinOutcome(outcome)) {
+    return makeBlocker({
+      kind: "spin",
+      summary: oneLine(sections.notes, `Persistent Worker Spin ended as ${outcome}.`),
+      next: "Review the named Spin pattern and the pushed branch, then add guidance or re-scope before requeueing.",
+    });
+  }
   switch (outcome) {
     case "blocked":
       return makeBlocker({
@@ -310,6 +318,7 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "push-rejected",
   "ci",
   "stalled",
+  "spin",
   "decision",
   "trunk-diverged",
   "infra",
