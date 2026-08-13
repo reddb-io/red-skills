@@ -186,7 +186,7 @@ import {
 } from "../verdict.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { reportValidationEvidenceInconsistency } from "./validation-park.js";
-import { parseRecords } from "@reddb-io/toon";
+import { setupFailureExcerpt } from "./setup-failure.js";
 
 /** Recorded when the forge refused the merge and the PR state did not explain it
  * (#2807). It says the cause is unknown rather than inventing a probable one. */
@@ -197,35 +197,6 @@ const MERGE_REJECTION_UNEXPLAINED =
 const MERGE_REJECTION_NEXT =
   "Read the recorded rejection reason above, clear it on the open PR, then merge it (no full agent re-run needed).";
 
-function setupFailureExcerpt(log: string | null | undefined): string | undefined {
-  const raw = log ?? "";
-  let readable = raw;
-  try {
-    const messages = parseRecords(raw)
-      .map((record) => record.msg)
-      .filter((message): message is string => typeof message === "string");
-    if (messages.length > 0) readable = messages.join("\n");
-  } catch {
-    // Legacy plaintext logs remain readable during the disposable-lane cutover.
-  }
-  const lines = readable
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("[heartbeat]"));
-  let setupFailure = -1;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]!;
-    if (
-      /command failed in sandbox/i.test(line) ||
-      /(?:sandbox|bootstrap|setup).*(?:error|fail)/i.test(line)
-    ) {
-      setupFailure = index;
-      break;
-    }
-  }
-  if (setupFailure < 0) return undefined;
-  return lines.slice(setupFailure, setupFailure + 4).join("\n");
-}
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -662,6 +633,7 @@ export async function processIssue(
     resolvedBase: baseResolution,
   };
   let validationSidecar: string[] = [];
+  let appraisalScore: number | undefined;
   const branchReversionRecords = new Map<"base-merge" | "landing", string>();
   const completeValidationSidecar = (): string[] => [
     ...branchReversionRecords.values(),
@@ -1098,6 +1070,7 @@ export async function processIssue(
     const readWorktreeDiff = deps.lookups.worktreeDiff!;
     const extractReview = deps.extractAdversarialReview!;
     const postReview = deps.postAdversarialReview!;
+    appraisalScore = undefined;
     let findings: AdversarialReviewFindings;
     let decision: AdversarialReviewDecision;
     let diff: string;
@@ -1137,6 +1110,7 @@ export async function processIssue(
         );
       }
       findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
+      appraisalScore = findings.score;
       decision = decideAdversarialReview(findings);
       await postReview({
         issue: input.issue,
@@ -2028,7 +2002,15 @@ export async function processIssue(
     deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
     const finalValidationSidecar = completeValidationSidecar();
     await writeValidationSidecar(deps, input.attemptDir, finalValidationSidecar);
-    const posted = await emitDone(common, mergeSha, durationS, finalValidationSidecar, lastValidationScope, noSourceDiffWarning);
+    const posted = await emitDone(
+      common,
+      mergeSha,
+      durationS,
+      finalValidationSidecar,
+      lastValidationScope,
+      noSourceDiffWarning,
+      appraisalScore,
+    );
     await recordOutcomeBestEffort(common, "done", { durationS });
     markLandingPhase("close", { step: "close-issue", status: "start" });
     await deps.gh.close(issue);

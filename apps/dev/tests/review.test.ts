@@ -5,11 +5,13 @@ import {
   resolveMaxRetries,
   runReview,
   REVIEW_EXTRACTION_FAILED_BODY,
+  scoredReviewFindingsSchema,
   type PrContext,
   type ReviewFindings,
   type ReviewGh,
 } from "../src/core/review.js";
 import { buildReviewPrompt, FOWLER_REFACTORING_SMELLS, makeExtractReview } from "../src/core/review-extract.js";
+import { buildAdversarialReviewPrompt } from "../src/core/adversarial-review.js";
 
 // A diff that touches src/a.ts (lines 1-2 added) so diff-line filtering has a target.
 const DIFF = [
@@ -37,6 +39,34 @@ const EXPECTED_FOWLER_SMELLS = [
   ["Middle Man", "Remove the delegator and call the real object directly"],
   ["Refused Bequest", "Push down the unused inheritance to the subclass that needs it"],
 ] as const;
+
+describe("scored reviewer output schema", () => {
+  it("requires a holistic score in the inclusive 0–1 range", () => {
+    const validate = scoredReviewFindingsSchema["~standard"].validate;
+    const base = { summary: "Ready to land.", inlineComments: [], blocking: false };
+
+    expect(validate({ ...base, score: 0.8 })).toEqual({ value: { ...base, score: 0.8 } });
+    expect(validate(base)).toMatchObject({ issues: expect.any(Array) });
+    expect(validate({ ...base, score: -0.01 })).toMatchObject({ issues: expect.any(Array) });
+    expect(validate({ ...base, score: 1.01 })).toMatchObject({ issues: expect.any(Array) });
+  });
+});
+
+describe("buildAdversarialReviewPrompt — Appraisal", () => {
+  it("instructs the reviewer to score holistic landing quality exactly once", () => {
+    const instruction =
+      "Set `score` to a holistic number from 0 to 1 answering: does this branch answer what was asked, and is it good enough to land?";
+    const prompt = buildAdversarialReviewPrompt({
+      issueNumber: 3832,
+      issueTitle: "Add Appraisal",
+      issueBody: "## Acceptance criteria\n- [ ] Score the branch.",
+      diff: DIFF,
+      base: "origin/main",
+    });
+
+    expect(prompt.split(instruction)).toHaveLength(2);
+  });
+});
 
 interface GhCall {
   op: string;

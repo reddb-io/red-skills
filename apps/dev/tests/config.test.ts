@@ -456,6 +456,7 @@ describe("config", () => {
   it("aggregates adversarial blocking findings by quorum (#2210)", () => {
     const one = {
       summary: "one",
+      score: 0.25,
       findings: [
         { path: "src/a.ts", line: 7, body: "real bug", blocking: true },
         { path: "src/a.ts", line: 8, body: "solo bug", blocking: true },
@@ -463,12 +464,14 @@ describe("config", () => {
     };
     const two = {
       summary: "two",
+      score: 0.75,
       findings: [
         { path: "src/a.ts", line: 7, body: "real bug", blocking: true },
         { path: "src/a.ts", line: 9, body: "nit", blocking: false },
       ],
     };
     const aggregated = aggregateAdversarialReviewFindings([one, two], 2);
+    expect(aggregated.score).toBe(0.5);
     expect(aggregated.findings.filter((finding) => finding.body === "real bug").every((finding) => finding.blocking)).toBe(true);
     expect(aggregated.findings.find((finding) => finding.body === "solo bug")?.blocking).toBe(false);
     expect(aggregated.findings.find((finding) => finding.body === "nit")?.blocking).toBe(false);
@@ -482,16 +485,18 @@ describe("config", () => {
     expect(
       decideAdversarialReview({
         summary: "blocking issue found",
+        score: 0.2,
         findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
       }),
     ).toBe("blocking");
     expect(
       decideAdversarialReview({
         summary: "nit only",
+        score: 0.4,
         findings: [{ path: "src/a.ts", line: 1, body: "style", blocking: false }],
       }),
     ).toBe("not-blocking");
-    expect(decideAdversarialReview({ summary: "clean", findings: [] })).toBe("not-blocking");
+    expect(decideAdversarialReview({ summary: "clean", score: 0.1, findings: [] })).toBe("not-blocking");
   });
 
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {

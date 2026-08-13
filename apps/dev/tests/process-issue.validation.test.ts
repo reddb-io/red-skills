@@ -2163,7 +2163,7 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
       // and the review's reserved round stays unreachable to gate and tier.
       reseedGateBudget: 9,
       adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
-      adversarialFindings: { summary: "Clean.", findings: [] },
+      adversarialFindings: { summary: "Clean.", score: 0.9, findings: [] },
     });
 
     const result = await processIssue(deps, input);
