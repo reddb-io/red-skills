@@ -51,6 +51,27 @@ export const REQUEUE_SUPPORTED_KINDS = new Set([
   "base-stale",
 ]);
 
+/**
+ * Park kinds that require human authority before the one requeue door may
+ * clear them. The transition-vocabulary guard proves this explicit set and
+ * {@link REQUEUE_SUPPORTED_KINDS} partition the complete Park census.
+ */
+export const HUMAN_ONLY_BLOCKER_KINDS = new Set([
+  "stalled",
+  "wall-clock-capped",
+  "crashed",
+  "signal-killed",
+  "dependency",
+  "quota",
+  "runner-transient",
+  "host-config",
+  "merge-conflict",
+  "ci",
+  "policy",
+  "trunk-diverged",
+  "budget",
+]);
+
 export interface RequeueInput {
   /** Machine callers are restricted to the mechanical allowlist; human callers may resolve any blocker kind. */
   authority?: RequeueAuthority;
