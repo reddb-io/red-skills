@@ -555,6 +555,22 @@ describe("buildNoLeakCommitMsgHook (issue #1366)", () => {
 });
 
 describe("runAgent", () => {
+  it("surfaces the runner session artifact from the latest captured iteration", async () => {
+    const r = await runAgent(
+      makeDeps(async () =>
+        fakeResult({
+          iterations: [
+            { sessionId: "session-1", sessionFilePath: "/sessions/session-1.toon" },
+            { sessionId: "session-2", sessionFilePath: "/sessions/session-2.toon" },
+          ],
+        }),
+      ),
+      baseInput,
+    );
+
+    expect(r.sessionArtifact).toBe("/sessions/session-2.toon");
+  });
+
   it("normalises a DONE RunResult", async () => {
     const r = await runAgent(makeDeps(async () => fakeResult()), baseInput);
     expect(r).toEqual({
