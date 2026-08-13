@@ -174,6 +174,9 @@ or a blocking 0–1 floor) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` inner-agent GitHub reads (explicit `gh api` REST forms for issues, pull
 requests, and check runs) -> `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`;
+Claude path briefs (automatic first-touch injection from a skill's `paths:`
+frontmatter, once per session per skill) -> `scripts/lib/path-briefs.mjs`,
+`apps/dev/src/core/path-brief-hook.ts`, and `plugins/dev/hooks/claude.hooks.json`;
 `/afk` task-class runner routes (`plugins.dev.afk.routes.{validate,simple,complex,think}`),
 their override precedence, and `/red-setup` interview ->
 `plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
