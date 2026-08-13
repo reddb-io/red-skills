@@ -15,6 +15,7 @@
 // survives across rounds instead of being rebuilt from the last trigger.
 
 import { EMPTY_FAILURE_SIGNATURE } from "../failure-signature.js";
+import type { SpinPattern } from "@reddb-io/red-castle/engine";
 
 /** The section tag naming WHAT ASKED for this round. The outstanding state
  * inside it is identical whichever one wraps it; the tag exists so a reader (and
@@ -22,6 +23,7 @@ import { EMPTY_FAILURE_SIGNATURE } from "../failure-signature.js";
 export type ReseedSectionTag =
   | "afk-gate-correction"
   | "go-machine-gate-retry"
+  | "spin-correction"
   | "tier-escalation"
   | "adversarial-review-correction";
 
@@ -235,6 +237,20 @@ export function gateReseedDirectives(opts: {
   return [
     `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
     "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+  ];
+}
+
+/** Persistent Spin spends the existing gate-shaped branch-repair round. The
+ * named fault is the actionable evidence; the next agent must not rediscover
+ * which futile pattern survived the free in-session steer. */
+export function spinReseedDirectives(opts: {
+  pattern: SpinPattern;
+  retry: number;
+  cap: number;
+}): string[] {
+  return [
+    `Spin persisted after the in-session steer as \`spin:${opts.pattern}\`. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
+    "Break the named pattern on the existing branch, take a materially different approach, commit only the needed changes, then emit the required terminal sentinel.",
   ];
 }
 
