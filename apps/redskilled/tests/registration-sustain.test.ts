@@ -194,6 +194,48 @@ describe("sustainProjectRegistration — what holds a lease up", () => {
 });
 
 describe("a registration outlives its window while the project still drains", () => {
+  it("keeps host-state and statusline reads as pure snapshots", async () => {
+    const snapshots: RedskilledProjectRegistration[][] = [];
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      clock: () => T0,
+      launch: recordingLaunch([]),
+      registrationIntentStore: {
+        read: async () => [],
+        replace: async (registrations) => { snapshots.push([...registrations]); },
+        flush: async () => {},
+      },
+    });
+    running.push(daemon);
+    daemon.registerProject(request());
+    daemon.trackWorker({
+      worker_id: "wLIVE",
+      project_label: "acme/widgets",
+      pid: 42,
+      started_at: T0,
+      workspace_path: "/tmp/acme-widgets",
+      isolated: true,
+      unit: "red-worker-wLIVE.service",
+      warnings: [],
+    });
+    const before = daemon.hostState().registrations![0]!;
+    const writes = snapshots.length;
+
+    for (let index = 0; index < 100; index += 1) {
+      daemon.hostState();
+      daemon.statuslinePayload();
+    }
+
+    const after = daemon.hostState().registrations![0]!;
+    expect(after.renewals).toBe(before.renewals);
+    expect(after.sustains).toBe(before.sustains);
+    expect(after.renew_by).toBe(before.renew_by);
+    expect(snapshots).toHaveLength(writes);
+  });
+
   it("survives a daemon replacement and resumes polling without project_start", async () => {
     const paths = await sessionPaths();
     const first = await startRedskilledDaemon({
@@ -383,6 +425,7 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
     expect(daemon.hostState().registrations).toHaveLength(1);
 
     clock.advance(WINDOW_MS);
+    daemon.sweepRegistrations();
     const state = daemon.hostState();
     expect(state.registrations).toEqual([]);
     // NOT just an absence: a project missing from the set could be one that never
@@ -412,6 +455,7 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
     // is what entitles one bounded recovery poll after a scheduling lapse.
     await daemon.pollQueueDiscovery();
     await new Promise((resolve) => setTimeout(resolve, 50));
+    daemon.sweepRegistrations();
     const lapsed = daemon.hostState();
     expect(lapsed.registrations).toEqual([]);
 
@@ -459,6 +503,7 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
 
     // Miss the registration deadline and the complete ordinary recovery window.
     clock.advance(WINDOW_MS * 3);
+    daemon.sweepRegistrations();
     const stopped = daemon.hostState();
     expect(stopped.registrations).toEqual([]);
     const rendered = renderRedskilledStatusline(
