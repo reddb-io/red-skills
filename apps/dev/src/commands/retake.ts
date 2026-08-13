@@ -266,6 +266,7 @@ async function collectWorkerState(cwd: string, issue: number): Promise<RetakeWor
     issue,
     // Attempt ordinals are retired (ADR 0103); a resumable issue has one attempt.
     attempt: undefined,
+    sessionArtifact: rec.state.session_artifact || undefined,
     phase: typeof current.phase === "string" ? current.phase : undefined,
     outcome: typeof (current as Record<string, unknown>).outcome === "string"
       ? String((current as Record<string, unknown>).outcome)
@@ -286,7 +287,7 @@ async function collectRetakeFacts(exec: ExecFn, cwd: string, flags: RetakeFlags)
   return { issue, pullRequests, branches, worktrees, workerState };
 }
 
-function renderRetakeReport(facts: RetakeFacts): string {
+export function renderRetakeReport(facts: RetakeFacts): string {
   const recommendation = recommendRetake(facts);
   const lines: string[] = [];
   lines.push(`/retake #${facts.issue.number}: ${facts.issue.title || "(untitled)"}`);
@@ -318,6 +319,7 @@ function renderRetakeReport(facts: RetakeFacts): string {
     lines.push(
       `  ${s.attemptDir} phase=${s.phase ?? "unknown"} outcome=${s.outcome ?? "unknown"} exit=${s.lastExitCode ?? "unknown"}`,
     );
+    if (s.sessionArtifact) lines.push(`  session evidence: ${s.sessionArtifact}`);
   }
   lines.push("");
   lines.push(`next: ${recommendation.summary}`);
