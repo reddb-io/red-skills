@@ -60,10 +60,6 @@ export interface SourceTrustInput {
    * honour the allowlist / write-access / CODEOWNERS overrides for an author whose
    * association alone does not qualify. */
   trustVerdict?: ActorTrustVerdict;
-  /** True when a maintainer applied 👍 to this specific comment. This is a
-   * per-comment promotion signal; it does not change the author's default trust
-   * on any other comment. */
-  maintainerThumbsUp?: boolean;
 }
 
 /**
@@ -72,11 +68,18 @@ export interface SourceTrustInput {
  *   2. author association OWNER/MEMBER/COLLABORATOR → trusted
  *   3. a POSITIVE trust-gate override (allowlist /
  *      write-access / codeowners)                  → trusted
- *   4. maintainer 👍 on this comment               → trusted
- *   5. everything else                             → dubious
+ *   4. everything else                             → dubious
  *
  * Note `permissive-default` never promotes: the guidance channel requires a
  * positive source signal, not the absence of one.
+ *
+ * A fifth rule used to sit at position 4: a maintainer's 👍 on one comment
+ * promoted that comment alone. It never fired. The field it keyed on was
+ * supplied by no reader in the repository — not the jq projection it was written
+ * for, and not the REST payload, which carries reaction COUNTS without the
+ * reacting logins. Restoring it needs a per-comment
+ * `…/comments/{id}/reactions` read, which is an N+1 on a budget-aware client;
+ * that is a decision to take deliberately, not a field to leave dangling.
  */
 export function classifySourceTrust(input: SourceTrustInput): SourceTrustLevel {
   if (input.isBot) return "automation";
@@ -88,8 +91,6 @@ export function classifySourceTrust(input: SourceTrustInput): SourceTrustLevel {
   if (verdict?.executable && verdict.basis !== undefined && TRUSTED_BASES.has(verdict.basis)) {
     return "trusted";
   }
-
-  if (input.maintainerThumbsUp) return "trusted";
 
   return "dubious";
 }

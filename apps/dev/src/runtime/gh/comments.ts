@@ -1,13 +1,7 @@
 import type { HandoffComment } from "../../core/handoff.js";
 import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { ActorTrustVerdict } from "../../core/trust-gate.js";
-import {
-  apiPath,
-  githubReadClient,
-  githubRepo,
-  runGithubRestRead,
-  type GhContext,
-} from "./common.js";
+import { githubReadClient, githubRepo, type GhContext } from "./common.js";
 
 export type CommentTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
 
@@ -17,10 +11,6 @@ interface RawGhComment {
   author?: { login?: string; is_bot?: boolean };
   authorAssociation?: string;
   createdAt?: string;
-  reactionGroups?: Array<{
-    content?: string;
-    users?: { nodes?: Array<{ login?: string }> };
-  }>;
 }
 
 export interface IssueCommentForUpdate {
@@ -35,48 +25,13 @@ export type IssueCommentsReadResult =
   | { ok: true; comments: IssueCommentForUpdate[] }
   | { ok: false; reason: string };
 
-function parseJsonLines(stdout: string): unknown[] {
-  const out: unknown[] = [];
-  for (const line of stdout.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    try {
-      out.push(JSON.parse(t));
-    } catch {
-      // tolerate malformed jq lines; callers degrade to the valid subset.
-    }
-  }
-  return out;
-}
-
-function thumbsUpReactors(comment: RawGhComment): string[] {
-  const reactors: string[] = [];
-  for (const group of comment.reactionGroups ?? []) {
-    if (String(group.content ?? "").toUpperCase() !== "THUMBS_UP") continue;
-    for (const node of group.users?.nodes ?? []) {
-      const login = String(node.login ?? "").trim();
-      if (login) reactors.push(login);
-    }
-  }
-  return reactors;
-}
-
-function isMaintainerThumbsUp(verdict: ActorTrustVerdict | undefined): boolean {
-  return (
-    verdict?.executable === true &&
-    (verdict.basis === "write-access" || verdict.basis === "codeowners")
-  );
-}
-
 /** Project GitHub comments to handoff comments with the source-trust taxonomy.
  * Bot authors resolve to `automation` and OWNER/MEMBER/COLLABORATOR associations
  * to `trusted` from the projection alone; every other author is resolved through
  * the injected `resolveTrust` primitive so allowlist / write-access / CODEOWNERS
- * overrides still promote. A maintainer's THUMBS_UP reaction promotes only the
- * reacted comment; it does not change the author's trust on sibling comments.
- * Results are memoised per login within the call. When `resolveTrust` is omitted
- * the level is decided from association + bot status only (a non-collaborator
- * falls to `dubious`, and reaction promotion is unavailable). */
+ * overrides still promote. Results are memoised per login within the call. When
+ * `resolveTrust` is omitted the level is decided from association + bot status
+ * only, so a non-collaborator falls to `dubious`. */
 async function projectComments(
   raw: readonly RawGhComment[],
   resolveTrust?: CommentTrustResolver,
@@ -105,19 +60,11 @@ async function projectComments(
     // otherwise-dubious human author is resolved through the trust primitive.
     const associationTrusted = TRUSTED_ASSOCIATIONS.has((authorAssociation ?? "").trim().toUpperCase());
     const trustVerdict = isBot || associationTrusted ? undefined : await resolveVerdict(login);
-    const maintainerThumbsUp = (
-      await Promise.all(thumbsUpReactors(c).map((actor) => resolveVerdict(actor)))
-    ).some(isMaintainerThumbsUp);
     out.push({
       body: String(c.body ?? ""),
       author: login,
       createdAt: c.createdAt ? String(c.createdAt) : undefined,
-      sourceTrust: classifySourceTrust({
-        authorAssociation,
-        isBot,
-        trustVerdict,
-        maintainerThumbsUp,
-      }),
+      sourceTrust: classifySourceTrust({ authorAssociation, isBot, trustVerdict }),
     });
   }
   return out;
@@ -175,77 +122,55 @@ interface RestIssueComment {
   readonly created_at?: string;
 }
 
-function restCommentJq(): string {
-  return '.[] | {body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}';
+/** The REST shape this reader needs: the handoff fields plus the numeric id. */
+interface RestIssueCommentWithId extends RestIssueComment {
+  readonly id?: number;
 }
 
-function restCommentWithIdJq(): string {
-  return '.[] | {id: .id, body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}';
-}
-
-function parseStrictCommentJsonLines(stdout: string): RawGhComment[] | undefined {
-  const out: RawGhComment[] = [];
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as RawGhComment;
-      if (!Number.isFinite(Number(parsed.id))) return undefined;
-      out.push(parsed);
-    } catch {
-      return undefined;
-    }
-  }
-  return out;
-}
-
-/** REST-backed issue comments for mutation-sensitive idempotency checks. Unlike
- * issueComments(), this preserves the numeric REST id and reports read/parse
- * failure separately from a successful empty list. */
+/**
+ * REST-backed issue comments for mutation-sensitive idempotency checks.
+ *
+ * Unlike `issueComments`, this preserves the numeric REST id and reports a read
+ * failure SEPARATELY from a successful empty list. The distinction is the whole
+ * point: the caller decides from this answer whether to CREATE a comment or
+ * UPDATE one, so degrading a transport failure to "no comments" would post a
+ * duplicate on every outage.
+ */
 export async function readIssueComments(
   ctx: GhContext,
   issue: number,
 ): Promise<IssueCommentsReadResult> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, `issues/${issue}/comments`), ["--paginate", "--jq", restCommentWithIdJq()]);
-  if (r.code !== 0) return { ok: false, reason: `failed to read issue comments (gh exit ${r.code})` };
-  const raw = parseStrictCommentJsonLines(r.stdout ?? "");
-  if (!raw) return { ok: false, reason: "failed to parse issue comments JSON" };
+  const repo = githubRepo(ctx);
+  if (!repo) return { ok: false, reason: "reading issue comments needs an owner/repository slug" };
+  let rows: readonly RestIssueCommentWithId[];
+  try {
+    const answer = await githubReadClient(ctx).conditionalPaginate<RestIssueCommentWithId>({
+      // Its OWN cache namespace. Four readers already share this route, and an
+      // idempotency check must never decide from a body another reader cached.
+      cacheKey: `gh:comments-for-update:${repo.owner}/${repo.repo}:${issue}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      parameters: { ...repo, issue_number: issue, per_page: 100 },
+      operation: { key: "issue comments", budget: "rest" },
+      actor: "dev:comments-for-update",
+    });
+    rows = answer.data;
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (rows.some((row) => !Number.isFinite(Number(row.id)))) {
+    return { ok: false, reason: "an issue comment carried no numeric id" };
+  }
   return {
     ok: true,
-    comments: raw.map((comment) => ({
-      id: Number(comment.id),
-      body: String(comment.body ?? ""),
-      author: comment.author?.login ? String(comment.author.login) : undefined,
-      createdAt: comment.createdAt ? String(comment.createdAt) : undefined,
+    comments: rows.map((row) => ({
+      id: Number(row.id),
+      body: String(row.body ?? ""),
+      author: row.user?.login ? String(row.user.login) : undefined,
+      createdAt: row.created_at ? String(row.created_at) : undefined,
       sourceTrust: classifySourceTrust({
-        authorAssociation: comment.authorAssociation,
-        isBot: comment.author?.is_bot === true,
+        authorAssociation: row.author_association,
+        isBot: row.user?.type === "Bot",
       }),
     })),
   };
-}
-
-/** PR top-level comments use GitHub's issue-comment API. Project them with the
- * exact same source-trust rule as issue comments so only trusted-source
- * directives can become authoritative guidance. */
-export async function prComments(
-  ctx: GhContext,
-  pr: number,
-  resolveTrust?: CommentTrustResolver,
-): Promise<HandoffComment[]> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, `issues/${pr}/comments`), ["--paginate", "--jq", restCommentJq()]);
-  if (r.code !== 0) return [];
-  return projectComments(parseJsonLines(r.stdout) as RawGhComment[], resolveTrust);
-}
-
-/** PR review comments use a separate pull-review-comment API but share the same
- * source-trust projection as issue and PR comments. */
-export async function prReviewComments(
-  ctx: GhContext,
-  pr: number,
-  resolveTrust?: CommentTrustResolver,
-): Promise<HandoffComment[]> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, `pulls/${pr}/comments`), ["--paginate", "--jq", restCommentJq()]);
-  if (r.code !== 0) return [];
-  return projectComments(parseJsonLines(r.stdout) as RawGhComment[], resolveTrust);
 }
