@@ -6,13 +6,11 @@
 // commits on a branch" step, then drives its own feedback gate, lock-toggled
 // landing, envelope, and close around the returned `RunAgentResult`.
 //
-// The pure mapping (buildRunOptions / interpretOutcome) is unit-tested with the
-// sandcastle `run` injected; `defaultSandcastleDeps` wires the real providers for
-// the CLI. AFK's own sentinels (`<promise>DONE|BLOCKED</promise>`) are registered
-// as sandcastle completion signals, so the existing AGENT-PROMPT contract is
-// unchanged.
+// The pure mapping is unit-tested with `run` injected; `defaultSandcastleDeps`
+// wires real providers. AFK sentinels remain registered as completion signals,
+// preserving the existing AGENT-PROMPT contract.
 
-import type { AgentStreamEvent, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
+import type { AgentStreamEvent, CodexOptions, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import { extractAgentOutput } from "@reddb-io/red-castle";
 import { join } from "node:path";
 import { buildLineRedactor } from "../../runtime/outbound-redaction.js";
@@ -516,6 +514,8 @@ export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
  * with fakes, without importing the package (which pulls real provider deps).
  * `defaultSandcastleDeps` supplies the real `core.{claudeCode,codex,opencode}`.
  */
+type CodexFactoryOptions = { effort?: AgentEffort } & { -readonly [K in "configOverrides" | "ignoreUserConfig" | "ignoreRules"]?: CodexOptions[K] };
+
 export interface AgentFactories {
   claudeCode: (model: string, options?: {
     effort?: AgentEffort;
@@ -523,10 +523,7 @@ export interface AgentFactories {
     settingSources?: readonly ("user" | "project" | "local")[];
     pluginDirs?: readonly string[];
   }) => RunOptions["agent"];
-  codex: (model: string, options?: {
-    effort?: AgentEffort;
-    configOverrides?: readonly string[];
-  }) => RunOptions["agent"];
+  codex: (model: string, options?: CodexFactoryOptions) => RunOptions["agent"];
   opencode: (model: string, options?: { variant?: string; env?: Record<string, string> }) => RunOptions["agent"];
 }
 
@@ -605,9 +602,12 @@ export function buildAgent(
   // `forcedModel` (claude-minimax → MiniMax-M3) discards the resolved tier model.
   const targetModel = spec.forcedModel ?? model;
   if (spec.factory === "codex") {
-    const options: { effort?: AgentEffort; configOverrides?: readonly string[] } = {};
+    const options: NonNullable<Parameters<AgentFactories["codex"]>[1]> = {};
     if (effort !== undefined) options.effort = effort;
-    if (opts?.implementer) options.configOverrides = opts.implementer.codexConfigOverrides;
+    if (opts?.implementer) {
+      options.configOverrides = opts.implementer.codexConfigOverrides;
+      options.ignoreUserConfig = options.ignoreRules = true;
+    }
     return factories.codex(targetModel, Object.keys(options).length > 0 ? options : undefined);
   }
   const options: {

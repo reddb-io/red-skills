@@ -506,7 +506,7 @@ export interface FeedbackWorktreeOptions {
    */
   rebaseOnto?: string;
   /** Resource budget applied to validation subprocesses (#1758). */
-  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number; turboConcurrency?: number };
   /**
    * Where a BLOCKED wait announces itself (#2985). Both host-wide locks here
    * can hold a worker for tens of minutes with no child process and no write,

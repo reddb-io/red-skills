@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_IMPLEMENTER_DEV_SKILLS,
   buildImplementerMetrics,
@@ -7,6 +9,25 @@ import {
   type ImplementerSkill,
 } from "../src/core/implementer-environment.js";
 import { buildAgent, type AgentFactories } from "../src/core/execution.js";
+import { prepareImplementerEnvironment } from "../src/runtime/implementer-environment.js";
+
+const scratchRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of scratchRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function pluginFixture(name: string): string {
+  const root = mkdtempSync(join(tmpdir(), `implementer-${name}-`));
+  scratchRoots.push(root);
+  for (const host of ["claude", "codex"]) {
+    mkdirSync(join(root, `.${host}-plugin`), { recursive: true });
+    writeFileSync(join(root, `.${host}-plugin`, "plugin.json"), JSON.stringify({ name, skills: ["./skills"] }));
+  }
+  mkdirSync(join(root, "skills", "tdd"), { recursive: true });
+  writeFileSync(join(root, "skills", "tdd", "SKILL.md"), "---\nname: tdd\ndescription: test first\n---\n");
+  return root;
+}
 
 const catalog: ImplementerSkill[] = [
   {
@@ -137,6 +158,61 @@ describe("resolveImplementerProjection", () => {
   });
 });
 
+describe("prepared Codex implementer projection", () => {
+  it("materializes only navigator when user and project fixtures contain unknown MCPs", () => {
+    const dev = pluginFixture("dev");
+    writeFileSync(join(dev, ".mcp.json"), JSON.stringify({ mcpServers: {
+      navigator: { command: "node", args: ["navigator.mjs"] },
+      "project-unknown": { command: "node", args: ["unknown.mjs"] },
+    } }));
+    const attemptDir = mkdtempSync(join(tmpdir(), "implementer-attempt-"));
+    scratchRoots.push(attemptDir);
+    const prepared = prepareImplementerEnvironment({ attemptDir, configText: config(), pluginRoots: { dev } });
+    const overrides = prepared.runtime.codexConfigOverrides.join("\n");
+
+    expect(overrides).toContain("features.plugins=false");
+    expect(overrides).toContain("features.apps=false");
+    expect(overrides).toContain("features.hooks=false");
+    expect(overrides).toContain("mcp_servers={navigator=");
+    expect(overrides).not.toContain("project-unknown");
+    expect(overrides).not.toContain("user-unknown");
+    expect(overrides).toContain("skills.config=[");
+  });
+
+  it("materializes every optional MCP exactly when project configuration enables it", () => {
+    const dev = pluginFixture("dev");
+    const memory = pluginFixture("memory");
+    const brain = pluginFixture("brain");
+    writeFileSync(join(dev, ".mcp.json"), JSON.stringify({ mcpServers: {
+      navigator: { command: "node", args: ["navigator.mjs"] },
+      rsp: { command: "node", args: ["rsp.mjs"] },
+      redskilled: { command: "node", args: ["redskilled.mjs"] },
+    } }));
+    writeFileSync(join(memory, ".mcp.json"), JSON.stringify({ mcpServers: {
+      "red-memory": { command: "node", args: ["memory.mjs"] },
+      "red-ui": { command: "node", args: ["ui.mjs"] },
+    } }));
+    writeFileSync(join(brain, ".mcp.json"), JSON.stringify({ mcpServers: {
+      brain: { command: "node", args: ["brain.mjs"] },
+    } }));
+    const attemptDir = mkdtempSync(join(tmpdir(), "implementer-attempt-"));
+    scratchRoots.push(attemptDir);
+    const prepared = prepareImplementerEnvironment({
+      attemptDir,
+      configText: config("  memory:\n    enabled: true\n  brain:\n    enabled: true\n  red-ui:\n    enabled: true\n") + "rsp:\n  enabled: true\n",
+      pluginRoots: { dev, memory, brain },
+    });
+    const mcp = prepared.runtime.codexConfigOverrides.find((override) => override.startsWith("mcp_servers="));
+
+    expect(mcp).toContain("navigator=");
+    expect(mcp).toContain("red-memory=");
+    expect(mcp).toContain("brain=");
+    expect(mcp).toContain("red-ui=");
+    expect(mcp).toContain("rsp=");
+    expect(mcp).not.toContain("redskilled=");
+  });
+});
+
 describe("buildImplementerMetrics", () => {
   it("captures runner-startup and exact manifest before/after deltas for run artifacts", () => {
     const projection = resolveImplementerProjection(config(), catalog);
@@ -206,6 +282,8 @@ describe("buildAgent implementer projection", () => {
     ]);
     expect(calls.codex).toEqual([
       {
+        ignoreUserConfig: true,
+        ignoreRules: true,
         configOverrides: ['plugins."memory@red-skills".enabled=false'],
       },
     ]);

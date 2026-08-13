@@ -810,16 +810,15 @@ export interface CodexOptions {
   };
   /**
    * Maps to Codex's `approvals_reviewer` config key (set via
-   * `-c approvals_reviewer="<value>"`). When set to `"auto_review"`, the
-   * provider swaps the default `--dangerously-bypass-approvals-and-sandbox`
-   * for an interactive approval policy (`-a on-request`) and Codex's most
-   * permissive sandbox (`-s danger-full-access`) — auto-review needs
-   * something to review, and the safety boundary is the reviewer agent
-   * rather than the filesystem sandbox.
+   * `-c approvals_reviewer="<value>"`). `"auto_review"` swaps the bypass for
+   * interactive approvals and Codex's permissive sandbox; Sandcastle retains
+   * the filesystem boundary while the reviewer owns per-action approval.
    */
   readonly approvalsReviewer?: "user" | "auto_review";
   /** Per-invocation `-c key=value` overrides (for example plugin/skill gates). */
   readonly configOverrides?: readonly string[];
+  readonly ignoreUserConfig?: boolean;
+  readonly ignoreRules?: boolean;
 }
 
 export const codex = (
@@ -848,9 +847,9 @@ export const codex = (
       options?.approvalsReviewer === "auto_review"
         ? ` -a on-request -s danger-full-access -c ${shellEscape(`approvals_reviewer="auto_review"`)}`
         : " --dangerously-bypass-approvals-and-sandbox";
-    const configFlags = (options?.configOverrides ?? [])
-      .map((override) => ` -c ${shellEscape(override)}`)
-      .join("");
+    const configFlags = `${options?.ignoreUserConfig ? " --ignore-user-config" : ""}${
+      options?.ignoreRules ? " --ignore-rules" : ""
+    }${(options?.configOverrides ?? []).map((override) => ` -c ${shellEscape(override)}`).join("")}`;
     // Codex distinguishes fork from resume at the verb level — `codex exec
     // fork <id>` leaves the parent rollout intact; `codex exec resume <id>`
     // appends to it. See ADR 0018.
@@ -864,7 +863,7 @@ export const codex = (
     }
     const stdinArg = resumeSession ? " -" : "";
     return {
-      command: `${base} --json${approvalsFlags} -m ${shellEscape(model)}${effortFlag}${configFlags}${stdinArg}`,
+      command: `${base} --json${configFlags}${approvalsFlags} -m ${shellEscape(model)}${effortFlag}${stdinArg}`,
       // codex has no system-prompt flag — prepend the contract to the stdin prompt.
       stdin: withSystemPrompt(systemPrompt, prompt),
     };

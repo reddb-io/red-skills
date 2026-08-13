@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
+import { projectImplementerEnvironment } from "@reddb-io/red-castle/engine";
 import {
   IMPLEMENTER_PLUGIN_NAMES,
   buildImplementerMetrics,
@@ -17,6 +18,7 @@ import {
   type ImplementerPluginName,
   type ImplementerSkill,
 } from "../core/implementer-environment.js";
+import { parseConfigYaml } from "../core/config.js";
 import type { ImplementerRuntimeProjection } from "../core/execution.js";
 import { assertDevSnapshotToonLossless } from "../core/toon-snapshot.js";
 
@@ -191,15 +193,73 @@ function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
+function tomlKey(value: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(value) ? value : tomlString(value);
+}
+
+function tomlValue(value: unknown): string {
+  if (typeof value === "string") return tomlString(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `[${value.map(tomlValue).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value).map(([key, nested]) => `${tomlKey(key)}=${tomlValue(nested)}`).join(",")}}`;
+  }
+  throw new Error("implementer MCP projection contains an unsupported value");
+}
+
+interface McpManifest {
+  mcpServers?: Record<string, Record<string, unknown>>;
+}
+
+function mcpPlugin(name: string, pluginRoots: ImplementerPluginRoots): ImplementerPluginName | undefined {
+  if (name === "navigator" || name === "rsp") return "dev";
+  if (name === "red-memory") return "memory";
+  if (name === "brain") return "brain";
+  if (name === "red-ui") return pluginRoots.memory ? "memory" : pluginRoots.brain ? "brain" : undefined;
+  return undefined;
+}
+
+function projectedMcpServers(
+  names: readonly string[],
+  runtimeRoot: string,
+  pluginRoots: ImplementerPluginRoots,
+): Record<string, Record<string, unknown>> {
+  const servers: Record<string, Record<string, unknown>> = {};
+  for (const name of names) {
+    const plugin = mcpPlugin(name, pluginRoots);
+    const sourceRoot = plugin ? pluginRoots[plugin] : undefined;
+    if (!plugin || !sourceRoot) throw new Error(`enabled implementer MCP '${name}' is not installed`);
+    const manifest = JSON.parse(readFileSync(join(sourceRoot, ".mcp.json"), "utf8")) as McpManifest;
+    const server = manifest.mcpServers?.[name];
+    if (!server) throw new Error(`enabled implementer MCP '${name}' has no transport`);
+    servers[name] = {
+      ...server,
+      env: {
+        ...((server.env as Record<string, unknown> | undefined) ?? {}),
+        CODEX_PLUGIN_ROOT: join(runtimeRoot, "plugins", plugin),
+      },
+    };
+  }
+  return servers;
+}
+
 function codexOverrides(
   projection: ReturnType<typeof resolveImplementerProjection>,
   runtimeRoot: string,
   pluginRoots: ImplementerPluginRoots,
+  configText: string,
 ): string[] {
-  const overrides = IMPLEMENTER_PLUGIN_NAMES.map(
-    (plugin) =>
-      `plugins.${tomlString(`${plugin}@red-skills`)}.enabled=false`,
-  );
+  const values = parseConfigYaml(configText);
+  const surfaces = projectImplementerEnvironment("codex", values).enabled;
+  const overrides = [
+    "features.plugins=false",
+    "features.apps=false",
+    "features.hooks=false",
+    "plugins={}",
+    "marketplaces={}",
+    "hooks={}",
+    `mcp_servers=${tomlValue(projectedMcpServers(surfaces.mcp, runtimeRoot, pluginRoots))}`,
+  ];
   const projectedSkillPaths = projection.skills.map((skill) => {
     const sourceRoot = pluginRoots[skill.plugin];
     if (!sourceRoot) return undefined;
@@ -299,6 +359,7 @@ export function prepareImplementerEnvironment(input: {
         projection,
         runtimeRoot,
         input.pluginRoots,
+        input.configText,
       ),
       opencodeConfigDir,
     },

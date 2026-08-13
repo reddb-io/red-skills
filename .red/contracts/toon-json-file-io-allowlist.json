@@ -60,6 +60,12 @@
       "moveKey": "f632cd5f3c50"
     },
     {
+      "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#bafaadf297bb",
+      "classification": "external",
+      "reason": ".mcp.json is MCP ecosystem JSON used to project permitted plugin transports.",
+      "moveKey": "f632cd5f3c50"
+    },
+    {
       "id": "apps/dev/src/runtime/implementer-environment.ts#json-stringify-file-write#ea0a59dd5189",
       "classification": "external",
       "reason": "Projected Claude and Codex plugin manifests remain JSON for host interoperability.",

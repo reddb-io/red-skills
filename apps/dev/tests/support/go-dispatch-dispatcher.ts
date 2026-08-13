@@ -13,6 +13,9 @@
 
 import { goCommand, type GoRuntime } from "../../src/commands/go.js";
 import { requestWorkerBirth } from "../../src/runtime/mcp-worker-birth.js";
+import { armTestProcessLifetime } from "./test-process-lifetime.js";
+
+armTestProcessLifetime();
 
 const workspace = process.argv[2];
 if (!workspace) throw new Error("go-dispatch-dispatcher: a workspace path is required");
