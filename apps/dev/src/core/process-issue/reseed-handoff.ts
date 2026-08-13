@@ -16,6 +16,7 @@
 
 import { EMPTY_FAILURE_SIGNATURE } from "../failure-signature.js";
 import type { SpinPattern } from "@reddb-io/red-castle/engine";
+import type { ReseedBudget, ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 
 /** The section tag naming WHAT ASKED for this round. The outstanding state
  * inside it is identical whichever one wraps it; the tag exists so a reader (and
@@ -275,4 +276,59 @@ export function reviewReseedDirectives(opts: { retry: number; cap: number }): st
     `A blocking adversarial review found confirmed defects or acceptance-criteria gaps. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
     "Fix only the blocking findings below on the existing branch, keep unrelated nits/style/suggestions out of scope, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
   ];
+}
+
+export interface ReseedRoundProjectionInput {
+  readonly trigger: ReseedTrigger;
+  readonly gate: "feedback" | "backpressure";
+  readonly spinPattern?: SpinPattern;
+  readonly tiers?: { readonly from: string; readonly to: string };
+  readonly spend: ReseedSpend;
+  readonly budget: ReseedBudget;
+  readonly lane: ReseedBudget["lane"];
+  readonly goLane: boolean;
+  readonly issue: number;
+}
+
+export interface ReseedRoundProjection {
+  readonly tag: ReseedSectionTag;
+  readonly directives: readonly string[];
+  readonly tier?: string;
+  readonly note: string;
+}
+
+/** Select the prompt directives and durable one-line account for one Re-seed. */
+export function reseedRoundProjection(input: ReseedRoundProjectionInput): ReseedRoundProjection {
+  const gateSpend = input.spend.gate ?? 0;
+  if (input.trigger === "spin") {
+    const pattern = input.spinPattern ?? "monologue";
+    return {
+      tag: "spin-correction",
+      directives: spinReseedDirectives({ pattern, retry: gateSpend, cap: input.budget.subCaps.gate }),
+      note: `🤖 ${input.lane}: spin:${pattern} persisted after the in-session steer; correction retry ${gateSpend}/${input.budget.subCaps.gate}.`,
+    };
+  }
+  if (input.trigger === "review-finding") {
+    const retry = input.spend.review ?? 0;
+    return {
+      tag: "adversarial-review-correction",
+      directives: reviewReseedDirectives({ retry, cap: input.budget.subCaps.review }),
+      note: `🤖 ${input.lane}: adversarial review found blocking issue(s); correction retry ${retry}/${input.budget.subCaps.review}.`,
+    };
+  }
+  if (input.trigger === "tier-escalation") {
+    const from = input.tiers?.from ?? "";
+    const to = input.tiers?.to ?? "";
+    return {
+      tag: "tier-escalation",
+      directives: tierEscalationDirectives({ from, to, retry: input.spend.tier ?? 0, cap: input.budget.subCaps.tier }),
+      tier: to,
+      note: `🤖 ${input.lane}: ${from}-tier feedback failed for #${input.issue}; re-seeding on the ${to} tier before terminal validation routing.`,
+    };
+  }
+  return {
+    tag: input.goLane ? "go-machine-gate-retry" : "afk-gate-correction",
+    directives: gateReseedDirectives({ gate: input.gate, retry: gateSpend, cap: input.budget.subCaps.gate }),
+    note: `🤖 ${input.lane}: ${input.gate} machine gate failed after DONE; correction retry ${gateSpend}/${input.budget.subCaps.gate}.`,
+  };
 }
