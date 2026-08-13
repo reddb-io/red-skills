@@ -98,7 +98,7 @@ export function renderStatuslineBedrockThemed(input: StatuslineBedrockInput): st
 // is deliberately NOT restated here: any `rsk=<token>` the lifecycle module
 // mints inherits the paint, so a new state cannot render as a plain outlier.
 const LIFECYCLE_TOKEN_LINE = /^rsk=[a-z-]+$/;
-const LIFECYCLE_SUFFIX = /^(.*) · age=(\S+) · rsk=([a-z-]+)$/;
+const LIFECYCLE_BADGE = /^(age=(\S+)|rsk=([a-z-]+)) · (.*)$/;
 
 /** One painted lifecycle token: paper key, DIM value — recessed, because the
  * glyphs already carry the meaning and `red.500` stays spent on failure. */
@@ -109,18 +109,22 @@ function paintedToken(key: string, value: string): string {
 /**
  * Paint the lifecycle-owned shapes in a tail line; pass every other line
  * through untouched (a live daemon row arrives already painted). Handles the
- * two shapes `lifecycleTailLines` emits: a whole-line `rsk=<state>` token, and
- * the ` · age=<t> · rsk=<state>` suffix on a cached head.
+ * two shapes `lifecycleTailLines` emits: a whole-line `rsk=<state>` token when
+ * there is nothing to draw, and a LEADING `age=<t> · ` (or `rsk=<state> · `)
+ * badge on a head that still carries its numbers.
  */
 export function paintLifecycleTokens(line: string): string {
   if (LIFECYCLE_TOKEN_LINE.test(line)) {
     const state = line.slice("rsk=".length);
     return `${NOBG}${paintedToken("rsk", state)}${RESET}`;
   }
-  const suffix = LIFECYCLE_SUFFIX.exec(line);
-  if (suffix !== null) {
-    const [, head, age, state] = suffix;
-    return `${head}${SOFT_SEPARATOR}${paintedToken("age", age!)}${SOFT_SEPARATOR}${paintedToken("rsk", state!)}${RESET}`;
+  const badge = LIFECYCLE_BADGE.exec(line);
+  if (badge !== null) {
+    const [, , age, state, head] = badge;
+    const painted = age === undefined
+      ? paintedToken("rsk", state!)
+      : paintedToken("age", age);
+    return `${NOBG}${painted}${SOFT_SEPARATOR}${head}${RESET}`;
   }
   return line;
 }

@@ -134,7 +134,7 @@ async function productionProbe(
  * The outer race is the prompt's wall-clock guarantee; the production probe
  * gives the socket transport the same deadline so its losing request is also
  * closed rather than left resident. A deadline miss with a cache serves that
- * tail as degraded; with no cache it states that the probe is still connecting.
+ * tail with its age; with no cache it states that the probe is still connecting.
  */
 export async function collectStatuslineTail(
   root: string,
@@ -154,18 +154,18 @@ export async function collectStatuslineTail(
   if (outcome.kind === "connecting") {
     if (cache != null) {
       return {
-        state: "degraded",
+        state: "stale",
         lines: lifecycleTailLines({
-          state: "degraded",
+          state: "stale",
           tail: cache.lines,
-          cachedAgeMs: cacheAgeMs(cache, nowMs),
+          ageMs: cacheAgeMs(cache, nowMs),
         }),
       };
     }
     return { state: "connecting", lines: lifecycleTailLines({ state: "connecting" }) };
   }
   if (outcome.kind === "unreachable") {
-    return { state: "bedrock-only", lines: lifecycleTailLines({ state: "bedrock-only" }) };
+    return { state: "no-daemon", lines: lifecycleTailLines({ state: "no-daemon" }) };
   }
 
   const reply = outcome.value;
@@ -185,8 +185,16 @@ export async function collectStatuslineTail(
     };
     (deps.writeCache ?? writeCacheFile)(cachePath, encodeDevSnapshotToon(value as never));
   }
+  // The daemon ANSWERED, so its lines are real whatever the lifecycle verdict —
+  // handing them on with an age badge is strictly more than handing on a word.
+  // Discarding them here is what made a stale read indistinguishable from an
+  // unreachable one on the only surface an operator actually reads.
   return {
     state,
-    lines: lifecycleTailLines({ state, tail: state === "live" ? reply.lines : undefined }),
+    lines: lifecycleTailLines({
+      state,
+      tail: reply.lines,
+      ...(reply.payloadAgeMs == null ? {} : { ageMs: reply.payloadAgeMs }),
+    }),
   };
 }
