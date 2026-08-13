@@ -328,7 +328,7 @@ describe("the dashboard carries the statusline's own fields", () => {
       LOCAL,
     );
     expect(dashboard.lines[0]).toBe(dashboard.header.line);
-    expect(dashboard.lines[1]).toContain("48h throughput unavailable");
+    expect(dashboard.lines.some((line) => line.includes("48h throughput unavailable"))).toBe(true);
     expect(dashboard.lines.slice(-2)).toEqual(dashboard.rows.map((row) => row.line));
   });
 
@@ -374,12 +374,21 @@ describe("the header carries the rates the daemon derived", () => {
     );
     const plain = dashboard.lines.map(stripAnsi);
 
-    expect(plain).toHaveLength(5);
-    expect(plain[0]).toMatch(/tk\/h=1\.2k ↑.*Tickets\/h=4 ↑.*wrk=3\/3.*slots=.*mem=/);
-    expect(plain[1]).toMatch(/^tokens 48h .{48} · now=1\.2k\/h ↑ · 46 missing \(no token samples/);
-    expect(plain[2]).toMatch(/^Tickets 48h .{48} · now=4\/h ↑ · 46 missing \(no Worker outcome/);
-    expect(plain[3]).toContain("w-1");
-    expect(plain[4]).toContain("terminal height");
+    // Order, not absolute position: a section added between the header and the
+    // Workers must not break an assertion about throughput.
+    const tokensAt = plain.findIndex((line) => line.startsWith("tokens "));
+    const ticketsAt = plain.findIndex((line) => line.startsWith("tickets "));
+    const workerAt = plain.findIndex((line, index) => index > 0 && /^w-1\b/.test(line.trim()));
+
+    expect(plain[0]).toMatch(/tk\/h=1\.2k ↑.*tickets\/h=4 ↑.*wrk=3\/3.*slots=.*mem=/);
+    // Both labels are padded to one width, so the two curves start in the SAME
+    // column and can be read against each other — the only thing two stacked
+    // sparklines are for.
+    expect(plain[tokensAt]).toMatch(/^tokens  48h .{48} · now=1\.2k\/h ↑ · 46 missing \(no token samples/);
+    expect(plain[ticketsAt]).toMatch(/^tickets 48h .{48} · now=4\/h ↑ · 46 missing \(no Worker outcome/);
+    expect(ticketsAt).toBe(tokensAt + 1);
+    if (workerAt >= 0) expect(workerAt).toBeGreaterThan(ticketsAt);
+    expect(plain.at(-1)).toContain("terminal height");
   });
 
   it("puts the hour's rates and the leading runner share in the one line a status bar shows", () => {
@@ -440,7 +449,7 @@ describe("the header carries the rates the daemon derived", () => {
       LOCAL,
     );
 
-    expect(stripAnsi(legacy.lines[1]!)).toContain("payload predates hourly history");
+    expect(legacy.lines.map(stripAnsi).some((line) => line.includes("payload predates hourly history"))).toBe(true);
     // The older rolling metrics remain readable instead of invalidating the payload.
     expect(stripAnsi(legacy.header.line)).toContain("tk/m=1.2k");
   });

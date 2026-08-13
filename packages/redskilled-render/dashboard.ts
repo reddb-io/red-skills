@@ -30,6 +30,7 @@ import {
   remoteCounterTokens,
   type RedskilledDashboardCounts,
 } from "./counters.js";
+import { projectLines, throughputLines, trendMark } from "./dashboard-sections.js";
 import {
   clamp,
   flattenPublishedLine,
@@ -70,7 +71,6 @@ import {
   REDSKILLED_RENDER_DISPLAY_ABSENT,
   type RedskilledRenderDeaths,
   type RedskilledRenderEngine,
-  type RedskilledRenderHourlySeries,
   type RedskilledRenderMetrics,
   type RedskilledRenderMetricsWindow,
   type RedskilledRenderPayload,
@@ -268,7 +268,12 @@ export function renderRedskilledDashboard(
 
   const header = buildHeader(payload, options, selected, match);
   const hidden = selected.length - visible.length;
-  const lines = [header.line, ...throughputLines(payload, options), ...rows.map((row) => row.line)];
+  const lines = [
+    header.line,
+    ...projectLines(payload, options),
+    ...throughputLines(payload, options),
+    ...rows.map((row) => row.line),
+  ];
   if (hidden > 0) {
     lines.push(clamp(`… ${hidden} more Worker(s) — the row budget is short, not the host`, options.maxWidth));
   }
@@ -627,62 +632,11 @@ function hourlyHeadline(history: NonNullable<RedskilledRenderMetrics["history_48
   const tickets = history.tickets_per_hour.current.value;
   const parts: string[] = [];
   if (tokens != null) parts.push(`tk/h=${formatRate(tokens)} ${trendMark(history.tokens_per_hour.trend)}`.trim());
-  if (tickets != null) parts.push(`Tickets/h=${formatRate(tickets)} ${trendMark(history.tickets_per_hour.trend)}`.trim());
+  if (tickets != null) parts.push(`tickets/h=${formatRate(tickets)} ${trendMark(history.tickets_per_hour.trend)}`.trim());
   return parts.length === 0 ? null : parts.join(" ");
 }
 
 /** The two 48-point series, or an explicit version/measurement absence. PURE. */
-function throughputLines(
-  payload: RedskilledRenderPayload,
-  options: RedskilledDashboardOptions,
-): readonly string[] {
-  const metrics = payload.metrics;
-  if (metrics == null) {
-    return [clamp("48h throughput unavailable — daemon payload carries no live metrics", options.maxWidth)];
-  }
-  if (metrics.history_48h == null) {
-    return [clamp("48h throughput unavailable — daemon payload predates hourly history", options.maxWidth)];
-  }
-  return [
-    hourlySeriesLine("tokens", metrics.history_48h.tokens_per_hour, options),
-    hourlySeriesLine("Tickets", metrics.history_48h.tickets_per_hour, options),
-  ];
-}
-
-const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
-
-function hourlySeriesLine(
-  label: "tokens" | "Tickets",
-  series: RedskilledRenderHourlySeries,
-  options: RedskilledDashboardOptions,
-): string {
-  const unit = label === "tokens" ? "tokens" : "Tickets";
-  const current = series.current.value;
-  const missing = series.buckets.filter((bucket) => bucket.value == null);
-  const reason = missing[0]?.absent_reason ?? null;
-  const currentText = current == null
-    ? `now unavailable (${series.current.absent_reason ?? "no current sample"})`
-    : `now=${formatRate(current)}/h ${trendMark(series.trend)}`.trim();
-  if (options.maxWidth < 72) {
-    return clamp(`${unit} 48h unavailable at width ${options.maxWidth} — 48 hourly points need 72 columns`, options.maxWidth);
-  }
-  const missingText = missing.length === 0 ? "" : ` · ${missing.length} missing (${reason ?? "unmeasured"})`;
-  return clamp(`${unit} 48h ${sparkline(series)} · ${currentText}${missingText}`, options.maxWidth);
-}
-
-function sparkline(series: RedskilledRenderHourlySeries): string {
-  const values = series.buckets.flatMap((bucket) => bucket.value == null ? [] : [Math.max(0, bucket.value)]);
-  const max = Math.max(0, ...values);
-  return series.buckets.map((bucket) => {
-    if (bucket.value == null) return "·";
-    if (max === 0) return SPARK[0];
-    return SPARK[Math.min(SPARK.length - 1, Math.floor((Math.max(0, bucket.value) / max) * (SPARK.length - 1)))]!;
-  }).join("");
-}
-
-function trendMark(trend: RedskilledRenderHourlySeries["trend"]): string {
-  return trend === "up" ? "↑" : trend === "down" ? "↓" : trend === "flat" ? "→" : "?";
-}
 
 /** `mem=1.2G/8G 15%`, or the observed figure alone when nothing caps it. PURE. */
 function memoryWindow(windows: RedskilledDashboardWindows): string {
