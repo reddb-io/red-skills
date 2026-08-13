@@ -44,6 +44,9 @@ import {
 } from "./validation-command.js";
 import { decideVerdict, emptyEnvironmentLedger } from "./verdict.js";
 import { applyValidationEvidence, reconcileValidationEvidence } from "./validation-evidence.js";
+import { namedFailures, outputSummary } from "./validation-output.js";
+
+export { namedFailures, outputSummary };
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
@@ -451,69 +454,6 @@ export function formatValidationLine(record: ValidationRecord): string {
 export interface ClassifiableCheck {
   status: ValidationStatus;
   record: ValidationRecord;
-}
-
-/** Strip ANSI SGR sequences so identity matching survives coloured runner output.
- * Test runners colour their FAIL markers; the raw captured bytes keep the escape
- * codes, and an un-stripped `^\s*FAIL\b` never matches `\x1b[31m FAIL \x1b[0m`. */
-function stripAnsi(line: string): string {
-  // eslint-disable-next-line no-control-regex
-  return line.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
-/** Patterns that name WHICH check failed, as opposed to how many did.
- * Vitest emits `FAIL  <file> > <suite> > <test>`; cargo emits `<name> ... FAILED`
- * and `---- <name> stdout ----`. Every one of them prints ABOVE the run's
- * trailing counters, which is precisely why a tail slice loses them. */
-const FAILURE_IDENTITY_PATTERNS: readonly RegExp[] = [
-  /^\s*FAIL\s+\S.*$/,
-  /^\s*\S.*\.{3}\s+FAILED\s*$/,
-  /^\s*----\s+\S.*\s+stdout\s+----\s*$/,
-];
-
-/** How many distinct failing identities to name before eliding the rest. A run
- * with dozens of failures is a systemic break, not a list to read line by line. */
-const MAX_NAMED_FAILURES = 5;
-
-/** Scan the WHOLE output for lines that name a failing check, deduped and in
- * first-seen order. Returns [] when the runner names nothing recognisable, which
- * keeps the tail-only summary as the honest fallback rather than inventing one. */
-export function namedFailures(output: string): string[] {
-  const seen = new Set<string>();
-  for (const raw of output.split("\n")) {
-    const line = stripAnsi(raw).replace(/\s+/g, " ").trim();
-    if (line === "") continue;
-    if (!FAILURE_IDENTITY_PATTERNS.some((re) => re.test(line))) continue;
-    seen.add(line);
-    if (seen.size >= MAX_NAMED_FAILURES) break;
-  }
-  return [...seen];
-}
-
-/**
- * Short summary for a finished check — the port of afk_validation_output_summary.
- * A passing check is always `command exited 0`; a failing check surfaces the
- * identities of the checks that failed followed by a trailing slice of its
- * captured output (joined to one line, capped at 1000 chars), or `command exited
- * non-zero` when there is nothing to show.
- *
- * The identity prefix exists because the tail alone is NOT actionable: a runner
- * prints `Tests 2 failed | 3750 passed` at the very end but names the two
- * failures higher up, so a park built from the tail says how many broke while
- * dropping which — forcing a human (or a whole CI round-trip) to re-derive what
- * the gate already had in hand. The identities lead because they are the part a
- * reader acts on, and the 1000-char cap is applied last so a verbose tail can
- * never crowd them out.
- */
-export function outputSummary(status: ValidationStatus, output: string): string {
-  if (status === "passed") return "command exited 0";
-  const trimmed = output.replace(/\n+$/, "");
-  if (trimmed === "") return "command exited non-zero";
-  const lines = trimmed.split("\n");
-  const tail = lines.slice(-20).join(" ");
-  const named = namedFailures(trimmed);
-  if (named.length === 0) return tail.slice(0, 1000);
-  return `failing: ${named.join(" | ")} — ${tail}`.slice(0, 1000);
 }
 
 // ---------- orchestration ----------
