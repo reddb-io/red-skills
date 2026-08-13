@@ -43,8 +43,8 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-describe("WSL2 — the daemon reaps a stamped orphan from a synthetic /proc", () => {
-  it("adopts the census identity, group-kills it, then records orphan-reaped death", async () => {
+describe("WSL2 — a synthetic /proc cannot confer Worker ownership", () => {
+  it("reports a stamped fixture Worker without a birth record and leaves it untouched", async () => {
     const root = await scratch("redskilled-wsl-orphan-");
     const procRoot = join(root, "proc");
     const processDir = join(procRoot, "4242");
@@ -85,14 +85,11 @@ describe("WSL2 — the daemon reaps a stamped orphan from a synthetic /proc", ()
     });
     daemons.push(daemon);
 
-    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 1, reaped: 1, suspects: 0 });
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 1 });
     await daemon.flushEvents();
 
-    expect(killed).toEqual([4_242]);
-    const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.map((event) => event.kind)).toEqual(["worker-birth", "worker-death"]);
-    expect(events[0]!.detail).toMatch(/adopted stamped orphan/);
-    expect(events[1]!.detail).toMatch(/orphan-reaped/);
+    expect(killed).toEqual([]);
+    expect(await readRedskilledEvents(paths.eventLanePath)).toEqual([]);
   });
 });
 
