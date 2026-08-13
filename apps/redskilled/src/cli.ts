@@ -742,7 +742,7 @@ export async function runUnit(
     return 0;
   }
   if (action === "install") {
-    const installed = await installRedskilledUnit(planRedskilledUnit(paths), io.unitIO ?? {});
+    const installed = await installRedskilledUnit(planRedskilledUnit(paths, { version: readBuildInfo("redskilled").version }), io.unitIO ?? {});
     write(`${JSON.stringify(installed, null, 2)}\n`);
     return installed.installed ? 0 : 1;
   }
@@ -834,7 +834,13 @@ export async function runProvision(
   // cache, so its ExecStart points at the daemon-home copy when the resolved
   // bundle's name states its version; anything else installs as resolved.
   const unitEntry = isResolvedRedskilledEntry(facts.entry)
-    ? stabilizeRedskilledEntry(facts.entry, { homeDir })
+    // Same reason as `planRedskilledUnit`: the version comes from the build
+    // stamp because an npx-resolved entry carries none in its name, and a unit
+    // pointing into a prunable cache is a daemon that stops starting.
+    ? stabilizeRedskilledEntry(facts.entry, {
+        homeDir,
+        version: readBuildInfo("redskilled").version,
+      })
     : undefined;
   const unit = values["install-unit"] && unitEntry != null
     ? await installRedskilledUserUnit({
