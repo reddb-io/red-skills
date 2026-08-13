@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
-import { freemem } from "node:os";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
@@ -63,6 +62,8 @@ import {
 } from "../memory-sampler.js";
 import { resolveResourceIncidentRuntime } from "./resource-incident-runtime.js";
 import { recordWorkerCpuReadings } from "./worker-cpu.js";
+import { foldWorkerHighWater, replayWorkerHighWater, terminalHighWaterFacts } from "./worker-high-water.js";
+import { handleResourceLeaseRequest, releaseOrphanedResourceLeases, resolveResourceLeaseRuntime } from "./resource-lease-runtime.js";
 import {
   createRedskilledMachineClaimStore,
   currentMachineOwner,
@@ -74,8 +75,6 @@ import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-t
 import {
   createRedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
-import { createRedskilledResourceLeaseRuntime } from "../resource-lease.js";
-import { createRedskilledResourceLeaseStore } from "../resource-lease-store.js";
 import {
   buildRegistrationLapse,
   buildRegistrationStop,
@@ -345,8 +344,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
   const registrationIntentStore = options.registrationIntentStore ??
     createRedskilledRegistrationIntentStore(paths.registrationIntentPath);
-  const resourceLeaseStore = options.resourceLeaseStore ??
-    createRedskilledResourceLeaseStore(paths.resourceLeasePath);
   const liveness = options.liveness ?? detectWorkerLiveness;
   const unitExitFacts = options.unitExitFacts ?? detectUnitExitFacts;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
@@ -393,12 +390,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const demandMs = options.demandMs ?? DEFAULT_REDSKILLED_DEMAND_MS;
   const demandBackoffMs = options.demandBackoffMs ?? REDSKILLED_DEMAND_BACKOFF_MS;
   const workers = new Map<string, RedskilledWorkerView>();
-  const restoredResourceLeases = await resourceLeaseStore.read().catch(() => []);
-  const resourceLeases = createRedskilledResourceLeaseRuntime({
-    nowMs: () => Date.parse(clock()),
-    availableMemoryBytes: options.availableMemoryBytes ?? freemem,
-    restored: restoredResourceLeases,
-    changed: (leases) => resourceLeaseStore.replace(leases),
+  const { runtime: resourceLeases, store: resourceLeaseStore } = await resolveResourceLeaseRuntime({
+    paths, clock,
+    ...(options.resourceLeaseStore == null ? {} : { store: options.resourceLeaseStore }),
+    ...(options.availableMemoryBytes == null ? {} : { availableMemoryBytes: options.availableMemoryBytes }),
   });
   // Concurrent socket admissions for the same trunk join one in-flight fetch.
   // A demand burst additionally retains its resolved promise for the whole tick.
@@ -414,17 +409,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // In memory beside the log lines and for the same reason: a display record is a
   // live progress note, and a durable copy would outlive the Worker it describes.
   const displays = new Map<string, RedskilledWorkerDisplayRecord>();
-  // What the daemon has SEEN, kept only as long as a window can ask about it.
-  // The displays map holds the latest record per Worker and nothing else, so a
-  // rate — which is a difference between two instants — has no ingredient there;
-  // these two lanes are that ingredient. In memory beside the displays and for
-  // the same reason: they are live progress notes, and a durable copy would be a
-  // third authority on a Worker's story (ADR 0130). The outcome marks are the one
-  // exception that is already durable — they mirror the host event lane, which is
-  // replayed into them at boot.
+  // Observations stay in memory; sparse checkpoints and outcomes replay from
+  // the authoritative event lane after daemon handover (ADR 0130).
   let observations: RedskilledWorkerMetricObservation[] = [];
   const metricCheckpoints = new Map<string, RedskilledWorkerMetricObservation>();
-  const workerHighWater = new Map<string, { memory: number; swap: number; pids: number }>();
+  let workerHighWater = replayWorkerHighWater([]);
   let outcomeMarks: RedskilledWorkerOutcomeMark[] = [];
   // Boot attributions and deaths this daemon observed share one surface feed.
   // The latter stay durable through the host event lane and are replayed below;
@@ -1661,13 +1650,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return tracked;
   }
 
-  /**
-   * Append one event, without making the caller wait for the disk.
-   *
-   * The lane serialises its own appends, so ordering survives the fire-and-
-   * forget; what a failed write must not do is take down the daemon that still
-   * holds the live Worker the event was about.
-   */
+  /** Append one ordered event without making the live daemon wait for disk. */
   function record(
     kind: RedskilledWorkerEventKind,
     worker: RedskilledWorkerView,
@@ -1676,26 +1659,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       readonly refusal?: string | null;
     } = {},
   ): void {
-    // A stopped daemon writes nothing. Its beliefs about who is alive stopped
-    // being authoritative when it let go of the session, and the next daemon
-    // re-derives every one of them by asking the host directly.
+    // A stopped daemon is no longer authoritative; its successor re-derives state.
     if (stopping) return;
     const ts = clock();
-    // The same instant the lane records, so the outcome rate and the lane never
-    // describe the same ending at two different times.
-    const high = workerHighWater.get(worker.worker_id);
+    // Outcome rates and lane records share this instant.
     const input: RecordWorkerEventInput = {
       kind,
       worker,
       ts,
       detail,
       ...facts,
-      ...((kind === "worker-death" || kind === "worker-budget-kill") && high != null
-        ? {
-            memoryPeakBytes: Math.max(facts.memoryPeakBytes ?? 0, high.memory),
-            memorySwapPeakBytes: Math.max(facts.memorySwapPeakBytes ?? 0, high.swap),
-            pidsPeak: Math.max(facts.pidsPeak ?? 0, high.pids),
-          }
+      ...((kind === "worker-death" || kind === "worker-budget-kill")
+        ? terminalHighWaterFacts(workerHighWater, worker.worker_id, facts)
         : {}),
     };
     if (kind === "worker-death" || kind === "worker-budget-kill") {
@@ -1782,26 +1757,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return true;
   }
 
-  /**
-   * One tick of the floor: sample the whole set, terminate what is over budget.
-   *
-   * The sample is taken ONCE for every Worker the daemon holds, so the tick's
-   * cost is the host's process table rather than the Worker count. An empty set
-   * is not sampled at all — there is nothing to measure and nothing to kill.
-   *
-   * The tick's CPU reading is recorded on every Worker it measured and acted on
-   * by nothing here: this tick enforces the memory budget, exactly as it did
-   * before the second number existed.
-   */
+  /** Sample all Workers once, record resources, and enforce memory budgets. */
   async function sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]> {
     const live = [...workers.values()];
     let reading: RedskilledTreeReading = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
     if (live.length > 0) try {
       reading = await treeSampler(live);
     } catch {
-      // A sampler that could not read the host measured nothing, and a Worker
-      // nothing measured is never killed on suspicion — nor is the last reading
-      // re-dated, because a failed tick must age the payload rather than refresh it.
+      // A failed sample measures nothing and never kills on suspicion.
       reading = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
     }
     const rss = reading.rss;
@@ -1810,14 +1773,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     recordWorkerCpuReadings(workers, reading.cpu_seconds, lastSampledAt);
     await resourceIncidents.ingest(Object.values(reading.resource_samples ?? {}), lastSampledAt);
     for (const [workerId, sample] of Object.entries(reading.resource_samples ?? {})) {
-      const previous = workerHighWater.get(workerId) ?? { memory: 0, swap: 0, pids: 0 };
-      const next = {
-        memory: Math.max(previous.memory, sample.memory.peak_bytes),
-        swap: Math.max(previous.swap, sample.memory.swap_peak_bytes ?? 0),
-        pids: Math.max(previous.pids, sample.pids.peak),
-      };
-      if (next.memory === previous.memory && next.swap === previous.swap && next.pids === previous.pids) continue;
-      workerHighWater.set(workerId, next);
+      const next = foldWorkerHighWater(workerHighWater, workerId, sample);
+      if (next == null) continue;
       const worker = workers.get(workerId);
       if (worker != null) record("worker-resource", worker, null, {
         memoryPeakBytes: next.memory,
@@ -2260,19 +2217,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // in the window between binding and replay would be told this session holds
   // nothing, and would then birth a second Worker for work already running.
   const laneEvents = await eventLane.read().catch(() => []);
-  for (const event of laneEvents) {
-    if (event.worker_id === "" || event.worker_id.startsWith("daemon:")) continue;
-    const previous = workerHighWater.get(event.worker_id);
-    if (previous == null && event.memory_peak_bytes == null && event.memory_swap_peak_bytes == null && event.pids_peak == null) {
-      continue;
-    }
-    const prior = previous ?? { memory: 0, swap: 0, pids: 0 };
-    workerHighWater.set(event.worker_id, {
-      memory: Math.max(prior.memory, event.memory_peak_bytes ?? 0),
-      swap: Math.max(prior.swap, event.memory_swap_peak_bytes ?? 0),
-      pids: Math.max(prior.pids, event.pids_peak ?? 0),
-    });
-  }
+  workerHighWater = replayWorkerHighWater(laneEvents);
   // A successor must render yesterday's loss too. The event lane is the durable
   // host witness, so replaying it here restores the exact feed a live exit updates
   // above without asking a project artifact that an early Worker never created.
@@ -2338,11 +2283,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     reattached.add(worker.worker_id);
     record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
   }
-  for (const lease of resourceLeases.snapshot()) {
-    if (lease.worker_id != null && !workers.has(lease.worker_id)) {
-      await resourceLeases.release(lease.lease_id).catch(() => undefined);
-    }
-  }
+  await releaseOrphanedResourceLeases(resourceLeases, new Set(workers.keys()));
   const bootRecovery = planRegistrationBootRecovery(restoredRegistrations, workers.values(), startedAt);
   for (const held of bootRecovery.live) registrations.set(held.project_label, held);
   for (const held of bootRecovery.recoverable) recoverableRegistrations.set(held.project_label, held);
@@ -2386,45 +2327,22 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (request.op === "host-state") return { id: request.id, ok: true, value: hostState() };
       if (request.op === "reap") return { id: request.id, ok: true, value: await orphanReaper.reap(request.report === true) };
       if (request.op === "statusline-payload") {
-        // A host read, permitted from any project: seeing the machine is the
-        // requirement, and a session that could not would diagnose contention
-        // by leaving the session it is in.
-        //
-        // The SKELETON — Workers, projects and budget — is served whatever the
-        // request says, because rule 9 already entitles a session to the whole
-        // machine and withholding it would buy only a second round trip (ADR
-        // 0132 decision 2). What scales with Worker count travels on request,
-        // and a request that names no extras is a client pinned to a bundle
-        // that predates them: it asked for everything by saying nothing.
+        // Always serve the machine skeleton; only per-Worker extras are optional.
         return { id: request.id, ok: true, value: withholdStatuslineExtras(statuslinePayload(), request.extras) };
       }
       if (request.op === "statusline-string") {
-        // The same host read, already rendered. The daemon renders it from the
-        // payload the other op returns — one call of a pure function — so the
-        // two surfaces are the same answer twice and never two answers.
+        // Render the same pure snapshot as the payload operation.
         return { id: request.id, ok: true, value: statuslineString(request.render) };
       }
       if (request.op === "statusline-dashboard") {
-        // The third of the statusline family, and the same host read again: one
-        // call of a pure function on the payload the first op returns, so a pane
-        // and a line are the same answer twice and never two answers.
+        // Render the dashboard from that same pure snapshot.
         return { id: request.id, ok: true, value: statuslineDashboard(request.dashboard) };
       }
       if (request.op === "worker-heartbeat") {
         return { id: request.id, ok: true, value: publishWorkerHeartbeat(request.heartbeat) };
       }
-      if (request.op === "resource-acquire") {
-        return { id: request.id, ok: true, value: await resourceLeases.acquire(request.request) };
-      }
-      if (request.op === "resource-renew") {
-        return { id: request.id, ok: true, value: await resourceLeases.renew(request.lease_id, request.ttl_ms) };
-      }
-      if (request.op === "resource-release") {
-        return {
-          id: request.id,
-          ok: true,
-          value: { version: 1, lease_id: request.lease_id, released: await resourceLeases.release(request.lease_id) },
-        };
+      if (request.op === "resource-acquire" || request.op === "resource-renew" || request.op === "resource-release") {
+        return handleResourceLeaseRequest(request, resourceLeases);
       }
       if (request.op === "project-register") {
         const value = registerProject(request.registration, request.session_project);
