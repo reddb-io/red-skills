@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CASTLE_VALIDATION_SCHEMA } from "./gate-constants.js";
 import { makeHeadlessGateSink, makeInteractiveGateSink } from "./gate-sink.js";
-import { classifyFinding, runCastleGate, type RunCastleGateInput } from "./gate-executor.js";
+import { classifyFinding, runCastleGate, validationResourceClass, type RunCastleGateInput } from "./gate-executor.js";
 
 function baseInput(): RunCastleGateInput {
   let tick = 0;
@@ -50,14 +50,26 @@ describe("castle gate executor", () => {
       triggerPackages: ["packages/core"],
       packages: ["apps/dev", "packages/core"],
     });
-    expect(input.feedbackExec).toHaveBeenCalledWith(["pnpm", "-C", "/repo/packages/core", "test"]);
+    expect(input.feedbackExec).toHaveBeenCalledWith(
+      ["pnpm", "-C", "/repo/packages/core", "test"],
+      { weight: "light" },
+    );
     expect(input.backpressureExec).toHaveBeenCalledWith({
       command: "pnpm smoke",
       cwd: "/repo",
       timeoutMs: 600000,
+      weight: "heavy",
     });
     expect(result.checks.map((check) => check.name)).toContain("backpressure:pnpm smoke");
     expect(JSON.parse(result.sidecar[0]!).schema).toBe(CASTLE_VALIDATION_SCHEMA);
+  });
+
+  it("classifies only root/workspace test, typecheck and build as heavy", () => {
+    expect(validationResourceClass(".", "test")).toBe("heavy");
+    expect(validationResourceClass(".", "typecheck")).toBe("heavy");
+    expect(validationResourceClass(".", "build")).toBe("heavy");
+    expect(validationResourceClass(".", "lint")).toBe("light");
+    expect(validationResourceClass("packages/core", "test")).toBe("light");
   });
 
   it("blocks through the headless sink on intent findings before validation evidence is recorded", async () => {
