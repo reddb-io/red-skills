@@ -181,7 +181,7 @@ function envNameMatches(name: string, exact: readonly string[], prefixes: readon
 
 export function buildFeedbackSubprocessEnv(
   source: NodeJS.ProcessEnv = process.env,
-  budget: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number } = {},
+  budget: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number; turboConcurrency?: number } = {},
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(source)) {
@@ -205,6 +205,9 @@ export function buildFeedbackSubprocessEnv(
   }
   if (budget.vitestMaxWorkers && budget.vitestMaxWorkers > 0) {
     env.VITEST_MAX_WORKERS = String(Math.trunc(budget.vitestMaxWorkers));
+  }
+  if (budget.turboConcurrency && budget.turboConcurrency > 0) {
+    env.TURBO_CONCURRENCY = String(Math.trunc(budget.turboConcurrency));
   }
   return env;
 }
@@ -545,7 +548,7 @@ export interface RunFeedbackInput {
    * Validation subprocess resource budget (#1758). Applied to every feedback
    * command and baseline probe through the sanitized env.
    */
-  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number; turboConcurrency?: number };
   /**
    * Operator-owned replacement for the discovered test/typecheck/lint/build
    * harness (`plugins.dev.afk.feedback.commands`, #3276). `undefined` preserves

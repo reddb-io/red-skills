@@ -309,7 +309,7 @@ export interface ProcessIssueDeps {
   baseMergeReversionGeometry?(branch: string): BranchReversionGeometry | undefined;
   /** Production wiring fails closed when either geometric safety barrier is absent. */
   requireBranchReversionSafety?: boolean;
-  validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number; turboConcurrency?: number };
   /** Resolved declaration schedule; lifecycle consumption lands in the dependent slice. */
   validationMoments?: ValidationMoments;
   /** Mechanical stale-base cure selected by Verdict for generated-only drift. */

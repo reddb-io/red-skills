@@ -29,6 +29,7 @@ export const VALIDATION_SETTING_KEYS: Readonly<Record<string, string>> = {
   node_max_old_space_mb: "apps/dev/src/core/config.ts",
   heavy_available_memory_mb: "apps/dev/src/core/config.ts",
   vitest_max_workers: "apps/dev/src/core/config.ts",
+  turbo_concurrency: "apps/dev/src/core/config.ts",
 };
 
 /** Whether an `afk.validation.<key>` names a setting rather than a moment. */

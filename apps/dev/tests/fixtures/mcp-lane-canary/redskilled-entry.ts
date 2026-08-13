@@ -5,8 +5,11 @@
 // other side of the socket is the daemon operators run, not a mock that answers
 // whatever the assertion wants to hear.
 
-// A bare import, deliberately: the CLI runs itself when it IS the entry, which
-// is what this bundle is. Calling `runRedskilledCli` on top of that would start
-// two daemons in one process, and the second would refuse the socket the first
-// just bound.
-import "@reddb-io/redskilled/cli";
+import { armTestProcessLifetime } from "../../support/test-process-lifetime.js";
+
+armTestProcessLifetime();
+
+// The CLI runs itself when it IS the entry. Import it only after arming the
+// fixture ceiling; a static import would evaluate the long-lived daemon before
+// this module's body could install the timer.
+await import("@reddb-io/redskilled/cli");

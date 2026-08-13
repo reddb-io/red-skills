@@ -8,6 +8,9 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createRedskilledMcpServer, main } from "../../../src/mcp-server.js";
+import { armTestProcessLifetime } from "../../support/test-process-lifetime.js";
+
+armTestProcessLifetime();
 
 process.exitCode = await main(process.argv.slice(2), {
   startCurator: async () => undefined,

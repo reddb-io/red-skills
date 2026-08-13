@@ -837,7 +837,7 @@ describe("gate test subprocess env (#1215 / #1224 Part C)", () => {
     const { io, envsFor } = captureEnvIO();
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
       cacheEnabled: false,
-      resourceBudget: { nodeMaxOldSpaceMb: 1536, vitestMaxWorkers: 2 },
+      resourceBudget: { nodeMaxOldSpaceMb: 1536, vitestMaxWorkers: 2, turboConcurrency: 4 },
     });
 
     await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
@@ -848,6 +848,7 @@ describe("gate test subprocess env (#1215 / #1224 Part C)", () => {
     for (const env of envs) {
       expect(env.NODE_OPTIONS).toContain("--max-old-space-size=1536");
       expect(env.VITEST_MAX_WORKERS).toBe("2");
+      expect(env.TURBO_CONCURRENCY).toBe("4");
     }
   });
 });

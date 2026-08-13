@@ -741,16 +741,18 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
     expect(readValidationResourceBudget(defaults)).toEqual({
       nodeMaxOldSpaceMb: 2048,
       vitestMaxWorkers: 1,
+      turboConcurrency: 2,
       heavyAvailableMemoryMb: 4096,
     });
 
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
-        "plugins:\n  dev:\n    afk:\n      validation:\n        node_max_old_space_mb: 1536\n        vitest_max_workers: 2\n        heavy_available_memory_mb: 3072\n",
+        "plugins:\n  dev:\n    afk:\n      validation:\n        node_max_old_space_mb: 1536\n        vitest_max_workers: 2\n        turbo_concurrency: 4\n        heavy_available_memory_mb: 3072\n",
     });
     expect(readValidationResourceBudget(values)).toEqual({
       nodeMaxOldSpaceMb: 1536,
       vitestMaxWorkers: 2,
+      turboConcurrency: 4,
       heavyAvailableMemoryMb: 3072,
     });
   });

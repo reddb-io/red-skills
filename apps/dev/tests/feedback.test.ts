@@ -38,12 +38,13 @@ describe("buildFeedbackSubprocessEnv resource budget (#1758)", () => {
         NODE_OPTIONS: "--trace-warnings",
         RED_AFK_WORKERS_NAMESPACE: "go-workers",
       },
-      { nodeMaxOldSpaceMb: 1536, vitestMaxWorkers: 2 },
+      { nodeMaxOldSpaceMb: 1536, vitestMaxWorkers: 2, turboConcurrency: 4 },
     );
 
     expect(env.PATH).toBe("/bin");
     expect(env.NODE_OPTIONS).toContain("--max-old-space-size=1536");
     expect(env.VITEST_MAX_WORKERS).toBe("2");
+    expect(env.TURBO_CONCURRENCY).toBe("4");
     expect("RED_AFK_WORKERS_NAMESPACE" in env).toBe(false);
   });
 });

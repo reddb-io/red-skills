@@ -257,13 +257,12 @@ export const CONFIG_DEFAULTS = {
   // worker state beside the existing heartbeat output-token counters so the
   // report can compare steered vs unsteered output without changing semantics.
   "afk.output_shaping.terse_steering": "false",
-  // Validation resource budget (#1758). Feedback/backpressure validation runs
-  // after the inner agent has finished, often spawning vitest/tsc/build workers
-  // outside the attempt guard. Keep Node heaps and Vitest worker fan-out bounded
-  // by default so two AFK slots cannot OOM the host by validating heavy suites
-  // at full parallelism. Repos may tune these under plugins.dev.afk.validation.
+  // Validation resource budget (#1758). Feedback/backpressure can spawn
+  // vitest/tsc/build workers outside the attempt guard, so defaults cap heaps
+  // and fan-out. Repos may tune these under plugins.dev.afk.validation.
   "afk.validation.node_max_old_space_mb": "2048",
   "afk.validation.vitest_max_workers": "1",
+  "afk.validation.turbo_concurrency": "2",
   "afk.validation.heavy_available_memory_mb": "4096",
   // The `/afk` lane's GATE share of the Re-seed budget (ADR 0129, #2733), the
   // lane-scoped replacement for the retired `afk.stallConvergenceBudget`. It caps
@@ -1351,6 +1350,7 @@ export function readPostWorkerFormat(values: ConfigValues): string[] {
 export interface ValidationResourceBudget {
   nodeMaxOldSpaceMb?: number;
   vitestMaxWorkers?: number;
+  turboConcurrency?: number;
   heavyAvailableMemoryMb?: number;
 }
 
@@ -1365,6 +1365,7 @@ export function readValidationResourceBudget(values: ConfigValues): ValidationRe
   return {
     nodeMaxOldSpaceMb: readPositiveInt(values, "afk.validation.node_max_old_space_mb"),
     vitestMaxWorkers: readPositiveInt(values, "afk.validation.vitest_max_workers"),
+    turboConcurrency: readPositiveInt(values, "afk.validation.turbo_concurrency"),
     heavyAvailableMemoryMb: readPositiveInt(values, "afk.validation.heavy_available_memory_mb"),
   };
 }

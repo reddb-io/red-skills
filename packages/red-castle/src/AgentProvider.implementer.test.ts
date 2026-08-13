@@ -21,19 +21,31 @@ describe("implementer skill projection", () => {
     expect(command.command).toContain("--plugin-dir '/runtime/memory'");
   });
 
-  it("passes per-run Codex config overrides that gate plugins and skills", () => {
+  it.each([
+    ["new", commandInput],
+    ["resumed", { ...commandInput, resumeSession: "session-1" }],
+    ["forked", { ...commandInput, resumeSession: "session-1", forkSession: true }],
+  ])("isolates user configuration and passes projected Codex constraints on %s invocations", (_kind, input) => {
     const command = codex("model", {
+      ignoreUserConfig: true,
+      ignoreRules: true,
       configOverrides: [
-        'plugins."memory@red-skills".enabled=false',
-        'skills.config=[{path="/runtime/dev/triage/SKILL.md",enabled=false}]',
+        "features.plugins=false",
+        "features.apps=false",
+        'mcp_servers={navigator={command="node",args=["navigator.mjs"]}}',
+        'skills.config=[{path="/runtime/dev/tdd/SKILL.md",enabled=true}]',
       ],
-    }).buildPrintCommand(commandInput);
+    }).buildPrintCommand(input);
 
+    expect(command.command).toContain("--ignore-user-config");
+    expect(command.command).toContain("--ignore-rules");
+    expect(command.command).toContain("-c 'features.plugins=false'");
+    expect(command.command).toContain("-c 'features.apps=false'");
     expect(command.command).toContain(
-      "-c 'plugins.\"memory@red-skills\".enabled=false'",
+      "-c 'mcp_servers={navigator={command=\"node\",args=[\"navigator.mjs\"]}}'",
     );
     expect(command.command).toContain(
-      "-c 'skills.config=[{path=\"/runtime/dev/triage/SKILL.md\",enabled=false}]'",
+      "-c 'skills.config=[{path=\"/runtime/dev/tdd/SKILL.md\",enabled=true}]'",
     );
   });
 

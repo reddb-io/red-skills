@@ -19,6 +19,7 @@ import {
   workerPidFile,
 } from "../../../src/core/worker-paths.js";
 import { afkPaths } from "../../../src/runtime/wire.js";
+import { armTestProcessLifetime } from "../../support/test-process-lifetime.js";
 
 const POLL_MS = 100;
 
@@ -33,6 +34,7 @@ function workerId(pid: number): string {
 }
 
 export async function canaryWorker(): Promise<number> {
+  armTestProcessLifetime();
   const root = process.cwd();
   const paths = afkPaths(root);
   const worker = workerId(process.pid);
