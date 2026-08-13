@@ -182,7 +182,6 @@ import {
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { reportValidationEvidenceInconsistency } from "./validation-park.js";
 import { setupFailureExcerpt } from "./setup-failure.js";
-
 /** Recorded when the forge refused the merge and the PR state did not explain it
  * (#2807). It says the cause is unknown rather than inventing a probable one. */
 const MERGE_REJECTION_UNEXPLAINED =
@@ -1262,9 +1261,7 @@ export async function processIssue(
         log: (message) => deps.appendIterLog(message),
       });
       run = notesOutcome.run;
-      if (run.sessionArtifact) {
-        deps.markState?.({ session_artifact: run.sessionArtifact });
-      }
+      if (run.sessionArtifact) deps.markState?.({ session_artifact: run.sessionArtifact });
       if (isRunnerRecoverableOutcome(run.outcome)) {
         if (!deps.fallbackRunner) {
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
@@ -1304,9 +1301,7 @@ export async function processIssue(
           env: agentEnv,
           sandboxMode: sandboxDecision.sandboxMode,
         });
-        if (run.sessionArtifact) {
-          deps.markState?.({ session_artifact: run.sessionArtifact });
-        }
+        if (run.sessionArtifact) deps.markState?.({ session_artifact: run.sessionArtifact });
         if (isRunnerRecoverableOutcome(run.outcome)) {
           await fireHook("post_attempt", postAttemptContext({ ...input, attempt: roundOrdinal }, branch, "fail", run.outcome));
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
