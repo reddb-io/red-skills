@@ -6,6 +6,7 @@ import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { createWorkerTeardownLedger } from "./worker-teardown.js";
+import { createBudgetGraceRuntime, DEFAULT_REDSKILLED_BUDGET_GRACE_MS, signalWorkerForBudgetGrace } from "./budget-grace.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
   appendRedskilledMetricObservation,
@@ -350,6 +351,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const stopProbe = options.stopWorker ?? stopWorker;
   /** Exactly-once Worker teardown: a second ask joins the stop already in flight. */
   const endWorkerOnce = createWorkerTeardownLedger(stopProbe);
+  const budgetGraceMs = options.budgetGraceMs ?? DEFAULT_REDSKILLED_BUDGET_GRACE_MS;
   const unitInventory = options.unitInventory ??
     (() =>
       maySweepMachine(paths.machineClaimPath, paths.machineClaimPathOfThisHost)
@@ -1191,6 +1193,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * note alive and leak a little memory per death.
    */
   function forgetWorker(workerId: string): void {
+    budgetGrace.workerExited(workerId);
     workers.delete(workerId);
     reattached.delete(workerId);
     logLines.delete(workerId);
@@ -1740,21 +1743,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       forgetWorker(worker.worker_id); record("worker-death", worker, detail); await eventLane.flush(); armIdleTimer();
     },
   });
+  const budgetGrace = createBudgetGraceRuntime({
+    graceMs: budgetGraceMs,
+    signal: options.signalWorkerForBudgetGrace ?? signalWorkerForBudgetGrace,
+    held: (workerId) => workers.has(workerId),
+    kill: async (worker, detail) => { await endWorkerOnce(worker, () => {
+      forgetWorker(worker.worker_id); record("worker-budget-kill", worker, detail); armIdleTimer();
+    }); },
+    record: (kind, worker, detail) => record(kind, worker, detail),
+  });
   async function killWorkerOverBudget(workerId: string, detail: string): Promise<boolean> {
     const worker = workers.get(workerId);
     if (!worker) return false;
-    // The kill is recorded either way: a stop the host refused still ends the
-    // daemon's claim on the budget, and a silent failure would leave the
-    // accounting holding room for a Worker nobody is tracking any more. It joins
-    // a teardown already in flight rather than starting a second one, so a floor
-    // tick that lands on a Worker a project is already stopping writes no second
-    // death and gives no second slot back.
-    await endWorkerOnce(worker, () => {
-      forgetWorker(workerId);
-      record("worker-budget-kill", worker, detail);
-      armIdleTimer();
-    });
-    return true;
+    return await budgetGrace.begin(worker, detail);
   }
 
   /** Sample all Workers once, record resources, and enforce memory budgets. */
@@ -2194,6 +2195,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (balanceTimer) clearTimeout(balanceTimer);
     if (queueTimer) clearTimeout(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
+    budgetGrace.stop();
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
