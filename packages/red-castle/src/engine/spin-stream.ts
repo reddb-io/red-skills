@@ -30,6 +30,15 @@ function normalizeSpinEvent(
   if (event.type === "text") {
     return { kind: "message", content: event.message };
   }
+  if (event.type === "toolCall") {
+    return {
+      kind: "action",
+      content: `${event.name} ${event.formattedArgs}`,
+    };
+  }
+  if (event.type === "result") {
+    return { kind: "observation", content: event.result };
+  }
   return null;
 }
 
