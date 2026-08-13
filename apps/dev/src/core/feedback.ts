@@ -44,9 +44,12 @@ import {
 } from "./validation-command.js";
 import { decideVerdict, emptyEnvironmentLedger } from "./verdict.js";
 import { applyValidationEvidence, reconcileValidationEvidence } from "./validation-evidence.js";
-import { namedFailures, outputSummary } from "./validation-output.js";
+import { outputSummary } from "./validation-output.js";
 
-export { namedFailures, outputSummary };
+// Re-exported from the source rather than imported-then-exported: a binding a
+// module only forwards is not a binding it USES, and the import-hygiene ratchet
+// counts the difference.
+export { namedFailures, outputSummary } from "./validation-output.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
