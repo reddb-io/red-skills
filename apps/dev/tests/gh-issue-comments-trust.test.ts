@@ -19,15 +19,24 @@ function ghReturning(stdout: string, code = 0): GhContext {
   return { cwd: "/r", repo: "acme/widgets", exec };
 }
 
-const COMMENTS = JSON.stringify({
-  comments: [
-    { body: "bot chatter", author: { login: "dependabot", is_bot: true }, authorAssociation: "NONE" },
-    { body: "owner order", author: { login: "maint", is_bot: false }, authorAssociation: "OWNER" },
-    { body: "collab order", author: { login: "friend", is_bot: false }, authorAssociation: "COLLABORATOR" },
-    { body: "stranger order", author: { login: "stranger", is_bot: false }, authorAssociation: "NONE" },
-    { body: "allowlisted order", author: { login: "trusted-ext", is_bot: false }, authorAssociation: "CONTRIBUTOR" },
-  ],
+/** One raw REST comment row, the shape the paginated read actually returns. */
+const restComment = (body: string, login: string, association: string, bot = false) => ({
+  body,
+  user: { login, type: bot ? "Bot" : "User" },
+  author_association: association,
+  created_at: "2026-08-13T00:00:00Z",
 });
+
+// The fixture used to answer `{comments: […]}` — the projection a hand-rolled
+// jq pipeline was meant to produce. That argv was refused by `gh`, so the shape
+// never existed outside this file (#3734).
+const COMMENTS = JSON.stringify([
+  restComment("bot chatter", "dependabot", "NONE", true),
+  restComment("owner order", "maint", "OWNER"),
+  restComment("collab order", "friend", "COLLABORATOR"),
+  restComment("stranger order", "stranger", "NONE"),
+  restComment("allowlisted order", "trusted-ext", "CONTRIBUTOR"),
+]);
 
 describe("issueComments — source-trust projection (#1100)", () => {
   it("classifies bots as automation and trusted associations as trusted without a lookup", async () => {
@@ -56,25 +65,19 @@ describe("issueComments — source-trust projection (#1100)", () => {
     expect(out[4]).toMatchObject({ author: "trusted-ext", sourceTrust: "trusted" });
   });
 
-  it("promotes only the outside comment with a maintainer thumbs-up reaction", async () => {
-    const comments = JSON.stringify({
-      comments: [
-        {
-          body: "useful outside suggestion",
-          author: { login: "stranger", is_bot: false },
-          authorAssociation: "NONE",
-          reactionGroups: [
-            { content: "THUMBS_UP", users: { nodes: [{ login: "maintainer" }] } },
-          ],
-        },
-        {
-          body: "second outside suggestion",
-          author: { login: "stranger", is_bot: false },
-          authorAssociation: "NONE",
-          reactionGroups: [],
-        },
-      ],
-    });
+  it("cannot promote an outside comment on a reaction this read does not carry", async () => {
+    // `projectComments` reads `reactionGroups` to promote a stranger whose
+    // suggestion a maintainer thumbed up. NOTHING supplies that field: neither
+    // the refused jq pipeline this read used to build, nor `restCommentJq`, and
+    // the REST comment list carries reaction COUNTS rather than the reacting
+    // logins. The promotion therefore never fired in production — this fixture
+    // used to hand the field in directly and so pinned a behaviour the shipped
+    // command could not reach. The gap is stated here rather than simulated,
+    // and closing it needs its own read (`…/comments/{id}/reactions`).
+    const comments = JSON.stringify([
+      restComment("useful outside suggestion", "stranger", "NONE"),
+      restComment("second outside suggestion", "stranger", "NONE"),
+    ]);
     const resolveTrust = async (actor: string): Promise<ActorTrustVerdict> =>
       actor === "maintainer"
         ? { executable: true, basis: "write-access" }
@@ -82,7 +85,7 @@ describe("issueComments — source-trust projection (#1100)", () => {
 
     const out = await issueComments(ghReturning(comments), 7, resolveTrust);
 
-    expect(out[0]).toMatchObject({ author: "stranger", sourceTrust: "trusted" });
+    expect(out[0]).toMatchObject({ author: "stranger", sourceTrust: "dubious" });
     expect(out[1]).toMatchObject({ author: "stranger", sourceTrust: "dubious" });
   });
 

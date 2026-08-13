@@ -229,10 +229,13 @@ describe("buildLookups", () => {
 
   it("censuses open PRs through the gh slug and drops malformed rows", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-ports-lookups-prs-"));
+    // Raw REST pull rows: the head ref arrives as `head.ref` and the caller
+    // projects it. The flattened `headRefName` this fixture used to answer came
+    // from a jq pipeline `gh` refused to run (#3734).
     const rows = JSON.stringify([
-      { number: 12, headRefName: "afk/2667", body: "Refs #2667" },
-      { number: 0, headRefName: "afk/broken" },
-      { number: 13, headRefName: "" },
+      { number: 12, head: { ref: "afk/2667" }, body: "Refs #2667" },
+      { number: 0, head: { ref: "afk/broken" } },
+      { number: 13, head: { ref: "" } },
     ]);
     const { exec, trace } = makeFakeExec((cmd) => (cmd === "gh" ? rows : ""));
 

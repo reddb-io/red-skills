@@ -50,14 +50,20 @@ function ghRouter(opts: { body?: string; comments?: string[]; labels?: string[] 
     const a = [...argv];
     // Single-object + comment-list reads route through REST (`gh api repos/...`,
     // #3730) rather than `gh issue view`; match on the REST path shape instead.
-    if (a[0] === "api" && typeof a[1] === "string" && a[1].endsWith("/comments")) {
+    // The comment list paginates through the shared client, so the path is no
+    // longer argv[1] (`--paginate` precedes it) and the payload is a RAW REST
+    // array. The old fixture answered the hand-rolled `{comments: […]}` jq
+    // projection, a shape the `gh` binary could never have produced here — the
+    // argv that asked for it was refused outright (#3734).
+    if (a[0] === "api" && a.some((arg) => typeof arg === "string" && arg.endsWith("/comments"))
+      && !a.includes("-X")) {
       const comments = (opts.comments ?? []).map((b) => ({
         body: b,
-        author: { login: "someone", is_bot: false },
-        authorAssociation: "NONE",
-        createdAt: undefined,
+        user: { login: "someone", type: "User" },
+        author_association: "NONE",
+        created_at: "2026-08-13T00:00:00Z",
       }));
-      return Promise.resolve(ok(JSON.stringify({ comments })));
+      return Promise.resolve(ok(JSON.stringify(comments)));
     }
     if (a[0] === "api" && typeof a[1] === "string" && /\/issues\/\d+$/.test(a[1])) {
       const labels = (opts.labels ?? []).map((name) => ({ name }));
