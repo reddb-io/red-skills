@@ -70,6 +70,11 @@ plugins:
   #                               # `plugins.<name>.enabled: true` activation gate.
   #                               # baseline_ms is an optional historical
   #                               # unprojected invocation-to-first-event sample.
+  #   review:
+  #     appraisal_floor: off      # `off` records the 0-1 Appraisal only. Set a
+  #                               # 0-1 floor to make lower scores consume the
+  #                               # review's reserved Re-seed round and park on
+  #                               # exhaustion through the validation path.
   # memory:
   #   enabled: true               # then run /memory:init to pick a storage mode
   # brain:

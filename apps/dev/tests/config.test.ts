@@ -321,6 +321,7 @@ describe("config", () => {
     expect(getConfig(defaults, "dev.review.max_iterations")).toBe("1");
     expect(getConfig(defaults, "dev.review.reviewer_count")).toBe("1");
     expect(getConfig(defaults, "dev.review.quorum")).toBe("any");
+    expect(getConfig(defaults, "dev.review.appraisal_floor")).toBe("off");
     expect(resolveAdversarialReviewConfig((key) => getConfig(defaults, key))).toEqual({
       enabled: false,
       maxIterations: 1,
@@ -330,7 +331,7 @@ describe("config", () => {
 
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
-        "plugins:\n  dev:\n    review:\n      enabled: true\n      max_iterations: 3\n",
+        "plugins:\n  dev:\n    review:\n      enabled: true\n      max_iterations: 3\n      appraisal_floor: 0.8\n",
     });
     expect(getConfig(values, "dev.review.enabled")).toBe("true");
     expect(getConfig(values, "dev.review.max_iterations")).toBe("3");
@@ -339,6 +340,7 @@ describe("config", () => {
       maxIterations: 3,
       reviewerCount: 1,
       quorum: "any",
+      appraisalFloor: 0.8,
     });
   });
 
@@ -497,6 +499,7 @@ describe("config", () => {
       }),
     ).toBe("not-blocking");
     expect(decideAdversarialReview({ summary: "clean", score: 0.1, findings: [] })).toBe("not-blocking");
+    expect(decideAdversarialReview({ summary: "clean", score: 0.1, findings: [] }, 0.8)).toBe("blocking");
   });
 
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
