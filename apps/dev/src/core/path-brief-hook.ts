@@ -13,7 +13,14 @@ interface ClaudeEditPayload {
   readonly session_id?: unknown;
   readonly cwd?: unknown;
   readonly tool_name?: unknown;
-  readonly tool_input?: { readonly file_path?: unknown };
+  readonly tool_input?: {
+    readonly file_path?: unknown;
+    readonly input?: unknown;
+    readonly patch?: unknown;
+    readonly paths?: unknown;
+    readonly files?: unknown;
+    readonly changes?: unknown;
+  };
 }
 
 interface PathBriefOptions {
@@ -92,15 +99,41 @@ async function declaredSkills(pluginRoot: string): Promise<PathBriefDeclaration[
   return declarations;
 }
 
-function editedRepoPath(payload: ClaudeEditPayload, repoRoot: string): string | undefined {
-  if (payload.tool_name !== "Edit" && payload.tool_name !== "Write") return undefined;
-  const filePath = stringField(payload.tool_input?.file_path);
-  if (!filePath) return undefined;
+function repoPath(filePath: string, repoRoot: string): string | undefined {
   const candidate = relative(repoRoot, isAbsolute(filePath) ? filePath : resolve(repoRoot, filePath));
   if (candidate === "" || candidate === ".." || candidate.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
     return undefined;
   }
   return candidate;
+}
+
+function patchPaths(input: ClaudeEditPayload["tool_input"]): string[] {
+  if (!input) return [];
+  const paths: string[] = [];
+  const envelope = stringField(input.input) ?? stringField(input.patch);
+  if (envelope) {
+    const pattern = /^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+?)\s*$/gim;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(envelope)) !== null) paths.push(match[1]);
+  }
+  const list = input.paths ?? input.files;
+  if (Array.isArray(list)) {
+    for (const path of list) if (typeof path === "string" && path.trim()) paths.push(path);
+  }
+  if (input.changes && typeof input.changes === "object" && !Array.isArray(input.changes)) {
+    paths.push(...Object.keys(input.changes));
+  }
+  return paths;
+}
+
+function editedRepoPaths(payload: ClaudeEditPayload, repoRoot: string): string[] {
+  const tool = stringField(payload.tool_name)?.toLowerCase();
+  const rawPaths = tool === "edit" || tool === "write"
+    ? [stringField(payload.tool_input?.file_path)]
+    : tool === "apply_patch"
+      ? patchPaths(payload.tool_input)
+      : [];
+  return [...new Set(rawPaths.flatMap((path) => path ? [repoPath(path, repoRoot)] : []).filter((path): path is string => Boolean(path)))];
 }
 
 async function claimBrief(stateRoot: string, sessionId: string, briefId: string): Promise<boolean> {
@@ -115,19 +148,22 @@ async function claimBrief(stateRoot: string, sessionId: string, briefId: string)
   }
 }
 
-/** Resolve and claim Claude Code path briefs for one PostToolUse edit event. */
-export async function injectClaudePathBriefs(
+/** Resolve and claim path briefs for one host-projected PostToolUse edit event. */
+export async function injectPathBriefs(
   payload: ClaudeEditPayload,
   options: PathBriefOptions,
 ): Promise<ClaudePathBriefOutput> {
   const sessionId = stringField(payload.session_id);
   const repoRoot = stringField(payload.cwd) ?? options.repoRoot;
   if (!sessionId || !repoRoot) return {};
-  const filePath = editedRepoPath(payload, repoRoot);
-  if (!filePath) return {};
+  const filePaths = editedRepoPaths(payload, repoRoot);
+  if (filePaths.length === 0) return {};
 
   const briefs = await declaredSkills(options.pluginRoot);
-  const matches = matchPathBriefs(briefs, filePath) as PathBriefDeclaration[];
+  const matches = [...new Map(
+    filePaths.flatMap((filePath) => matchPathBriefs(briefs, filePath) as PathBriefDeclaration[])
+      .map((brief) => [brief.id, brief]),
+  ).values()];
   const newlyClaimed: PathBriefDeclaration[] = [];
   const stateRoot = options.stateRoot ?? join(tmpdir(), "red-skills-path-briefs");
   for (const brief of matches) {
@@ -142,3 +178,6 @@ export async function injectClaudePathBriefs(
     },
   };
 }
+
+/** Compatibility name retained for the original Claude Code adapter. */
+export const injectClaudePathBriefs = injectPathBriefs;

@@ -387,6 +387,7 @@ function toolExecuteAfterTemplate(input: {
       hookGroups: input.hookGroups,
       toolExpression: "input.tool",
       payloadExpression: "__payload",
+      contextSink: 'output.output = [__ctx, output.output].filter(Boolean).join("\\n\\n")',
     }),
     "    },",
     "  };",
