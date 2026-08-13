@@ -1,5 +1,8 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { createSpinStreamProcessor } from "@reddb-io/red-castle/engine";
+import { encode } from "@reddb-io/toon";
 import type { CastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import type { ConfigValues } from "../../core/config.js";
 import { getConfig } from "../../core/config.js";
@@ -49,6 +52,15 @@ export function makeImplementerRunAgent(
   let prepared: PreparedImplementerEnvironment | undefined;
 
   return (input) => {
+    const spinStream = createSpinStreamProcessor({
+      workerLog: {
+        append: (record) =>
+          options.castleBridge.record(record.kind, record.payload),
+      },
+      steer: (message) => {
+        writeFileSync(steerFilePath, encode({ text: message }), "utf8");
+      },
+    });
     const attemptDir = input.cwd ?? options.current.attemptDir;
     if (!prepared || preparedDir !== attemptDir) {
       const baseline = Number(
@@ -81,6 +93,7 @@ export function makeImplementerRunAgent(
       },
       implementer: environment.runtime,
       onAgentEvent: (event) => {
+        void spinStream.observe(event).catch(() => {});
         if (!startupRecorded) {
           startupRecorded = true;
           environment.recordRunnerStartup(
