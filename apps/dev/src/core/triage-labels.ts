@@ -83,6 +83,10 @@ export const LABEL_VALIDATION = "blocked:validation";
 // is observability only; Verdict, not the label, owns routing.
 export const LABEL_VALIDATION_INFRA = "blocked:validation-infra";
 export const LABEL_STALLED = "blocked:stalled";
+// Spin is a live Worker emitting futile runner-stream activity. The detected
+// pattern rides the outcome and Envelope; the label remains one queryable
+// species across every named pattern.
+export const LABEL_SPIN = "blocked:spin";
 // Wall-clock cap (#2701): the worker was cut off by the per-issue wall-clock
 // ceiling while it was still working. Distinct from `blocked:stalled` — nothing
 // was stuck, a policy deadline expired — so the branch/PR it produced is handed
