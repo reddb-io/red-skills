@@ -662,6 +662,7 @@ export async function processIssue(
     resolvedBase: baseResolution,
   };
   let validationSidecar: string[] = [];
+  let appraisalScore: number | undefined;
   const branchReversionRecords = new Map<"base-merge" | "landing", string>();
   const completeValidationSidecar = (): string[] => [
     ...branchReversionRecords.values(),
@@ -1098,6 +1099,7 @@ export async function processIssue(
     const readWorktreeDiff = deps.lookups.worktreeDiff!;
     const extractReview = deps.extractAdversarialReview!;
     const postReview = deps.postAdversarialReview!;
+    appraisalScore = undefined;
     let findings: AdversarialReviewFindings;
     let decision: AdversarialReviewDecision;
     let diff: string;
@@ -1137,6 +1139,7 @@ export async function processIssue(
         );
       }
       findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
+      appraisalScore = findings.score;
       decision = decideAdversarialReview(findings);
       await postReview({
         issue: input.issue,
@@ -2028,7 +2031,15 @@ export async function processIssue(
     deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
     const finalValidationSidecar = completeValidationSidecar();
     await writeValidationSidecar(deps, input.attemptDir, finalValidationSidecar);
-    const posted = await emitDone(common, mergeSha, durationS, finalValidationSidecar, lastValidationScope, noSourceDiffWarning);
+    const posted = await emitDone(
+      common,
+      mergeSha,
+      durationS,
+      finalValidationSidecar,
+      lastValidationScope,
+      noSourceDiffWarning,
+      appraisalScore,
+    );
     await recordOutcomeBestEffort(common, "done", { durationS });
     markLandingPhase("close", { step: "close-issue", status: "start" });
     await deps.gh.close(issue);
