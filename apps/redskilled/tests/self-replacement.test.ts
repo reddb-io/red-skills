@@ -64,9 +64,41 @@ afterEach(async () => {
       () => undefined,
     );
   }
-  for (const child of children.splice(0)) child.kill("SIGKILL");
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+  for (const child of children.splice(0)) {
+    child.kill("SIGKILL");
+    // A signal is a request, not an exit. Removing the tree while the process is
+    // still between two writes is how this suite intermittently died on
+    // `ENOTEMPTY ... /state/deaths` — the directory the daemon was writing into
+    // as the directory came out from under it.
+    if (child.exitCode == null && child.signalCode == null) {
+      await new Promise((resolve) => child.once("exit", resolve));
+    }
+  }
+  for (const root of roots.splice(0)) await removeWhenQuiet(root);
 });
+
+/**
+ * Remove a session tree, retrying while something is still writing into it.
+ *
+ * The awaits above cover every process this file spawned — but not the SUCCESSOR,
+ * which by design is spawned by the daemon under test and whose handle this suite
+ * therefore never holds. It is asked to shut down over its socket, and a shutdown
+ * answered is not a process exited, so its last writes can still land after the
+ * teardown believes the host is quiet. Retrying is what can be done about a child
+ * that is not ours; failing loudly at the end is what keeps a genuinely stuck
+ * process from passing as a tidy one.
+ */
+async function removeWhenQuiet(root: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rm(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt >= 40) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+}
 
 async function scratch(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
@@ -816,8 +848,13 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
     expect(daemon.hostState().upgrade.replacement).toBe("in-progress");
     expect(daemon.hostState().upgrade.checks).toBeGreaterThan(0);
-    // It let go of the session first, exactly as the idle route does.
-    expect(await socketAnswers(paths.socketPath)).toBe(false);
+    // And it does let go of the session — but AFTER the successor is staged, not
+    // before. A successor is started while the incumbent still holds the socket
+    // precisely so a boot that fails is a takeover that never happened rather
+    // than a machine left with no daemon at all; the handover commits only once
+    // the successor has proven it can boot. So the spawn above is not the moment
+    // the socket goes quiet, and waiting for it is the honest assertion.
+    expect(await until(async () => !(await socketAnswers(paths.socketPath)), 5_000)).toBe(true);
   });
 
   it("takes its first look shortly after boot, not one whole interval later", async () => {
