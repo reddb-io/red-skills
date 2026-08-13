@@ -1273,18 +1273,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       );
       return;
     }
-    const death = await resolveUnitDeath(worker, unitExitFacts, {
-      detail: ended,
-      facts: { exitCode: code, signal },
-    });
+    const death = await resolveUnitDeath(worker, unitExitFacts, { detail: ended, facts: { exitCode: code, signal } });
     const refusal = worker.log_path == null
       ? null
       : bootRefusalFromLog(await readLogTail(worker.log_path).catch(() => null));
     forgetWorker(worker.worker_id);
-    record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, {
-      ...death.facts,
-      refusal,
-    });
+    record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, { ...death.facts, refusal });
     armIdleTimer();
   }
 
@@ -1621,9 +1615,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           armIdleTimer();
           return;
         }
-        observedExitTail = observedExitTail
-          .then(() => resolveObservedExit(worker, code, signal))
-          .catch(() => undefined);
+        observedExitTail = observedExitTail.then(() => resolveObservedExit(worker, code, signal)).catch(() => undefined);
       },
     });
     const forkSha = grant.forkSha ?? launched.fork_sha ?? launched.worker.fork_sha;
@@ -1712,10 +1704,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       workers: [...workers.values()], reattached_worker_ids: reattached,
       now_ms: Date.parse(clock()), grace_ms: livenessGraceMs, probe: liveness,
       on_dead: async (worker) => {
-        const death = await resolveUnitDeath(worker, unitExitFacts, {
-          detail: "the host no longer confirms this Worker",
-          facts: {},
-        });
+        const death = await resolveUnitDeath(worker, unitExitFacts, { detail: "the host no longer confirms this Worker", facts: {} });
         forgetWorker(worker.worker_id);
         record("worker-death", worker, death.detail, death.facts);
       },
@@ -2463,12 +2452,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     sweepOrphanProcesses: () => stopping ? Promise.resolve({ adopted: 0, reaped: 0, suspects: 0 }) : orphanReaper.sweep(), censusOrphanProcesses: () => orphanReaper.census(),
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
-    flushEvents: async () => {
-      await workerBirthTail;
-      await observedExitTail;
-      await projectHooks.waitForSettled();
-      await eventLane.flush();
-    },
+    flushEvents: async () => { await workerBirthTail; await observedExitTail; await projectHooks.waitForSettled(); await eventLane.flush(); },
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
       record("worker-birth", worker, null);
