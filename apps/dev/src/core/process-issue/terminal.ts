@@ -229,6 +229,15 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: validationBlockerSummary(sections.validation) ?? oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
         next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
       });
+    case "feedback-failed-infra":
+      return makeBlocker({
+        kind: "validation-infra",
+        summary: oneLine(
+          sections.validation ?? sections.log,
+          "The declared validation gate could not run because its infrastructure failed.",
+        ),
+        next: "Restore the validation infrastructure, then requeue the declared gate.",
+      });
     case "no-sentinel":
       return makeBlocker({
         kind: "runner",
