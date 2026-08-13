@@ -161,6 +161,13 @@ describe("the three silences a redskilled client can meet", () => {
       serverCommand: process.execPath,
       serverArgs: ["-e", "process.exit(1)"],
       readyTimeoutMs: 400,
+      // A held daemon is RETRYABLE: waiting is what a client owes one that is
+      // merely booting, and only patience running out tells that apart from one
+      // that is wedged. So this test must state its own patience — the product
+      // default is 30s, which is exactly this suite's timeout, and the test lost
+      // that race every time by a margin of zero.
+      reconnectTimeoutMs: 1_000,
+      reconnectInitialBackoffMs: 25,
     }).then((outcome) => outcome as never, (err: unknown) => err);
 
     expect(error).toBeInstanceOf(RedskilledDaemonHeldError);

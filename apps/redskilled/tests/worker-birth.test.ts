@@ -225,7 +225,13 @@ describe("the daemon accepts the workspace path as given", () => {
       systemdRun: null,
       userSession: false,
       jobObjects: { available: false, reason: expect.stringContaining("Windows backend") },
-      posix: { available: false, reason: expect.stringContaining("macOS backend") },
+      // POSIX shell placement stopped being "the macOS backend" when it became
+      // the fallback for a Linux host with no systemd, so it reports available
+      // here. It stays inside this test's invariant: `/bin/sh` is an absolute
+      // path the daemon was shipped knowing, and `nice` is null precisely
+      // BECAUSE the handed PATH is empty — both answers derive from the probe
+      // arguments, never from a directory a client named.
+      posix: { available: true, shell: "/bin/sh", nice: null },
     });
   });
 

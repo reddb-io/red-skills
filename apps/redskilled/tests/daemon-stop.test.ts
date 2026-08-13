@@ -211,13 +211,18 @@ describe("redskilled stop", () => {
     }, config);
     spawnedPids.push(worker.worker.pid);
 
-    const report = await stopRedskilledDaemon(paths, { settleTimeoutMs: 2_000 });
+    // The settle is a DEADLINE with an early return, so a generous one costs
+    // nothing when the drain is quick. At 2s this test was stricter than the
+    // product's own 5s default and failed on a loaded 4-core runner while
+    // passing here — `stopped: false` means only "did not finish the bounded
+    // drain in time", which says nothing about the behaviour under test.
+    const report = await stopRedskilledDaemon(paths, { settleTimeoutMs: 20_000 });
 
     expect(report.stopped).toBe(true);
     expect(isPidAlive(state.pid)).toBe(false);
     expect(await readRedskilledLeaseFile(paths.leasePath)).toBeUndefined();
     expect(isPidAlive(worker.worker.pid)).toBe(true);
-  });
+  }, 60_000);
 
   it("shuts the daemon down and reports what it was holding", async () => {
     const paths = await sessionPaths();
@@ -311,7 +316,10 @@ describe("redskilled stop", () => {
     const paths = await sessionPaths();
     const pid = await startSilentHolder(paths);
 
-    const report = await stopRedskilledDaemon(paths, { settleTimeoutMs: 2_000 });
+    // Same reasoning as the settle above: signalling a holder and confirming the
+    // pid is gone is not instant on a busy machine, and the deadline returns
+    // early when it is.
+    const report = await stopRedskilledDaemon(paths, { settleTimeoutMs: 20_000 });
 
     expect(report.running).toBe(true);
     expect(report.stopped).toBe(true);

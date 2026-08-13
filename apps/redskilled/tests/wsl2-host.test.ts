@@ -28,6 +28,15 @@ import {
 } from "../src/machine-scope.js";
 import { resolveRedskilledPaths, resolveSessionKey, REDSKILLED_SOCKET_FILE } from "../src/paths.js";
 import { censusRedskilledProcesses } from "../src/orphan-reaper.js";
+
+import { permitUnitDiscoveryForThisSuite } from "./support/test-host-isolation.js";
+
+// The sweep is what this suite tests, so the sandbox default that refuses it
+// would turn every assertion into "found nothing, expected nothing". Every
+// verdict below rests on a process fixture this file builds, never on what
+// the machine running it happens to hold.
+permitUnitDiscoveryForThisSuite();
+
 import { stopWorker } from "../src/reattach.js";
 import { launchWorker } from "../src/worker-launch.js";
 import { detectWorkerPlacementProbes, planWorkerPlacement } from "../src/worker-placement.js";

@@ -16,6 +16,34 @@ const isolatedEnvironment = {
   REDSKILLED_TEST_HOST_ROOT: root,
 } as const;
 
+// Every line above isolates a PATH. Unit discovery isolates none of them: a
+// booting daemon asks the user's systemd for `red-worker-*` units, and systemd
+// has never heard of HOME. So a sandboxed daemon adopted the operator's REAL
+// Workers and counted them against budgets the tests had just declared — 77 of
+// 859 failing on a developer machine that happened to be draining a queue in
+// another checkout, and passing on an idle one.
+//
+// So the sandbox does not sweep by default. It sits OUTSIDE the pinned set
+// above because it is a feature switch rather than an identity: the suites that
+// test the sweep must be able to ask for it back, and `assertIsolatedHostIdentity`
+// would call that legitimate opt-in an escape.
+process.env.REDSKILLED_UNIT_DISCOVERY = "off";
+
+/**
+ * Let THIS suite sweep the host, for the suites whose subject is the sweep.
+ *
+ * The reaper and the WSL2 census cannot be tested with discovery off — it is the
+ * behaviour under test, so the safe default would silently assert that finding
+ * nothing is finding nothing. Such a suite must supply its own process fixtures
+ * and never let a verdict rest on what this machine happens to be running.
+ *
+ * Call it at module scope, before the daemon under test is spawned: a child
+ * inherits the environment as it stood at spawn, not as it stands at assertion.
+ */
+export function permitUnitDiscoveryForThisSuite(): void {
+  delete process.env.REDSKILLED_UNIT_DISCOVERY;
+}
+
 Object.assign(process.env, isolatedEnvironment);
 mkdirSync(isolatedEnvironment.HOME, { recursive: true });
 mkdirSync(isolatedEnvironment.XDG_RUNTIME_DIR, { recursive: true });

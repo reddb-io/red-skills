@@ -13,6 +13,28 @@ import {
 import type { RedskilledWorkerView } from "../src/host-state.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Run a documented `tq` recipe, and say what is missing when `tq` is.
+ *
+ * `tq` is an external Rust binary rather than a workspace dependency, so an
+ * environment without it fails at `spawn tq ENOENT` — a message that names
+ * neither the tool nor the way to get it. This test is NEVER skipped for its
+ * absence: the recipes it runs are the ones the /redskilled skill hands an
+ * operator, and a recipe nothing executes is a recipe nothing keeps true.
+ */
+async function tq(args: readonly string[]): Promise<{ stdout: string }> {
+  try {
+    return await execFileAsync("tq", [...args]);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    throw new Error(
+      "these are the tq recipes the /redskilled skill documents, and tq is not on PATH. " +
+        "Install the prebuilt binary from the reddb-io/toon releases (tq-linux-x86_64-static), " +
+        "or `cargo install reddb-io-tq`. CI installs the pinned release.",
+    );
+  }
+}
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DOC_PATH = join(ROOT, "plugins/dev/skills/engineering/redskilled/SKILL.md");
 const roots: string[] = [];
@@ -120,10 +142,10 @@ describe("queryable daemon worker-event log", () => {
     expect(docs).toContain(WORKER_STORY_QUERY);
     expect(docs).toContain(DRIFT_HEAL_COUNTS_QUERY);
 
-    const today = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-c", TODAY_PERFORMANCE_QUERY, path]);
+    const today = await tq(["-p", "toonl", "-o", "json", "-c", TODAY_PERFORMANCE_QUERY, path]);
     expect(today.stdout.trim().split("\n")).toHaveLength(5);
 
-    const story = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-c", WORKER_STORY_QUERY, path]);
+    const story = await tq(["-p", "toonl", "-o", "json", "-c", WORKER_STORY_QUERY, path]);
     const storyRows = story.stdout.trim().split("\n").map((line) => JSON.parse(line) as { kind: string });
     expect(storyRows.map((row) => row.kind)).toEqual([
       "worker-birth",
@@ -133,7 +155,7 @@ describe("queryable daemon worker-event log", () => {
       "worker-death",
     ]);
 
-    const counts = await execFileAsync("tq", [
+    const counts = await tq([
       "-p",
       "toonl",
       "-o",
