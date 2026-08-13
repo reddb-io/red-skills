@@ -1262,6 +1262,9 @@ export async function processIssue(
         log: (message) => deps.appendIterLog(message),
       });
       run = notesOutcome.run;
+      if (run.sessionArtifact) {
+        deps.markState?.({ session_artifact: run.sessionArtifact });
+      }
       if (isRunnerRecoverableOutcome(run.outcome)) {
         if (!deps.fallbackRunner) {
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
@@ -1301,6 +1304,9 @@ export async function processIssue(
           env: agentEnv,
           sandboxMode: sandboxDecision.sandboxMode,
         });
+        if (run.sessionArtifact) {
+          deps.markState?.({ session_artifact: run.sessionArtifact });
+        }
         if (isRunnerRecoverableOutcome(run.outcome)) {
           await fireHook("post_attempt", postAttemptContext({ ...input, attempt: roundOrdinal }, branch, "fail", run.outcome));
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
