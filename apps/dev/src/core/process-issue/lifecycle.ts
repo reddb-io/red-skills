@@ -80,6 +80,8 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
+  isSpinOutcome,
+  spinPatternFromOutcome,
   type WorkerOutcome,
 } from "../worker-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
@@ -163,6 +165,7 @@ import {
   gateReseedDirectives,
   noteReseedSignature,
   reviewReseedDirectives,
+  spinReseedDirectives,
   tierEscalationDirectives,
   withGateOutstanding,
   withReviewOutstanding,
@@ -828,6 +831,8 @@ export async function processIssue(
     /** Review only — the blocking findings and the diff they were raised
      * against, which become the review half of the outstanding state. */
     review?: { summary: string; findings: readonly AdversarialReviewFinding[]; diff: string };
+    /** Persistent Spin only — the pattern that survived the free steer. */
+    spinPattern?: ReturnType<typeof spinPatternFromOutcome>;
     /** The round's failure signature, when the caller already derived it to
      * decide something (the tier escalation does). Absent, it is derived here
      * from `sidecar` — one key either way. */
@@ -917,7 +922,16 @@ export async function processIssue(
      * two projections, so the surfaces cannot disagree about what the round was
      * asked to fix. */
     let note: string;
-    if (req.trigger === "review-finding") {
+    if (req.trigger === "spin") {
+      const pattern = req.spinPattern ?? "monologue";
+      currentHandoff = composeReseed(
+        "spin-correction",
+        spinReseedDirectives({ pattern, retry: gateSpend, cap: gateSubCap }),
+      );
+      note =
+        `🤖 ${reseedLane}: spin:${pattern} persisted after the in-session steer; ` +
+        `correction retry ${gateSpend}/${gateSubCap}.`;
+    } else if (req.trigger === "review-finding") {
       const reviewSpend = reseedSpend.review ?? 0;
       currentHandoff = composeReseed(
         "adversarial-review-correction",
@@ -1016,7 +1030,7 @@ export async function processIssue(
     if (verdict.budgetEffect.kind !== "consume-environment") return false;
     environmentLedger = verdict.budgetEffect.ledger;
     gateRevalidationSkip = true;
-    const cause = verdict.fault.kind === "branch" ? "unknown" : verdict.fault.cause;
+    const cause = "cause" in verdict.fault ? verdict.fault.cause : verdict.fault.kind;
     const note =
       `🤖 ${reseedLane}: ${stage} ${verdict.fault.kind} fault (${cause}); ${verdict.reason}; ` +
       `re-running validation without an agent or branch charge. ${describeEnvironmentLedger(environmentLedger)}.`;
@@ -1322,6 +1336,33 @@ export async function processIssue(
       model: initialTier.model,
       effort: initialTier.effort,
     } satisfies StageCommon;
+    if (isSpinOutcome(run.outcome)) {
+      const pattern = spinPatternFromOutcome(run.outcome);
+      await fireHook("post_attempt", postAttemptContext(current, workerBranch, "fail", run.outcome));
+      const branchBudgetAvailable = reseedDraw(reseedBudget, "gate", reseedSpend).allowed;
+      const verdict = decideVerdict({
+        checks: [],
+        signature: run.outcome,
+        spinPattern: pattern,
+        history: { environment: environmentLedger, branchBudgetAvailable },
+        environment: {},
+      });
+      if (!verdict.parkNow) {
+        const reseed = await requestReseed({
+          trigger: "spin",
+          spinPattern: pattern,
+          validation: run.outcome,
+          signature: run.outcome,
+        });
+        if (reseed === "granted") continue;
+      }
+      const evidence = `${run.outcome} fault: ${verdict.reason}`;
+      await parkReseedTrail(evidence);
+      return await terminalFailure(common, run.outcome, "spin", {
+        notes: `Verdict: ${evidence}`,
+        log: run.stdout,
+      });
+    }
     if (input.runMode === "scout" && run.outcome === "no-sentinel" && scoutCapturedDone(run, scoutTextChunks)) {
       deps.appendIterLog(
         "🤖 /scout: AgentOutput was missing, but the captured agent stream ended with DONE — posting the recovered scout report.",
@@ -1637,7 +1678,7 @@ export async function processIssue(
       }
       if (grantEnvironmentRound("feedback", verdict)) continue;
       if (verdict.fault.kind !== "branch" && verdict.remediation?.kind !== "agent-correction") {
-        const cause = verdict.fault.cause;
+        const cause = "cause" in verdict.fault ? verdict.fault.cause : verdict.fault.kind;
         deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
           trigger: "gate-stage",
           cause,
@@ -1710,7 +1751,7 @@ export async function processIssue(
         );
         if (grantEnvironmentRound("backpressure", verdict)) continue;
         if (verdict.fault.kind !== "branch") {
-          const cause = verdict.fault.cause;
+          const cause = "cause" in verdict.fault ? verdict.fault.cause : verdict.fault.kind;
           const notes =
             `Backpressure validation parked as infra (${cause}): ${verdict.reason}. ` +
             `${describeEnvironmentLedger(environmentLedger)}. The branch repair budget was not charged.`;
