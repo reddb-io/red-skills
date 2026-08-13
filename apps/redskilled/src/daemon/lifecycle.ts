@@ -1310,6 +1310,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       systemdResult: receipt?.systemd_result,
       memoryPeakBytes: receipt?.memory_peak_bytes,
       memorySwapPeakBytes: receipt?.memory_swap_peak_bytes,
+      journalTail: receipt?.journal_tail,
       refusal,
     });
     armIdleTimer();
@@ -1751,6 +1752,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           systemdResult: receipt?.systemd_result,
           memoryPeakBytes: receipt?.memory_peak_bytes,
           memorySwapPeakBytes: receipt?.memory_swap_peak_bytes,
+          journalTail: receipt?.journal_tail,
         });
       },
     });
