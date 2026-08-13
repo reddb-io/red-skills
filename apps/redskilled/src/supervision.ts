@@ -77,6 +77,17 @@ export interface PlanRedskilledUnitOptions {
   /** Where to look for the published bundle when no command is stated. */
   readonly entryLookup?: RedskilledEntryLookup;
   readonly idleMs?: number;
+  /**
+   * The version this daemon IS, so a cache-resident bundle can be copied
+   * somewhere durable before the unit names it.
+   *
+   * Absent, `stabilizeRedskilledEntry` cannot name a destination and returns
+   * the entry untouched — which is correct for a local build and wrong for the
+   * npx dispatch, because npx always delivers the UNVERSIONED asset name. That
+   * is how an installed unit came to point inside `~/.npm/_npx/`, a directory
+   * npm may prune, leaving a daemon that cannot start.
+   */
+  readonly version?: string;
 }
 
 /**
@@ -91,13 +102,18 @@ export function planRedskilledUnit(
   options: PlanRedskilledUnitOptions = {},
 ): RedskilledUnitPlan {
   const env = options.env ?? process.env;
-  // Stabilized when the bundle's name already states its version: the unit
-  // outlives every cache, so its ExecStart should too (#3554 closure). An
-  // unversioned or shim entry is used as resolved — durability is an upgrade,
-  // never a precondition.
+  // The unit outlives every cache, so its ExecStart must too (#3554 closure).
+  // The caller states the version because the RESOLVED name usually cannot:
+  // an npx dispatch hands over `redskilled.bundle.min.mjs`, with no version in
+  // it, so a stabilizer left to read the basename declines and the unit ends up
+  // naming a path inside `~/.npm/_npx/`. A shim or a genuinely local build is
+  // still used as resolved — durability is an upgrade, never a precondition.
   const entry = stabilizeRedskilledEntry(
     requireRedskilledEntry(options.override ?? {}, options.entryLookup ?? {}),
-    { homeDir: stableBundleHomeOf(env) },
+    {
+      homeDir: stableBundleHomeOf(env),
+      ...(options.version === undefined ? {} : { version: options.version }),
+    },
   );
   const args = [
     ...entry.args,
