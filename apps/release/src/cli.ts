@@ -2,10 +2,11 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
-import { createGithubClient } from "@reddb-io/github";
+import { createGithubClient, type GithubClient } from "@reddb-io/github";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { readChangesetQueue } from "./changeset-queue.js";
 import { createGithubReleaseAdapter } from "./github-release-adapter.js";
+import { createGithubReleaseWaitAdapter, watchVersionPullRequest } from "./release-wait.js";
 import { runReleaseEngine, type ReleaseEngineEvent } from "./release-engine.js";
 import { computeReleaseStatus, renderReleaseStatus } from "./status.js";
 import type { ReleaseClock, VersionScheme } from "./version-core.js";
@@ -24,6 +25,7 @@ const RELEASE_USAGE = `red-skills-release
 Usage:
   red-skills-release status [--root <repository>] [--scheme semver|calver]
   red-skills-release run [--root <repository>]
+  red-skills-release watch
   red-skills-release --version
   red-skills-release --help
 `;
@@ -36,6 +38,7 @@ export interface ReleaseCliIo {
 
 export interface ReleaseRunIo extends ReleaseCliIo {
   readonly env?: NodeJS.ProcessEnv;
+  readonly githubClient?: GithubClient;
 }
 
 export function main(
@@ -77,14 +80,23 @@ export async function runMain(
   argv: readonly string[] = process.argv.slice(2),
   io: ReleaseRunIo = {},
 ): Promise<number> {
+  if (argv[0] === "watch") {
+    const env = io.env ?? process.env;
+    const [owner, repository] = requiredRepository(env);
+    const github = createGithubReleaseWaitAdapter({
+      client: io.githubClient ?? createGithubClient({ token: requiredEnv(env, "GITHUB_TOKEN") }),
+      owner,
+      repository,
+    });
+    const result = await watchVersionPullRequest({ github });
+    (io.write ?? ((text: string) => process.stdout.write(text)))(`${JSON.stringify(result)}\n`);
+    return 0;
+  }
   if (argv[0] !== "run") return main(argv, io);
   const { values } = parseFlags(argv.slice(1), FLAGS, { unknownFlags: "error" });
   const env = io.env ?? process.env;
   const repoRoot = resolve(io.cwd ?? process.cwd(), values.root ?? ".");
-  const [owner, repository] = requiredEnv(env, "GITHUB_REPOSITORY").split("/", 2);
-  if (owner === undefined || repository === undefined || owner === "" || repository === "") {
-    throw new Error("GITHUB_REPOSITORY must be owner/repository");
-  }
+  const [owner, repository] = requiredRepository(env);
   const eventName = requiredEnv(env, "GITHUB_EVENT_NAME");
   const payload = JSON.parse(readFileSync(requiredEnv(env, "GITHUB_EVENT_PATH"), "utf8")) as unknown;
   const github = createGithubReleaseAdapter({
@@ -159,6 +171,14 @@ function requiredEnv(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (value === undefined || value.trim() === "") throw new Error(`${name} is required`);
   return value;
+}
+
+function requiredRepository(env: NodeJS.ProcessEnv): [owner: string, repository: string] {
+  const [owner, repository] = requiredEnv(env, "GITHUB_REPOSITORY").split("/", 2);
+  if (owner === undefined || repository === undefined || owner === "" || repository === "") {
+    throw new Error("GITHUB_REPOSITORY must be owner/repository");
+  }
+  return [owner, repository];
 }
 
 function errorMessage(error: unknown): string {

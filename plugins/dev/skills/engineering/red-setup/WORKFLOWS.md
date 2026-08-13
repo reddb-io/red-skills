@@ -60,7 +60,7 @@ These run in `reddb-io/red-skills` only. Listed so the catalogue is complete.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `red-release.yml` | push / merged Version-PR to `main` | Generated Release-standard workflow: maintains the **Version-PR**, then publishes its merged revision as a tag, human notes, and JSON + TOON manifests (ADR 0139). |
+| `red-release.yml` | push / merged Version-PR to `main`; 20-minute schedule | Generated Release-standard workflow: maintains the **Version-PR**, publishes its merged revision as a tag, human notes, and JSON + TOON manifests, and opens or refreshes a GitHub Ticket when current-head runs await approval or required contexts never start. Ordinary pending/failed checks and strict-base lag remain distinct non-paging states (ADR 0139). |
 | `red-memory-drift-guard.yml` | `pull_request` | Fails a PR that changes a watched memory surface (`.red/adr/**`, the glossary) without a `Memory-Ingested:`/`Memory-NoIngest:` audit marker. |
 | `red-memory-bench.yml` | `pull_request`, push to `main` | Memory deterministic-core regression gate. |
 | `red-memory-wiki-extract.yml` | PR merge | Extracts LLM-Wiki pages from the merged PR. |

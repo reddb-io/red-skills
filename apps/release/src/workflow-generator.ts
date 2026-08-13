@@ -192,6 +192,17 @@ function normalizedEngineVersion(value: string): string {
 }
 
 function renderVersionPullRequestWorkflow(invocation: string): string {
+  const watchInvocation = invocation.replace(/ run$/, " watch");
+  const vendoredWatchSetup = watchInvocation.startsWith("node ")
+    ? [
+        "      - name: Load the vendored release engine",
+        "        env:",
+        "          GH_TOKEN: ${{ github.token }}",
+        "        run: |",
+        "          mkdir -p .github/red-skills",
+        "          gh api -H \"Accept: application/vnd.github.raw+json\" \"repos/${GITHUB_REPOSITORY}/contents/.github/red-skills/release.bundle.mjs?ref=${GITHUB_SHA}\" > .github/red-skills/release.bundle.mjs",
+      ]
+    : [];
   return [
     generatedHeader(),
     "name: RedSkills Release",
@@ -202,6 +213,8 @@ function renderVersionPullRequestWorkflow(invocation: string): string {
     "  pull_request:",
     "    branches: [main]",
     "    types: [closed]",
+    "  schedule:",
+    "    - cron: '*/20 * * * *'",
     "",
     "permissions: {}",
     "",
@@ -250,6 +263,25 @@ function renderVersionPullRequestWorkflow(invocation: string): string {
     "        env:",
     "          GITHUB_TOKEN: ${{ github.token }}",
     `        run: ${invocation}`,
+    "",
+    "  watch-version-pr:",
+    "    if: github.event_name == 'schedule'",
+    "    runs-on: ubuntu-latest",
+    "    permissions:",
+    "      actions: read",
+    "      checks: read",
+    "      contents: read",
+    "      issues: write",
+    "      pull-requests: read",
+    "    steps:",
+    `      - uses: ${SETUP_NODE_ACTION}`,
+    "        with:",
+    "          node-version: 22",
+    ...vendoredWatchSetup,
+    "      - name: Signal a stalled Version PR",
+    "        env:",
+    "          GITHUB_TOKEN: ${{ github.token }}",
+    `        run: ${watchInvocation}`,
     "",
   ].join("\n");
 }
