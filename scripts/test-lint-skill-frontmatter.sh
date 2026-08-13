@@ -58,6 +58,8 @@ assert_grep "violating/description" /tmp/.skill-frontmatter-violating "empty-des
 assert_grep "violating/description-rule" /tmp/.skill-frontmatter-violating "description-non-empty"
 assert_grep "violating/wildcard" /tmp/.skill-frontmatter-violating "wildcard-tools/SKILL.md"
 assert_grep "violating/wildcard-rule" /tmp/.skill-frontmatter-violating "no-wildcard-tool-grant"
+assert_grep "violating/paths" /tmp/.skill-frontmatter-violating "malformed-paths/SKILL.md"
+assert_grep "violating/paths-rule" /tmp/.skill-frontmatter-violating "paths-globs-valid"
 
 rm -f /tmp/.skill-frontmatter-compliant /tmp/.skill-frontmatter-violating
 
