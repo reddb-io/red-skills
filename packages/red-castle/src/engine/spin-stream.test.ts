@@ -50,4 +50,44 @@ describe("Spin runner-stream processing", () => {
     expect(steers).toHaveLength(1);
     expect(steers[0]).toContain("monologue");
   });
+
+  it("normalizes runner tool calls and results for Spin evaluation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "spin-stream-"));
+    roots.push(root);
+    const workerLog = createCastleLaneWriters(
+      createEnginePaths(join(root, ".red")),
+      { clock: () => "2026-08-13T00:00:00.000Z" },
+    ).worker("wPAIR");
+    const steers: string[] = [];
+    const stream = createSpinStreamProcessor({
+      workerLog,
+      steer: (message) => {
+        steers.push(message);
+      },
+    });
+
+    for (let index = 0; index < 3; index += 1) {
+      await stream.observe({
+        type: "toolCall",
+        name: "Bash",
+        formattedArgs: "pnpm test",
+        iteration: 1,
+        timestamp: new Date(0),
+      });
+      await stream.observe({
+        type: "result",
+        result: "1 test failed",
+        iteration: 1,
+        timestamp: new Date(0),
+      });
+    }
+
+    expect((await readCastleLaneRecords(workerLog.path))[0]).toMatchObject({
+      kind: "worker.spin",
+      payload: { pattern: "repeated-action-observation" },
+    });
+    expect(steers).toEqual([
+      expect.stringContaining("repeated-action-observation"),
+    ]);
+  });
 });
