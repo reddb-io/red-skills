@@ -28,6 +28,7 @@
  * The probes are injected, so both branches are provable without systemd.
  */
 import { spawn, spawnSync } from "node:child_process";
+import { constants as osConstants } from "node:os";
 import { killTreeAndWait } from "@reddb-io/shared/kill-tree.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -35,6 +36,21 @@ import { DEFAULT_WORKER_UNIT_PREFIX } from "./worker-placement.js";
 
 /** Answers "is this Worker still running?" for one Worker. */
 export type RedskilledLivenessProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
+
+/** The exit receipt systemd retains for a transient Worker unit. */
+export interface RedskilledUnitExitFacts {
+  readonly systemd_result: string | null;
+  readonly exit_code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly memory_peak_bytes: number | null;
+  readonly memory_swap_peak_bytes: number | null;
+  readonly journal_tail: string | null;
+}
+
+/** Reads the exit receipt for a unit that the host no longer reports active. */
+export type RedskilledUnitExitFactsProbe = (
+  unit: string,
+) => RedskilledUnitExitFacts | null | Promise<RedskilledUnitExitFacts | null>;
 
 /** Stops one Worker; returns whether the host confirmed its death. */
 export type RedskilledStopProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
@@ -130,6 +146,102 @@ export function isUnitActive(unit: string): boolean {
   const probe = spawnSync("systemctl", ["--user", "is-active", "--quiet", unit], { stdio: "ignore" });
   if (probe.error != null) return false;
   return probe.status === 0;
+}
+
+/**
+ * Ask systemd for the unit's own exit, never the `systemd-run --wait` client's.
+ *
+ * `ExecMainCode=1` is CLD_EXITED and makes `ExecMainStatus` an exit status;
+ * CLD_KILLED/CLD_DUMPED make it a signal number. Missing or collected units
+ * answer `null` rather than turning the launch client's generic 255 into fact.
+ */
+export function detectUnitExitFacts(unit: string): RedskilledUnitExitFacts | null {
+  const show = spawnSync(
+    "systemctl",
+    [
+      "--user",
+      "show",
+      "--no-pager",
+      "--property=Result",
+      "--property=ExecMainCode",
+      "--property=ExecMainStatus",
+      "--property=MemoryPeak",
+      "--property=MemorySwapPeak",
+      unit,
+    ],
+    { encoding: "utf8" },
+  );
+  const journal = spawnSync(
+    "journalctl",
+    ["--user", `--user-unit=${unit}`, "--no-pager", "--output=cat", "--lines=20"],
+    { encoding: "utf8" },
+  );
+  const showReadable = show.error == null && show.status === 0;
+  const journalReadable = journal.error == null && journal.status === 0;
+  if (!showReadable && !journalReadable) return null;
+  return parseUnitExitFacts(
+    showReadable ? show.stdout ?? "" : "",
+    journalReadable ? (journal.stdout ?? "").trim() : "",
+  );
+}
+
+/** Decode `systemctl show`'s stable `Property=value` surface. PURE. */
+export function parseUnitExitFacts(stdout: string, journalTail = ""): RedskilledUnitExitFacts {
+  const properties = new Map(
+    stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.includes("="))
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return [line.slice(0, separator), line.slice(separator + 1)] as const;
+      }),
+  );
+  const mainCode = parseSystemdNumber(properties.get("ExecMainCode"));
+  const mainStatus = parseSystemdNumber(properties.get("ExecMainStatus"));
+  const journalExit = journalTail.match(/Main process exited, code=(exited|killed|dumped), status=(\d+)(?:\/[A-Z0-9]+)?/);
+  const journalStatus = parseSystemdNumber(journalExit?.[2]);
+  const journalResult = journalTail.match(/Failed with result ['"]([^'"]+)['"]/i)?.[1] ?? null;
+  const memoryPeak = journalTail.match(/([\d.]+)\s*([KMGTPE]?)\s*(?:i?B)?\s+memory peak/i);
+  const swapPeak = journalTail.match(/([\d.]+)\s*([KMGTPE]?)\s*(?:i?B)?\s+memory swap peak/i);
+  return {
+    systemd_result: nonempty(properties.get("Result")) ?? journalResult,
+    exit_code: mainCode === 1
+      ? mainStatus
+      : journalExit?.[1] === "exited" ? journalStatus : null,
+    signal: mainCode === 2 || mainCode === 3
+      ? signalName(mainStatus)
+      : journalExit?.[1] === "killed" || journalExit?.[1] === "dumped" ? signalName(journalStatus) : null,
+    memory_peak_bytes: parseSystemdNumber(properties.get("MemoryPeak")) ?? parseJournalBytes(memoryPeak),
+    memory_swap_peak_bytes: parseSystemdNumber(properties.get("MemorySwapPeak")) ?? parseJournalBytes(swapPeak),
+    journal_tail: nonempty(journalTail),
+  };
+}
+
+function nonempty(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed == null || trimmed === "" ? null : trimmed;
+}
+
+function parseSystemdNumber(value: string | undefined): number | null {
+  if (value == null || !/^\d+$/.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parseJournalBytes(match: RegExpMatchArray | null): number | null {
+  if (match == null) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 0) return null;
+  const power = "KMGTPE".indexOf((match[2] ?? "").toUpperCase()) + 1;
+  const bytes = value * (power === 0 ? 1 : 1024 ** power);
+  return Number.isSafeInteger(bytes) ? bytes : null;
+}
+
+function signalName(number: number | null): NodeJS.Signals | null {
+  if (number == null) return null;
+  const match = Object.entries(osConstants.signals).find(([, value]) => value === number)?.[0];
+  return match?.startsWith("SIG") ? match as NodeJS.Signals : null;
 }
 
 /** Answers "which process is this unit actually running?"; null when unresolvable. */

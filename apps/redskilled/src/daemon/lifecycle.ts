@@ -89,6 +89,7 @@ import { createRedskilledProjectHookRuntime } from "../project-hook.js";
 import { createRedskilledHostEventSinkRuntime } from "../host-event-sink.js";
 import { pingAnswer } from "./ping-answer.js";
 import {
+  detectUnitExitFacts,
   detectUnitMainPid,
   detectWorkerLiveness,
   discoverUnownedWorkers,
@@ -218,6 +219,7 @@ import {
 import { replaceWithViableSuccessor } from "./takeover.js";
 import { createRemotePollDeadline } from "./remote-poll.js";
 import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
+import { resolveUnitDeath } from "./unit-death.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
 export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
 
@@ -336,6 +338,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const registrationIntentStore = options.registrationIntentStore ??
     createRedskilledRegistrationIntentStore(paths.registrationIntentPath);
   const liveness = options.liveness ?? detectWorkerLiveness;
+  const unitExitFacts = options.unitExitFacts ?? detectUnitExitFacts;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
   /** Exactly-once Worker teardown: a second ask joins the stop already in flight. */
@@ -437,6 +440,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     refuse: (detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel: "redskilled/host-events", detail }).catch(() => undefined),
   });
   let workerBirthTail: Promise<void> = Promise.resolve();
+  let observedExitTail: Promise<void> = Promise.resolve();
   function startAfterProjectHooks<T>(start: () => T | Promise<T>): Promise<T> {
     const turn = workerBirthTail.then(async () => { await projectHooks.waitForSettled(); const result = await start();
       await projectHooks.waitForSettled(); return result; });
@@ -1269,15 +1273,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       );
       return;
     }
+    const death = await resolveUnitDeath(worker, unitExitFacts, { detail: ended, facts: { exitCode: code, signal } });
     const refusal = worker.log_path == null
       ? null
       : bootRefusalFromLog(await readLogTail(worker.log_path).catch(() => null));
     forgetWorker(worker.worker_id);
-    record("worker-death", worker, refusal == null ? ended : `session-error: ${refusal}`, {
-      exitCode: code,
-      signal,
-      refusal,
-    });
+    record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, { ...death.facts, refusal });
     armIdleTimer();
   }
 
@@ -1614,7 +1615,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           armIdleTimer();
           return;
         }
-        void resolveObservedExit(worker, code, signal).catch(() => undefined);
+        observedExitTail = observedExitTail.then(() => resolveObservedExit(worker, code, signal)).catch(() => undefined);
       },
     });
     const forkSha = grant.forkSha ?? launched.fork_sha ?? launched.worker.fork_sha;
@@ -1702,8 +1703,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const dead = await sweepHeldWorkerLiveness({
       workers: [...workers.values()], reattached_worker_ids: reattached,
       now_ms: Date.parse(clock()), grace_ms: livenessGraceMs, probe: liveness,
-      on_dead: (worker) => {
-        forgetWorker(worker.worker_id); record("worker-death", worker, "the host no longer confirms this Worker");
+      on_dead: async (worker) => {
+        const death = await resolveUnitDeath(worker, unitExitFacts, { detail: "the host no longer confirms this Worker", facts: {} });
+        forgetWorker(worker.worker_id);
+        record("worker-death", worker, death.detail, death.facts);
       },
     });
     if (dead.length > 0) armIdleTimer();
@@ -2449,7 +2452,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     sweepOrphanProcesses: () => stopping ? Promise.resolve({ adopted: 0, reaped: 0, suspects: 0 }) : orphanReaper.sweep(), censusOrphanProcesses: () => orphanReaper.census(),
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
-    flushEvents: async () => { await workerBirthTail; await projectHooks.waitForSettled(); await eventLane.flush(); },
+    flushEvents: async () => { await workerBirthTail; await observedExitTail; await projectHooks.waitForSettled(); await eventLane.flush(); },
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
       record("worker-birth", worker, null);
