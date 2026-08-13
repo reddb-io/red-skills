@@ -18,6 +18,7 @@ import type { AdversarialReviewFindings } from "../src/core/adversarial-review.j
 import type { LandLock } from "../src/core/land-lock.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 import { githubMergeReadFromExec } from "./support/github-merge-read.js";
+import { defaultAdversarialFindings } from "./support/process-issue-review-fixtures.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -693,17 +694,11 @@ export function harness(opts: HarnessOptions = {}): {
       ? async ({ context, runner, model, effort, maxIterations }) => {
           trace.adversarialReviewContexts.push({ ...context, runner, model, effort, maxIterations });
           if (opts.adversarialExtractError) throw new Error(opts.adversarialExtractError);
-          return opts.adversarialFindingsSequence?.[trace.adversarialReviewContexts.length - 1] ?? opts.adversarialFindings ?? {
-            summary: "Stubbed adversarial review summary.", score: 0.5,
-            findings: [
-              {
-                path: "packages/x/src/a.ts",
-                line: 1,
-                body: "Acceptance criteria conformance finding.",
-                blocking: true,
-              },
-            ],
-          };
+          return (
+            opts.adversarialFindingsSequence?.[trace.adversarialReviewContexts.length - 1] ??
+            opts.adversarialFindings ??
+            defaultAdversarialFindings()
+          );
         }
       : undefined,
     postAdversarialReview: opts.adversarialReview
