@@ -75,4 +75,27 @@ describe("Claude path brief injection", () => {
       ),
     ).resolves.toEqual({});
   });
+
+  it("injects the same skill exactly once for a Codex apply_patch touch", async () => {
+    const options = await fixture();
+    const payload = {
+      session_id: "codex-session",
+      cwd: options.repoRoot,
+      tool_name: "apply_patch",
+      tool_input: {
+        input: "*** Begin Patch\n*** Update File: src/feature/thing.ts\n@@\n+changed\n*** End Patch",
+      },
+    };
+
+    const first = await injectClaudePathBriefs(payload, options);
+    const second = await injectClaudePathBriefs(payload, options);
+
+    expect(first).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        additionalContext: "# Path brief: guarded-source\n\nKeep the guarded source invariant intact.",
+      },
+    });
+    expect(second).toEqual({});
+  });
 });
