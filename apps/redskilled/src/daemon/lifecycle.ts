@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
+import { freemem } from "node:os";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
@@ -10,6 +11,7 @@ import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
   appendRedskilledMetricObservation,
   replayRedskilledMetricObservations,
+  shouldCheckpointMetricObservation,
 } from "./metric-history.js";
 import {
   deriveWorkerScopeCeiling,
@@ -72,6 +74,8 @@ import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-t
 import {
   createRedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
+import { createRedskilledResourceLeaseRuntime } from "../resource-lease.js";
+import { createRedskilledResourceLeaseStore } from "../resource-lease-store.js";
 import {
   buildRegistrationLapse,
   buildRegistrationStop,
@@ -341,6 +345,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
   const registrationIntentStore = options.registrationIntentStore ??
     createRedskilledRegistrationIntentStore(paths.registrationIntentPath);
+  const resourceLeaseStore = options.resourceLeaseStore ??
+    createRedskilledResourceLeaseStore(paths.resourceLeasePath);
   const liveness = options.liveness ?? detectWorkerLiveness;
   const unitExitFacts = options.unitExitFacts ?? detectUnitExitFacts;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
@@ -387,6 +393,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const demandMs = options.demandMs ?? DEFAULT_REDSKILLED_DEMAND_MS;
   const demandBackoffMs = options.demandBackoffMs ?? REDSKILLED_DEMAND_BACKOFF_MS;
   const workers = new Map<string, RedskilledWorkerView>();
+  const restoredResourceLeases = await resourceLeaseStore.read().catch(() => []);
+  const resourceLeases = createRedskilledResourceLeaseRuntime({
+    nowMs: () => Date.parse(clock()),
+    availableMemoryBytes: options.availableMemoryBytes ?? freemem,
+    restored: restoredResourceLeases,
+    changed: (leases) => resourceLeaseStore.replace(leases),
+  });
   // Concurrent socket admissions for the same trunk join one in-flight fetch.
   // A demand burst additionally retains its resolved promise for the whole tick.
   const trunkRefreshes = new Map<string, Promise<string>>();
@@ -410,6 +423,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // exception that is already durable — they mirror the host event lane, which is
   // replayed into them at boot.
   let observations: RedskilledWorkerMetricObservation[] = [];
+  const metricCheckpoints = new Map<string, RedskilledWorkerMetricObservation>();
+  const workerHighWater = new Map<string, { memory: number; swap: number; pids: number }>();
   let outcomeMarks: RedskilledWorkerOutcomeMark[] = [];
   // Boot attributions and deaths this daemon observed share one surface feed.
   // The latter stay durable through the host event lane and are replayed below;
@@ -675,7 +690,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   function hostState(): RedskilledHostState {
     const now = clock();
-    expireLapsedRegistrations(now);
     return buildHostState({
       now,
       daemonVersion,
@@ -760,7 +774,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     observations = appended.observations;
     // The host event lane is the daemon's one durable history. Persist the
     // projection needed for rates there, never in a metrics sidecar.
-    void eventLane.recordWorker(appended.record).catch(() => undefined);
+    const latest = observations.at(-1)!;
+    if (shouldCheckpointMetricObservation(metricCheckpoints.get(worker.worker_id), latest)) {
+      metricCheckpoints.set(worker.worker_id, latest);
+      void eventLane.recordWorker(appended.record).catch(() => undefined);
+    }
   }
 
   /**
@@ -1188,6 +1206,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     reattached.delete(workerId);
     logLines.delete(workerId);
     displays.delete(workerId);
+    void resourceLeases.releaseHolder(workerId).catch(() => undefined);
   }
 
   /**
@@ -1664,7 +1683,21 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const ts = clock();
     // The same instant the lane records, so the outcome rate and the lane never
     // describe the same ending at two different times.
-    const input: RecordWorkerEventInput = { kind, worker, ts, detail, ...facts };
+    const high = workerHighWater.get(worker.worker_id);
+    const input: RecordWorkerEventInput = {
+      kind,
+      worker,
+      ts,
+      detail,
+      ...facts,
+      ...((kind === "worker-death" || kind === "worker-budget-kill") && high != null
+        ? {
+            memoryPeakBytes: Math.max(facts.memoryPeakBytes ?? 0, high.memory),
+            memorySwapPeakBytes: Math.max(facts.memorySwapPeakBytes ?? 0, high.swap),
+            pidsPeak: Math.max(facts.pidsPeak ?? 0, high.pids),
+          }
+        : {}),
+    };
     if (kind === "worker-death" || kind === "worker-budget-kill") {
       const mark: RedskilledWorkerOutcomeMark = { worker_id: worker.worker_id, ts, outcome: kind };
       outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
@@ -1776,6 +1809,22 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lastSampledAt = clock();
     recordWorkerCpuReadings(workers, reading.cpu_seconds, lastSampledAt);
     await resourceIncidents.ingest(Object.values(reading.resource_samples ?? {}), lastSampledAt);
+    for (const [workerId, sample] of Object.entries(reading.resource_samples ?? {})) {
+      const previous = workerHighWater.get(workerId) ?? { memory: 0, swap: 0, pids: 0 };
+      const next = {
+        memory: Math.max(previous.memory, sample.memory.peak_bytes),
+        swap: Math.max(previous.swap, sample.memory.swap_peak_bytes ?? 0),
+        pids: Math.max(previous.pids, sample.pids.peak),
+      };
+      if (next.memory === previous.memory && next.swap === previous.swap && next.pids === previous.pids) continue;
+      workerHighWater.set(workerId, next);
+      const worker = workers.get(workerId);
+      if (worker != null) record("worker-resource", worker, null, {
+        memoryPeakBytes: next.memory,
+        memorySwapPeakBytes: next.swap,
+        pidsPeak: next.pids,
+      });
+    }
     const { terminations } = evaluateWorkerBudgets({
       workers: live,
       rss,
@@ -2193,6 +2242,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // Worker it holds a budget for and no record of.
     await eventLane.flush().catch(() => undefined);
     await registrationIntentStore.flush().catch(() => undefined);
+    await resourceLeaseStore.flush().catch(() => undefined);
     // Ownership records go first while the socket still proves this daemon is
     // reachable. If either release stalls or fails, the old daemon stays bound
     // and no successor mistakes a live, socketless pid for the singleton.
@@ -2210,6 +2260,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // in the window between binding and replay would be told this session holds
   // nothing, and would then birth a second Worker for work already running.
   const laneEvents = await eventLane.read().catch(() => []);
+  for (const event of laneEvents) {
+    if (event.worker_id === "" || event.worker_id.startsWith("daemon:")) continue;
+    const previous = workerHighWater.get(event.worker_id);
+    if (previous == null && event.memory_peak_bytes == null && event.memory_swap_peak_bytes == null && event.pids_peak == null) {
+      continue;
+    }
+    const prior = previous ?? { memory: 0, swap: 0, pids: 0 };
+    workerHighWater.set(event.worker_id, {
+      memory: Math.max(prior.memory, event.memory_peak_bytes ?? 0),
+      swap: Math.max(prior.swap, event.memory_swap_peak_bytes ?? 0),
+      pids: Math.max(prior.pids, event.pids_peak ?? 0),
+    });
+  }
   // A successor must render yesterday's loss too. The event lane is the durable
   // host witness, so replaying it here restores the exact feed a live exit updates
   // above without asking a project artifact that an early Worker never created.
@@ -2240,6 +2303,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     { now: clock() },
   );
   observations = replayRedskilledMetricObservations(laneEvents, clock());
+  for (const observation of observations) metricCheckpoints.set(observation.worker_id, observation);
   const replayed = rehydrateWorkers(laneEvents);
   // Census active units before attributing deaths: an active unit is re-attachable, not dead.
   const activeUnits = new Set(await Promise.resolve(unitInventory()).catch(() => []));
@@ -2273,6 +2337,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     workers.set(worker.worker_id, worker);
     reattached.add(worker.worker_id);
     record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
+  }
+  for (const lease of resourceLeases.snapshot()) {
+    if (lease.worker_id != null && !workers.has(lease.worker_id)) {
+      await resourceLeases.release(lease.lease_id).catch(() => undefined);
+    }
   }
   const bootRecovery = planRegistrationBootRecovery(restoredRegistrations, workers.values(), startedAt);
   for (const held of bootRecovery.live) registrations.set(held.project_label, held);
@@ -2343,6 +2412,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       }
       if (request.op === "worker-heartbeat") {
         return { id: request.id, ok: true, value: publishWorkerHeartbeat(request.heartbeat) };
+      }
+      if (request.op === "resource-acquire") {
+        return { id: request.id, ok: true, value: await resourceLeases.acquire(request.request) };
+      }
+      if (request.op === "resource-renew") {
+        return { id: request.id, ok: true, value: await resourceLeases.renew(request.lease_id, request.ttl_ms) };
+      }
+      if (request.op === "resource-release") {
+        return {
+          id: request.id,
+          ok: true,
+          value: { version: 1, lease_id: request.lease_id, released: await resourceLeases.release(request.lease_id) },
+        };
       }
       if (request.op === "project-register") {
         const value = registerProject(request.registration, request.session_project);
@@ -2442,6 +2524,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     killWorkerOverBudget,
     sampleMemoryBudgets,
     renewLease,
+    resourceLeases,
     pollRepositoryActivity,
     pollGithubBalance,
     githubBalance: () => lastBalance,
@@ -2461,10 +2544,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     },
     releaseWorker(workerId) {
       const worker = workers.get(workerId);
-      const removed = workers.delete(workerId);
-      reattached.delete(workerId);
-      logLines.delete(workerId);
-      displays.delete(workerId);
+      const removed = worker != null;
+      if (worker != null) forgetWorker(workerId);
       if (worker) record("worker-death", worker, "released by the daemon");
       armIdleTimer();
       return removed;
@@ -2472,6 +2553,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     workerCount: () => workers.size,
     registerProject,
     renewProject,
+    sweepRegistrations: () => expireLapsedRegistrations(clock()),
     resetProjectBirthBreaker,
     deregisterProject,
     registrations: () => hostState().registrations ?? [],
