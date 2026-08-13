@@ -1,5 +1,6 @@
 import { applyRequeue, type RequeueFreshnessResult } from "./requeue.js";
-import { isRefused, planTransition } from "./state-transition.js";
+import { parseCurrentBlocker } from "./blocker-state.js";
+import { BLOCKED_LABELS, isRefused, parkOrHuman, planTransition } from "./state-transition.js";
 
 /**
  * hitl_resolve core (#2369, Spec #2329 E7): one human decision on a parked
@@ -62,9 +63,25 @@ export async function resolveHitlDecision(
   const labels = await deps.viewLabels(input.issue);
 
   if (input.decision === "park") {
+    const body = await deps.viewBody(input.issue);
+    const activeBlocker = parseCurrentBlocker(body);
+    const projectedLabel = activeBlocker === null ? null : `blocked:${activeBlocker.kind}`;
+    if (
+      projectedLabel !== null &&
+      !BLOCKED_LABELS.some((declared) => declared === projectedLabel)
+    ) {
+      return {
+        issue: input.issue,
+        decision: input.decision,
+        actions,
+        refused:
+          `cannot write Park: body blocker kind "${activeBlocker!.kind}" has no declared label counterpart; ` +
+          "no coherent parked state exists for that value",
+      };
+    }
     await deps.comment(input.issue, rationaleComment);
     actions.push("rationale comment posted");
-    const plan = planTransition(labels, { kind: "human" });
+    const plan = planTransition(labels, parkOrHuman(projectedLabel));
     if (!isRefused(plan) && (plan.add.length > 0 || plan.remove.length > 0)) {
       await deps.editLabels(input.issue, [...plan.remove], [...plan.add]);
       actions.push(`park labels reconciled (+${plan.add.join(",") || "∅"} -${plan.remove.join(",") || "∅"})`);
