@@ -36,6 +36,7 @@ export interface RetakeWorkerState {
   path: string;
   attemptDir: string;
   issue: number;
+  sessionArtifact?: string;
   attempt?: number;
   phase?: string;
   outcome?: string;
