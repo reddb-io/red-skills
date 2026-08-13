@@ -44,6 +44,7 @@ export interface RedskilledUnitExitFacts {
   readonly signal: NodeJS.Signals | null;
   readonly memory_peak_bytes: number | null;
   readonly memory_swap_peak_bytes: number | null;
+  readonly journal_tail: string | null;
 }
 
 /** Reads the exit receipt for a unit that the host no longer reports active. */
@@ -155,7 +156,7 @@ export function isUnitActive(unit: string): boolean {
  * answer `null` rather than turning the launch client's generic 255 into fact.
  */
 export function detectUnitExitFacts(unit: string): RedskilledUnitExitFacts | null {
-  const probe = spawnSync(
+  const show = spawnSync(
     "systemctl",
     [
       "--user",
@@ -170,12 +171,22 @@ export function detectUnitExitFacts(unit: string): RedskilledUnitExitFacts | nul
     ],
     { encoding: "utf8" },
   );
-  if (probe.error != null || probe.status !== 0) return null;
-  return parseUnitExitFacts(probe.stdout ?? "");
+  const journal = spawnSync(
+    "journalctl",
+    ["--user", `--user-unit=${unit}`, "--no-pager", "--output=cat", "--lines=20"],
+    { encoding: "utf8" },
+  );
+  const showReadable = show.error == null && show.status === 0;
+  const journalReadable = journal.error == null && journal.status === 0;
+  if (!showReadable && !journalReadable) return null;
+  return parseUnitExitFacts(
+    showReadable ? show.stdout ?? "" : "",
+    journalReadable ? (journal.stdout ?? "").trim() : "",
+  );
 }
 
 /** Decode `systemctl show`'s stable `Property=value` surface. PURE. */
-export function parseUnitExitFacts(stdout: string): RedskilledUnitExitFacts {
+export function parseUnitExitFacts(stdout: string, journalTail = ""): RedskilledUnitExitFacts {
   const properties = new Map(
     stdout
       .split("\n")
@@ -188,12 +199,22 @@ export function parseUnitExitFacts(stdout: string): RedskilledUnitExitFacts {
   );
   const mainCode = parseSystemdNumber(properties.get("ExecMainCode"));
   const mainStatus = parseSystemdNumber(properties.get("ExecMainStatus"));
+  const journalExit = journalTail.match(/Main process exited, code=(exited|killed|dumped), status=(\d+)(?:\/[A-Z0-9]+)?/);
+  const journalStatus = parseSystemdNumber(journalExit?.[2]);
+  const journalResult = journalTail.match(/Failed with result ['"]([^'"]+)['"]/i)?.[1] ?? null;
+  const memoryPeak = journalTail.match(/([\d.]+)\s*([KMGTPE]?)\s*(?:i?B)?\s+memory peak/i);
+  const swapPeak = journalTail.match(/([\d.]+)\s*([KMGTPE]?)\s*(?:i?B)?\s+memory swap peak/i);
   return {
-    systemd_result: nonempty(properties.get("Result")),
-    exit_code: mainCode === 1 ? mainStatus : null,
-    signal: mainCode === 2 || mainCode === 3 ? signalName(mainStatus) : null,
-    memory_peak_bytes: parseSystemdNumber(properties.get("MemoryPeak")),
-    memory_swap_peak_bytes: parseSystemdNumber(properties.get("MemorySwapPeak")),
+    systemd_result: nonempty(properties.get("Result")) ?? journalResult,
+    exit_code: mainCode === 1
+      ? mainStatus
+      : journalExit?.[1] === "exited" ? journalStatus : null,
+    signal: mainCode === 2 || mainCode === 3
+      ? signalName(mainStatus)
+      : journalExit?.[1] === "killed" || journalExit?.[1] === "dumped" ? signalName(journalStatus) : null,
+    memory_peak_bytes: parseSystemdNumber(properties.get("MemoryPeak")) ?? parseJournalBytes(memoryPeak),
+    memory_swap_peak_bytes: parseSystemdNumber(properties.get("MemorySwapPeak")) ?? parseJournalBytes(swapPeak),
+    journal_tail: nonempty(journalTail),
   };
 }
 
@@ -206,6 +227,15 @@ function parseSystemdNumber(value: string | undefined): number | null {
   if (value == null || !/^\d+$/.test(value.trim())) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parseJournalBytes(match: RegExpMatchArray | null): number | null {
+  if (match == null) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 0) return null;
+  const power = "KMGTPE".indexOf((match[2] ?? "").toUpperCase()) + 1;
+  const bytes = value * (power === 0 ? 1 : 1024 ** power);
+  return Number.isSafeInteger(bytes) ? bytes : null;
 }
 
 function signalName(number: number | null): NodeJS.Signals | null {
