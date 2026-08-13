@@ -3,7 +3,17 @@ import {
   type RunFeedbackResult,
   type ValidationRecord,
 } from "../feedback.js";
+import { makeBlocker, type CurrentBlocker } from "../blocker-state.js";
+import type { SectionBodies } from "../envelope-emit.js";
 import type { ProcessIssueDeps } from "./types.js";
+
+export function oneLine(value: string | undefined, fallback: string): string {
+  const line = (value ?? "")
+    .split("\n")
+    .map((part) => part.replace(/^[-*]\s*(?:\[[^\]]+\]\s*)?/, "").replace(/\s+/g, " ").trim())
+    .find((part) => part.length > 0);
+  return line ?? fallback;
+}
 
 function validationRecords(value: string | undefined): ValidationRecord[] {
   if (!value) return [];
@@ -69,6 +79,27 @@ export function validationBlockerSummary(value: string | undefined): string | un
     );
   }
   return record.summary ?? record.name;
+}
+
+export function validationFailureBlocker(
+  outcome: "feedback-failed" | "feedback-failed-infra",
+  sections: SectionBodies,
+): CurrentBlocker {
+  if (outcome === "feedback-failed-infra") {
+    return makeBlocker({
+      kind: "validation-infra",
+      summary: oneLine(
+        sections.validation ?? sections.log,
+        "The declared validation gate could not run because its infrastructure failed.",
+      ),
+      next: "Restore the validation infrastructure, then requeue the declared gate.",
+    });
+  }
+  return makeBlocker({
+    kind: "validation",
+    summary: validationBlockerSummary(sections.validation) ?? oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
+    next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
+  });
 }
 
 export function reportValidationEvidenceInconsistency(
