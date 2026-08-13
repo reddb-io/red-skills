@@ -97,9 +97,26 @@ describe("hitl_resolve decisions (#2369)", () => {
     expect(deps.releaseClaims).not.toHaveBeenCalled();
     expect(deps.closeIssue).not.toHaveBeenCalled();
     const [, remove, add] = deps.editLabels.mock.calls[0]!;
-    expect(add).toContain("ready-for-human");
-    expect(remove).toContain("ready-for-agent");
+    expect(add).toEqual(["ready-for-human"]);
+    expect(remove).toEqual(expect.arrayContaining(["ready-for-agent", "blocked:crashed"]));
     expect(result.actions.some((a) => a.includes("rationale comment posted"))).toBe(true);
+  });
+
+  it("park: plainly refuses a historical body kind with no declared label counterpart", async () => {
+    const body = ACTIVE_BLOCKER_BODY.replace("kind: runner", "kind: runner-typo");
+    const deps = makeDeps(["ready-for-human", "blocked:crashed"], [], body);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 3507,
+      decision: "park",
+      rationale: "keep this parked",
+    });
+
+    expect(result.refused).toContain('body blocker kind "runner-typo"');
+    expect(result.refused).toContain("no coherent parked state exists");
+    expect(result.refused).not.toContain("hitl");
+    expect(deps.comment).not.toHaveBeenCalled();
+    expect(deps.editLabels).not.toHaveBeenCalled();
   });
 
   it("close: strips the park role BEFORE closing, keeping permanent markers (#2749)", async () => {
