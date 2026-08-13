@@ -391,7 +391,13 @@ export function sampleWorkerTrees(
       target: { kind: "worker", id: workerId, project_label: worker.project_label },
     });
     rss[workerId] = sample.memory.current_bytes;
-    cpuSeconds[workerId] = sample.cpu.usage_usec / 1_000_000;
+    // An absent `cpu.stat` is not a Worker that burned no CPU. The forensic
+    // reader is TOTAL by design — it fills a counter the kernel did not expose
+    // with a stated zero, so an incident record has no missing fields — and
+    // `recordWorkerCpuReadings` stamps a FRESH `sampled_at` on every entry it is
+    // handed. Recording the zero therefore dates a reading nobody took, and a
+    // Worker this tick could not measure must keep its last one instead.
+    if (existsSync(join(dir, "cpu.stat"))) cpuSeconds[workerId] = sample.cpu.usage_usec / 1_000_000;
     sources[workerId] = "cgroup";
     resourceSamples[workerId] = sample;
   }
