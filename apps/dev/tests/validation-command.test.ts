@@ -194,6 +194,27 @@ describe("suspect-infra duration", () => {
     })).toBe(false);
   });
 
+  it("lets structured branch evidence outrank a turbo-cached sub-second duration (#3773)", () => {
+    expect(isSuspectInfraFailure({
+      status: "failed",
+      durationMs: 26,
+      output: "apps/dev/src/runtime/wire/boot.ts(649,21): error TS2345: Argument is not assignable",
+    })).toBe(false);
+    expect(isSuspectInfraFailure({
+      status: "failed",
+      durationMs: 45,
+      output: "file-size-guard: apps/dev/src/core/boot.ts grew from 1606 to 1633 lines",
+    })).toBe(false);
+  });
+
+  it("may still classify an evidence-free sub-second failure as infrastructure (#3773)", () => {
+    expect(isSuspectInfraFailure({
+      status: "failed",
+      durationMs: 26,
+      output: "command exited non-zero",
+    })).toBe(true);
+  });
+
   it("leaves a plausible failure, a fast pass, and an unmeasured check alone", () => {
     expect(isSuspectInfraFailure({ status: "failed", durationMs: SUITE_MIN_PLAUSIBLE_MS })).toBe(false);
     expect(isSuspectInfraFailure({ status: "passed", durationMs: 3 })).toBe(false);
