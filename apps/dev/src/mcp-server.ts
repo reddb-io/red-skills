@@ -11,83 +11,14 @@ import {
   type CastleMcpDependencies,
 } from "@reddb-io/red-castle/mcp-server";
 import { CastleResidentClient } from "@reddb-io/red-castle/resident";
-import {
-  createEnginePaths,
-  createFileIssueCuratorStore,
-  armPr,
-  createFileMergeDriverStore,
-  createGitHubTrackerAdapter,
-  createLaneFollower,
-  createSingletonLeaseStore,
-  listCastleLaneFiles,
-  runIssueStateCurator,
-  runMergeDriverPass,
-} from "@reddb-io/red-castle/engine";
+import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 import {
   registerLaneEventSubscription,
   type LaneSubscriptionServer,
 } from "./lane-subscription.js";
-import { HOST_STATE_TRANSITION_LABELS } from "./core/state-transition.js";
-import { parseCurrentBlocker } from "./core/blocker-state.js";
-import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
-import { createDevGithubMergeRead } from "./runtime/github-merge-read.js";
-import { createMedicIo } from "./runtime/medic-io.js";
-import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
-import { resolveRepoContext } from "./runtime/wire.js";
-import { createCastleMcpDependencies } from "./mcp-adapter.js";
-import type { ResidentWebhook } from "./resident-webhook.js";
-import type { ResidentJanitor } from "./resident-cron.js";
-import { createRedskilledBirthPort } from "./runtime/redskilled-birth.js";
-import { publishedBundleArgv } from "./runtime/published-entry.js";
-import { renewRegistrationDelivery } from "./runtime/registration-delivery.js";
-import { maintainStandingDrain } from "./runtime/standing-drain.js";
-import { workerLogPathTemplate } from "./runtime/redskilled-worker-log.js";
-import {
-  newestInstalledPluginVersion,
-  refreshPublishedBundleVersion,
-} from "./core/published-version.js";
-import { encodeRedskilledMcpToon } from "./mcp-toon.js";
-import { loadConfig, readStandingDrain } from "./core/config.js";
-import { drain } from "./mcp/project.js";
+import { createResidentLaneFollower } from "./resident-lane-follower.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
-const REGISTRATION_DELIVERY_RENEW_MS = 150_000;
-
-/**
- * Keep a standing registration pointed at the published engine.
- *
- * The first pass repairs a registration inherited from an older MCP session;
- * later passes ride the registration's ordinary half-window renewal. A registry
- * outage costs one comparison and is retried on the next pass, while the renewal
- * itself still moves inside `renewRegistrationDelivery`.
- */
-export function startResidentRegistrationDelivery(root: string): { stop(): void } {
-  const tick = async () => {
-    const port = createRedskilledBirthPort({ root });
-    const installed = readBuildInfo("dev").version;
-    await maintainStandingDrain({
-      standing: () => readStandingDrain(loadConfig(join(root, ".red", "config.yaml"), {
-        warn: () => undefined,
-      })),
-      registration: () => port.registration(),
-      register: (standing) => drain(root, standing, { standing: true }),
-      renew: () => renewRegistrationDelivery({
-        port,
-        publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
-        publishedArgv: (version) => publishedBundleArgv({
-          installedVersion: installed,
-          resolvePublished: () => version,
-        }),
-        pluginCacheVersion: () => newestInstalledPluginVersion(),
-        logPath: workerLogPathTemplate(root),
-      }),
-    });
-  };
-  void tick().catch(() => undefined);
-  const timer = setInterval(() => void tick().catch(() => undefined), REGISTRATION_DELIVERY_RENEW_MS);
-  timer.unref();
-  return { stop: () => clearInterval(timer) };
-}
 
 export function createRedskilledMcpServer(
   root = process.cwd(),
@@ -108,9 +39,10 @@ export function createRedskilledMcpServer(
   // Tool schemas stay local so MCP discovery needs no resident round-trip. When
   // a resident invoker is present the dependency object is deliberately empty:
   // every invocation is replaced below, so this process owns no engine port.
-  const dependencies = residentInvoke === undefined
-    ? createCastleMcpDependencies(root)
-    : ({} as CastleMcpDependencies);
+  const invoke = residentInvoke ?? (async () => {
+    throw new Error("CASTLE_RESIDENT_UNAVAILABLE: the stdio proxy has no resident client");
+  });
+  const dependencies = {} as CastleMcpDependencies;
   for (const tool of createCastleMcpTools(dependencies)) {
     registerTool(
       tool.name,
@@ -124,7 +56,7 @@ export function createRedskilledMcpServer(
           {
             type: "text" as const,
             text: encodeRedskilledMcpToon(
-              await (residentInvoke === undefined ? tool.invoke(input) : residentInvoke(tool.name, input)),
+              await invoke(tool.name, input),
             ),
           },
         ],
@@ -148,12 +80,9 @@ export function createRedskilledMcpServer(
       }),
     );
   }
-  const paths = createEnginePaths(join(root, ".red"));
   registerLaneEventSubscription(
     server.server as unknown as LaneSubscriptionServer,
-    createLaneFollower({
-      list: () => listCastleLaneFiles(paths, ["worker", "supervisor"]),
-    }),
+    createResidentLaneFollower(invoke),
   );
   return server;
 }
@@ -166,8 +95,13 @@ export interface ResidentMcpConnection {
 export interface ConnectResidentMcpOptions {
   readonly server: ResidentMcpConnection;
   readonly transport: StdioServerTransport;
-  readonly resident: ResidentWebhook;
-  readonly janitor: ResidentJanitor;
+  readonly resident: ResidentLeaseComponent;
+  readonly janitor: ResidentLeaseComponent;
+}
+
+export interface ResidentLeaseComponent {
+  start(): Promise<unknown>;
+  stop(): Promise<void>;
 }
 
 export async function connectResidentMcp(
@@ -244,112 +178,6 @@ export function resolveCastleResidentBundle(caller: string): string {
   const match = /^redskilled-mcp(?<version>-[^.]+(?:\.[^.]+)*)?\.bundle\.min\.mjs$/.exec(file);
   const suffix = match?.groups?.version ?? "";
   return join(dirname(caller), `castle-resident${suffix}.bundle.min.mjs`);
-}
-
-export const RESIDENT_CURATOR_INTERVAL_MS = 5 * 60 * 1000;
-export const RESIDENT_MERGE_DRIVER_INTERVAL_MS = 90 * 1000;
-
-/** Start the #2512 merge driver inside the redskilled MCP resident: every interval it
- * reloads the durable armed set from `.red/state/castle/merge-driver.toon` and
- * runs one pass (update-branch when BEHIND, merge-commit when green, bounded
- * retries, terminal classification). A singleton lease keeps multiple stdio
- * hosts for the same repo off the same store; an empty armed set costs one
- * file read and no gh call. */
-export async function startResidentMergeDriver(root = process.cwd()): Promise<void> {
-  const paths = createEnginePaths(join(root, ".red"));
-  const owner = { pid: process.pid, startTime: new Date().toISOString() };
-  const lease = await createSingletonLeaseStore(paths).acquire("merge-driver", owner);
-  if (!lease.acquired) return;
-
-  const store = createFileMergeDriverStore(paths);
-  let githubMergeRead: ReturnType<typeof createDevGithubMergeRead> | undefined;
-  let running = false;
-  const pass = async (): Promise<void> => {
-    if (running) return;
-    running = true;
-    try {
-      const state = await store.read();
-      const armed = Object.values(state.prs).some((record) => record.status === "armed");
-      if (armed) {
-        const context = await resolveRepoContext(root);
-        githubMergeRead ??= createDevGithubMergeRead(root, "resident:merge-driver");
-        const entries = await runMergeDriverPass(
-          createMergeDriverIo({ cwd: context.root, repo: context.repo }, githubMergeRead),
-          store,
-          { nowEpoch: Math.floor(Date.now() / 1000) },
-        );
-        // PR medic (#2513): a terminal needs-medic classification gets ONE
-        // bounded mechanical healing round before any human sees it. A healed
-        // push re-arms the PR so the driver resumes ownership; the medic's own
-        // ledger escalates after MEDIC_MAX_ROUNDS failed rounds.
-        for (const entry of entries) {
-          if (entry.action !== "terminal-medic") continue;
-          try {
-            const medic = await runMedicPass(
-              createMedicIo(context.root),
-              createFileMedicStore(paths),
-              entry.pr,
-              { nowEpoch: Math.floor(Date.now() / 1000) },
-            );
-            if (medic.outcome === "healed") {
-              await armPr(store, entry.pr, Math.floor(Date.now() / 1000));
-            }
-          } catch {
-            // A failed heal leaves the terminal classification standing.
-          }
-        }
-      }
-    } catch {
-      // Transport faults retry on the next interval; the resident never dies here.
-    } finally {
-      running = false;
-    }
-  };
-  void pass();
-  const timer = setInterval(() => void pass(), RESIDENT_MERGE_DRIVER_INTERVAL_MS);
-  timer.unref();
-}
-
-/** Start the ADR 0122 periodic reconciliation owner inside the redskilled MCP resident.
- * The singleton lease prevents multiple stdio hosts for the same repo from
- * racing the durable ledger. The first sweep is detached from MCP startup; a
- * slow or unavailable tracker never delays the stdio handshake. */
-export async function startResidentIssueCurator(
-  root = process.cwd(),
-): Promise<void> {
-  const paths = createEnginePaths(join(root, ".red"));
-  const owner = { pid: process.pid, startTime: new Date().toISOString() };
-  const lease = await createSingletonLeaseStore(paths).acquire(
-    "issue-curator",
-    owner,
-  );
-  if (!lease.acquired) return;
-
-  const tracker = createGitHubTrackerAdapter({
-    claimLockRoot: join(paths.tmpRoot, "claims"),
-  });
-  const store = createFileIssueCuratorStore(paths);
-  let running = false;
-  const sweep = async (): Promise<void> => {
-    if (running) return;
-    running = true;
-    try {
-      await runIssueStateCurator({
-        tracker,
-        store,
-        labels: HOST_STATE_TRANSITION_LABELS,
-        hasActiveCurrentBlocker: (body) => parseCurrentBlocker(body) !== null,
-      });
-    } catch {
-      // Repo-level transport/state faults retry on the permanent periodic belt;
-      // they must not terminate the resident or block its MCP surface.
-    } finally {
-      running = false;
-    }
-  };
-  void sweep();
-  const timer = setInterval(() => void sweep(), RESIDENT_CURATOR_INTERVAL_MS);
-  timer.unref();
 }
 
 export interface McpEntrypointDependencies {

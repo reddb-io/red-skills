@@ -78,6 +78,27 @@ export interface CastleResidentProtocolError {
   readonly residentProtocol: string;
 }
 
+export interface CastleResidentStatus {
+  readonly health: "ready";
+  readonly residentVersion: string;
+  readonly protocolVersion: string;
+  readonly pid: number;
+  readonly startedAt: string;
+  readonly uptimeMs: number;
+  readonly clients: number;
+  readonly workers: number;
+  readonly obligations: number;
+  readonly calls: number;
+  readonly handover: "serving" | "draining";
+}
+
+export class CastleResidentRequestError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "CastleResidentRequestError";
+  }
+}
+
 export type CastleResidentResponse =
   | { readonly id: string; readonly ok: true; readonly value?: unknown }
   | { readonly id: string; readonly ok: false; readonly error: CastleResidentProtocolError | { code: string; message: string } };
@@ -117,6 +138,8 @@ export async function startCastleResident(
   options: StartCastleResidentOptions,
 ): Promise<CastleResidentServer> {
   const protocolVersion = options.protocolVersion ?? CASTLE_RESIDENT_PROTOCOL_VERSION;
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   const activity = options.activity ?? new ResidentActivity({ idleMs: options.idleMs ?? DEFAULT_RESIDENT_IDLE_MS });
   const sockets = new Set<Socket>();
   let closing = false;
@@ -136,13 +159,17 @@ export async function startCastleResident(
           respond({ id: request.id, ok: false, error: incompatible });
           return;
         }
-        await handleCastleRequest(request, respond, activity, options, close);
+        await handleCastleRequest(request, respond, activity, options, close, {
+          protocolVersion,
+          startedAt,
+          startedAtMs,
+        });
       },
       (error, request, respond) => {
         respond({
           id: request?.id ?? randomUUID(),
           ok: false,
-          error: { code: "CASTLE_RESIDENT_ERROR", message: errorMessage(error) },
+          error: { code: errorCode(error), message: errorMessage(error) },
         });
       },
     );
@@ -189,6 +216,7 @@ async function handleCastleRequest(
   activity: ResidentActivity,
   options: StartCastleResidentOptions,
   close: () => Promise<void>,
+  lifecycle: { protocolVersion: string; startedAt: string; startedAtMs: number },
 ): Promise<void> {
   if (request.op === "ping") {
     respond({
@@ -203,7 +231,21 @@ async function handleCastleRequest(
     return;
   }
   if (request.op === "status") {
-    respond({ id: request.id, ok: true, value: activity.snapshot() });
+    const snapshot = activity.snapshot();
+    const status: CastleResidentStatus = {
+      health: "ready",
+      residentVersion: options.residentVersion,
+      protocolVersion: lifecycle.protocolVersion,
+      pid: process.pid,
+      startedAt: lifecycle.startedAt,
+      uptimeMs: Math.max(0, Date.now() - lifecycle.startedAtMs),
+      clients: snapshot.clients,
+      workers: snapshot.workers,
+      obligations: snapshot.obligations,
+      calls: snapshot.calls,
+      handover: snapshot.draining ? "draining" : "serving",
+    };
+    respond({ id: request.id, ok: true, value: status });
     return;
   }
   if (request.op === "client-open") {
@@ -270,6 +312,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function errorCode(error: unknown): string {
+  const code = isRecord(error) ? error.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]+$/.test(code)
+    ? code
+    : "CASTLE_RESIDENT_ERROR";
+}
+
 export interface CastleResidentClientOptions {
   readonly cwd: string;
   readonly clientVersion: string;
@@ -316,36 +365,60 @@ export class CastleResidentClient {
     assertCastleResponse(await this.send({ id: randomUUID(), op: "notify", topic, value }));
   }
 
+  async status(): Promise<CastleResidentStatus> {
+    await this.ensure();
+    const response = await this.send({ id: randomUUID(), op: "status" });
+    assertCastleResponse(response);
+    if (!isCastleResidentStatus(response.value)) {
+      throw new CastleResidentRequestError(
+        "CASTLE_RESIDENT_INVALID_RESPONSE",
+        "Castle resident returned an invalid status envelope",
+      );
+    }
+    return response.value;
+  }
+
   async ensure(): Promise<ResidentHello> {
-    return await ensureVersionedResident({
-      lockPath: this.#paths.lockPath,
-      clientVersion: this.options.clientVersion,
-      protocolVersion: this.#protocolVersion,
-      probe: async () => await this.probe(),
-      requestHandover: async () => {
-        const response = await this.send({
-          id: randomUUID(),
-          op: "handover",
-          clientVersion: this.options.clientVersion,
-        });
-        assertCastleResponse(response);
-      },
-      spawn: () => {
-        const child = spawn(this.options.serverCommand, [...this.options.serverArgs], {
-          cwd: this.options.cwd,
-          detached: true,
-          stdio: "ignore",
-        });
-        child.unref();
-      },
-    });
+    try {
+      return await ensureVersionedResident({
+        lockPath: this.#paths.lockPath,
+        clientVersion: this.options.clientVersion,
+        protocolVersion: this.#protocolVersion,
+        probe: async () => await this.probe(),
+        requestHandover: async () => {
+          const response = await this.send({
+            id: randomUUID(),
+            op: "handover",
+            clientVersion: this.options.clientVersion,
+          });
+          assertCastleResponse(response);
+        },
+        spawn: () => {
+          const child = spawn(this.options.serverCommand, [...this.options.serverArgs], {
+            cwd: this.options.cwd,
+            detached: true,
+            stdio: "ignore",
+          });
+          child.unref();
+        },
+      });
+    } catch (error) {
+      if (error instanceof IncompatibleResidentProtocolError || error instanceof CastleResidentRequestError) {
+        throw error;
+      }
+      throw new CastleResidentRequestError("CASTLE_RESIDENT_UNAVAILABLE", errorMessage(error));
+    }
   }
 
   async #sendRequest(request: CastleResidentRequestWithoutProtocol): Promise<CastleResidentResponse> {
-    return await sendCastleResidentRequest(this.#paths.socketPath, {
-      ...request,
-      protocolVersion: this.#protocolVersion,
-    } as CastleResidentRequest);
+    try {
+      return await sendCastleResidentRequest(this.#paths.socketPath, {
+        ...request,
+        protocolVersion: this.#protocolVersion,
+      } as CastleResidentRequest);
+    } catch (error) {
+      throw new CastleResidentRequestError("CASTLE_RESIDENT_UNAVAILABLE", errorMessage(error));
+    }
   }
 
   private send(request: CastleResidentRequestWithoutProtocol): Promise<CastleResidentResponse> {
@@ -382,7 +455,18 @@ function assertCastleResponse(
     const error = response.error as CastleResidentProtocolError;
     throw new IncompatibleResidentProtocolError(error.clientProtocol, error.residentProtocol);
   }
-  throw new Error(response.error.message);
+  throw new CastleResidentRequestError(response.error.code, response.error.message);
+}
+
+function isCastleResidentStatus(value: unknown): value is CastleResidentStatus {
+  return isRecord(value) && value.health === "ready" &&
+    typeof value.residentVersion === "string" &&
+    typeof value.protocolVersion === "string" &&
+    typeof value.pid === "number" &&
+    typeof value.startedAt === "string" &&
+    typeof value.uptimeMs === "number" &&
+    typeof value.clients === "number" &&
+    (value.handover === "serving" || value.handover === "draining");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

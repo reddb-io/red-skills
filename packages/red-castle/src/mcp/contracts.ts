@@ -186,12 +186,35 @@ export const validationMomentScheduleSchema = z.object({
   })).length(3),
 });
 
+export const castleResidentStatusSchema = z.object({
+  health: z.enum(["ready", "unavailable"]),
+  version: z.string(),
+  protocol: z.string(),
+  pid: z.number().int().positive(),
+  started_at: z.string(),
+  uptime_ms: z.number().nonnegative(),
+  client_count: z.number().int().nonnegative(),
+  handover: z.enum(["serving", "draining"]),
+  resources: z.object({
+    sampled_at: z.string(),
+    source: z.enum(["cgroup-v2", "process-tree", "unavailable"]),
+    memory_current_bytes: z.number().nonnegative(),
+    memory_peak_bytes: z.number().nonnegative(),
+    cpu_usage_usec: z.number().nonnegative(),
+    pids_current: z.number().nonnegative(),
+  }),
+});
+
+export type CastleResidentStatusOutput = z.infer<typeof castleResidentStatusSchema>;
+
 export const projectStatusOutputSchema = z.object({
   registration: projectRegistrationStatusSchema,
   /** The exact project declaration every new Worker receives (ADR 0135). */
   validation_schedule: validationMomentScheduleSchema,
   /** The project-wide birth latch, or null when autonomous births are allowed. */
   birth_latch: projectBirthLatchSchema.nullable(),
+  /** The one project authority; deliberately excludes socket paths and argv. */
+  resident: castleResidentStatusSchema.optional(),
   slots: z.object({
     busy: z.number(),
     free: z.number(),
