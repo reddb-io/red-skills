@@ -223,6 +223,8 @@ export interface RedskilledHostEvent {
   readonly memory_peak_bytes: number | null;
   /** Peak swap charged to the unit, in bytes. */
   readonly memory_swap_peak_bytes: number | null;
+  /** Bounded unit journal tail retained when the transient unit was collected. */
+  readonly journal_tail: string | null;
 }
 
 /** A host-event record whose discriminator carries the public stability promise. */
@@ -250,6 +252,7 @@ export interface RecordEventInput {
   readonly systemdResult?: string | null;
   readonly memoryPeakBytes?: number | null;
   readonly memorySwapPeakBytes?: number | null;
+  readonly journalTail?: string | null;
   readonly reason?: string | null;
 }
 
@@ -264,6 +267,7 @@ export interface RecordWorkerEventInput {
   readonly systemdResult?: string | null;
   readonly memoryPeakBytes?: number | null;
   readonly memorySwapPeakBytes?: number | null;
+  readonly journalTail?: string | null;
   readonly admissionVerdict?: string | null;
   readonly phase?: string | null;
   readonly step?: string | null;
@@ -323,6 +327,7 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     systemd_result: input.systemdResult ?? null,
     memory_peak_bytes: input.memoryPeakBytes ?? null,
     memory_swap_peak_bytes: input.memorySwapPeakBytes ?? null,
+    journal_tail: input.journalTail ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
   };
 }
@@ -361,6 +366,7 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     systemd_result: null,
     memory_peak_bytes: null,
     memory_swap_peak_bytes: null,
+    journal_tail: null,
     reason: null,
   };
 }
@@ -803,6 +809,7 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     memory_swap_peak_bytes: record.memory_swap_peak_bytes == null || record.memory_swap_peak_bytes === ""
       ? null
       : Number(record.memory_swap_peak_bytes),
+    journal_tail: text(record.journal_tail),
     // A lane written before stops were recorded reads them as absent, never as a
     // crash: "this daemon did not say why it left" is the honest answer for a row
     // whose writer had no way to say anything.
