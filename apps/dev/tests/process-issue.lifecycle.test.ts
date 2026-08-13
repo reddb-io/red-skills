@@ -1631,6 +1631,46 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     expect(trace.adversarialReviews[0]?.body).toContain("Decision: not-blocking (advisory)");
   });
 
+  it("a configured Appraisal floor makes the same low-score review consume the reserved round, then park", async () => {
+    const lowScore = {
+      summary: "No discrete finding, but the branch does not answer enough of the request.",
+      score: 0.2,
+      findings: [],
+    };
+    const { deps, input, trace } = harness({
+      outcomes: ["done", "done"],
+      feedbackOk: true,
+      locked: false,
+      adversarialReview: {
+        enabled: true,
+        maxIterations: 1,
+        reviewerCount: 1,
+        quorum: "any",
+        appraisalFloor: 0.8,
+      },
+      adversarialFindingsSequence: [lowScore, lowScore],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.closed).toEqual([]);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toContainEqual({
+      kind: "worker.reseeded",
+      payload: expect.objectContaining({ trigger: "review-finding", cause: "review", cause_spent: 1, cause_cap: 1 }),
+    });
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("Appraisal score 0.2 is below the configured floor 0.8");
+    expect(labelTrace(trace)).toContain("-running|+ready-for-human+blocked:validation");
+    expect(trace.adversarialReviews.map((review) => review.body)).toEqual([
+      expect.stringContaining("Decision: blocking"),
+      expect.stringContaining("Decision: blocking"),
+    ]);
+    expect(parseCurrentBlocker(trace.bodyEdits.at(-1)?.body ?? "")?.summary).toContain(
+      "Appraisal score 0.2 is below the configured floor 0.8",
+    );
+  });
+
   it("runs configured reviewer count and applies quorum with reviewer runner resolution (#2210)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
