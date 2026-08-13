@@ -150,6 +150,22 @@ function injectedReadClient(ctx: GhContext): Pick<GithubClient, "conditionalRest
         const data = Array.isArray(parsed) ? (parsed as T[]) : [];
         return { data, headers: {}, quotaFree: false, requestCount: 1 };
       }
+      if (input.route === "GET /repos/{owner}/{repo}/pulls") {
+        // The routed open-PR read: the same plain `gh api --paginate` shape as
+        // the issues collection, returning full REST pull rows so the caller
+        // projects `head.ref` itself.
+        const owner = String(input.parameters?.owner ?? "");
+        const repo = String(input.parameters?.repo ?? "");
+        const query: string[] = [];
+        if (input.parameters?.state !== undefined) query.push("-f", `state=${String(input.parameters.state)}`);
+        query.push("-f", `per_page=${String(input.parameters?.per_page ?? 100)}`);
+        const args = ["api", "--paginate", `repos/${owner}/${repo}/pulls`, ...query];
+        const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
+        if (out.code !== 0) throw new Error(out.stderr || out.stdout);
+        const parsed = JSON.parse(out.stdout || "[]") as unknown;
+        const data = Array.isArray(parsed) ? (parsed as T[]) : [];
+        return { data, headers: {}, quotaFree: false, requestCount: 1 };
+      }
       const issue = String(input.parameters?.issue_number ?? "");
       const args = ["api", "--paginate", apiPath(ctx, `issues/${issue}/sub_issues`), "--jq", ".[] | {number}"];
       const out = await ctx.exec!("gh", args, { cwd: ctx.cwd });
