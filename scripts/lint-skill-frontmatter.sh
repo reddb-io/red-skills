@@ -5,13 +5,15 @@
 #   1. `name` must equal the skill directory name.
 #   2. `description` must be present and non-empty.
 #   3. Tool grant fields, when present, must not grant a bare wildcard (`*`).
+#   4. `paths`, when present, must be a non-empty list of valid repo-relative globs.
 #
 # Usage:
 #   scripts/lint-skill-frontmatter.sh [--root DIR]
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$SCRIPT_ROOT"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -121,6 +123,11 @@ while IFS= read -r file; do
     printf 'FAIL  %s\n      > no-wildcard-tool-grant: %s must not grant bare wildcard "*"\n' "$file" "$grant_key"
     failures=$((failures + 1))
   done < <(printf '%s\n' "$fm" | wildcard_tool_grants)
+
+  if ! paths_error="$(node "$SCRIPT_ROOT/scripts/validate-skill-paths.mjs" "$file" 2>&1)"; then
+    printf 'FAIL  %s\n      > paths-globs-valid: %s\n' "$file" "$paths_error"
+    failures=$((failures + 1))
+  fi
 done < <(find plugins -name SKILL.md -not -path '*/in-progress/*' | sort)
 
 echo ""

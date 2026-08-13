@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$SCRIPT_ROOT"
 
 usage() {
   cat <<'EOF'
@@ -16,6 +17,7 @@ Validates:
   - Every listed plugin has well-formed Claude and Codex plugin manifests.
   - Required plugin manifest fields are present.
   - Every skills/<bucket>/<skill>/ directory contains SKILL.md.
+  - Every SKILL.md paths field contains valid repository-relative globs.
 EOF
 }
 
@@ -135,6 +137,9 @@ validate_skill_dirs() {
   while IFS= read -r -d '' skill_dir; do
     [ -f "$skill_dir/SKILL.md" ] \
       || fail "$plugin: skill directory missing SKILL.md: $skill_dir"
+    if ! paths_error="$(node "$SCRIPT_ROOT/scripts/validate-skill-paths.mjs" "$skill_dir/SKILL.md" 2>&1)"; then
+      fail "$plugin: invalid SKILL.md paths: $paths_error"
+    fi
   done < <(find "$skills_dir" -mindepth 2 -maxdepth 2 -type d \
     -not -path '*/_*' \
     -print0 | sort -z)

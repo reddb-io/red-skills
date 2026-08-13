@@ -102,6 +102,17 @@ plugin_set_mismatch() {
   mv "$1/marketplace2.tmp" "$1/.gemini-plugin/marketplace.json"
 }
 
+malformed_skill_paths() {
+  printf '%s\n' \
+    '---' \
+    'name: do-thing' \
+    'description: Exercise the malformed marketplace path-brief fixture.' \
+    'paths:' \
+    '  - apps/dev/[broken.ts' \
+    '---' \
+    > "$1/plugins/alpha/skills/core/do-thing/SKILL.md"
+}
+
 expect_pass basic
 expect_fail missing-plugin-dir       "plugin directory not found"       missing_plugin_dir
 expect_fail missing-plugin-manifest  "plugin manifest not found"        missing_plugin_manifest
@@ -109,6 +120,7 @@ expect_fail malformed-manifest       "malformed plugin manifest"        malforme
 expect_fail missing-required-field   "missing required field"           missing_manifest_field
 expect_fail skill-without-skill-md   "skill directory missing SKILL.md" skill_without_skill_md
 expect_fail plugin-set-mismatch      "marketplace plugin set mismatch"  plugin_set_mismatch
+expect_fail malformed-skill-paths    "invalid paths glob"               malformed_skill_paths
 
 if [ "$fail_count" -ne 0 ]; then
   printf '\n%d failed, %d passed\n' "$fail_count" "$pass_count" >&2

@@ -36,10 +36,7 @@ export { readStandingDrain, type StandingDrainConfig } from "./standing-drain-co
  * `config_get` in the shell — callers compare against literals like "false".
  */
 
-import {
-  DEFAULT_FLEET_WIDTH_CONFIG,
-  FLEET_WIDTH_CONFIG_KEY,
-} from "@reddb-io/shared/default-fleet-width.js";
+import { DEFAULT_FLEET_WIDTH_CONFIG, FLEET_WIDTH_CONFIG_KEY } from "@reddb-io/shared/default-fleet-width.js";
 
 /** Documented v1 defaults — the only way to expand the schema. */
 export const CONFIG_DEFAULTS = {
