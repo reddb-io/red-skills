@@ -51,6 +51,11 @@ export async function runDashboard(
     ...(project.configText == null ? {} : { configText: project.configText }),
     project: project.label,
     flags: parsed.flags,
+    // The dashboard answers for the HOST. `local` remains one word away —
+    // `dashboard local`, `--mode local`, or a config entry — and the current
+    // directory's project is marked either way rather than being the only one
+    // drawn.
+    defaultMode: "global",
   });
   for (const warning of [...resolved.warnings, ...parsed.warnings]) {
     warn(`redskilled dashboard: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);

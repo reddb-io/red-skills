@@ -28,7 +28,11 @@ function expectBorderlessTable(
   const headerIndex = lines.findIndex((line) => header.test(line));
   const rowIndex = lines.findIndex((line) => row.test(line));
   expect(plain).not.toMatch(BOX_DRAWING_CHARACTER);
-  expect(headerIndex).toBe(2);
+  // The table follows the lines above it, whatever they are. Pinning an
+  // absolute index made this break the moment a section was added between the
+  // host header and the Workers — the assertion was about the table, and it
+  // was measuring the header block.
+  expect(headerIndex).toBeGreaterThan(0);
   expect(rowIndex).toBe(headerIndex + 1);
   expect(lines.every((line) => line.length <= columns)).toBe(true);
 }

@@ -90,7 +90,7 @@ Commands:
   host-state (default)  print the host's state as JSON
   serve                 run the daemon in this process
   statusline [global]   render one agent-host status line
-  dashboard [global]    render the host view a terminal can read
+  dashboard [local]     the host's screen; local scopes it to this repo
   github-spend          report which operations spent GitHub budget
   unit                  install | uninstall | status — the optional supervisor
   provision             make this machine ready; --check is the read-only half
@@ -131,13 +131,14 @@ no queue — an honest unknown, never a drained one.
 Prints the host's state as JSON. Contacts the running daemon; the default
 command when none is named.
 `,
-  dashboard: `Usage: redskilled dashboard [global] [flags]
+  dashboard: `Usage: redskilled dashboard [local] [flags]
 
-The host view the herdr plugin and the VS Code extension draw, at the density a
-terminal can read. Same payload and same render as the statusline (ADR 0132
-decision 1) — a density argument, never a second renderer.
+Every project this host is watching, every Worker it holds, and how the last
+48 hours have gone. The same payload and render as the statusline (ADR 0132
+decision 1) — a density argument, never a second renderer. The project of the
+directory you run it from is marked, never the only one shown.
 
-  global          every project's Workers, each naming its owner
+  local           scope to this directory's project instead of the host
   --max-width N   hard ceiling in characters
   --verbose       expand recent death receipts
 
