@@ -89,6 +89,8 @@ function deps(): CastleMcpDependencies {
         ready_for_agent_held: 0,
         ready_for_human: 0,
       },
+      degraded: false,
+      errors: [],
     })),
     deadendAudit: vi.fn(async () => ({ total: 0, classes: [] })),
     eventsSince: vi.fn(async (input) => {

@@ -213,7 +213,7 @@ export function createCastleMcpDependencies(
       }
       const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
       const policy = parseTrustPolicy(config, await ghx.repoVisibility(gh));
-      const { eligible, heldForSummon } = await partitionReadyForAgentByTrust(
+      const { eligible, heldForSummon, errors } = await partitionReadyForAgentByTrust(
         readyForAgent,
         policy,
         {
@@ -221,7 +221,7 @@ export function createCastleMcpDependencies(
           actorTrustSignals: ghx.createActorTrustLookup(gh),
         },
       );
-      return buildQueueStatus(eligible, heldForSummon, readyForHuman);
+      return buildQueueStatus(eligible, heldForSummon, readyForHuman, errors);
     },
     workerDispatch: (input) => {
       if (input.issue !== undefined) {

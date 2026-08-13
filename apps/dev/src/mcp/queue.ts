@@ -38,6 +38,7 @@ export function buildQueueStatus(
   eligibleForAgent: readonly IssueCandidate[],
   heldForSummon: readonly IssueCandidate[],
   readyForHuman: readonly HitlCandidate[],
+  errors: readonly QueueStatusError[] = [],
 ): QueueStatusOutput {
   const projectCandidate = ({ body: _body, author: _author, ...candidate }: IssueCandidate) => candidate;
   return {
@@ -51,7 +52,40 @@ export function buildQueueStatus(
       ready_for_agent_held: heldForSummon.length,
       ready_for_human: readyForHuman.length,
     },
+    degraded: errors.length > 0,
+    errors: [...errors],
   };
+}
+
+export interface QueueStatusError {
+  kind: "trust-read";
+  number: number;
+  message: string;
+}
+
+export const DEFAULT_QUEUE_TRUST_READ_DEADLINE_MS = 30_000;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function withDeadline<T>(promise: Promise<T>, deadline: number, message: string): Promise<T> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(
+      () => rejectPromise(new Error(message)),
+      Math.max(0, deadline - Date.now()),
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolvePromise(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        rejectPromise(error);
+      },
+    );
+  });
 }
 
 export async function partitionReadyForAgentByTrust(
@@ -60,27 +94,50 @@ export async function partitionReadyForAgentByTrust(
   deps: {
     issueTrust(candidate: IssueCandidate): Promise<TrustProvenance>;
     actorTrustSignals: ActorTrustLookup;
+    trustReadDeadlineMs?: number;
   },
 ): Promise<{
   eligible: IssueCandidate[];
   heldForSummon: IssueCandidate[];
+  errors: QueueStatusError[];
 }> {
   const eligible: IssueCandidate[] = [];
   const heldForSummon: IssueCandidate[] = [];
+  const errors: QueueStatusError[] = [];
   const gateActive = policy.enabled || policy.failClosed === true;
-  for (const candidate of candidates) {
-    if (!gateActive) {
-      eligible.push(candidate);
-      continue;
+  if (!gateActive) return { eligible: [...candidates], heldForSummon, errors };
+  const deadlineMs = deps.trustReadDeadlineMs ?? DEFAULT_QUEUE_TRUST_READ_DEADLINE_MS;
+  const deadline = Date.now() + deadlineMs;
+
+  const results = await Promise.all(candidates.map(async (candidate) => {
+    try {
+      const verdict = await withDeadline(
+        (async () => evaluateClaimTrust(
+          policy,
+          await deps.issueTrust(candidate),
+          deps.actorTrustSignals,
+        ))(),
+        deadline,
+        `trust read timed out after ${deadlineMs}ms`,
+      );
+      return { candidate, status: "success", executable: verdict.executable } as const;
+    } catch (error) {
+      return { candidate, status: "error", error: errorMessage(error) } as const;
     }
-    const verdict = await evaluateClaimTrust(
-      policy,
-      await deps.issueTrust(candidate),
-      deps.actorTrustSignals,
-    );
-    (verdict.executable ? eligible : heldForSummon).push(candidate);
+  }));
+
+  for (const result of results) {
+    if (result.status === "error") {
+      errors.push({
+        kind: "trust-read",
+        number: result.candidate.number,
+        message: result.error,
+      });
+    } else {
+      (result.executable ? eligible : heldForSummon).push(result.candidate);
+    }
   }
-  return { eligible, heldForSummon };
+  return { eligible, heldForSummon, errors };
 }
 
 /** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in

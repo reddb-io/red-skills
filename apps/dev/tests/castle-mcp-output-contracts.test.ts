@@ -213,6 +213,8 @@ describe("dev:afk observability output contracts", () => {
         ready_for_agent_held: 1,
         ready_for_human: 1,
       },
+      degraded: false,
+      errors: [],
     });
   });
 });
