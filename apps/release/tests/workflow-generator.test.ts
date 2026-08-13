@@ -72,7 +72,12 @@ describe("release workflow generator", () => {
       expect(source).toContain("red-skills-release[bot]");
     }
 
-    expect(versionPullRequest.match(/token: \$\{\{ secrets\.RELEASE_PAT \}\}/g)).toHaveLength(1);
+    // BOTH jobs in the version-PR workflow push, and both therefore need the
+    // non-bot credential. This assertion read `1` for as long as the release
+    // train silently blocked itself: `maintain-version-pr` pushed the version
+    // branch as github.token, so the PR's required checks never started and a
+    // human had to hand-push an empty commit to release at all.
+    expect(versionPullRequest.match(/token: \$\{\{ secrets\.RELEASE_PAT \}\}/g)).toHaveLength(2);
     expect(auto.match(/token: \$\{\{ secrets\.RELEASE_PAT \}\}/g)).toHaveLength(1);
     expect(versionPullRequest).toContain("pull-requests: write");
     expect(auto).not.toContain("pull-requests: write");

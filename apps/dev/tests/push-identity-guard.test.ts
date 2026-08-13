@@ -19,8 +19,20 @@ const WORKFLOW_DIR = join(ROOT, ".github/workflows");
  * How a workflow can end up pushing a ref. `changesets/action` is here because it
  * pushes its release branch internally — a workflow that names it never spells
  * `git push` and pushes on every run regardless.
+ *
+ * The house release engine is here for the same reason, and its absence is why
+ * this guard watched a third occurrence go by (2026-08-13). `red-release.yml`
+ * force-pushes `red-release/version-pr` from inside the bundle, so it spells
+ * neither `git push` nor `changesets/action`; the walker skipped the file and
+ * the version branch went out as `github-actions[bot]` for two releases. Both
+ * invocation shapes are matched — the vendored bundle and the pinned npx form.
  */
-const PUSH_MECHANISMS = [/^\s*[^#]*git push/m, /uses:\s*changesets\/action/];
+const PUSH_MECHANISMS = [
+  /^\s*[^#]*git push/m,
+  /uses:\s*changesets\/action/,
+  /release\.bundle\.mjs\s+run/,
+  /red-skills-release\s+run/,
+];
 
 /** A checkout `token:` that is the bot — the exact credential that parks runs. */
 const BOT_TOKEN = /token:\s*\$\{\{\s*(secrets\.GITHUB_TOKEN|github\.token)\s*\}\}/;
