@@ -201,9 +201,11 @@ Read the focused reference before touching that concern:
   intent wakes the Custodian's repair Worker through ordinary admission.
 - The **Verdict** is the one pure failed-Validation decision. Checks, history,
   and environment facts enter; fault, budget effect, and park-now leave. There
-  is no runtime classification hook: the sole operator escape is the declared
+  is no runtime classification hook. Concrete compiler, assertion, and guard
+  evidence is branch fault at any duration; only an evidence-free sub-second
+  failure may be suspect infrastructure. The declared
   `plugins.dev.afk.validation.subsecond_failures_are_branch_fault` policy beside
-  the Validation moments.
+  the Validation moments makes even that fallback branch-owned.
 - The **Park** has one door. `blocker-state` alone parses, writes, and clears the
   active blocker (malformed blocked records stay active and named), and every
   return to `ready-for-agent` calls `applyRequeue` with `machine` or `human`
