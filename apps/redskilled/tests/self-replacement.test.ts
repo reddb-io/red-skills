@@ -109,7 +109,14 @@ child.on("exit", (code) => process.exit(code ?? 0));
     // HOME is scoped to the fixture: entry stabilization files bundles under
     // the env's home, and a test env reaching the REAL ~/.red/redskilled/
     // would poison the operator's stable-bundle directory with fake versions.
-    env: { ...process.env, HOME: root, RED_SKILLS_CACHE_DIR: cacheDir },
+    env: {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_SESSION: `test:${root}`,
+      REDSKILLED_MACHINE_DIR: root,
+      RED_SKILLS_CACHE_DIR: cacheDir,
+    },
   };
 }
 
