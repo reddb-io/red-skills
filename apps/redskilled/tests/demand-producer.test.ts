@@ -489,6 +489,9 @@ describe("a death reported by the daemon drives the project's breaker", () => {
       detail: "exit 1",
       exit_code: 1,
       signal: null,
+      systemd_result: null,
+      memory_peak_bytes: null,
+      memory_swap_peak_bytes: null,
       reason: null,
     };
     expect(
