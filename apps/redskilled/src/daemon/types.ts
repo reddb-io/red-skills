@@ -88,6 +88,7 @@ import type {
 } from "../resource-incidents.js";
 import type { RedskilledResourceLeaseRuntime } from "../resource-lease.js";
 import type { RedskilledResourceLeaseStore } from "../resource-lease-store.js";
+import type { RedskilledBudgetGraceSignal } from "./budget-grace.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
   /** Test seam; production detects the kernel-side topology at daemon start. */
@@ -154,6 +155,10 @@ export interface RedskilledDaemonOptions {
   readonly livenessGraceMs?: number;
   /** How the daemon stops a Worker it is reclaiming a budget from. */
   readonly stopWorker?: RedskilledStopProbe;
+  /** Fixed host-policy checkpoint window before an over-budget Worker is killed. */
+  readonly budgetGraceMs?: number;
+  /** Test seam; production delivers the daemon's Budget grace signal. */
+  readonly signalWorkerForBudgetGrace?: RedskilledBudgetGraceSignal;
   /**
    * How the daemon lists the Worker units this host has active.
    *
