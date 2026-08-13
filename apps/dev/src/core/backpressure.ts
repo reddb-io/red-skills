@@ -136,6 +136,7 @@ export async function runBackpressure(
       durationMs,
       summary,
       infra: result.infraEvidence?.kind,
+      resources: result.resources,
     });
     checks.push({ name, command, status, record });
     sidecar.push(formatValidationLine(record));

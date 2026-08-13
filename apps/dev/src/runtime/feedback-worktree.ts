@@ -8,8 +8,7 @@
 //
 // This manager closes that seam: given a branch token it lazily `git worktree
 // add`s a temp checkout of the branch (fetching origin first) under
-// `.red/tmp/feedback/<branch-slug>`, caches it for the run, and hands back the
-// real path. It exposes the `pnpm` executor + `PackageLayout` probe the
+// `.red/tmp/feedback/<branch-slug>`, caches it, and exposes the `pnpm` executor + `PackageLayout` probe the
 // feedback gate consumes, both rebased onto the materialised checkout. Every
 // worktree it created is torn down by `cleanup()` after the session.
 //
@@ -26,12 +25,9 @@
 // AFK runner improvement — cross-session worktree cache: by default, a
 // materialised worktree whose branch HEAD matches the live branch's HEAD
 // is REUSED across sessions (no `worktree add` / setup command on re-claim).
-// The worktree itself is the cache — it just
-// isn't torn down if it was a cache hit. SHA mismatch (force-push, new
-// commit) is the only invalidation signal; there is no mtime/TTL GC. The
-// cost saved is `pnpm install --frozen-lockfile` (60-180s) per re-claim — the
-// dominant cost when 5+ workers race-claim the same branch (Pattern 7 of the
-// claude-minimax spike investigation). The flag is opt-out via
+// The worktree itself is the cache and is retained on a cache hit. SHA mismatch
+// is the only invalidation signal; there is no mtime/TTL GC. This saves the
+// install cost per re-claim (Pattern 7 of the claude-minimax spike). Opt out via
 // `cacheEnabled: false` for callers that need a strict per-session manager.
 //
 // A worktree path is a SINGLETON across every process on the host — most
@@ -71,6 +67,7 @@ import * as gitx from "./git.js";
 import { createPathLock, createPathSemaphore } from "./land-lock.js";
 import type { LandLockWaitInfo } from "../core/land-lock.js";
 import type { BranchReversionGeometry } from "../core/branch-reversion.js";
+import { withValidationResourceEvidence } from "./validation-resources.js";
 
 /**
  * Is `token` an ALREADY-MATERIALISED checkout rather than a branch name (#2339)?
@@ -588,7 +585,7 @@ export function makeFeedbackWorktree(
       }
     };
     try {
-      const result = await run((pid) => {
+      const result = await withValidationResourceEvidence(() => run((pid) => {
         active = {
           kind: "gate",
           subject,
@@ -598,7 +595,7 @@ export function makeFeedbackWorktree(
           escalation: "fail the validation stage",
         };
         publish({ state: "waiting", ...active });
-      });
+      }));
       const completed = active as Omit<GateWaitNotice, "state"> | null;
       if (completed !== null) {
         publish(
@@ -932,6 +929,7 @@ export function makeFeedbackWorktree(
         stdout: r.stdout,
         stderr: r.stderr,
         ...(r.infraEvidence === undefined ? {} : { infraEvidence: r.infraEvidence }),
+        ...(r.resources === undefined ? {} : { resources: r.resources }),
         commandDir: rewritten,
         ...(setupRecord.has(branch) ? { setup: setupRecord.get(branch)! } : {}),
       };
@@ -947,6 +945,7 @@ export function makeFeedbackWorktree(
       stdout: r.stdout,
       stderr: r.stderr,
       ...(r.infraEvidence === undefined ? {} : { infraEvidence: r.infraEvidence }),
+      ...(r.resources === undefined ? {} : { resources: r.resources }),
     };
   };
 
@@ -974,6 +973,7 @@ export function makeFeedbackWorktree(
       stdout: r.stdout,
       stderr: r.stderr,
       ...(r.infraEvidence === undefined ? {} : { infraEvidence: r.infraEvidence }),
+      ...(r.resources === undefined ? {} : { resources: r.resources }),
     };
   };
 

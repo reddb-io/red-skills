@@ -80,6 +80,11 @@ import { type RedskilledLease,
   type RedskilledLeaseOwner,
   type RedskilledLeaseStore,
 } from "../session-lease.js";
+import type {
+  DaemonResourceSampler,
+  ResourceIncidentStore,
+  ResourceIncidentTracker,
+} from "../resource-incidents.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
   /** Operator-owned lifecycle hooks and desktop notification declarations. */
@@ -153,6 +158,12 @@ export interface RedskilledDaemonOptions {
   readonly treeSampler?: RedskilledTreeSampler;
   /** Window between memory samples; 0 or below leaves the sampler unarmed. */
   readonly sampleMs?: number;
+  /** Bounded forensic incident store; host-owned default when absent. */
+  readonly resourceIncidentStore?: ResourceIncidentStore;
+  /** Incident state machine seam for deterministic tests. */
+  readonly resourceIncidentTracker?: ResourceIncidentTracker;
+  /** Daemon cgroup/process sampler seam. */
+  readonly daemonResourceSampler?: DaemonResourceSampler;
   /** Window between lease renewals; 0 or below leaves the renewer unarmed. */
   readonly leaseRenewMs?: number;
   /** Window between registration sustain passes; 0 or below leaves the belt unarmed. */

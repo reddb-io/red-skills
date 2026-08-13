@@ -37,6 +37,11 @@ export const REDSKILLED_SOCKET_FILE = "redskilled.sock";
 /** Env var that pins the session scope explicitly, ahead of every derivation. */
 export const REDSKILLED_SESSION_ENV = "REDSKILLED_SESSION";
 
+/** Durable, host-owned and bounded forensic incident lane. */
+export function redskilledResourceIncidentRoot(homeDir: string): string {
+  return join(redskilledHomeDir(homeDir), "state", "incidents");
+}
+
 export interface RedskilledPaths {
   /** The raw session scope this daemon serves — never published. */
   readonly sessionKey: string;

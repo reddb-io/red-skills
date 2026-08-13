@@ -595,6 +595,27 @@ describe("pure shaping helpers", () => {
     });
   });
 
+  it("carries secret-free resource evidence on the validation record", () => {
+    const resources = {
+      source: "cgroup-v2" as const,
+      sampled_before: "2026-08-13T00:00:00.000Z",
+      sampled_after: "2026-08-13T00:01:00.000Z",
+      memory_current_before_bytes: 100,
+      memory_current_after_bytes: 150,
+      memory_peak_bytes: 200,
+      memory_max_bytes: 1_000,
+      cpu_usage_delta_usec: 50,
+      cpu_throttled_delta_usec: 10,
+      pids_peak: 4,
+      memory_events_delta: { max: 1 },
+      pids_events_delta: {},
+    };
+    expect(buildValidationRecord({ name: "typecheck:root", status: "passed", resources })).toMatchObject({
+      schema: "red.afk.validation.v1",
+      resources,
+    });
+  });
+
   it("summarizes pass and fail output", () => {
     expect(outputSummary("passed", "anything")).toBe("command exited 0");
     expect(outputSummary("failed", "")).toBe("command exited non-zero");

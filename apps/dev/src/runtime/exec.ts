@@ -68,6 +68,7 @@ export interface ExecOutput {
   stderr: string;
   /** Typed infrastructure evidence emitted when validation made no CPU progress. */
   infraEvidence?: ValidationInfraEvidence;
+  resources?: import("../core/validation-resources.js").ValidationResourceEvidence;
 }
 
 export interface ValidationInfraEvidence {

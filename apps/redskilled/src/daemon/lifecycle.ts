@@ -56,10 +56,11 @@ import {
   evaluateWorkerBudgets,
   sampleWorkerTrees,
   type RedskilledBudgetTermination,
-  type RedskilledCpuReading,
   type RedskilledRssReading,
   type RedskilledTreeReading,
 } from "../memory-sampler.js";
+import { resolveResourceIncidentRuntime } from "./resource-incident-runtime.js";
+import { recordWorkerCpuReadings } from "./worker-cpu.js";
 import {
   createRedskilledMachineClaimStore,
   currentMachineOwner,
@@ -353,6 +354,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const treeSampler = options.treeSampler ?? sampleWorkerTrees;
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
+  const resourceIncidents = await resolveResourceIncidentRuntime(paths.eventLanePath, owner.pid, sampleMs, options);
   const leaseRenewMs = options.leaseRenewMs ?? DEFAULT_REDSKILLED_LEASE_RENEW_MS;
   const registrationSustainMs = options.registrationSustainMs ?? DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS;
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
@@ -487,9 +489,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let lastDemand: RedskilledDemandTick | null = null;
   // Registrations dropped by this daemon, retained so a stopped drain is not a healthy-looking absence (#2973).
   const lapses: RedskilledRegistrationLapse[] = [];
-  // A deliberate stop is not a lapse and not an absence nobody can explain.
-  // Retained on the same bounded tail as lapses so `project_stop` remains visible
-  // without turning live registration state into a durable second authority.
+  // A deliberate stop stays on the bounded lapse tail without becoming another durable authority.
   const stops: RedskilledRegistrationStop[] = [];
   const orphanedRegistrations = new Map(
     (options.orphanedRegistrations ?? []).map((record) => [record.project_label, record]),
@@ -707,6 +707,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         checks: publishedChecks,
         holdReason: publishedHoldReason,
       },
+      resourceIncidents: resourceIncidents.state(),
     });
   }
 
@@ -1758,43 +1759,31 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    */
   async function sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]> {
     const live = [...workers.values()];
-    if (live.length === 0) return [];
-    let reading: RedskilledTreeReading;
-    try {
+    let reading: RedskilledTreeReading = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
+    if (live.length > 0) try {
       reading = await treeSampler(live);
     } catch {
       // A sampler that could not read the host measured nothing, and a Worker
       // nothing measured is never killed on suspicion — nor is the last reading
       // re-dated, because a failed tick must age the payload rather than refresh it.
-      return [];
+      reading = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
     }
     const rss = reading.rss;
     lastReading = rss;
     lastSampledAt = clock();
-    recordCpuReading(reading.cpu_seconds, lastSampledAt);
-    const { terminations } = evaluateWorkerBudgets({ workers: live, rss, processes: reading.processes ?? {} });
+    recordWorkerCpuReadings(workers, reading.cpu_seconds, lastSampledAt);
+    await resourceIncidents.ingest(Object.values(reading.resource_samples ?? {}), lastSampledAt);
+    const { terminations } = evaluateWorkerBudgets({
+      workers: live,
+      rss,
+      processes: reading.processes ?? {},
+      sources: reading.sources,
+    });
     const done: RedskilledBudgetTermination[] = [];
     for (const termination of terminations) {
       if (await killWorkerOverBudget(termination.worker_id, termination.reason)) done.push(termination);
     }
     return done;
-  }
-
-  /**
-   * Carry this tick's CPU reading onto the Workers it measured.
-   *
-   * A Worker the tick did NOT measure keeps the sample it already had, dated by
-   * the tick that took it: dropping the number would erase the last thing known
-   * about a Worker exactly when it went quiet, and re-dating it would forge a
-   * measurement this tick never made.
-   */
-  function recordCpuReading(cpuSeconds: RedskilledCpuReading, sampledAt: string): void {
-    for (const [workerId, seconds] of Object.entries(cpuSeconds)) {
-      if (typeof seconds !== "number" || !Number.isFinite(seconds)) continue;
-      const held = workers.get(workerId);
-      if (!held) continue;
-      workers.set(workerId, { ...held, cpu: { cpu_seconds: seconds, sampled_at: sampledAt } });
-    }
   }
 
   /**
@@ -1965,9 +1954,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   function armSampleTimer(): void {
     if (stopping || sampleTimer != null || sampleMs <= 0) return;
-    sampleTimer = setInterval(() => {
-      void sampleMemoryBudgets().catch(() => undefined);
-    }, sampleMs);
+    const tick = (): void => {
+      sampleTimer = undefined;
+      void sampleMemoryBudgets().catch(() => undefined).finally(() => {
+        if (stopping) return;
+        const cadence = resourceIncidents.hasActiveIncident() ? Math.min(sampleMs, 2_000) : sampleMs;
+        sampleTimer = setTimeout(tick, cadence);
+        sampleTimer.unref();
+      });
+    };
+    sampleTimer = setTimeout(tick, sampleMs);
     sampleTimer.unref();
   }
 

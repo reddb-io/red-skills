@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled",
-  "version": "3.18.4",
+  "version": "3.18.5",
   "private": true,
   "type": "module",
   "exports": {
@@ -19,6 +19,7 @@
     "./paths": "./src/paths.ts",
     "./project-breaker": "./src/project-breaker.ts",
     "./project-registration": "./src/project-registration.ts",
+    "./resource-incidents": "./src/resource-incidents.ts",
     "./protocol": "./src/protocol.ts",
     "./queue-discovery": "./src/queue-discovery.ts",
     "./reattach": "./src/reattach.ts",
@@ -38,7 +39,8 @@
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify",
     "build": "pnpm run typecheck && pnpm run bundle",
     "build:native": "node-gyp rebuild --directory=native",
-    "serve": "tsx src/cli.ts serve"
+    "serve": "tsx src/cli.ts serve",
+    "diagnose:resources": "tsx scripts/resource-incident-harness.ts"
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
