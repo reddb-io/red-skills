@@ -234,6 +234,8 @@ describe("decideVerdict — one fault, budget effect, and park decision", () => 
 
     expect(verdict.fault).toEqual({ kind: "branch" });
     expect(verdict.budgetEffect).toEqual({ kind: "none" });
+    expect(verdict.parkNow).toBe(false);
+    expect(verdict.reason).toContain("all-green validation evidence");
   });
 });
 
