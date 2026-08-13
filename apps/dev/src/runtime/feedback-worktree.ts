@@ -52,12 +52,6 @@ import {
 import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostWorkerFormatExec } from "../core/post-worker-format.js";
 import {
-  acquireRedskilledResourceLease,
-  releaseRedskilledResourceLease,
-  renewRedskilledResourceLease,
-} from "@reddb-io/redskilled/client";
-import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
-import {
   DEFAULT_VALIDATION_STALL_DETECTION,
   execTool,
   pnpm as runPnpm,
@@ -70,6 +64,7 @@ import { createPathLock } from "./land-lock.js";
 import type { LandLockWaitInfo } from "../core/land-lock.js";
 import type { BranchReversionGeometry } from "../core/branch-reversion.js";
 import { withValidationResourceEvidence } from "./validation-resources.js";
+import { acquireHeavyValidationLease, HEAVY_VALIDATION_WAIT_MS } from "./heavy-validation-lease.js";
 
 /**
  * Is `token` an ALREADY-MATERIALISED checkout rather than a branch name (#2339)?
@@ -270,16 +265,8 @@ export type GateWaitSink = (notice: GateWaitNotice) => void;
  * far under the revalidation cycle it protects.
  */
 const WORKTREE_LOCK_WAIT_MS = 10 * 60_000;
-/** A holder that has not finished a materialise in this long has crashed. */
 const WORKTREE_LOCK_STALE_MS = 20 * 60_000;
-const GATE_LOCK_WAIT_MS = 60 * 60_000;
-const GATE_LEASE_TTL_MS = 30_000;
-/**
- * How often a still-blocked waiter re-announces itself. The first poll speaks
- * IMMEDIATELY — a wait nobody hears about for 30s is still a wait nobody can
- * see at second 1 — and every later notice is spaced so a 60-minute gate-lock
- * wait costs ~120 log lines rather than ~7200.
- */
+/** Re-announce a blocked waiter after its immediate first notice. */
 export const LOCK_WAIT_NOTICE_INTERVAL_MS = 30_000;
 
 /** `754321` → `12m34s`. Coarse on purpose: the reader wants an order of
@@ -430,56 +417,18 @@ const defaultIO: FeedbackWorktreeIO = {
     );
   },
   gateLock: async (_root, onWait, admission) => {
-    const paths = resolveRedskilledPaths();
-    const workerId = admission?.workerId;
-    const started = Date.now();
-    onWait?.({
-      lock: "validation-gate",
-      state: "waiting",
-      path: "redskilled:validation-heavy",
-      waitedMs: 0,
-      remainingMs: GATE_LOCK_WAIT_MS,
-      message: "⏳ /afk gate: waiting for host heavy-validation admission.",
+    return acquireHeavyValidationLease({
+      minimumAvailableMemoryMb: admission?.minimumAvailableMemoryMb ?? 4_096,
+      ...(admission?.workerId == null ? {} : { workerId: admission.workerId }),
+      notice: (notice) => onWait?.({
+        lock: "validation-gate",
+        state: notice.state,
+        path: "redskilled:validation-heavy",
+        waitedMs: notice.waitedMs,
+        remainingMs: notice.state === "waiting" ? HEAVY_VALIDATION_WAIT_MS : 0,
+        message: notice.message,
+      }),
     });
-    try {
-      const lease = await acquireRedskilledResourceLease(paths, {
-        resource: "validation-heavy",
-        holder_id: workerId ?? `process:${process.pid}`,
-        ...(workerId == null ? {} : { worker_id: workerId }),
-        minimum_available_memory_bytes: (admission?.minimumAvailableMemoryMb ?? 4_096) * 1024 ** 2,
-        ttl_ms: GATE_LEASE_TTL_MS,
-        wait_timeout_ms: GATE_LOCK_WAIT_MS,
-      });
-      onWait?.({
-        lock: "validation-gate",
-        state: "acquired",
-        path: "redskilled:validation-heavy",
-        waitedMs: Date.now() - started,
-        remainingMs: 0,
-        message: "✅ /afk gate: host granted heavy-validation admission.",
-      });
-      let renewal = Promise.resolve();
-      const timer = setInterval(() => {
-        renewal = renewal.then(() => renewRedskilledResourceLease(paths, lease.lease_id, GATE_LEASE_TTL_MS).then(() => undefined))
-          .catch(() => undefined);
-      }, GATE_LEASE_TTL_MS / 3);
-      timer.unref();
-      return async () => {
-        clearInterval(timer);
-        await renewal;
-        await releaseRedskilledResourceLease(paths, lease.lease_id).catch(() => undefined);
-      };
-    } catch (error) {
-      onWait?.({
-        lock: "validation-gate",
-        state: "timed-out",
-        path: "redskilled:validation-heavy",
-        waitedMs: Date.now() - started,
-        remainingMs: 0,
-        message: `⛔ /afk gate: heavy-validation admission failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      return null;
-    }
   },
 };
 
@@ -695,7 +644,7 @@ export function makeFeedbackWorktree(
         code: 1,
         stdout: "",
         stderr: "host heavy-validation admission timed out; validation blocked",
-        infraEvidence: { kind: "admission-timeout", wallTimeMs: GATE_LOCK_WAIT_MS },
+        infraEvidence: { kind: "admission-timeout", wallTimeMs: HEAVY_VALIDATION_WAIT_MS },
       };
     }
     try {
