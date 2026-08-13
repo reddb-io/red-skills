@@ -15,11 +15,11 @@ const ROOT = "/tmp/statusline-lifecycle-fixture";
 
 describe("Statusline Lifecycle render", () => {
   it.each([
-    "bedrock-only",
+    "no-daemon",
     "connecting",
-    "registering",
-    "unregistered",
-    "degraded",
+    "joining",
+    "no-producer",
+    "stale",
   ] satisfies StatuslineLifecycleState[])("renders %s as the compact rsk token", (state) => {
     expect(renderStatuslineLifecycleToken(state)).toBe(`rsk=${state}`);
     expect(lifecycleTailLines({ state })).toEqual([`rsk=${state}`]);
@@ -31,12 +31,12 @@ describe("Statusline Lifecycle render", () => {
   });
 
   it.each([
-    [{ probe: "disabled" }, "bedrock-only"],
-    [{ probe: "unreachable" }, "bedrock-only"],
+    [{ probe: "disabled" }, "no-daemon"],
+    [{ probe: "unreachable" }, "no-daemon"],
     [{ probe: "connecting" }, "connecting"],
-    [{ probe: "answered", registration: "pending" }, "registering"],
-    [{ probe: "answered", registration: "absent" }, "unregistered"],
-    [{ probe: "answered", registration: "present", payloadAgeMs: 30_001, stalenessWindowMs: 30_000 }, "degraded"],
+    [{ probe: "answered", registration: "pending" }, "joining"],
+    [{ probe: "answered", registration: "absent" }, "no-producer"],
+    [{ probe: "answered", registration: "present", payloadAgeMs: 30_001, stalenessWindowMs: 30_000 }, "stale"],
     [{ probe: "answered", registration: "present", payloadAgeMs: 30_000, stalenessWindowMs: 30_000 }, "live"],
   ] as const)("maps %o to %s", (input, expected) => {
     expect(resolveStatuslineLifecycle(input)).toBe(expected);
@@ -87,11 +87,21 @@ describe("Statusline Lifecycle wire", () => {
       probe: async () => probe({ projectMatch: "unregistered" }),
     });
 
-    expect(registering).toEqual({ state: "registering", lines: ["rsk=registering"] });
-    expect(unregistered).toEqual({ state: "unregistered", lines: ["rsk=unregistered"] });
+    // The daemon ANSWERED in both cases, so both keep every number it sent and
+    // wear the state as a leading badge. Replacing real rows with one word was
+    // the defect: an operator asking "how is the queue" got a report about the
+    // reporter instead.
+    expect(registering).toEqual({
+      state: "joining",
+      lines: ["rsk=joining · 1w rdy=5 iss=24 pr=3 mrg=7 128M", "w123 working"],
+    });
+    expect(unregistered).toEqual({
+      state: "no-producer",
+      lines: ["rsk=no-producer · 1w rdy=5 iss=24 pr=3 mrg=7 128M", "w123 working"],
+    });
   });
 
-  it("serves the last-known tail with age and degraded state inside the socket deadline", async () => {
+  it("serves the last-known tail with its age LEADING, inside the socket deadline", async () => {
     const h = harness();
     const live = await collectStatuslineTail(ROOT, [], {
       ...h.deps,
@@ -109,9 +119,11 @@ describe("Statusline Lifecycle wire", () => {
     const elapsed = performance.now() - started;
 
     expect(elapsed).toBeLessThan(100);
-    expect(served.state).toBe("degraded");
+    expect(served.state).toBe("stale");
+    // The age leads: it is read BEFORE the values it qualifies, rather than
+    // discovered after them.
     expect(served.lines).toEqual([
-      "1w rdy=5 iss=24 pr=3 mrg=7 128M · age=17s · rsk=degraded",
+      "age=17s · 1w rdy=5 iss=24 pr=3 mrg=7 128M",
       "w123 working",
     ]);
   });
@@ -136,6 +148,6 @@ describe("Statusline Lifecycle wire", () => {
       },
     });
 
-    expect(served).toEqual({ state: "bedrock-only", lines: ["rsk=bedrock-only"] });
+    expect(served).toEqual({ state: "no-daemon", lines: ["rsk=no-daemon"] });
   });
 });

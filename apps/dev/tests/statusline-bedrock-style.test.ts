@@ -91,15 +91,24 @@ describe("paintLifecycleTokens paints the lifecycle's plain shapes and nothing e
     expect(painted.endsWith(RESET)).toBe(true);
   });
 
-  it("paints the age and state suffix on a cached head, leaving the head alone", () => {
+  it("paints a LEADING age badge, leaving the head it qualifies alone", () => {
+    // The badge leads so the age is read before the values it qualifies. It
+    // used to trail, which is how an operator scanned a row of numbers and only
+    // then learned they were three minutes old.
     const head = `${SOFT}w1 iss=42${RESET}`;
-    const painted = paintLifecycleTokens(`${head} · age=3m · rsk=degraded`);
+    const painted = paintLifecycleTokens(`age=3m · ${head}`);
 
-    expect(stripAnsi(painted)).toBe("w1 iss=42 · age=3m · rsk=degraded");
-    expect(painted.startsWith(head)).toBe(true);
+    expect(stripAnsi(painted)).toBe("age=3m · w1 iss=42");
     expect(painted).toContain(`${KEY}age=${DIM}3m`);
-    expect(painted).toContain(`${KEY}rsk=${DIM}degraded`);
     expect(painted.endsWith(RESET)).toBe(true);
+  });
+
+  it("paints a LEADING state badge when lateness is not the message", () => {
+    const head = `${SOFT}w1 iss=42${RESET}`;
+    const painted = paintLifecycleTokens(`rsk=no-producer · ${head}`);
+
+    expect(stripAnsi(painted)).toBe("rsk=no-producer · w1 iss=42");
+    expect(painted).toContain(`${KEY}rsk=${DIM}no-producer`);
   });
 
   it("passes a painted daemon row through untouched", () => {

@@ -176,7 +176,7 @@ describe("dev statusline render path", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(""));
 
     expect(code).toBe(0);
-    expect(out.text()).toContain("rsk=bedrock-only");
+    expect(out.text()).toContain("rsk=no-daemon");
     expect(directCollector).not.toHaveBeenCalled();
     expect(performance.now() - started).toBeLessThan(100);
   });
@@ -196,7 +196,7 @@ describe("dev statusline render path", () => {
     expect(code).toBe(0);
     expect(out.text()).toBe(
       `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} Opus·high ctx=47k 24% ` +
-        "5h=23% 7d=41% loc=+142 -36 · rsk=bedrock-only\n",
+        "5h=23% 7d=41% loc=+142 -36 · rsk=no-daemon\n",
     );
     expect(localGit).toHaveBeenCalledOnce();
     expect(directCollector).not.toHaveBeenCalled();
@@ -213,7 +213,7 @@ describe("dev statusline render path", () => {
     expect(code).toBe(0);
     expect(out.text()).toBe(
       `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} Opus·high ctx=47k 24% ` +
-        "5h=23% 7d=41% loc=+142 -36 · rsk=bedrock-only\n",
+        "5h=23% 7d=41% loc=+142 -36 · rsk=no-daemon\n",
     );
   });
 
@@ -287,10 +287,10 @@ describe("dev statusline render path — colour", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(JSON.stringify(PAYLOAD)));
 
     expect(code).toBe(0);
-    expect(out.text()).toContain(`${KEY}rsk=${DIM}bedrock-only`);
+    expect(out.text()).toContain(`${KEY}rsk=${DIM}no-daemon`);
     expect(stripAnsi(out.text())).toBe(
       `» red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} Opus·high ctx=47k 24% ` +
-        "5h=23% 7d=41% loc=+142 -36 · rsk=bedrock-only\n",
+        "5h=23% 7d=41% loc=+142 -36 · rsk=no-daemon\n",
     );
   });
 
