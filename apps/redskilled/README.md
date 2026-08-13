@@ -57,6 +57,16 @@ on first attach or a rotated position it captures the new position, asks
 `host-state` for the current picture, and resumes event following from there.
 The missing prefix is never replayed or guessed.
 
+`host-state.topology` states the daemon's `platform` and whether its kernel is
+`native` or `wsl`. WSL is detected from the kernel release, not from an
+environment variable. On first attach, `followRedskilledPublicEvents` compares
+that daemon-side fact with its own kernel and returns `status: refused` for
+`wsl-daemon/native-windows-consumer` or
+`native-windows-daemon/wsl-consumer`. The refusal names that file-change
+notification does not cross the WSL boundary and returns no watch position.
+WSL on both sides and native Windows on both sides remain ordinary `baseline`
+attachments.
+
 Each public record is flat and total. It contains the following fields, with
 `null` used where a field does not apply:
 

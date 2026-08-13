@@ -29,6 +29,7 @@ import type {
 import { type RedskilledLaunchTemplate } from "../launch-template.js";
 import type { RedskilledPaths } from "../paths.js";
 import type { RedskilledHostEventSinks } from "../host-event-sink.js";
+import type { RedskilledHostTopology } from "../host-topology.js";
 import { type RedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
 import { type RedskilledProjectRegistration,
@@ -87,6 +88,8 @@ import type {
 } from "../resource-incidents.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
+  /** Test seam; production detects the kernel-side topology at daemon start. */
+  readonly hostTopology?: RedskilledHostTopology;
   /** Operator-owned lifecycle hooks and desktop notification declarations. */
   readonly hostEventSinks?: RedskilledHostEventSinks;
   /** Hard deadline for each daemon-owned GitHub call; 0 or below disables it. */
