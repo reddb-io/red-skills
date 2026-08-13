@@ -16,6 +16,25 @@ import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./proc
 import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
 import { encodeToonlLines } from "@reddb-io/toon";
 import { vi } from "vitest";
+
+describe("processIssue — Spin", () => {
+  it("re-seeds persistent Spin with the detected pattern, then renders the exhausted fault in the Envelope", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["spin:monologue", "spin:monologue"],
+      reseedGateBudget: 1,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("spin:monologue");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("spin:monologue");
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("Spin persisted after the in-session steer");
+    expect(trace.envelopeBodies).toHaveLength(1);
+    expect(trace.envelopeBodies[0]).toContain("spin:monologue");
+  });
+});
+
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
   describe("landing.wait slot release (#2427)", () => {
     type DeferredTail = {
