@@ -46,6 +46,22 @@ plugins:
       #     this file every time, so changing this line alone does not move a
       #     registration that is already standing.
       default_runner: codex
+      # Maintainer decision 2026-08-13: this repo keeps a STANDING registration.
+      #
+      # A registration is a producer's lease, so without this block the repo is
+      # registered only while some producer happens to be alive and reads
+      # `rsk=unregistered` the moment one dies. The MCP resident's registration
+      # delivery re-registers whenever nothing standing is held, so declaring it
+      # here is what makes the reconnect survive a daemon restart, a plugin
+      # reload and a reboot.
+      #
+      # This is opt-in by design and there is no product default: a standing
+      # drain means the host births Workers here on its own. `target` is how
+      # many it may hold at once, under the host's own worker ceiling — lower it
+      # to share the machine, remove the block to stop drainage entirely.
+      standing:
+        runner: codex
+        target: 2
       models:
         # Maintainer decision 2026-08-05: exactly TWO runner/model combinations
         # exist in this repo — claude is `claude-opus-5` at high and codex is
