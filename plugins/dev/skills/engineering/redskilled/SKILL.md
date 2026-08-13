@@ -116,7 +116,9 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    is the ordinary case, not a fault: the daemon is host-scoped and the operator
    works in personal repositories, other organisations and forks.
 
-4. **Restart and adopt** — stop the daemon through its reporting verb:
+4. **Restart and adopt — only once a verb is actually needed** (read *The daemon
+   upgrades itself* below before this step; a daemon that merely trails the
+   registry needs nothing from you). Stop the daemon through its reporting verb:
 
    ```bash
    npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled stop
@@ -142,6 +144,55 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    `ceiling.worker_source: home-config`. A `flag` or `environment` source means
    a higher-precedence declaration still overrides the home policy; remove or
    change that declaration, repeat the restart, and read back again.
+
+## The daemon upgrades itself — read the clock before reaching for a verb
+
+**A daemon one version behind a fresh publish is not a fault; it is a daemon
+that has not looked yet.** `redskilled` replaces itself. A busy daemon re-reads
+the registry every fifteen minutes (`DEFAULT_REDSKILLED_REPLACE_CHECK_MS`), a
+starting one looks once at boot, and an idle one asks once at the idle boundary
+before it leaves. A publish therefore reaches the machine on its own, and the
+operator's part is usually to wait one interval and read again.
+
+**A replacement is a restart, never an evacuation.** Workers are init-system
+units (ADR 0130 rule 5), so they outlive the daemon that asked for them and the
+successor re-attaches by unit name. Nothing is stopped, drained, or re-queued —
+a version change is not a reason to protect running work.
+
+**The version a daemon reports is the version it RUNS.** `host-state`'s
+`daemon_version` is the running process; the published answer is carried beside
+it and never folded in. A daemon that substituted the resolved version for the
+running one would report a healthy zero skew while every Worker boot-halts.
+
+**A major boundary is held on purpose, and the hold is SAID.** The resolver
+adopts only inside the running major, but it still reports the newest published
+version whatever its major, states that not adopting it is deliberate, and names
+the step that crosses it. A stated refusal is a decision; a silent one is a bug.
+
+### Do not stop a daemon that is merely behind
+
+**`stop` is for a WEDGED daemon, never a BEHIND one.** Read `request_health`
+first: a daemon answering its own socket in single-digit milliseconds needs no
+verb from you.
+
+- ✅ **Do** wait one replace interval after a publish, then re-read `host-state`.
+- ✅ **Do** run the `unit install` → `stop` → `provision` sequence when the
+  daemon is genuinely stuck: it accepted a stop and did not exit, or its socket
+  stopped answering within the ready window.
+- ✅ **Do** reach for `systemctl --user restart redskilled.service` when a stop
+  was accepted but the process is still alive holding a dead socket. The
+  successor adopts the surviving Workers and the standing registrations.
+- ❌ Do **not** reach for `stop` because `daemon_version` trails the registry
+  minutes after a publish. A HEALTHY daemon can accept the stop, fail to finish
+  its bounded drain, and leave a live process holding a socket that no longer
+  answers — turning a machine that would have healed itself into one that needs
+  a manual `systemctl` restart.
+- ❌ Do **not** read a pinned `ExecStart` as proof the upgrade is broken. The
+  replacement WRITES that pin so its successor sticks, so a pin naming the old
+  bundle on a daemon that has not looked yet is the state *before* the look, not
+  evidence the look will fail. A pin outlives its daemon only when the daemon
+  wedged before it could replace itself — which is a wedge to cure, not a pin to
+  fight.
 
 ## Debug a Worker by issue
 
@@ -231,6 +282,44 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
 </what-to-do>
 
 <supporting-info>
+
+## `rsk=unregistered` is a producer state, not a connection state
+
+**The statusline's `rsk=` token reports the Statusline Lifecycle, never the
+daemon's health.** `unregistered` means the socket ANSWERED and nothing is
+registering this repository — the daemon is up and no producer holds a
+registration here. It is distinct from `connecting` (probe in flight),
+`registering` (handshake in flight), and `bedrock-only` (probe disabled or
+unreachable). A `live` read renders no token at all, so silence is the healthy
+state. The read path only probes and never spawns the daemon, so the token is a
+report, never a repair.
+
+**A registration is a producer's LEASE, not a property of the repository.** It
+appears when a producer starts and ends when that producer dies, so a repo whose
+supervisor exited reads `unregistered` correctly. A stale pid file under
+`.red/tmp/supervisors/default/` is the residue of that death, not its cause.
+
+**A registration that outlives its producer is DECLARED, never inferred.** The
+MCP resident maintains one — `maintainStandingDrain` re-registers whenever
+nothing standing is held, which is what makes the reconnect survive a daemon
+restart, a plugin reload and a reboot — but only for a repo that declares it:
+
+```yaml
+plugins:
+  dev:
+    afk:
+      standing:
+        runner: codex
+        target: 2
+```
+
+Both keys are required (`afk.standing.runner`, `afk.standing.target`), and the
+target must be a positive integer; anything else resolves to no standing drain
+and the resident has nothing to keep alive. **There is deliberately no product
+default.** A standing drain means the host births Workers in that repo on its
+own, so a machine-wide default would start draining every enabled checkout
+without anyone asking. Absent the block, the registering verb is `project_start`
+(`/afk fleet`), and its registration dies with the producer it belongs to.
 
 ## Scope Boundary
 
