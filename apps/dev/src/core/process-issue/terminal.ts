@@ -26,9 +26,7 @@ import {
 } from "../feedback.js";
 import {
   computeValidationScope,
-  formatValidationScope,
   scopesForValidationScope,
-  type ValidationScope,
   type WorkspaceGraph,
 } from "../validation-scope.js";
 import {
@@ -52,7 +50,6 @@ import { doLanding } from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
-  emitEnvelope,
   type EmitEnvelopeDeps,
   type SectionBodies,
 } from "../envelope-emit.js";
@@ -96,7 +93,6 @@ import {
   type IssueClassificationMetadata,
   type ReviewGateConfig,
 } from "../issue-classifier.js";
-import type { AttemptStatus } from "../envelope.js";
 import type { Runner } from "../../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "../runner-spec.js";
 import type { HistoryClock } from "../history.js";
@@ -112,10 +108,14 @@ import {
   LABEL_SPEC,
 } from "../triage-labels.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
-import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
+import { markTerminalState, recoveryOrdinalFor } from "./types.js";
 import { validationBlockerSummary } from "./validation-park.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editIssueLifecycleLabels, routeRecovery } from "./recovery.js";
+import { emitFailure as emitFailureEnvelope } from "./terminal-envelope.js";
+
+export { emitDone, emitFailure } from "./terminal-envelope.js";
+
 export async function writeValidationSidecar(
   deps: ProcessIssueDeps,
   attemptDir: string,
@@ -207,33 +207,6 @@ export async function emitBackpressureReview(
     await deps.postBackpressureReview(prNumber, body);
   } catch {
   }
-}
-export async function emitFailure(
-  c: StageCommon,
-  status: AttemptStatus,
-  diffLabel: string,
-  sections: SectionBodies,
-): Promise<boolean> {
-  const { deps, input } = c;
-  const durationS = deps.nowEpoch() - c.startedEpoch;
-  const result = await emitEnvelope(deps.envelope, {
-    status,
-    issue: input.issue,
-    worker: input.workerId,
-    durationS,
-    branch: c.branch,
-    attempt: input.attempt,
-    diff: diffLabel,
-    repo: c.noBranchLink ? "" : input.repo,
-    repoDir: input.repoDir,
-    worktreeRel: input.attemptDir,
-    diffstat: "",
-    sections: { ...sections, ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}) },
-    historyPath: deps.historyPath,
-    historyClock: deps.historyClock,
-    historyFields: { runner: input.runner },
-  });
-  return result.posted;
 }
 export function oneLine(value: string | undefined, fallback: string): string {
   const line = (value ?? "")
@@ -447,7 +420,7 @@ export async function terminalFailure(
         : proposedBlocker,
     );
   }
-  const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
+  const posted = await emitFailureEnvelope(c, envelopeStatusFor(outcome), sectionKey, sections);
   if (record.validationSummary) {
     const signature = failureSignature({ sidecar: record.validationSummary.split("\n") });
     if (signature !== EMPTY_FAILURE_SIGNATURE) {
@@ -471,38 +444,6 @@ export async function terminalFailure(
     hooksFired: c.hooksFired,
     envelopePosted: posted,
   });
-}
-export async function emitDone(
-  c: StageCommon,
-  mergeSha: string,
-  durationS: number,
-  validationSidecar: string[],
-  validationScope?: ValidationScope,
-  validationNotice?: string,
-): Promise<boolean> {
-  const { deps, input } = c;
-  const scopeHeader = validationScope ? `${formatValidationScope(validationScope)}\n` : "";
-  const validationBody = [validationNotice, `${scopeHeader}${validationSidecar.join("\n")}`]
-    .filter((part) => part && part.trim().length > 0)
-    .join("\n");
-  const result = await emitEnvelope(deps.envelope, {
-    status: "done",
-    issue: input.issue,
-    worker: input.workerId,
-    durationS,
-    branch: c.branch,
-    attempt: input.attempt,
-    mergeSha,
-    diff: "merged",
-    sections: {
-      validation: validationBody,
-      ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}),
-    },
-    historyPath: deps.historyPath,
-    historyClock: deps.historyClock,
-    historyFields: { runner: input.runner, merge_sha: mergeSha },
-  });
-  return result.posted;
 }
 /**
  * Make work that already reached the remote VISIBLE on the tracker (#2811).
@@ -581,7 +522,7 @@ export async function mergeFailed(
       blockerForFailure("merge-conflict", { log: reason || "(no merge log captured)" }),
     );
   }
-  const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
+  const posted = await emitFailureEnvelope(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: reason || "(no merge log captured)",
   });
   await recordOutcomeBestEffort(c, "merge-conflict", {
@@ -611,7 +552,7 @@ export async function ciBlocked(
       : `required status checks were still pending on ${prRef} past the CI-wait timeout`;
   await routeRecovery(deps, input.issue, outcome, recoveryOrdinalFor(input));
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: reason }));
-  const posted = await emitFailure(c, envelopeStatusFor(outcome), "ci", {
+  const posted = await emitFailureEnvelope(c, envelopeStatusFor(outcome), "ci", {
     log:
       `Inner agent completed (DONE, committed) and ${prRef} is MERGEABLE, but ${reason}. ` +
       `The work is NOT lost — drive the open PR to merge once CI is green (no agent re-run needed).`,
@@ -656,7 +597,7 @@ export async function prLandingBlocked(
     blocker && nextStep ? { ...blocker, next: nextStep } : blocker,
   );
   const section = outcome === "merge-conflict" ? "merge-conflict" : "ci";
-  const posted = await emitFailure(c, envelopeStatusFor(outcome), section, {
+  const posted = await emitFailureEnvelope(c, envelopeStatusFor(outcome), section, {
     log:
       `Inner agent completed (DONE, committed) and ${prRef} exists, but ${reason}. ` +
       `The work is NOT lost — finish and land the existing PR instead of re-running the agent.`,
@@ -696,7 +637,7 @@ export async function trunkDivergedBlocked(
     `requeue the issue. The attempt branch is intact — no work was lost.`;
   await routeRecovery(deps, input.issue, "trunk-diverged", recoveryOrdinalFor(input));
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("trunk-diverged", { log: detail }));
-  const posted = await emitFailure(c, envelopeStatusFor("trunk-diverged"), "trunk-diverged", { log: detail });
+  const posted = await emitFailureEnvelope(c, envelopeStatusFor("trunk-diverged"), "trunk-diverged", { log: detail });
   await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
   await recordOutcomeBestEffort(c, "trunk-diverged", {
     durationS: deps.nowEpoch() - c.startedEpoch,
@@ -869,7 +810,7 @@ export async function handoffForManualLanding(
     `Held for MANUAL LANDING (\`landing:manual\`, #1049): a human drives the final merge click; the inner agent was NOT re-run.`,
     `The issue auto-closes on PR merge via \`Closes #${input.issue}\`.`,
   ];
-  const posted = await emitFailure(c, envelopeStatusFor("manual-landing"), "manual-landing", {
+  const posted = await emitFailureEnvelope(c, envelopeStatusFor("manual-landing"), "manual-landing", {
     notes: envelopeLines.join("\n"),
     validation: validationSidecar.length > 0 ? validationSidecar.join("\n") : undefined,
   });
