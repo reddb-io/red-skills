@@ -44,8 +44,8 @@ export const FOWLER_REFACTORING_SMELLS = [
  * the structured-output overload — it returns `RunResult` augmented with the
  * validated `output`.
  */
-export interface ReviewExtractDeps {
-  run: (options: RunOptions) => Promise<RunResult & { output: ReviewFindings }>;
+export interface ReviewExtractDeps<Output extends ReviewFindings = ReviewFindings> {
+  run: (options: RunOptions) => Promise<RunResult & { output: Output }>;
   agentFor: (runner: AgentRunner, model: string, opts?: { effort?: AgentEffort }) => RunOptions["agent"];
   sandboxFor: (mode: "none") => RunOptions["sandbox"];
   /** Build the structured-output definition (so the package's `Output` import stays here). */
