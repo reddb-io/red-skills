@@ -8,6 +8,7 @@ import {
   createGithubClient,
   createGithubInstallationLookup,
   githubCoveragePath,
+  githubIdentityRef,
   openGithubCoverageCache,
   planGithubRestRead,
   resolveGithubAppCredential,
@@ -219,6 +220,10 @@ export function githubReadClient(
     ...(app === null ? {} : { app }),
     attribution: createGithubAttributionLedger({
       path: join(stateDir(ctx.cwd), "github", "spend.toonl"),
+      // Which bucket this row drew from. Without it the ledger records WHAT was
+      // spent and never WHOSE, so a host running an App and a token produced one
+      // undifferentiated total — a number no ceiling can be checked against.
+      identity: githubIdentityRef(app === null ? { kind: "personal", token } : { kind: "app", app }),
     }),
   });
   routedClients.set(ctx, client);

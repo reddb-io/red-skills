@@ -193,6 +193,7 @@ import {
   type RedskilledReplacementDecision,
   type RedskilledReplacementHoldReason,
 } from "../self-replace.js";
+import { measureGithubCompanions } from "../github-companions.js";
 import {
   createRedskilledLeaseStore,
   currentProcessOwner,
@@ -793,6 +794,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() }));
     await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
     await balanceRegistration.history?.append(lastBalance).catch(() => undefined);
+    await measureGithubCompanions(balanceRegistration.companions ?? [], clock());
     return lastBalance;
   }
 

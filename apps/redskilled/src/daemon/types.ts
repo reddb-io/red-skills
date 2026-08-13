@@ -302,10 +302,34 @@ export interface RedskilledBalanceRegistration {
   /** Append-only forensic pool curve written from the same answers as the snapshot. */
   readonly history?: GithubBalanceHistory;
   /**
+   * Other payers on this host, each measured on its own credential.
+   *
+   * A GitHub App carries a bucket of its own, and the daemon used to ask only
+   * the operator's token — so an installation spending thousands of reads an
+   * hour appeared on no surface at all. Each companion is asked separately and
+   * writes its own files, because **two buckets are never summed**: a single
+   * document would have to pick an owner, and the last writer would become the
+   * displayed truth for a ceiling the next request will not draw from.
+   *
+   * A companion NEVER decides the daemon's own `githubBalance()` answer. That
+   * stays the primary's, the floor every surface already renders — a companion
+   * failing must cost nothing but its own row.
+   */
+  readonly companions?: readonly RedskilledBalanceCompanion[];
+  /**
    * A hard window, for a test that needs one. Production leaves this absent and
    * lets the balance decide — that is the whole decision.
    */
   readonly intervalMsOverride?: number;
+}
+
+/** One additional payer, measured beside the primary and written apart from it. */
+export interface RedskilledBalanceCompanion {
+  /** How this payer is named on the rows it writes, e.g. `app:153309957`. */
+  readonly identity: string;
+  readonly transport: GithubBalanceTransport;
+  readonly store?: GithubBalanceStore;
+  readonly history?: GithubBalanceHistory;
 }
 
 /**
