@@ -21,6 +21,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { renderRedskilledDashboard } from "@reddb-io/redskilled-render";
 import {
   ensureRedskilledDaemon,
   publishRedskilledWorkerLogLine,
@@ -96,7 +97,12 @@ function pidLiveness(worker: RedskilledWorkerView): boolean {
  * a Worker carrying a unit name, and `exitLaunchClient` fires the exit the daemon
  * would observe when the client — never the unit — is killed.
  */
-function unitBackedLaunch(state: { exitLaunchClient?: (signal: NodeJS.Signals) => void }) {
+interface TestUnitLauncher {
+  exitLaunchClient?: (signal: NodeJS.Signals) => void;
+  exitLaunchClientWith?: (code: number | null, signal: NodeJS.Signals | null) => void;
+}
+
+function unitBackedLaunch(state: TestUnitLauncher) {
   return (options: LaunchWorkerOptions): LaunchedWorker => {
     const workerId = options.spec.worker_id ?? "w-unit";
     const worker: RedskilledWorkerView = {
@@ -111,6 +117,7 @@ function unitBackedLaunch(state: { exitLaunchClient?: (signal: NodeJS.Signals) =
       warnings: [],
     };
     state.exitLaunchClient = (signal: NodeJS.Signals) => options.onExit?.(workerId, null, signal);
+    state.exitLaunchClientWith = (code, signal) => options.onExit?.(workerId, code, signal);
     return {
       worker,
       admission: options.admission,
@@ -141,6 +148,58 @@ function spec(overrides: Partial<RedskilledWorkerSpec> = {}): RedskilledWorkerSp
 }
 
 describe("a launch client that dies is not a Worker that died", () => {
+  it("records a unit MemoryMax kill from systemd instead of the launch client's exit 255", async () => {
+    const paths = await sessionPaths();
+    const launcher: TestUnitLauncher = {};
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      launch: unitBackedLaunch(launcher),
+      liveness: () => false,
+      unitExitFacts: () => ({
+        systemd_result: "oom-kill",
+        exit_code: null,
+        signal: "SIGKILL",
+        memory_peak_bytes: 2_684_354_560,
+        memory_swap_peak_bytes: 3_221_225_472,
+      }),
+      unitInventory: () => [],
+    });
+    running.push(daemon);
+
+    daemon.startWorker(spec({ worker_id: "h09II" }));
+    launcher.exitLaunchClientWith!(255, null);
+    await daemon.flushEvents();
+
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events[1]).toMatchObject({
+      event: "worker-death",
+      exit_code: null,
+      signal: "SIGKILL",
+      systemd_result: "oom-kill",
+      memory_peak_bytes: 2_684_354_560,
+      memory_swap_peak_bytes: 3_221_225_472,
+    });
+
+    const death = daemon.statuslinePayload().deaths?.latest;
+    expect(death).toMatchObject({ sender_class: "oomd", confidence: "high", signal: "SIGKILL" });
+    expect(death?.evidence).toContain("systemd result=oom-kill");
+    expect(death?.evidence).toContain("memory peak=2.50 GiB + 3.00 GiB swap");
+
+    const dashboard = renderRedskilledDashboard(daemon.statuslinePayload(), {
+      mode: "local",
+      project: "acme/widgets",
+      maxWidth: 200,
+      maxRows: 16,
+      showDeathDetails: true,
+    });
+    const receipt = dashboard.lines.find((line) => line.includes("h09II"));
+    expect(receipt).toContain("oomd/high");
+    expect(receipt).toContain("signal=SIGKILL");
+    expect(receipt).toContain("systemd result=oom-kill");
+    expect(receipt).toContain("memory peak=2.50 GiB + 3.00 GiB swap");
+  });
+
   it("keeps holding the Worker, and writes no death, while its unit stays active", async () => {
     const paths = await sessionPaths();
     const launcher: { exitLaunchClient?: (signal: NodeJS.Signals) => void } = {};
