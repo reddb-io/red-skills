@@ -182,6 +182,7 @@ export const CONFIG_DEFAULTS = {
   "dev.review.max_iterations": "1",
   "dev.review.reviewer_count": "1",
   "dev.review.quorum": "any",
+  "dev.review.appraisal_floor": "off",
   // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
   // version-pinned release (today's behaviour); `canary` tracks npm's canary
   // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
