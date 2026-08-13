@@ -79,6 +79,9 @@ function workerEvent(kind: RecordWorkerEventInput["kind"]): RecordWorkerEventInp
       return { ...common, baseHeadSha: "bbbb2222", baseCommitsAhead: 3 };
     case "worker-heal":
       return { ...common, healKind: "mechanical-regeneration", detail: "generated surfaces regenerated" };
+    case "worker-budget-verdict":
+    case "worker-budget-grace":
+      return { ...common, detail: "MemoryMax budget exceeded" };
     case "worker-death":
       return { ...common, exitCode: 0 };
     case "worker-budget-kill":
