@@ -14,6 +14,7 @@ import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
 import { orphanBranchesCommand } from "./commands/orphan-branches.js";
+import { pathBriefCommand } from "./commands/path-brief.js";
 import { redDoctorCommand } from "./commands/red-doctor.js";
 import { worktreeCommand } from "./commands/worktree.js";
 import { redactSweepCommand } from "./commands/redact-sweep.js";
@@ -48,6 +49,7 @@ export type CliCommand =
   | "weekly-review"
   | "reap"
   | "orphan-branches"
+  | "path-brief"
   | "red-doctor"
   | "worktree"
   | "redact-sweep"
@@ -99,6 +101,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "weekly-review": {},
     reap: {},
     "orphan-branches": {},
+    "path-brief": {},
     "red-doctor": {},
     worktree: {},
     "redact-sweep": {},
@@ -252,6 +255,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "weekly-review") return activityReviewCommand("weekly", parsed.args);
   if (parsed.command === "reap") return reapCommand(parsed.args);
   if (parsed.command === "orphan-branches") return orphanBranchesCommand(parsed.args);
+  if (parsed.command === "path-brief") return pathBriefCommand(parsed.args);
   if (parsed.command === "red-doctor") return redDoctorCommand(parsed.args);
   if (parsed.command === "worktree") return worktreeCommand(parsed.args);
   if (parsed.command === "redact-sweep") return redactSweepCommand(parsed.args);
