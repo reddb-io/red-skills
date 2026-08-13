@@ -60,6 +60,7 @@ export const HUMAN_ONLY_BLOCKER_KINDS = new Set([
   "stalled",
   "wall-clock-capped",
   "crashed",
+  "runner",
   "signal-killed",
   "dependency",
   "quota",
@@ -223,7 +224,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
 
   // Mixed blocked:* labels are an ambiguous Park, not a transition request.
   // Refuse them before planning so /hitl can reconcile the competing reasons.
-  if (blocked.length > 1) {
+  if (authority === "machine" && blocked.length > 1) {
     return refuse(
       `mixed blocked:* labels [${blocked.join(", ")}]: label state is ambiguous — use /hitl to reconcile`,
       true,
@@ -261,7 +262,12 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   }
 
   // Label/body kind mismatch → inconsistent state; /hitl must reconcile.
-  if (activeBlocker !== null && labelKind !== null && activeBlocker.kind !== labelKind) {
+  if (
+    authority === "machine" &&
+    activeBlocker !== null &&
+    labelKind !== null &&
+    activeBlocker.kind !== labelKind
+  ) {
     return refuse(
       `label/body kind mismatch: label says blocked:${labelKind} but body blocker kind is "${activeBlocker.kind}" — use /hitl to reconcile`,
       true,
