@@ -190,13 +190,15 @@ describe("budget accounting survives the restart", () => {
 });
 
 describe("the host event lane", () => {
-  it("records birth, death and budget-kill, and nothing else", async () => {
+  it("records the full Budget grace sequence between birth and kill", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 60_000,
       liveness: pidLiveness,
+      budgetGraceMs: 0,
+      signalWorkerForBudgetGrace: () => true,
       stopWorker: () => true,
     });
     running.push(daemon);
@@ -210,8 +212,14 @@ describe("the host event lane", () => {
     await daemon.flushEvents();
 
     const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.map((event) => event.event)).toEqual(["worker-birth", "worker-birth", "worker-budget-kill"]);
-    const kill = events[2]!;
+    expect(events.map((event) => event.event)).toEqual([
+      "worker-birth",
+      "worker-birth",
+      "worker-budget-verdict",
+      "worker-budget-grace",
+      "worker-budget-kill",
+    ]);
+    const kill = events[4]!;
     expect(kill.worker_id).toBe(killed.worker.worker_id);
     expect(kill.project_label).toBe("acme/gadgets");
     expect(kill.detail).toBe("host memory high-water mark exceeded");
