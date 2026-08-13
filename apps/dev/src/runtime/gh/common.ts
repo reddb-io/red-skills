@@ -3,10 +3,17 @@ import { join } from "node:path";
 import {
   createGithubAttributionLedger,
   createGithubClient,
+  createGithubInstallationLookup,
+  githubCoveragePath,
+  openGithubCoverageCache,
   planGithubRestRead,
+  readGithubAppCredentialFromEnv,
+  type GithubAppCredential,
   type GithubClient,
   type GithubConditionalRestRequest,
 } from "@reddb-io/github";
+import { homedir } from "node:os";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { stateDir } from "@reddb-io/shared/red-paths.js";
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
 import { resolveGhQuotaBackoff, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
@@ -186,8 +193,10 @@ export function githubReadClient(
   if (held) return held;
   const token = trackerToken();
   if (token === "") throw new Error("GitHub reads require an authenticated tracker credential");
+  const app = coveringApp(ctx);
   const client = createGithubClient({
     token,
+    ...(app === null ? {} : { app }),
     attribution: createGithubAttributionLedger({
       path: join(stateDir(ctx.cwd), "github", "spend.toonl"),
     }),
@@ -253,4 +262,42 @@ export function apiPath(ctx: GhContext, suffix: string): string {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The App credential when it stands in THIS repository, else `null`.
+ *
+ * The daemon is host-global but an installation covers an account, so the
+ * operator is routinely in a repository the App was never installed on. That
+ * request must still go out, on the personal token — this is a router, not a
+ * switch, and the person remains the floor.
+ *
+ * The decision is synchronous because the transport is built synchronously: a
+ * remembered answer decides now, and an unknown repository is paid for by the
+ * person while the answer is learned in the background for every process after
+ * this one. Learning costs one request and is never allowed to fail a read.
+ */
+function coveringApp(ctx: GhContext): GithubAppCredential | null {
+  let app: GithubAppCredential | null;
+  try {
+    app = readGithubAppCredentialFromEnv();
+  } catch {
+    return null; // a misdeclared App must not take the personal token down with it
+  }
+  if (app === null) return null;
+  const repo = githubRepo(ctx);
+  if (!repo) return null;
+
+  const cachePath = githubCoveragePath(
+    join(redskilledHomeDir(homedir()), "state"),
+    app.installationId,
+  );
+  const cache = openGithubCoverageCache(cachePath);
+  const remembered = cache.covered(repo.owner, repo.repo);
+  if (remembered !== undefined) return remembered ? app : null;
+
+  void createGithubInstallationLookup(app)(repo.owner, repo.repo)
+    .then((covered) => { if (covered !== null) cache.remember(repo.owner, repo.repo, covered); })
+    .catch(() => undefined);
+  return null;
 }

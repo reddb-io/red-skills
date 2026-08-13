@@ -348,6 +348,46 @@ operator-owned.
   WSL and some distros relocate it — falls back once more to `/tmp` so the socket
   path stays inside the kernel's 108-byte `sun_path` limit.
 
+## Which identity pays
+
+The host authenticates as a **person** by default: `REDSKILLED_HOST_TOKEN`,
+`GITHUB_TOKEN`, `GH_TOKEN`, or the tracker CLI's own credential, in that order.
+That personal token spends ONE bucket for the whole machine — the queue poll,
+every Worker's reads, and the operator's own commands draw from the same
+5,000/hour.
+
+An operator may additionally declare a **GitHub App**, which carries its own
+bucket, states its permissions instead of inheriting everything its owner can
+do, and is revocable without touching a person's account:
+
+```
+RED_GITHUB_APP_ID=<app id>
+RED_GITHUB_APP_INSTALLATION=<installation id>
+RED_GITHUB_APP_KEY=<absolute path to the App's .pem>
+```
+
+All three are required together. A partial declaration is refused rather than
+falling back quietly, because a silent fallback would restore the shared bucket
+the App was adopted to end.
+
+**The App does not replace the person — it is routed to, per repository.** An
+installation covers an ACCOUNT while the daemon is host-global, so the operator
+is routinely working in a repository the App was never installed on: a personal
+repo, another organisation, a fork. Those requests go out on the personal token,
+which remains the floor. Coverage is asked once per repository and remembered
+under the host state root, so the question costs one request rather than one per
+client. When coverage cannot be established at all — offline, unreadable key,
+GitHub refusing — the personal token answers and the recorded reason says
+*unknown* rather than *not installed*, so an outage never masquerades as a
+verdict.
+
+**Two identities keep two balances, and the two are never summed.** Five
+thousand App requests cannot pay for a repository the App does not cover, so a
+combined figure would report headroom that the next request cannot spend. Each
+identity's balance is stored under its own name (`balance.toon` for the person,
+`balance-app-<installation>.toon` for the App), a per-project surface shows the
+bucket that pays for THAT repository, and the host view shows both side by side.
+
 ## Provisioning
 
 A daemon starts on first use. Two things must exist before it can — a published
