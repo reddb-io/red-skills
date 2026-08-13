@@ -51,7 +51,7 @@ export {
   type RecordDaemonStopInput,
   type RecordDaemonTakeoverFailedInput,
 } from "./daemon-events.js";
-import { decodeLaneRows } from "./event-lane-decode.js";
+import { decodeHostEventRow, decodeLaneRows } from "./event-lane-decode.js";
 import {
   readPositionedEventLane,
   type EventLanePosition,
@@ -683,7 +683,7 @@ export function parseEventLane(raw: string): RedskilledHostEvent[] {
   if (malformed.length > 0) {
     console.warn(`redskilled event lane skipped ${malformed.length} malformed row(s) at line ${malformed.join(", ")}`);
   }
-  return records.filter(isHostEventRecord).map(fromRow);
+  return records.filter(isHostEventRecord).map(decodeHostEventRow);
 }
 
 /**
@@ -760,64 +760,4 @@ function isHostEventRecord(record: ToonlRecord): boolean {
     typeof record.ts === "string" &&
     typeof record.worker_id === "string" &&
     ([...REDSKILLED_WORKER_EVENT_KINDS, ...REDSKILLED_DAEMON_EVENT_KINDS] as readonly unknown[]).includes(kind);
-}
-
-function fromRow(record: ToonlRecord): RedskilledHostEvent {
-  const kind = (record.kind ?? record.event) as RedskilledEventKind;
-  return {
-    version: 1,
-    ts: String(record.ts),
-    kind,
-    event: kind,
-    worker_id: String(record.worker_id),
-    project_label: text(record.project_label) ?? "",
-    pid: Number(record.pid ?? 0),
-    ...(record.pgid == null || record.pgid === "" ? {} : { pgid: Number(record.pgid) }),
-    ...(text(record.proc_start_time) == null
-      ? {}
-      : { proc_start_time: text(record.proc_start_time)! }),
-    workspace_path: text(record.workspace_path) ?? "",
-    fork_sha: text(record.fork_sha),
-    log_path: text(record.log_path),
-    isolated: record.isolated === true || record.isolated === "true",
-    unit: text(record.unit),
-    memory_high: text(record.memory_high),
-    memory_max: text(record.memory_max),
-    cpu_weight: record.cpu_weight == null || record.cpu_weight === "" ? null : Number(record.cpu_weight),
-    admission_verdict: text(record.admission_verdict),
-    phase: text(record.phase),
-    step: text(record.step),
-    tokens: record.tokens == null || record.tokens === "" ? null : Number(record.tokens),
-    tools: record.tools == null || record.tools === "" ? null : Number(record.tools),
-    runner: text(record.runner),
-    model: text(record.model),
-    base_head_sha: text(record.base_head_sha),
-    base_commits_ahead: record.base_commits_ahead == null || record.base_commits_ahead === ""
-      ? null
-      : Number(record.base_commits_ahead),
-    heal_kind: text(record.heal_kind),
-    detail: text(record.detail),
-    // A lane written before the exit facts existed reads them as absent rather
-    // than as `0` — an exit code of zero is a CLEAN drain, and inventing one for
-    // an old row would tell a project a crashed Worker finished its work.
-    exit_code: record.exit_code == null || record.exit_code === "" ? null : Number(record.exit_code),
-    signal: text(record.signal),
-    systemd_result: text(record.systemd_result),
-    memory_peak_bytes: record.memory_peak_bytes == null || record.memory_peak_bytes === ""
-      ? null
-      : Number(record.memory_peak_bytes),
-    memory_swap_peak_bytes: record.memory_swap_peak_bytes == null || record.memory_swap_peak_bytes === ""
-      ? null
-      : Number(record.memory_swap_peak_bytes),
-    journal_tail: text(record.journal_tail),
-    // A lane written before stops were recorded reads them as absent, never as a
-    // crash: "this daemon did not say why it left" is the honest answer for a row
-    // whose writer had no way to say anything.
-    reason: text(record.reason),
-  };
-}
-
-function text(value: ToonlRecord[string]): string | null {
-  if (value == null || value === "") return null;
-  return String(value);
 }
