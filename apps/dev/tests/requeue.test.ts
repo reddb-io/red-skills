@@ -93,7 +93,7 @@ describe("requeue — label flip invariant", () => {
   });
 });
 
-describe("requeue — supported kinds (validation, spec, infra, base-stale)", () => {
+describe("requeue — supported kinds (validation, validation-infra, spec, infra, base-stale)", () => {
   it("clears the active blocker in the rewritten body instead of requiring manual editing", () => {
     const plan = planRequeue({
       body: parkedBody,
