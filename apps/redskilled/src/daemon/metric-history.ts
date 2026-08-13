@@ -15,6 +15,23 @@ export interface AppendedRedskilledMetricObservation {
   readonly record: RecordWorkerEventInput;
 }
 
+export const REDSKILLED_METRIC_CHECKPOINT_MS = 5 * 60_000;
+
+/** Persist first/changed rate endpoints immediately; checkpoint idle repeats sparsely. */
+export function shouldCheckpointMetricObservation(
+  previous: RedskilledWorkerMetricObservation | undefined,
+  next: RedskilledWorkerMetricObservation,
+): boolean {
+  if (previous == null) return true;
+  if (
+    previous.tokens !== next.tokens ||
+    previous.tools !== next.tools ||
+    previous.runner !== next.runner ||
+    previous.model !== next.model
+  ) return true;
+  return Date.parse(next.observed_at) - Date.parse(previous.observed_at) >= REDSKILLED_METRIC_CHECKPOINT_MS;
+}
+
 /** Project one published display into both the live history and durable event input. PURE. */
 export function appendRedskilledMetricObservation(
   history: readonly RedskilledWorkerMetricObservation[],
