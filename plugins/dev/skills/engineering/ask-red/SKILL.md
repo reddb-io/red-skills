@@ -255,8 +255,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
   `/afk` plus `/daily-review` own the lane-reading examples.
 - `/retake` reconstructs one Ticket's real state — PRs, branches, worktrees,
-  uncommitted work, blocker — then acts on it: requeue into `ready-for-agent`,
-  adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.
+  uncommitted work, blocker, and retained **Session evidence** — then acts on it:
+  requeue into `ready-for-agent`, adopt a hand-done branch through the no-agent
+  gate, or hand off to `/hitl`.
 - An on-fire Ticket carries the `priority:urgent` label; the `/afk` queue
   promotes it ahead of every `--spec` / `--issues` filter.
 - `/adr-editor` is the proposal-driven reverse grill over the active `.red/adr/`
