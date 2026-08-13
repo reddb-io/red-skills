@@ -186,7 +186,7 @@ On autonomous creation: the fleet supervisor calls `gh label create runner-error
 | runner transport/setup failed | `blocked:runner-transient` | **auto-retry** → ready-for-agent | 3 (`RED_AFK_RETRY_RUNNER_TRANSIENT`) |
 | couldn't integrate or land | `blocked:merge-conflict` | **auto-retry** (base settles) | 3 (`RED_AFK_RETRY_MERGE`) |
 | mergeable PR blocked by CI (required check failed / still pending) | `blocked:ci` | **pages** → ready-for-human / CI-aware finisher (never re-runs the agent) | — (never auto) |
-| agent exited without a sentinel | `blocked:crashed` | **auto-retry once** (transient) | 1 (`RED_AFK_RETRY_CRASH`) |
+| runner ended without an agent-authored sentinel | `blocked:runner` | **auto-retry once** (transient) | 1 (`RED_AFK_RETRY_CRASH`) |
 | a user `pre_*` guard hook rejected it | `blocked:policy` | **auto-retry once** | 1 (`RED_AFK_RETRY_POLICY`) |
 | agent emitted `<promise>BLOCKED</promise>` | `blocked:spec` | **pages** → ready-for-human (decide/clarify) | — (never auto) |
 | feedback gate failed (test/lint/build) | `blocked:validation` | **pages** → ready-for-human (review diff) | — (never auto) |
