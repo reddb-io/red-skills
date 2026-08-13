@@ -104,6 +104,8 @@ export interface SectionBodies {
   log?: string;
   /** Package-aware feedback report (done). */
   validation?: string;
+  /** Holistic 0–1 quality score from the existing gate reviewer pass. */
+  appraisal?: string;
   /** Resolved worker base ref/sha evidence (issue #1380). */
   base?: string;
   /** One `<lifecycle> <command> exit=<rc>` line per user-declared hook that ran
@@ -142,6 +144,7 @@ export function buildSections(
     });
 
   if (status === "done") {
+    if (sections.appraisal !== undefined) out.push({ name: "appraisal", body: sections.appraisal });
     if (sections.validation !== undefined) out.push({ name: "validation", body: sections.validation });
     if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   } else if (status === "blocked") {
