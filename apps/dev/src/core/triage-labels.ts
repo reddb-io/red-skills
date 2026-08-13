@@ -95,7 +95,7 @@ export const LABEL_CRASHED = "blocked:crashed";
 export const LABEL_RUNNER = "blocked:runner";
 // External-signal kill (#1308): the inner process was terminated by an OS
 // signal (SIGKILL/SIGTERM from the harness or kernel). Distinct from a plain
-// `blocked:crashed` (no-sentinel) so the kill cause is actionable.
+// `blocked:runner` (no-sentinel) so the kill cause is actionable.
 export const LABEL_SIGNAL_KILLED = "blocked:signal-killed";
 export const LABEL_DEPENDENCY = "blocked:dependency";
 export const LABEL_SPEC = "blocked:spec";
