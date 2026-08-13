@@ -224,13 +224,16 @@ describe("decideVerdict — one fault, budget effect, and park decision", () => 
     });
   });
 
-  it("refuses a failed-round verdict when the supplied evidence is all green", () => {
-    expect(() => decideVerdict({
+  it("never classifies all-green evidence as an environment failure", () => {
+    const verdict = decideVerdict({
       checks: [passedCheck()],
       signature: SIGNATURE,
       history: { environment: emptyEnvironmentLedger(2), branchBudgetAvailable: false },
       environment: {},
-    })).toThrow(/all-green validation evidence/);
+    });
+
+    expect(verdict.fault).toEqual({ kind: "branch" });
+    expect(verdict.budgetEffect).toEqual({ kind: "none" });
   });
 });
 
