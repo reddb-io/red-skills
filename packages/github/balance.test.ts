@@ -9,7 +9,6 @@ import {
   admitGithubCall,
   admitGithubOperation,
   buildGithubBalanceReport,
-  createGithubAppBalanceTransport,
   fetchGithubBalance,
   githubBalanceCadenceMs,
   githubBalancePosture,
@@ -17,6 +16,7 @@ import {
   parseGithubBalance,
   unaskedGithubBalance,
 } from "./balance.js";
+import { createGithubAppBalanceTransport } from "./app-balance-transport.js";
 import { routeGithubArgs } from "./surface.js";
 
 const ASKED_AT = "2026-08-03T12:00:00.000Z";

@@ -48,9 +48,6 @@
 // PURE, apart from `fetchGithubBalance` and `createGithubBalanceTransport`, whose
 // transport is injected.
 
-import { createAppAuth } from "@octokit/auth-app";
-
-import { readGithubAppPrivateKey, type GithubAppCredential } from "./app-credential.js";
 import type { GithubApiSurface, GithubOperation, GithubRateBudget } from "./surface.js";
 
 /**
@@ -887,40 +884,6 @@ export function createGithubBalanceTransport(options: {
       throw new Error(`the balance ask was refused with HTTP ${response.status}`);
     }
     return await response.json();
-  };
-}
-
-/**
- * The same authoritative balance ask, authenticated as one App installation.
- *
- * The auth strategy owns the expiring installation token. Callers keep the App
- * facts, never a token that becomes dead during a daemon's second hour.
- */
-export function createGithubAppBalanceTransport(options: {
-  readonly app: GithubAppCredential;
-  readonly origin?: string;
-  readonly fetchImpl?: typeof fetch;
-  /** Test seam that returns a short-lived installation token. */
-  readonly authenticate?: () => Promise<string>;
-}): GithubBalanceTransport {
-  const authenticate = options.authenticate ?? (() => {
-    const appAuth = createAppAuth({
-      appId: options.app.appId,
-      installationId: options.app.installationId,
-      privateKey: readGithubAppPrivateKey(options.app),
-    });
-    return async () => {
-      const authentication = await appAuth({ type: "installation" });
-      return authentication.token;
-    };
-  })();
-  return async () => {
-    const token = await authenticate();
-    return await createGithubBalanceTransport({
-      token,
-      ...(options.origin ? { origin: options.origin } : {}),
-      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-    })();
   };
 }
 

@@ -118,7 +118,6 @@ export {
   balanceFromReport,
   buildGithubBalanceReport,
   createGithubBalanceTransport,
-  createGithubAppBalanceTransport,
   fetchGithubBalance,
   githubBalanceCadenceMs,
   githubBalancePosture,
@@ -143,6 +142,8 @@ export {
   type GithubDiversionInput,
   type GithubPoolBalance,
 } from "./balance.js";
+
+export { createGithubAppBalanceTransport } from "./app-balance-transport.js";
 
 export {
   DEFAULT_GITHUB_CACHE_CAPACITY,
