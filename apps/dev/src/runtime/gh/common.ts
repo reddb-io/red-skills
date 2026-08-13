@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import yaml from "js-yaml";
 import { join } from "node:path";
 import {
   createGithubAttributionLedger,
@@ -7,12 +10,11 @@ import {
   githubCoveragePath,
   openGithubCoverageCache,
   planGithubRestRead,
-  readGithubAppCredentialFromEnv,
+  resolveGithubAppCredential,
   type GithubAppCredential,
   type GithubClient,
   type GithubConditionalRestRequest,
 } from "@reddb-io/github";
-import { homedir } from "node:os";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { stateDir } from "@reddb-io/shared/red-paths.js";
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
@@ -194,6 +196,8 @@ export function githubReadClient(
   const token = trackerToken();
   if (token === "") throw new Error("GitHub reads require an authenticated tracker credential");
   const app = coveringApp(ctx);
+  // Read-only by construction: writes leave through `runGithubWrite` into the
+  // `gh` CLI on the OPERATOR's credential, so the App pays and the operator signs.
   const client = createGithubClient({
     token,
     ...(app === null ? {} : { app }),
@@ -280,7 +284,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 function coveringApp(ctx: GhContext): GithubAppCredential | null {
   let app: GithubAppCredential | null;
   try {
-    app = readGithubAppCredentialFromEnv();
+    app = resolveGithubAppCredential({
+      configBlock: readHostGithubAppBlock(),
+      expandHome: (path) => (path.startsWith("~/") ? join(homedir(), path.slice(2)) : path),
+    });
   } catch {
     return null; // a misdeclared App must not take the personal token down with it
   }
@@ -300,4 +307,25 @@ function coveringApp(ctx: GhContext): GithubAppCredential | null {
     .then((covered) => { if (covered !== null) cache.remember(repo.owner, repo.repo, covered); })
     .catch(() => undefined);
   return null;
+}
+
+/**
+ * The operator's `github_app` block from the host policy file.
+ *
+ * The file is the onboarding surface — three exported variables are a setup
+ * nobody remembers doing and nobody finds again — and an absent or malformed
+ * file simply leaves the person as this host's identity.
+ */
+function readHostGithubAppBlock(): unknown {
+  try {
+    const document = yaml.load(
+      readFileSync(join(homedir(), ".red", "config.yaml"), "utf8"),
+    ) as Record<string, unknown> | null;
+    const plugins = document?.plugins as Record<string, unknown> | undefined;
+    const dev = plugins?.dev as Record<string, unknown> | undefined;
+    const redskilled = dev?.redskilled as Record<string, unknown> | undefined;
+    return redskilled?.github_app ?? null;
+  } catch {
+    return null;
+  }
 }

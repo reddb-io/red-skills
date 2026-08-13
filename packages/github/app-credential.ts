@@ -219,3 +219,62 @@ export function githubBalanceFileName(identity: GithubIdentity): string {
 export function githubIdentityRef(identity: GithubIdentity): string {
   return identity.kind === "app" ? `app:${identity.app.installationId}` : "pat";
 }
+
+/**
+ * Read the App credential from an operator's parsed host config.
+ *
+ * The environment is for a one-run override; the FILE is the onboarding
+ * surface, because three exported variables are a setup nobody remembers having
+ * done and nobody finds again. The shape mirrors the host policy it sits beside:
+ *
+ * ```yaml
+ * plugins:
+ *   dev:
+ *     redskilled:
+ *       github_app:
+ *         app_id: "4575633"
+ *         installation_id: "153309957"
+ *         private_key: ~/.red/redskilled/credentials/github-app.pem
+ * ```
+ *
+ * A partial block is refused for the same reason a partial environment is: a
+ * silent fallback restores the shared bucket the App was adopted to end.
+ */
+export function readGithubAppCredentialFromConfig(
+  block: unknown,
+  expandHome: (path: string) => string = (path) => path,
+): GithubAppCredential | null {
+  if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
+  const record = block as Record<string, unknown>;
+  const appId = String(record.app_id ?? "").trim();
+  const installationId = String(record.installation_id ?? "").trim();
+  const privateKeyPath = String(record.private_key ?? "").trim();
+  if (appId === "" && installationId === "" && privateKeyPath === "") return null;
+  if (appId === "" || installationId === "" || privateKeyPath === "") {
+    throw new Error(
+      "a github_app block needs all three of app_id, installation_id and private_key; " +
+        "a partial declaration would silently fall back to the shared personal bucket",
+    );
+  }
+  return { appId, installationId, privateKeyPath: expandHome(privateKeyPath) };
+}
+
+/**
+ * The App credential this host declares, file first and environment as override.
+ *
+ * Never returns the token itself, and the App credential must never be exported
+ * as `GH_TOKEN` or `GITHUB_TOKEN`: writes go out through the `gh` CLI so that
+ * comments, labels and pull requests carry the OPERATOR's name, and the App pays
+ * only for reads. Handing the App token to the CLI would sign the operator's
+ * work as a bot — the App is a payer, not an author.
+ */
+export function resolveGithubAppCredential(input: {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly configBlock?: unknown;
+  readonly expandHome?: (path: string) => string;
+}): GithubAppCredential | null {
+  return (
+    readGithubAppCredentialFromEnv(input.env ?? process.env) ??
+    readGithubAppCredentialFromConfig(input.configBlock, input.expandHome)
+  );
+}

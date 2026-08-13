@@ -70,6 +70,52 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    Keep these keys in the home config only: a project's `.red/config.yaml` may
    ask for Workers, but it may not redefine the machine's limit.
 
+   **The App is a payer, never an author.** An operator who wants automation off
+   their personal rate limit declares a GitHub App in the SAME host file, because
+   one machine has one App and one private key — a repository never declares it:
+
+   ```yaml
+   plugins:
+     dev:
+       redskilled:
+         github_app:
+           app_id: "4575633"
+           installation_id: "153309957"
+           private_key: ~/.red/redskilled/credentials/github-app.pem
+   ```
+
+   Walk the operator through it in this order, and stop at the first step that
+   cannot be completed rather than writing a half-declaration:
+
+   1. **Create the App** under the account that owns the repositories (an
+      organisation for shared work), granting Issues, Pull requests and Contents
+      as read & write, Metadata as read, and **Workflows as write** — the one
+      that is easy to miss, and without it a Worker touching `.github/workflows`
+      is refused at push.
+   2. **Generate a private key**, and place the `.pem` under the daemon's home
+      with owner-only permissions. It never belongs in a repository.
+   3. **Install the App** on the account and choose its repositories. An App
+      that exists but is installed nowhere has no bucket and cannot be used.
+   4. **Read the installation id back** rather than transcribing it: the App's
+      own installations listing names it, and a wrong id fails as an
+      authentication error far from its cause.
+   5. **Declare the block** above, all three keys together. A partial block is
+      REFUSED rather than ignored, because a silent fallback restores the shared
+      personal bucket the App was adopted to end.
+
+   Then say what changes and what does not. The App pays for READS — the queue
+   poll, issue listings, timelines, trust lookups — on its own bucket, per
+   repository it covers. Everything else is unchanged: **writes still go out as
+   the operator**, because comments, labels and pull requests are made through
+   the `gh` CLI with the operator's own credential, and commits are made by
+   local `git` with the operator's name and email. The App credential must never
+   be exported as `GH_TOKEN` or `GITHUB_TOKEN` — that would hand the CLI a bot
+   identity and sign the operator's work with it.
+
+   A repository outside the installation keeps using the operator's token. That
+   is the ordinary case, not a fault: the daemon is host-scoped and the operator
+   works in personal repositories, other organisations and forks.
+
 4. **Restart and adopt** — stop the daemon through its reporting verb:
 
    ```bash
@@ -192,6 +238,12 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
 and lifecycle. `/red-setup` is per-repository: it is the only authority allowed
 to create a checkout's `.red/` and enable plugins there. Route repository setup
 to `/red-setup`; route host daemon operation here.
+
+**The GitHub credential is machine-scoped, so it is configured here.** One host
+has one App, one private key and one installation; a repository has none of
+those and must never declare them. A `/red-setup` run that meets an operator
+wanting automation off their personal rate limit routes them to this skill
+rather than writing credentials into a checkout.
 
 The debug entry is scoped the same way — it explains one Worker's process life
 from the daemon's and the Worker's own records. Queue health across the backlog

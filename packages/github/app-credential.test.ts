@@ -12,6 +12,8 @@ import {
   createGithubIdentityRouter,
   githubBalanceFileName,
   githubIdentityRef,
+  readGithubAppCredentialFromConfig,
+  resolveGithubAppCredential,
 } from "./app-credential.js";
 
 const roots: string[] = [];
@@ -123,5 +125,37 @@ describe("two identities keep two balances", () => {
   it("labels each identity for the operator", () => {
     expect(githubIdentityRef({ kind: "personal", token: "pat" })).toBe("pat");
     expect(githubIdentityRef({ kind: "app", app })).toBe("app:153309957");
+  });
+});
+
+describe("the onboarding surface is the file, not three exported variables", () => {
+  it("reads a github_app block and expands the operator's home", () => {
+    expect(readGithubAppCredentialFromConfig(
+      { app_id: "4575633", installation_id: "153309957", private_key: "~/.red/app.pem" },
+      (path) => path.replace("~", "/home/cyber"),
+    )).toEqual({
+      appId: "4575633",
+      installationId: "153309957",
+      privateKeyPath: "/home/cyber/.red/app.pem",
+    });
+  });
+
+  it("answers null for an absent block and refuses a partial one", () => {
+    expect(readGithubAppCredentialFromConfig(undefined)).toBeNull();
+    expect(readGithubAppCredentialFromConfig({})).toBeNull();
+    expect(() => readGithubAppCredentialFromConfig({ app_id: "4575633" })).toThrow(/all three/);
+  });
+
+  it("lets the environment override the file for one run", () => {
+    const fromFile = { app_id: "1", installation_id: "2", private_key: "/file.pem" };
+    expect(resolveGithubAppCredential({
+      env: {
+        RED_GITHUB_APP_ID: "9",
+        RED_GITHUB_APP_INSTALLATION: "8",
+        RED_GITHUB_APP_KEY: "/env.pem",
+      },
+      configBlock: fromFile,
+    })?.appId).toBe("9");
+    expect(resolveGithubAppCredential({ env: {}, configBlock: fromFile })?.appId).toBe("1");
   });
 });
