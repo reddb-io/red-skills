@@ -45,8 +45,7 @@ export function createRedskilledResourceLeaseStore(path: string): RedskilledReso
       await tail;
       try {
         const raw = await readFile(path, "utf8");
-        let parsed: unknown;
-        try { parsed = JSON.parse(raw); } catch { parsed = decode(raw.trim()); }
+        const parsed: unknown = decode(raw.trim());
         if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
         const leases = (parsed as Record<string, unknown>).leases;
         return Array.isArray(leases) ? leases.filter(isRedskilledResourceLease) : [];
