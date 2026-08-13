@@ -240,7 +240,7 @@ describe("buildRunOptions", () => {
   it("sets maxIterations to DEFAULT_MAX_ITERATIONS when unset (issue #322 regression guard)", () => {
     // sandcastle defaults maxIterations to 1, cutting the agent off before DONE.
     // buildRunOptions MUST set a generous ceiling — this guard would have caught
-    // the missing setting that made every issue end no-sentinel → blocked:crashed.
+    // the missing setting that made every issue end no-sentinel → blocked:runner.
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     expect(opts.maxIterations).toBe(DEFAULT_MAX_ITERATIONS);
     expect(DEFAULT_MAX_ITERATIONS).toBeGreaterThan(1);
