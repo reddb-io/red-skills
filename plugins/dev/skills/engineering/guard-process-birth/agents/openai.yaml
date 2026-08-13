@@ -1,0 +1,3 @@
+interface:
+  display_name: "Guard Process Birth"
+  short_description: "Keeps Worker process birth behind the host-scoped redskilled daemon. Use when changing per-project runtime source under apps/dev/src."
