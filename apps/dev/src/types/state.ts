@@ -165,6 +165,10 @@ export const AfkStateSchema = z.object({
    * worker counts; no independent derivation allowed. */
   origin: z.string().default(""),
   runner: z.string().default(""),
+  /** Runner-owned persisted session artifact for this Worker. Empty is a legal,
+   * explicit state: some runners or failure paths produce no file-backed
+   * session. This is a pointer only; the Worker never copies or moves it. */
+  session_artifact: z.string().default(""),
   filter: AfkFilterSchema.default({}),
   total: z.number().default(0),
   done: z.number().default(0),
