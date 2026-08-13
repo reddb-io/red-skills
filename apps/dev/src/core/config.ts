@@ -6,7 +6,6 @@ export { readStandingDrain, type StandingDrainConfig } from "./standing-drain-co
 
 /**
  * config.ts — TypeScript port of scripts/config.sh.
- *
  * Loads the dev config from `.red/config.yaml`. Per ADR 0042 the canonical
  * location is the namespaced `plugins.dev.afk.*` block; the legacy top-level
  * `afk.*` block is still read as a back-compat fallback. `loadConfig` folds the
