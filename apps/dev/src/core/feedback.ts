@@ -418,11 +418,16 @@ function buildRanRecord(input: {
   command: string;
   exitCode: number;
   durationMs: number;
+  output: string;
   summary: string;
   setup?: string;
   infra?: "stall";
 }): ValidationRecord {
-  const suspect = isSuspectInfraFailure({ status: input.status, durationMs: input.durationMs });
+  const suspect = isSuspectInfraFailure({
+    status: input.status,
+    durationMs: input.durationMs,
+    output: input.output,
+  });
   const summary = suspect
     ? suspectInfraSummary({
         command: input.command,
@@ -941,13 +946,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
+      const output = joinCommandOutput(result.stdout, result.stderr);
       const record = buildRanRecord({
         name,
         status,
         command,
         exitCode: result.code,
         durationMs,
-        summary: outputSummary(status, joinCommandOutput(result.stdout, result.stderr)),
+        output,
+        summary: outputSummary(status, output),
         setup: result.setup,
         infra: result.infraEvidence?.kind,
       });
@@ -1038,13 +1045,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
       const command = recordedValidationCommand(composed, script, excludeArgs, result.commandDir);
-      const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
+      const output = joinCommandOutput(result.stdout, result.stderr);
+      const summary = outputSummary(status, output);
       const record = buildRanRecord({
         name,
         status,
         command,
         exitCode: result.code,
         durationMs,
+        output,
         summary,
         setup: result.setup,
         infra: result.infraEvidence?.kind,
@@ -1072,13 +1081,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
     const command = recordedValidationCommand(composed, "typecheck", [], result.commandDir);
-    const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
+    const output = joinCommandOutput(result.stdout, result.stderr);
+    const summary = outputSummary(status, output);
     const record = buildRanRecord({
       name,
       status,
       command,
       exitCode: result.code,
       durationMs,
+      output,
       summary,
       setup: result.setup,
       infra: result.infraEvidence?.kind,
@@ -1130,6 +1141,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         command,
         exitCode: result.code,
         durationMs,
+        output,
         summary,
         setup: result.setup,
         infra: result.infraEvidence?.kind,
