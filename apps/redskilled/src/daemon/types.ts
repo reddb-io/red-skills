@@ -37,6 +37,7 @@ import { type RedskilledProjectRegistration,
 import { REDSKILLED_LIVENESS_GRACE_MS,
   type RedskilledLivenessProbe,
   type RedskilledStopProbe,
+  type RedskilledUnitExitFactsProbe,
   type RedskilledUnitInventoryProbe,
   type RedskilledUnitPidProbe,
 } from "../reattach.js";
@@ -128,6 +129,8 @@ export interface RedskilledDaemonOptions {
   readonly registrationIntentStore?: RedskilledRegistrationIntentStore;
   /** How the daemon asks whether a re-attached Worker is still running. */
   readonly liveness?: RedskilledLivenessProbe;
+  /** How the daemon reads systemd's retained exit receipt for a dead Worker unit. */
+  readonly unitExitFacts?: RedskilledUnitExitFactsProbe;
   /**
    * How long a newborn Worker is exempt from the liveness sweep.
    *
