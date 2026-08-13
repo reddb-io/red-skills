@@ -40,7 +40,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/dev/src/core/landing.ts", lines: 1183 },
   { path: "apps/dev/src/core/merge.ts", lines: 2672 },
   { path: "apps/dev/src/core/process-issue/lifecycle.ts", lines: 2258 },
-  { path: "apps/dev/src/core/process-issue/terminal.ts", lines: 1367 },
+  { path: "apps/dev/src/core/process-issue/terminal.ts", lines: 1308 },
   { path: "apps/dev/src/core/reconcile.ts", lines: 1103 },
   { path: "apps/dev/src/runtime/doctor-classifiers.ts", lines: 900 },
   { path: "apps/dev/src/runtime/feedback-worktree.ts", lines: 1045 },
