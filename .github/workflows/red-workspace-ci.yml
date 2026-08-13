@@ -31,8 +31,12 @@ on:
   merge_group:
   push:
     # automation/toon-bump is written with GITHUB_TOKEN, whose events never
-    # trigger pull_request workflows. The Version Packages PR uses RELEASE_PAT
-    # and receives the normal pull_request checks instead.
+    # trigger pull_request workflows, so it needs this push entrance to be
+    # checked at all. red-release/version-pr does NOT appear here: it pushes
+    # with RELEASE_PAT and therefore receives the ordinary pull_request checks.
+    # That claim was false between ADR 0139 and 2026-08-13 — the job had lost
+    # the PAT, so the Version PR's checks never started and every release
+    # needed a hand-pushed commit.
     branches: [main, automation/toon-bump]
 
 permissions:
