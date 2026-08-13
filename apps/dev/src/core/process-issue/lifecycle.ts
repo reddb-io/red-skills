@@ -138,14 +138,9 @@ import {
   type BranchReversionGeometry,
 } from "../branch-reversion.js";
 import {
-  aggregateAdversarialReviewFindings,
-  decideAdversarialReview,
-  renderAdversarialReviewBlockerSummary,
-  renderAdversarialReviewComment,
-  resolveAdversarialReviewer,
-  type AdversarialReviewDecision,
-  type AdversarialReviewFinding,
-  type AdversarialReviewFindings,
+  aggregateAdversarialReviewFindings, appraisalBlocker, decideAdversarialReview,
+  renderAdversarialReviewBlockerSummary, renderAdversarialReviewComment, resolveAdversarialReviewer,
+  type AdversarialReviewDecision, type AdversarialReviewFinding, type AdversarialReviewFindings,
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
@@ -1111,7 +1106,7 @@ export async function processIssue(
       }
       findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
       appraisalScore = findings.score;
-      decision = decideAdversarialReview(findings);
+      decision = decideAdversarialReview(findings, config.appraisalFloor);
       await postReview({
         issue: input.issue,
         findings,
@@ -1135,6 +1130,10 @@ export async function processIssue(
       return { outcome: { stage: "review", ok: true }, next: "proceed" };
     }
     const blocking = findings.findings.filter((finding) => finding.blocking);
+    const appraisal = appraisalBlocker(findings, config.appraisalFloor);
+    if (appraisal) {
+      blocking.push({ path: "Appraisal", line: 0, body: appraisal, blocking: true });
+    }
     const reseed = await requestReseed({
       trigger: "review-finding",
       review: { summary: findings.summary, findings: blocking, diff },
@@ -1144,7 +1143,7 @@ export async function processIssue(
     if (reseed === "hook-aborted") return { outcome: { stage: "review", ok: false }, next: "hook-aborted" };
     // Exhausted parks — uniformly, with no cap-dependent branch that could land
     // code carrying a known blocking finding.
-    const validation = renderAdversarialReviewBlockerSummary(findings, reseedBudget.subCaps.review);
+    const validation = renderAdversarialReviewBlockerSummary(findings, reseedBudget.subCaps.review, config.appraisalFloor);
     deps.appendIterLog(`🤖 ${reseedLane}: ${validation} Parked to ready-for-human.`);
     return { outcome: { stage: "review", ok: false }, next: "park", validation };
   };
