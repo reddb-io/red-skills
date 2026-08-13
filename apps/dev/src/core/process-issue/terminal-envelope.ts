@@ -49,6 +49,7 @@ export async function emitDone(
   validationSidecar: string[],
   validationScope?: ValidationScope,
   validationNotice?: string,
+  appraisalScore?: number,
 ): Promise<boolean> {
   const { deps, input } = c;
   const scopeHeader = validationScope ? `${formatValidationScope(validationScope)}\n` : "";
@@ -65,6 +66,7 @@ export async function emitDone(
     mergeSha,
     diff: "merged",
     sections: {
+      ...(appraisalScore === undefined ? {} : { appraisal: `Score: ${appraisalScore}` }),
       validation: validationBody,
       ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}),
     },
