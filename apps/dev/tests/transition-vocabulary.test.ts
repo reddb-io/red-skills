@@ -31,6 +31,7 @@ describe("ADR 0136 transition vocabulary", () => {
       "blocked:validation",
       "blocked:validation-infra",
       "blocked:stalled",
+      "blocked:spin",
       "blocked:wall-clock-capped",
       "blocked:crashed",
       "blocked:signal-killed",
