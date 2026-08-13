@@ -32,6 +32,11 @@ for now. See `plugins/dev/skills/engineering/red-setup/domain.md`.
 - Commit the worktree, push the branch early, open a PR, monitor its checks, then merge it or park the issue/PR for `/hitl`.
 - The agent never switches the primary checkout's branch; only the user does. With `plugins.dev.enabled: true`, the dev command proxy blocks agent-created worktrees outside registered `.red/tmp/` lanes and primary-checkout branch movement.
 
+## Repo-wide invariants
+
+- **Serialization:** keep default structured files and owned wires on TOON/TOONL; follow [`guard-serialization`](plugins/dev/skills/engineering/guard-serialization/SKILL.md) on first touch.
+- **Process birth:** only the host-scoped daemon births Workers; follow [`guard-process-birth`](plugins/dev/skills/engineering/guard-process-birth/SKILL.md) on first touch.
+
 ## Token-efficient terminal work
 
 `rsp` is the repo-owned surface for token-efficient terminal work. Prefer the explicit wrappers when summarized output is enough:
