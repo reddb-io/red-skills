@@ -235,6 +235,8 @@ export interface RedskilledBirthPort {
    * process that knows when the birth happened.
    */
   workerBirths(): Promise<Readonly<Record<string, string>>>;
+  /** Workers whose latest lifecycle verdict in the daemon lane is death. */
+  recordedDeadWorkerIds(): Promise<readonly string[]>;
   /** Extra host capacity reserved above the ordinary Worker ceiling. */
   interactiveReservation(): Promise<number>;
   /**
@@ -400,6 +402,18 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
 
     async workerBirths() {
       return Object.fromEntries((await readProjectWorkers()).map((w) => [w.worker_id, w.started_at]));
+    },
+
+    async recordedDeadWorkerIds() {
+      const dead = new Set<string>();
+      for (const event of await readRedskilledEvents(paths.eventLanePath)) {
+        if (event.project_label !== projectLabel) continue;
+        if (event.kind === "worker-birth") dead.delete(event.worker_id);
+        if (event.kind === "worker-death" || event.kind === "worker-budget-kill") {
+          dead.add(event.worker_id);
+        }
+      }
+      return [...dead];
     },
 
     async interactiveReservation() {

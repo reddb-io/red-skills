@@ -75,7 +75,7 @@ import { HOST_CONFIG_EXIT_CODE, sweepDiscardsWorkspace } from "../../core/worker
 import { LABEL_READY } from "../../core/triage-labels.js";
 import { evaluateClaimTrust, parseTrustPolicy } from "../../core/trust-gate.js";
 
-import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
+import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, runNeedsAdmittedFork, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
 import {
@@ -224,8 +224,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
     return runReconcileWorker(flags.reconcileIssue, runner, ctx, paths, workerId);
   }
 
-  const forkSha = process.env.RED_AFK_FORK_SHA?.trim();
-  if (!forkSha) {
+  const forkSha = process.env.RED_AFK_FORK_SHA?.trim() ?? "";
+  if (runNeedsAdmittedFork(flags) && !forkSha) {
     const error = new Error("redskilled granted this Worker no fork SHA — refusing unadmitted birth");
     retainedBootDiagnostic = await retainBootFailure("boot-error", error);
     await cleanupBootFailure("boot-error", retainedBootDiagnostic);

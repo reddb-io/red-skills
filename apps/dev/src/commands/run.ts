@@ -6,6 +6,7 @@ export {
   checkBootGuard,
   parseRunFlags,
   resolveRunDispatchIdentity,
+  runNeedsAdmittedFork,
   shouldSkipBootSweeps,
 } from "./run/flags.js";
 export { deriveActivity } from "./run/activity.js";

@@ -52,12 +52,10 @@ import {
 } from "./boot-sweep.js";
 import {
   planStaleClaimSweep,
-  renderConcededClaimSweepAudit,
-  renderDeadClaimSweepAudit,
-  renderStaleClaimSweepAudit,
   resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
+import { planClaimRecovery } from "./claim-recovery.js";
 import { renderConcedeOnBehalf } from "./claim.js";
 import {
   planDocsSweep,
@@ -1298,32 +1296,14 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
           );
         }
       }
-      const parked = currentLabels.includes(LABEL_HUMAN) || blockedLabelsIn(currentLabels).length > 0;
-      if (parked) {
-        // A parked issue only sheds the stale `running` projection — the park
-        // itself is the authoritative state and must survive the sweep (#968).
-        await deps.gh.editLabels(p.issue, [LABEL_RUNNING], []);
-      } else {
-        const plan = planTransition(currentLabels, { kind: "queue" });
-        if (isRefused(plan)) {
-          // A refused queue (e.g. dangling req:* edges without blocked:dependency)
-          // is a poison signal — shed `running` but never re-admit the issue.
-          deps.log?.(`boot claim-sweep queue refused for #${p.issue}: ${plan.reason}`);
-          await deps.gh.editLabels(p.issue, [LABEL_RUNNING], []);
-        } else {
-          await deps.gh.editLabels(p.issue, [...plan.remove], [...plan.add]);
-        }
+      const recovery = planClaimRecovery(currentLabels, p, claimedIssue);
+      if (recovery.refusalReason) {
+        deps.log?.(`boot claim-sweep queue refused for #${p.issue}: ${recovery.refusalReason}`);
       }
-      const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
-      const concededOwners = p.concededOwners ?? [];
-      const body = concededOwners.length > 0
-        ? renderConcededClaimSweepAudit(concededOwners)
-        : p.staleOwners.some((owner) => deadOwners.has(owner))
-          ? renderDeadClaimSweepAudit(p.staleOwners)
-          : renderStaleClaimSweepAudit(p.staleOwners);
-      await deps.gh.comment(p.issue, body);
+      await deps.gh.editLabels(p.issue, recovery.remove, recovery.add);
+      await deps.gh.comment(p.issue, recovery.audit);
       released.push(p.issue);
-      if (concededOwners.length > 0) repairedConceded.push(p.issue);
+      if ((p.concededOwners?.length ?? 0) > 0) repairedConceded.push(p.issue);
     } catch {
       // Best-effort: a failed release leaves the issue for the next boot's sweep.
     }

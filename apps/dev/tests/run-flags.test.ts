@@ -13,6 +13,7 @@ import {
   RunFlagError,
   deriveActivity,
   resolveRunDispatchIdentity,
+  runNeedsAdmittedFork,
   shouldSkipBootSweeps,
   initBootWorkerState,
 } from "../src/commands/run.js";
@@ -217,6 +218,11 @@ describe("parseRunFlags", () => {
   it("parses --boot-only as a boolean, defaulting to false", () => {
     expect(parseRunFlags(["--boot-only"]).bootOnly).toBe(true);
     expect(parseRunFlags([]).bootOnly).toBe(false);
+  });
+
+  it("lets boot-only reconciliation run without an admitted work fork", () => {
+    expect(runNeedsAdmittedFork(parseRunFlags(["--boot-only"]))).toBe(false);
+    expect(runNeedsAdmittedFork(parseRunFlags([]))).toBe(true);
   });
 
   it("parses --alternate and --fallback-runner as booleans", () => {

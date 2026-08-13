@@ -87,6 +87,11 @@ export function shouldSkipBootSweeps(
   return supervisorSweepsDone || filter.kind === "issues";
 }
 
+/** Boot-only Workers reconcile shared state; they never check out or process work. */
+export function runNeedsAdmittedFork(flags: Pick<ParsedRunFlags, "bootOnly">): boolean {
+  return !flags.bootOnly;
+}
+
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
 export class RunFlagError extends Error {
   constructor(message: string) {
