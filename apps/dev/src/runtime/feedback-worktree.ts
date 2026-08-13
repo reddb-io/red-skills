@@ -52,9 +52,11 @@ import {
 import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostWorkerFormatExec } from "../core/post-worker-format.js";
 import {
-  readRedskilledHostConfig,
-  resolveRedskilledHostSettings,
-} from "@reddb-io/redskilled/host-config";
+  acquireRedskilledResourceLease,
+  releaseRedskilledResourceLease,
+  renewRedskilledResourceLease,
+} from "@reddb-io/redskilled/client";
+import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import {
   DEFAULT_VALIDATION_STALL_DETECTION,
   execTool,
@@ -64,7 +66,7 @@ import {
   type ValidationStallDetection,
 } from "./exec.js";
 import * as gitx from "./git.js";
-import { createPathLock, createPathSemaphore } from "./land-lock.js";
+import { createPathLock } from "./land-lock.js";
 import type { LandLockWaitInfo } from "../core/land-lock.js";
 import type { BranchReversionGeometry } from "../core/branch-reversion.js";
 import { withValidationResourceEvidence } from "./validation-resources.js";
@@ -206,11 +208,12 @@ export interface FeedbackWorktreeIO {
    * in-process, which is all a single-process fixture needs.
    */
   lock?(dest: string, onWait?: LockWaitSink): Promise<(() => Promise<void>) | null>;
-  /**
-   * Host-wide sized semaphore for validation commands. Every live worker and
-   * no-agent reconcile manager binds the same `.red/state` slot set.
-   */
-  gateLock?(root: string, onWait?: LockWaitSink): Promise<(() => Promise<void>) | null>;
+  /** Host-daemon resource lease used only for Castle-classified heavy commands. */
+  gateLock?(
+    root: string,
+    onWait?: LockWaitSink,
+    admission?: { readonly minimumAvailableMemoryMb: number; readonly workerId?: string },
+  ): Promise<(() => Promise<void>) | null>;
 }
 
 /**
@@ -270,7 +273,7 @@ const WORKTREE_LOCK_WAIT_MS = 10 * 60_000;
 /** A holder that has not finished a materialise in this long has crashed. */
 const WORKTREE_LOCK_STALE_MS = 20 * 60_000;
 const GATE_LOCK_WAIT_MS = 60 * 60_000;
-const GATE_LOCK_STALE_MS = 24 * 60 * 60_000;
+const GATE_LEASE_TTL_MS = 30_000;
 /**
  * How often a still-blocked waiter re-announces itself. The first poll speaks
  * IMMEDIATELY — a wait nobody hears about for 30s is still a wait nobody can
@@ -426,19 +429,57 @@ const defaultIO: FeedbackWorktreeIO = {
       }).acquire(),
     );
   },
-  gateLock: async (root, onWait) => {
-    const stateDir = join(root, ".red", "state");
-    await mkdir(stateDir, { recursive: true });
-    const hostConfig = await readRedskilledHostConfig();
-    const capacity = resolveRedskilledHostSettings({ config: hostConfig }).ceiling.validation_count ?? 1;
-    return acquireAnnounced("validation-gate", onWait, (report) =>
-      createPathSemaphore(join(stateDir, "validation-gate.lock"), `validation-gate:${process.pid}`, capacity, {
-        waitTimeoutMs: GATE_LOCK_WAIT_MS,
-        staleAfterMs: GATE_LOCK_STALE_MS,
-        pollMs: 500,
-        ...(report ? { onWait: report } : {}),
-      }).acquire(),
-    );
+  gateLock: async (_root, onWait, admission) => {
+    const paths = resolveRedskilledPaths();
+    const workerId = admission?.workerId;
+    const started = Date.now();
+    onWait?.({
+      lock: "validation-gate",
+      state: "waiting",
+      path: "redskilled:validation-heavy",
+      waitedMs: 0,
+      remainingMs: GATE_LOCK_WAIT_MS,
+      message: "⏳ /afk gate: waiting for host heavy-validation admission.",
+    });
+    try {
+      const lease = await acquireRedskilledResourceLease(paths, {
+        resource: "validation-heavy",
+        holder_id: workerId ?? `process:${process.pid}`,
+        ...(workerId == null ? {} : { worker_id: workerId }),
+        minimum_available_memory_bytes: (admission?.minimumAvailableMemoryMb ?? 4_096) * 1024 ** 2,
+        ttl_ms: GATE_LEASE_TTL_MS,
+        wait_timeout_ms: GATE_LOCK_WAIT_MS,
+      });
+      onWait?.({
+        lock: "validation-gate",
+        state: "acquired",
+        path: "redskilled:validation-heavy",
+        waitedMs: Date.now() - started,
+        remainingMs: 0,
+        message: "✅ /afk gate: host granted heavy-validation admission.",
+      });
+      let renewal = Promise.resolve();
+      const timer = setInterval(() => {
+        renewal = renewal.then(() => renewRedskilledResourceLease(paths, lease.lease_id, GATE_LEASE_TTL_MS).then(() => undefined))
+          .catch(() => undefined);
+      }, GATE_LEASE_TTL_MS / 3);
+      timer.unref();
+      return async () => {
+        clearInterval(timer);
+        await renewal;
+        await releaseRedskilledResourceLease(paths, lease.lease_id).catch(() => undefined);
+      };
+    } catch (error) {
+      onWait?.({
+        lock: "validation-gate",
+        state: "timed-out",
+        path: "redskilled:validation-heavy",
+        waitedMs: Date.now() - started,
+        remainingMs: 0,
+        message: `⛔ /afk gate: heavy-validation admission failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return null;
+    }
   },
 };
 
@@ -506,7 +547,12 @@ export interface FeedbackWorktreeOptions {
    */
   rebaseOnto?: string;
   /** Resource budget applied to validation subprocesses (#1758). */
-  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number; turboConcurrency?: number };
+  resourceBudget?: {
+    nodeMaxOldSpaceMb?: number;
+    vitestMaxWorkers?: number;
+    turboConcurrency?: number;
+    heavyAvailableMemoryMb?: number;
+  };
   /**
    * Where a BLOCKED wait announces itself (#2985). Both host-wide locks here
    * can hold a worker for tens of minutes with no child process and no write,
@@ -636,15 +682,20 @@ export function makeFeedbackWorktree(
   }
 
   async function runValidationCommand(
+    weight: "light" | "heavy",
     run: () => Promise<ExecOutput>,
   ): Promise<ExecOutput> {
-    if (!io.gateLock) return run();
-    const release = await io.gateLock(root, onLockWait);
+    if (weight === "light" || !io.gateLock) return run();
+    const release = await io.gateLock(root, onLockWait, {
+      minimumAvailableMemoryMb: resourceBudget.heavyAvailableMemoryMb ?? 4_096,
+      ...(process.env.RED_AFK_WORKER_ID == null ? {} : { workerId: process.env.RED_AFK_WORKER_ID }),
+    });
     if (release === null) {
       return {
         code: 1,
         stdout: "",
-        stderr: "host-wide validation gate lock timed out; validation blocked",
+        stderr: "host heavy-validation admission timed out; validation blocked",
+        infraEvidence: { kind: "admission-timeout", wallTimeMs: GATE_LOCK_WAIT_MS },
       };
     }
     try {
@@ -914,7 +965,7 @@ export function makeFeedbackWorktree(
       }
       const rewritten = resolve(scope === "." ? base : join(base, scope));
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await runValidationCommand(() =>
+      const r = await runValidationCommand(opts?.weight ?? "light", () =>
         runGateChild(`pnpm ${rest[0] ?? "validation"}`, (onSpawn) =>
           io.pnpm(["-C", rewritten, ...rest], { cwd: root, env, onSpawn, stallDetection })
         )
@@ -935,7 +986,7 @@ export function makeFeedbackWorktree(
       };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await runValidationCommand(() =>
+    const r = await runValidationCommand(opts?.weight ?? "light", () =>
       runGateChild(`pnpm ${head[0] ?? "validation"}`, (onSpawn) =>
         io.pnpm(head, { cwd: root, env, onSpawn, stallDetection })
       )
@@ -963,7 +1014,7 @@ export function makeFeedbackWorktree(
       return { code: 1, stdout: "", stderr: setupFailureMessage(cwd) };
     }
     const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
-    const r = await runValidationCommand(() =>
+    const r = await runValidationCommand("heavy", () =>
       runGateChild("sh backpressure", (onSpawn) =>
         io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env, onSpawn, stallDetection })
       )
