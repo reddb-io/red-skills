@@ -23,7 +23,7 @@ export interface ResolvePersistentSpinInput {
   readonly log: string;
   readonly environment: EnvironmentLedger;
   readonly branchBudgetAvailable: boolean;
-  readonly firePostAttempt: (outcome: SpinOutcome) => Promise<void>;
+  readonly firePostAttempt: (outcome: SpinOutcome) => Promise<unknown>;
   readonly requestReseed: (pattern: SpinPattern, outcome: SpinOutcome) => Promise<ReseedOutcome>;
   readonly parkReseedTrail: (evidence: string) => Promise<void>;
 }
