@@ -51,6 +51,11 @@ export type RedskilledOrphanReaperCandidate =
       readonly detail: string;
     }
   | {
+      readonly kind: "stranger";
+      readonly process: RedskilledProcessCensusRow;
+      readonly detail: string;
+    }
+  | {
       readonly kind: "suspect";
       readonly process: RedskilledProcessCensusRow;
       readonly detail: string;
@@ -71,7 +76,7 @@ export interface SelectedRedskilledProcessCensus {
   readonly candidates: readonly RedskilledOrphanReaperCandidate[];
 }
 
-/** A stamped orphan is given this long to reconnect before the host reaps it. */
+/** A stamped stranger is given this long to reconnect before the host reports it. */
 export const REDSKILLED_STAMPED_ORPHAN_GRACE_MS = 10 * 60_000;
 
 /** An unstamped process needs a longer window because it cannot prove its origin. */
@@ -263,7 +268,7 @@ export function selectRedskilledProcessCensus(
       version: 1,
       active_worker_units: new Set(input.active_worker_units).size,
       daemon_held_workers: new Set(input.held_worker_ids).size,
-      stamped_orphans: candidates.filter((candidate) => candidate.kind === "reap").length,
+      stamped_orphans: candidates.filter((candidate) => candidate.kind === "stranger").length,
       unstamped_suspects: candidates.filter((candidate) => candidate.kind === "suspect").length,
       dump_files: new Set(input.dump_files).size,
     },
@@ -306,9 +311,9 @@ function selectOrphanReaperCandidatesOnly(
     }
     if (process.age_ms < REDSKILLED_STAMPED_ORPHAN_GRACE_MS) continue;
     selected.push({
-      kind: "reap",
+      kind: "stranger",
       process,
-      detail: `stamped Worker ${workerId} has no live birth and is at least 10 minutes old`,
+      detail: `stamped Worker ${workerId} has no birth record in this daemon and will never be signalled`,
     });
   }
   return selected;
@@ -504,11 +509,16 @@ export function createRedskilledOrphanReaperRuntime(
 
       for (const candidate of candidates) {
         if (mode === "report") {
-          if (candidate.kind === "suspect") counts.suspects += 1;
+          if (candidate.kind === "suspect" || candidate.kind === "stranger") counts.suspects += 1;
           report(`${candidate.detail}; report mode withheld adoption and signalling`);
           continue;
         }
         if (candidate.kind === "suspect") {
+          counts.suspects += 1;
+          report(candidate.detail);
+          continue;
+        }
+        if (candidate.kind === "stranger") {
           counts.suspects += 1;
           report(candidate.detail);
           continue;
@@ -567,7 +577,11 @@ export function createRedskilledOrphanReaperRuntime(
       mode: reportOnly ? "report" : "reap",
       census,
       actions: reportOnly
-        ? { adopted: 0, reaped: 0, suspects: census.unstamped_suspects }
+        ? {
+            adopted: 0,
+            reaped: 0,
+            suspects: census.stamped_orphans + census.unstamped_suspects,
+          }
         : await sweep(),
     };
   }
