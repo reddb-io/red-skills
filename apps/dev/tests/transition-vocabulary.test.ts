@@ -8,6 +8,11 @@ import {
   blockedKindOf,
   blockedLabelsIn,
 } from "../src/core/state-transition.js";
+import {
+  HUMAN_ONLY_BLOCKER_KINDS,
+  REQUEUE_SUPPORTED_KINDS,
+  planRequeue,
+} from "../src/core/requeue.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, "..", "src");
@@ -72,6 +77,39 @@ describe("ADR 0136 transition vocabulary", () => {
       expect(source, relative(SRC, path)).not.toMatch(/\.startsWith\(["']blocked:/);
       expect(source, relative(SRC, path)).not.toMatch(/\.slice\(["']blocked:["']\.length\)/);
       expect(source, relative(SRC, path)).not.toMatch(/\/\^blocked:\|ready-for-human/);
+    }
+  });
+
+  it("partitions every Park label into machine-supported or explicitly human-only requeue authority", () => {
+    expect([...HUMAN_ONLY_BLOCKER_KINDS]).toEqual([
+      "stalled",
+      "wall-clock-capped",
+      "crashed",
+      "signal-killed",
+      "dependency",
+      "quota",
+      "runner-transient",
+      "host-config",
+      "merge-conflict",
+      "ci",
+      "policy",
+      "trunk-diverged",
+      "budget",
+    ]);
+
+    for (const label of BLOCKED_LABELS) {
+      const kind = blockedKindOf(label)!;
+      const machineSupported = REQUEUE_SUPPORTED_KINDS.has(kind);
+      const humanOnly = HUMAN_ONLY_BLOCKER_KINDS.has(kind);
+      expect(machineSupported !== humanOnly, label).toBe(true);
+
+      const plan = planRequeue({
+        authority: machineSupported ? "machine" : "human",
+        body: "## Summary\nParked by the engine.\n",
+        labels: ["ready-for-human", label],
+        guidance: "The declared blocker has been resolved.",
+      });
+      expect(plan.requeueable, `${label}: ${plan.reason ?? "refused without reason"}`).toBe(true);
     }
   });
 

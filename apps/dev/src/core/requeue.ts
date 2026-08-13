@@ -11,10 +11,10 @@
 // are its IO callers.
 //
 // #860 narrows the scope to explicitly supported transient parks. Alongside
-// `blocked:validation` and `blocked:spec`, `blocked:infra` and
-// `blocked:base-stale` are requeueable because a recovered mechanical fault
-// needs no new human decision. The IO caller freshness-gates `base-stale`
-// before applying this pure plan. Mixed
+// `blocked:validation`, `blocked:validation-infra`, and `blocked:spec`,
+// `blocked:infra` and `blocked:base-stale` are requeueable because a recovered
+// mechanical fault needs no new human decision. The IO caller freshness-gates
+// `base-stale` before applying this pure plan. Mixed
 // `blocked:*` states and label/body kind mismatches are refused without mutation
 // and direct the maintainer to `/hitl`.
 
@@ -45,9 +45,31 @@ import { LABEL_READY } from "./triage-labels.js";
  */
 export const REQUEUE_SUPPORTED_KINDS = new Set([
   "validation",
+  "validation-infra",
   "spec",
   "infra",
   "base-stale",
+]);
+
+/**
+ * Park kinds that require human authority before the one requeue door may
+ * clear them. The transition-vocabulary guard proves this explicit set and
+ * {@link REQUEUE_SUPPORTED_KINDS} partition the complete Park census.
+ */
+export const HUMAN_ONLY_BLOCKER_KINDS = new Set([
+  "stalled",
+  "wall-clock-capped",
+  "crashed",
+  "signal-killed",
+  "dependency",
+  "quota",
+  "runner-transient",
+  "host-config",
+  "merge-conflict",
+  "ci",
+  "policy",
+  "trunk-diverged",
+  "budget",
 ]);
 
 export interface RequeueInput {
@@ -67,7 +89,7 @@ export type RequeueAuthority = "machine" | "human";
 
 /**
  * Is `kind` requeueable? The supported set is
- * `{validation, spec, infra, base-stale}`.
+ * `{validation, validation-infra, spec, infra, base-stale}`.
  */
 function kindRequeueable(kind: string): boolean {
   return REQUEUE_SUPPORTED_KINDS.has(kind);
@@ -174,10 +196,11 @@ export function isRequeueComplete(body: string, labels: readonly string[]): bool
  * labels, and add `ready-for-agent`. The body is always rewritten when a blocker
  * is active so the transition can never degrade into a label-only flip.
  *
- * Narrowed to explicit transient parks: `blocked:validation`, `blocked:spec`,
- * `blocked:infra`, and freshness-gated `blocked:base-stale`. Mixed `blocked:*`
- * states and label/body kind mismatches set `refuseForHitl: true` and direct
- * the caller to `/hitl` instead.
+ * Narrowed to explicit transient parks: `blocked:validation`,
+ * `blocked:validation-infra`, `blocked:spec`, `blocked:infra`, and
+ * freshness-gated `blocked:base-stale`. Mixed `blocked:*` states and label/body
+ * kind mismatches set `refuseForHitl: true` and direct the caller to `/hitl`
+ * instead.
  */
 export function planRequeue(input: RequeueInput): RequeuePlan {
   const authority = input.authority ?? "machine";
@@ -215,7 +238,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   // Unsupported label kind → /hitl handles other human-input blocker types.
   if (authority === "machine" && labelKind !== null && !kindRequeueable(labelKind)) {
     return refuse(
-      `blocked:${labelKind} is not in the supported set for machine authority (validation, spec, infra, base-stale): use /hitl for human authority`,
+      `blocked:${labelKind} is not in the supported set for machine authority (validation, validation-infra, spec, infra, base-stale): use /hitl for human authority`,
       true,
       activeBlocker,
       input.body,
@@ -230,7 +253,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     !kindRequeueable(activeBlocker.kind)
   ) {
     return refuse(
-      `active blocker kind "${activeBlocker.kind}" is not in the supported set for machine authority (validation, spec, infra, base-stale): use /hitl for human authority`,
+      `active blocker kind "${activeBlocker.kind}" is not in the supported set for machine authority (validation, validation-infra, spec, infra, base-stale): use /hitl for human authority`,
       true,
       activeBlocker,
       input.body,
