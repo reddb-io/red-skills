@@ -19,9 +19,10 @@
 //      nothing, so it may not consume a re-seed round or park a branch — the
 //      same honesty rule the admission verdicts follow: a refusal carries what
 //      it judged.
-//   3. **A suite-shaped command that exits in under a second did not run a
-//      suite.** The record carries `suspectInfra` and says why, rather than
-//      leaving the operator to spot the duration.
+//   3. **A suite-shaped command that exits in under a second without a concrete
+//      diagnostic may not have run a suite.** Turbo cache hits can return real
+//      compiler, assertion, and guard failures in milliseconds, so structured
+//      branch evidence always outranks duration.
 //
 // A branch TOKEN is left verbatim on purpose. The AFK gate is posed with the
 // worker branch name (`afk/<n>-<slug>`), which the feedback-worktree executor
@@ -43,11 +44,9 @@ export const VALIDATION_TARGET_MISSING_MARKER = "validation worktree directory i
 export const SUSPECT_INFRA_MARKER = "suspect-infra";
 
 /**
- * How fast a suite-shaped command has to exit before its verdict is suspect.
- * `pnpm`'s own startup — resolving the workspace, spawning the script — costs
- * more than this on every host we run on, so a sub-second exit means the suite
- * never started. Deliberately coarse: the claim is "this did not run", not a
- * performance budget.
+ * How fast an evidence-free suite-shaped failure has to exit before its verdict
+ * is suspect. Duration alone proves nothing because turbo can replay a cached
+ * task in milliseconds; a concrete compiler, assertion, or guard finding wins.
  */
 export const SUITE_MIN_PLAUSIBLE_MS = 1000;
 
@@ -57,17 +56,13 @@ const CONCRETE_DIAGNOSTIC_PATTERNS: readonly RegExp[] = [
   /^\s*FAIL\s+\S.*$/m,
   /^\s*\S.*\.{3}\s+FAILED\s*$/m,
   /^\s*----\s+\S.*\s+stdout\s+----\s*$/m,
+  /\bAssertionError\b/,
+  /\b(?:expected|received)\b.*\b(?:to|equal|match|contain|be)\b/i,
+  /\b(?:file-size-guard|invariant)\b.*\b(?:failed|finding|grew|exceeded|violation)\b/i,
 ];
 
-function diagnosticNamesBranchFile(output: string, branchFiles: readonly string[]): boolean {
-  if (!CONCRETE_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(output))) return false;
-  const normalizedOutput = output.replaceAll("\\", "/");
-  return branchFiles.some((file) => {
-    const normalizedFile = file.replace(/^\.\//, "").replaceAll("\\", "/");
-    const parts = normalizedFile.split("/").filter(Boolean);
-    const suffixes = parts.map((_, index) => parts.slice(index).join("/"));
-    return suffixes.some((suffix) => suffix.includes("/") && normalizedOutput.includes(suffix));
-  });
+function hasConcreteBranchEvidence(output: string): boolean {
+  return CONCRETE_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(output));
 }
 
 /**
@@ -261,14 +256,11 @@ export function isSuspectInfraFailure(input: {
   durationMs?: number;
   /** Captured compiler/test output, inspected before duration can classify it. */
   output?: string;
-  /** Repo-relative files changed by the branch being judged. */
+  /** Retained for caller compatibility; concrete diagnostics no longer need path matching. */
   branchFiles?: readonly string[];
 }): boolean {
   if (input.status !== "failed") return false;
-  if (
-    input.output !== undefined &&
-    diagnosticNamesBranchFile(input.output, input.branchFiles ?? [])
-  ) {
+  if (input.output !== undefined && hasConcreteBranchEvidence(input.output)) {
     return false;
   }
   const { durationMs } = input;
@@ -285,7 +277,7 @@ export function suspectInfraSummary(input: {
 }): string {
   const head =
     `${SUSPECT_INFRA_MARKER}: \`${input.command}\` exited ${input.exitCode} after ` +
-    `${input.durationMs}ms — under ${SUITE_MIN_PLAUSIBLE_MS}ms is too fast for a suite ` +
-    `command to have started, so read this as an environment failure before the branch's`;
+    `${input.durationMs}ms without a concrete compiler, assertion, or guard finding; ` +
+    `the command may not have started, so inspect the environment before charging the branch`;
   return input.summary === "" ? head : `${head}. ${input.summary}`;
 }
