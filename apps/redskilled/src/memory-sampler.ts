@@ -47,6 +47,10 @@ import { dirname, join } from "node:path";
 import { appliedWorkerBudget, parseMemoryBudget } from "./budget-accounting.js";
 import type { RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
+import {
+  readCgroupResourceSample,
+  type RedskilledResourceSample,
+} from "./resource-incidents.js";
 
 /** How the daemon classifies a termination it decided itself. */
 export type RedskilledTerminationClassification = "budget-exceeded";
@@ -148,6 +152,8 @@ export interface RedskilledTreeReading {
    * sampleWorkerTrees} always states it.
    */
   readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
+  /** Full forensic counters for boundaries the kernel exposed on this tick. */
+  readonly resource_samples?: Readonly<Record<string, RedskilledResourceSample>>;
 }
 
 /** The complete reading returned by the daemon's host sampler. */
@@ -372,24 +378,31 @@ export function sampleWorkerTrees(
   const cpuSeconds: Record<string, number> = {};
   const processes: Record<string, number> = {};
   const sources: Record<string, RedskilledRssSource> = {};
+  const resourceSamples: Record<string, RedskilledResourceSample> = {};
+  const sampledAt = new Date().toISOString();
 
   // The kernel's own charge first, for every Worker the daemon put in a unit.
   const cgroups = resolveUnitCgroups(workers, platform, options);
   for (const [workerId, dir] of cgroups) {
-    const charge = readCgroupCharge(dir);
-    if (charge == null) continue;
-    rss[workerId] = charge.memoryBytes;
-    if (charge.cpuSeconds != null) cpuSeconds[workerId] = charge.cpuSeconds;
+    const worker = workers.find((candidate) => candidate.worker_id === workerId);
+    if (worker === undefined) continue;
+    const sample = readCgroupResourceSample(dir, {
+      sampledAt,
+      target: { kind: "worker", id: workerId, project_label: worker.project_label },
+    });
+    rss[workerId] = sample.memory.current_bytes;
+    cpuSeconds[workerId] = sample.cpu.usage_usec / 1_000_000;
     sources[workerId] = "cgroup";
+    resourceSamples[workerId] = sample;
   }
 
   // The walk answers only for whoever the kernel did not: an unisolated Worker, a
   // host with no cgroup filesystem, or a unit whose directory is already gone.
   const remaining = workers.filter((worker) => sources[worker.worker_id] == null);
-  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources };
+  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources, resource_samples: resourceSamples };
 
   const table = readHostProcessTable(platform, options);
-  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources };
+  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources, resource_samples: resourceSamples };
 
   const children = new Map<number, number[]>();
   for (const entry of table.values()) {
@@ -420,8 +433,28 @@ export function sampleWorkerTrees(
     cpuSeconds[worker.worker_id] = totalCpu;
     processes[worker.worker_id] = processCount;
     sources[worker.worker_id] = "process-tree";
+    const maxBytes = resolveEnforcedBudget(worker)?.bytes ?? null;
+    const maxProcesses = appliedWorkerBudget(worker).max_processes ?? null;
+    resourceSamples[worker.worker_id] = {
+      schema: "red.redskilled.resource_sample.v1",
+      sampled_at: sampledAt,
+      target: { kind: "worker", id: worker.worker_id, project_label: worker.project_label },
+      source: "process-tree",
+      memory: { current_bytes: totalRss, peak_bytes: totalRss, max_bytes: maxBytes },
+      cpu: {
+        usage_usec: Math.round(totalCpu * 1_000_000),
+        user_usec: 0,
+        system_usec: 0,
+        nr_periods: 0,
+        nr_throttled: 0,
+        throttled_usec: 0,
+      },
+      pressure: {},
+      pids: { current: processCount, peak: processCount, max: maxProcesses },
+      processes: processCount,
+    };
   }
-  return { rss, cpu_seconds: cpuSeconds, processes, sources };
+  return { rss, cpu_seconds: cpuSeconds, processes, sources, resource_samples: resourceSamples };
 }
 
 export interface SampleWorkerTreesOptions {
@@ -526,42 +559,6 @@ function readSelfCgroupPath(): string | null {
     // A host with no `/proc` falls back to the conventional slice path below.
   }
   return null;
-}
-
-/**
- * One unit's memory charge and accumulated CPU, straight from the kernel.
- *
- * `memory.current` is the whole cgroup's charge — every process inside the
- * boundary, however it got there — so it is a single read where the walk is a
- * traversal, and it is exact where the walk is a best effort. CPU rides along
- * from `cpu.stat` for the reason it rides the `/proc` line: the question "is this
- * Worker alive and working?" must not need a second instrument.
- *
- * `null` when the directory holds no readable `memory.current`, which is a unit
- * that has already gone away — the caller then falls back to the walk rather
- * than reporting a Worker at zero.
- */
-function readCgroupCharge(dir: string): { readonly memoryBytes: number; readonly cpuSeconds: number | null } | null {
-  let raw: string;
-  try {
-    raw = readFileSync(join(dir, "memory.current"), "utf8");
-  } catch {
-    return null;
-  }
-  const memoryBytes = Number(raw.trim());
-  if (!Number.isFinite(memoryBytes) || memoryBytes < 0) return null;
-  return { memoryBytes, cpuSeconds: readCgroupCpuSeconds(dir) };
-}
-
-/** `usage_usec` out of `cpu.stat`, in seconds; `null` when the host keeps none. */
-function readCgroupCpuSeconds(dir: string): number | null {
-  let raw: string;
-  try {
-    raw = readFileSync(join(dir, "cpu.stat"), "utf8");
-  } catch {
-    return null;
-  }
-  return parseCgroupCpuStat(raw);
 }
 
 /** Microseconds of `usage_usec` as seconds, or `null` when the key is absent. PURE. */

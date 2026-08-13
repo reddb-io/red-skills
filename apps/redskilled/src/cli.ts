@@ -61,6 +61,8 @@ import {
   type RedskilledReclaimOptions,
 } from "./reclaim.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
+import { RESOURCE_INCIDENTS_USAGE, runResourceIncidents } from "./resource-incidents-command.js";
+export { runResourceIncidents } from "./resource-incidents-command.js";
 import { runDashboard } from "./dashboard-command.js";
 import { runStatusline } from "./statusline-command.js";
 export { runStatusline } from "./statusline-command.js";
@@ -92,6 +94,7 @@ Commands:
   statusline [global]   render one agent-host status line
   dashboard [local]     the host's screen; local scopes it to this repo
   github-spend          report which operations spent GitHub budget
+  incidents             list/show bounded CPU and memory forensic captures
   unit                  install | uninstall | status — the optional supervisor
   provision             make this machine ready; --check is the read-only half
   reclaim               clear runtime dirs left by dead sessions
@@ -154,6 +157,7 @@ hour. This is durable process attribution, never GitHub's authoritative balance.
   --pool <pool|all>  graphql (default), rest, search, or every pool
   --hours <n>        positive number of hours ending now (default: 1)
 `,
+  incidents: RESOURCE_INCIDENTS_USAGE,
   statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
 
 Renders the status line the agent host prints verbatim. Config is read on this
@@ -418,6 +422,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     | "statusline"
     | "dashboard"
     | "github-spend"
+    | "incidents"
     | "unit"
     | "provision"
     | "reclaim"
@@ -430,6 +435,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       statusline: {},
       dashboard: {},
       "github-spend": {},
+      incidents: {},
       unit: {},
       provision: {},
       reclaim: {},
@@ -578,6 +584,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "statusline") return await runStatusline(args);
   if (command === "dashboard") return await runDashboard(args);
   if (command === "github-spend") return await runGithubSpend(args);
+  if (command === "incidents") return await runResourceIncidents(args);
   if (command === "unit") return await runUnit(args);
 
   if (command === "provision") return await runProvision(args);

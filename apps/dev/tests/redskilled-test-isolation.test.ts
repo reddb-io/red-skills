@@ -43,6 +43,7 @@ describe("the test host is the sandbox's, not the operator's", () => {
     // of its runtime and machine scope. Leaving HOME ambient lets sandbox
     // births and deaths cross into the operator's real daemon history.
     expect(paths.eventLanePath.startsWith(ISOLATED_REDSKILLED_HOST_ROOT)).toBe(true);
+    expect(process.env.REDSKILLED_UNIT_DISCOVERY).toBe("off");
   });
 
   it("resolves an auto-spawn entry that cannot start a daemon", () => {

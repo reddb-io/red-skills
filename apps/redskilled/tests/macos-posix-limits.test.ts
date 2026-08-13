@@ -151,7 +151,7 @@ describe("macOS placement — the memory ceiling it refuses to claim", () => {
       },
     });
 
-    expect(reading).toEqual({ rss: {}, cpu_seconds: {}, processes: {}, sources: {} });
+    expect(reading).toEqual({ rss: {}, cpu_seconds: {}, processes: {}, sources: {}, resource_samples: {} });
   });
 
   it("parses `ps` output and ignores every line that is not a process row", () => {

@@ -14,6 +14,7 @@ const isolatedEnvironment = {
   XDG_RUNTIME_DIR: join(root, "runtime"),
   REDSKILLED_MACHINE_DIR: join(root, "machine"),
   REDSKILLED_TEST_HOST_ROOT: root,
+  REDSKILLED_UNIT_DISCOVERY: "off",
 } as const;
 
 // Every line above isolates a PATH. Unit discovery isolates none of them: a

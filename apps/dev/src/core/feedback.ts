@@ -43,6 +43,7 @@ import {
   type ValidationTargetKind,
 } from "./validation-command.js";
 import { decideVerdict, emptyEnvironmentLedger } from "./verdict.js";
+import type { ValidationResourceEvidence } from "./validation-resources.js";
 import { applyValidationEvidence, reconcileValidationEvidence } from "./validation-evidence.js";
 import { outputSummary } from "./validation-output.js";
 
@@ -79,6 +80,8 @@ export interface ExecResult {
    * after a hook manager refused AFK's redirected `core.hooksPath` (#3268).
    */
   setup?: string;
+  /** Secret-free cgroup/process deltas observed around this validation child. */
+  resources?: ValidationResourceEvidence;
 }
 
 export interface FeedbackExecOptions {
@@ -252,6 +255,8 @@ export interface ValidationRecord {
   suspectInfra?: true;
   /** The command ran, but infrastructure reaped it after observing no progress. */
   infra?: "stall";
+  /** What the host was carrying while this check ran, when it was measured. */
+  resources?: ValidationResourceEvidence;
 }
 
 /**
@@ -396,6 +401,7 @@ export function buildValidationRecord(input: {
   setup?: string;
   suspectInfra?: boolean;
   infra?: "stall";
+  resources?: ValidationResourceEvidence;
 }): ValidationRecord {
   const record: ValidationRecord = {
     schema: VALIDATION_SCHEMA,
@@ -409,6 +415,7 @@ export function buildValidationRecord(input: {
   if (input.setup !== undefined && input.setup !== "") record.setup = input.setup;
   if (input.suspectInfra === true) record.suspectInfra = true;
   if (input.infra !== undefined) record.infra = input.infra;
+  if (input.resources !== undefined) record.resources = input.resources;
   return record;
 }
 
@@ -428,6 +435,7 @@ function buildRanRecord(input: {
   summary: string;
   setup?: string;
   infra?: "stall";
+  resources?: ValidationResourceEvidence;
 }): ValidationRecord {
   const suspect = isSuspectInfraFailure({
     status: input.status,
@@ -900,6 +908,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         summary: outputSummary(status, output),
         setup: result.setup,
         infra: result.infraEvidence?.kind,
+        resources: result.resources,
       });
       push({ name, script: "test", label: "operator", scope: "", status, record });
     }
@@ -1000,6 +1009,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         summary,
         setup: result.setup,
         infra: result.infraEvidence?.kind,
+        resources: result.resources,
       });
       push({ name, script, label, scope, status, record });
     }
@@ -1036,6 +1046,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       summary,
       setup: result.setup,
       infra: result.infraEvidence?.kind,
+        resources: result.resources,
     });
     push({ name, script: "typecheck", label, scope, status, record });
   }
@@ -1088,6 +1099,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         summary,
         setup: result.setup,
         infra: result.infraEvidence?.kind,
+        resources: result.resources,
       });
       push({ name: suite.name, script: "test", label, scope: run.scope, runScript: run.script, status, record });
     }
