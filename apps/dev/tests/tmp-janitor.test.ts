@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEAD_WORKER_DIR_TTL_S } from "../src/core/reclaim.js";
 import {
   auditTmpRoot,
   DIAGNOSTICS_TTL_S,
@@ -213,8 +214,28 @@ describe("planWorkerDirJanitor", () => {
     expect(planWorkerDirJanitor([open, unknown], NOW)).toEqual({ reclaim: [], spare: [open, unknown] });
   });
 
-  it("spares dead worker dirs with no issue-bearing attempts", () => {
+  it("spares a FRESH dead worker dir with no issue-bearing attempts", () => {
+    // Spared for its AGE, not for its emptiness: a Worker that has just died
+    // still owns evidence somebody may be reading.
     const entry = worker({ issues: [] });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [], spare: [entry] });
+  });
+
+  it("reclaims an AGED dead worker dir with no issue-bearing attempts", () => {
+    // The corpse case, and the one that made this lane grow without bound.
+    // `everyIssueClosed` and `everyIssueKnown` both gate on `issues.length > 0`,
+    // so a lane whose workspaces were already reclaimed — or that died before
+    // claiming anything — answered `false` to every question and was spared at
+    // ANY age, forever. Seventy-six of them were reported as workers on one host
+    // while this sweep ran every five minutes and freed none of them.
+    const entry = worker({ issues: [], mtimeS: NOW - DEAD_WORKER_DIR_TTL_S });
+    expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [entry], spare: [] });
+  });
+
+  it("still spares an aged EMPTY lane the daemon cannot answer for", () => {
+    // Age never overrides an unreachable authority: only a fresh `dead` verdict
+    // releases a lane, never the absence of one (#2679).
+    const entry = worker({ issues: [], liveness: "unknown", mtimeS: NOW - DEAD_WORKER_DIR_TTL_S });
     expect(planWorkerDirJanitor([entry], NOW)).toEqual({ reclaim: [], spare: [entry] });
   });
 
