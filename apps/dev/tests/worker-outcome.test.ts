@@ -27,7 +27,7 @@ const TABLE: Row[] = [
   { outcome: "exhausted", label: "blocked:quota", recovery: "quota" },
   { outcome: "runner-transient", label: "blocked:runner-transient", recovery: "runner-transient" },
   { outcome: "host-config", label: "blocked:host-config", recovery: null },
-  { outcome: "no-sentinel", label: "blocked:crashed", recovery: "crashed" },
+  { outcome: "no-sentinel", label: "blocked:runner", recovery: "crashed" },
   // #1308: signal-killed is a distinct crash class (OS signal, SIGKILL/SIGTERM).
   // Same `crashed` recovery policy as no-sentinel; the label is distinct so the
   // kill cause is visible in the observability layer.
