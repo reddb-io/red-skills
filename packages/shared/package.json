@@ -34,6 +34,7 @@
     "./repo-root.js": "./repo-root.ts",
     "./resident-client.js": "./resident-client.ts",
     "./resident-core.js": "./resident-core.ts",
+    "./resident-lifecycle.js": "./resident-lifecycle.ts",
     "./resident-protocol.js": "./resident-protocol.ts",
     "./resident-wire.js": "./resident-wire.ts",
     "./rsp-entry.js": "./rsp-entry.ts",

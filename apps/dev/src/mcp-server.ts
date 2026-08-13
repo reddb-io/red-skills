@@ -3,12 +3,14 @@ import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CASTLE_MCP_PROMPTS,
   createCastleMcpTools,
+  type CastleMcpDependencies,
 } from "@reddb-io/red-castle/mcp-server";
+import { CastleResidentClient } from "@reddb-io/red-castle/resident";
 import {
   createEnginePaths,
   createFileIssueCuratorStore,
@@ -31,19 +33,10 @@ import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
 import { createDevGithubMergeRead } from "./runtime/github-merge-read.js";
 import { createMedicIo } from "./runtime/medic-io.js";
 import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
-import { resolveRepoContext, resolveRepoSlug } from "./runtime/wire.js";
-import { buildProjectBootSweeps } from "./commands/boot-sweeps.js";
+import { resolveRepoContext } from "./runtime/wire.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
-import {
-  createResidentWebhook,
-  type ResidentWebhook,
-} from "./resident-webhook.js";
-import {
-  createResidentJanitor,
-  type ResidentJanitor,
-} from "./resident-cron.js";
-import { startResidentUnblockSweep } from "./resident-unblock.js";
-import { startResidentSelfUpdate } from "./resident-self-update.js";
+import type { ResidentWebhook } from "./resident-webhook.js";
+import type { ResidentJanitor } from "./resident-cron.js";
 import { createRedskilledBirthPort } from "./runtime/redskilled-birth.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
 import { renewRegistrationDelivery } from "./runtime/registration-delivery.js";
@@ -96,7 +89,10 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
   return { stop: () => clearInterval(timer) };
 }
 
-export function createRedskilledMcpServer(root = process.cwd()): McpServer {
+export function createRedskilledMcpServer(
+  root = process.cwd(),
+  residentInvoke?: (method: string, input: Record<string, unknown>) => Promise<unknown>,
+): McpServer {
   const server = new McpServer({ name: "redskilled", version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
     name: string,
@@ -109,7 +105,13 @@ export function createRedskilledMcpServer(root = process.cwd()): McpServer {
       content: Array<{ type: "text"; text: string }>;
     }>,
   ) => void;
-  for (const tool of createCastleMcpTools(createCastleMcpDependencies())) {
+  // Tool schemas stay local so MCP discovery needs no resident round-trip. When
+  // a resident invoker is present the dependency object is deliberately empty:
+  // every invocation is replaced below, so this process owns no engine port.
+  const dependencies = residentInvoke === undefined
+    ? createCastleMcpDependencies(root)
+    : ({} as CastleMcpDependencies);
+  for (const tool of createCastleMcpTools(dependencies)) {
     registerTool(
       tool.name,
       {
@@ -121,7 +123,9 @@ export function createRedskilledMcpServer(root = process.cwd()): McpServer {
         content: [
           {
             type: "text" as const,
-            text: encodeRedskilledMcpToon(await tool.invoke(input)),
+            text: encodeRedskilledMcpToon(
+              await (residentInvoke === undefined ? tool.invoke(input) : residentInvoke(tool.name, input)),
+            ),
           },
         ],
       }),
@@ -196,8 +200,14 @@ async function run(): Promise<void> {
     id: `redskilled-mcp:${process.pid}`,
     phase: "connecting",
   });
-  const server = createRedskilledMcpServer();
-  const registrationDelivery = startResidentRegistrationDelivery(root);
+  const client = new CastleResidentClient({
+    cwd: root,
+    clientVersion: buildInfo.version,
+    serverCommand: process.execPath,
+    serverArgs: [resolveCastleResidentBundle(fileURLToPath(import.meta.url))],
+  });
+  await client.open();
+  const server = createRedskilledMcpServer(root, (method, input) => client.call(method, input));
   const close = () => {
     void server.close();
   };
@@ -205,31 +215,35 @@ async function run(): Promise<void> {
   process.once("SIGTERM", close);
   try {
     deaths.phase("serving");
-    let sharedBootSweeps: (() => Promise<void>) | undefined;
+    const inertLease = {
+      acquired: false as const,
+      lease: {
+        pid: process.pid,
+        start_time: "client",
+        acquired_at: "client",
+        renewed_at: "client",
+      },
+    };
     await connectResidentMcp({
       server,
       transport: new StdioServerTransport(),
-      resident: createResidentWebhook({ root }),
-      janitor: createResidentJanitor({
-        root,
-        sweep: async () => {
-          if (!sharedBootSweeps) {
-            const repo = await resolveRepoSlug(root).catch(() => "");
-            sharedBootSweeps = buildProjectBootSweeps(root, repo, (line) =>
-              process.stderr.write(`redskilled MCP resident: ${line}\n`),
-            );
-          }
-          await sharedBootSweeps();
-        },
-        notice: (line) => process.stderr.write(`redskilled MCP resident: ${line}\n`),
-      }),
+      resident: { start: async () => inertLease, stop: async () => undefined },
+      janitor: { start: async () => inertLease, stop: async () => undefined },
     });
   } finally {
-    registrationDelivery.stop();
+    await client.close();
     deaths.phase("closing");
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);
   }
+}
+
+/** Resolve the resident shipped beside this MCP bundle, preserving cache keys. */
+export function resolveCastleResidentBundle(caller: string): string {
+  const file = basename(caller);
+  const match = /^redskilled-mcp(?<version>-[^.]+(?:\.[^.]+)*)?\.bundle\.min\.mjs$/.exec(file);
+  const suffix = match?.groups?.version ?? "";
+  return join(dirname(caller), `castle-resident${suffix}.bundle.min.mjs`);
 }
 
 export const RESIDENT_CURATOR_INTERVAL_MS = 5 * 60 * 1000;
@@ -377,16 +391,12 @@ Worker subcommands (run, monitor, fleet, …) belong to red-skills-dev.
 export async function main(
   argv = process.argv.slice(2),
   dependencies: McpEntrypointDependencies = {
-    startCurator: startResidentIssueCurator,
-    startMergeDriver: startResidentMergeDriver,
-    startUnblockSweep: async () => {
-      await startResidentUnblockSweep();
-    },
-    startSelfUpdate: async () => {
-      await startResidentSelfUpdate({
-        notice: (line) => process.stderr.write(`redskilled MCP resident: ${line}\n`),
-      });
-    },
+    // The dedicated Castle resident owns every belt. The stdio MCP is only a
+    // client and must not start a second in-process authority.
+    startCurator: async () => undefined,
+    startMergeDriver: async () => undefined,
+    startUnblockSweep: async () => undefined,
+    startSelfUpdate: async () => undefined,
     connect: run,
   },
 ): Promise<number> {

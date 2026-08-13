@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import { rspStateDir } from "./red-paths.js";
+import {
+  readResidentRegistryDocument,
+  writeResidentRegistryDocument,
+} from "./resident-lifecycle.js";
 import {
   acquireSpawnLock,
   describeSpawnLockHolder,
@@ -214,12 +217,8 @@ export async function warmResidentServer(paths: RspResidentPaths, config: RspRes
 }
 
 export async function readResidentRegistry(path: string): Promise<RspResidentRegistryEntry | null> {
-  try {
-    const parsed = parseStructuredDocument(await readFile(path, "utf8"));
-    return isResidentRegistryEntry(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  const parsed = await readResidentRegistryDocument(path);
+  return isResidentRegistryEntry(parsed) ? parsed : null;
 }
 
 export async function writeResidentRegistry(
@@ -237,10 +236,7 @@ export async function writeResidentRegistry(
     resident_version: entry.resident_version,
     started_at: entry.started_at ?? new Date().toISOString(),
   };
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${encode(payload as unknown as JsonObject)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(tmp, path);
+  await writeResidentRegistryDocument(path, payload as unknown as Record<string, unknown>);
 }
 
 export async function removeResidentRegistry(path: string, pid = process.pid): Promise<void> {
@@ -399,16 +395,6 @@ function tailString(value: string, maxBytes: number): string {
   const bytes = Buffer.byteLength(value, "utf8");
   if (bytes <= maxBytes) return value;
   return Buffer.from(value, "utf8").subarray(bytes - maxBytes).toString("utf8").replace(/^\uFFFD+/, "");
-}
-
-function parseStructuredDocument(raw: string): unknown {
-  const body = raw.trim();
-  if (!body) return null;
-  try {
-    return JSON.parse(body) as unknown;
-  } catch {
-    return decode(body);
-  }
 }
 
 async function reconcileResidentRegistry(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {

@@ -130,3 +130,4 @@ export type {
   NamedBranchStrategy,
 } from "./SandboxProvider.js";
 export * from "./engine/index.js";
+export * from "./resident.js";

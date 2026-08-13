@@ -77,7 +77,11 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **Operating project execution** -> the `redskilled` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
   from live host state; it is the sole runtime source of execution choreography
-  (ADR 0134). `/afk` and `/go` are clients of that canonical interface. The
+  (ADR 0134). The stdio MCP is a client of the project's one versioned **Castle
+  resident** (ADR 0143), which owns engine state, GitHub adapters, registration,
+  and background belts; use the MCP response for project workflow truth and
+  `/redskilled` for host process/budget truth. `/afk` and `/go` are clients of
+  that canonical interface. The
   tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
@@ -150,6 +154,10 @@ Capability references registered by owner:
 `help` tool, while `status {scope: worker | project | host}` provides scoped
 read-only diagnostics, and a visible project `birth_latch` routes through its
 structured `project_reset` repair) ->
+`plugins/dev/skills/engineering/afk/MCP.md`;
+Castle resident lifecycle (one project identity across Worktrees, versioned
+wire, spawn/handover/idle rules, and the `redskilled` host-authority boundary) ->
+`.red/adr/0143-castle-resident-is-project-workflow-truth.md` and
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
