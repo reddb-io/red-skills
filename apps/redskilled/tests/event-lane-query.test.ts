@@ -73,6 +73,8 @@ function workerEvent(kind: RecordWorkerEventInput["kind"]): RecordWorkerEventInp
       return { ...common, phase: "coding", step: "implementing" };
     case "worker-metrics":
       return { ...common, tokens: 42_000, tools: 31, runner: "codex", model: "gpt-5.6" };
+    case "worker-resource":
+      return { ...common, memoryPeakBytes: 1024, memorySwapPeakBytes: 512, pidsPeak: 7 };
     case "worker-drift":
       return { ...common, baseHeadSha: "bbbb2222", baseCommitsAhead: 3 };
     case "worker-heal":
