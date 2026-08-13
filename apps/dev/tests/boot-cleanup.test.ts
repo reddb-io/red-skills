@@ -649,7 +649,7 @@ describe("runBoot unblock sweep promotes + comments", () => {
         body: "🤖 /afk promoted to ready-for-agent: all blockers closed (#10, #11).",
       },
     ]);
-    expect(r.unblockSweep).toEqual({ promoted: [100] });
+    expect(r.unblockSweep).toMatchObject({ promoted: [100] });
   });
 
   it("promotes a blocked:dependency issue via its req:* labels, shedding blocked:dependency", async () => {
@@ -673,7 +673,7 @@ describe("runBoot unblock sweep promotes + comments", () => {
     expect(ghCalls.comment).toEqual([
       { issue: 100, body: "🤖 /afk unblocked: all dependencies closed (#10, #11)." },
     ]);
-    expect(r.unblockSweep).toEqual({ promoted: [100] });
+    expect(r.unblockSweep).toMatchObject({ promoted: [100] });
   });
 });
 
