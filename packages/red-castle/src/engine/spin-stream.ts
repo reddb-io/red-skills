@@ -1,5 +1,4 @@
 import type { AgentStreamEvent } from "../AgentStreamEmitter.js";
-import type { CastleLaneWriter } from "./lane-writers.js";
 import {
   evaluateSpin,
   SPIN_THRESHOLDS,
@@ -9,7 +8,12 @@ import {
 } from "./spin-evaluator.js";
 
 export interface SpinStreamProcessorOptions {
-  readonly workerLog: Pick<CastleLaneWriter, "append">;
+  readonly workerLog: {
+    append(record: {
+      readonly kind: "worker.spin";
+      readonly payload: { readonly pattern: SpinPattern };
+    }): unknown | Promise<unknown>;
+  };
   readonly steer?: (message: string) => void | Promise<void>;
 }
 
@@ -63,11 +67,13 @@ export function createSpinStreamProcessor(
       if (!verdict || verdict.pattern === lastReportedPattern) return verdict;
       lastReportedPattern = verdict.pattern;
 
-      await options.workerLog.append({
+      const logWrite = options.workerLog.append({
         kind: "worker.spin",
         payload: { pattern: verdict.pattern },
       });
-      await options.steer?.(renderSpinSteer(verdict.pattern));
+      const steerWrite = options.steer?.(renderSpinSteer(verdict.pattern));
+      await logWrite;
+      await steerWrite;
       return verdict;
     },
   };
