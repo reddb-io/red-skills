@@ -27,6 +27,7 @@ import {
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
 import {
   readRedskilledHostConfig,
+  readRedskilledHostGithubApp,
   resolveRedskilledHostEventSinks,
   resolveRedskilledHostSettings,
 } from "./host-config.js";
@@ -55,6 +56,7 @@ import {
   type GithubAttributionLedger,
   type GithubRateBudget,
 } from "@reddb-io/github";
+import { resolveServeGithubCompanions } from "./github-companions.js";
 import { createGitHubActivityTransport } from "./repository-activity.js";
 import {
   reclaimRedskilledRuntimeDirs,
@@ -475,14 +477,26 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       githubAttribution,
     );
     const resolvedGithubBalance = resolveServeGithubBalance(values);
+    // The App is a PAYER to measure, never a credential this daemon acts as.
+    // Declared → its ceiling is asked on its own installation token and written
+    // to its own file, because two buckets summed into one document would make
+    // the last writer the displayed truth for a ceiling the next request may
+    // not draw from.
+    const hostApp = await readRedskilledHostGithubApp();
     const githubBalance = resolvedGithubBalance == null
       ? null
       : {
           ...resolvedGithubBalance,
+          // The operator's own ceiling keeps the unsuffixed name and the default
+          // `pat` stamp: this is the floor every surface already renders, and
+          // renaming it would move a file other processes read.
           store: createGithubBalanceStore({ path: join(hostStateRoot, "github", "balance.toon") }),
           history: createGithubBalanceHistory({
             path: join(hostStateRoot, "github", "balance-history.toonl"),
           }),
+          ...(hostApp === null
+            ? {}
+            : { companions: resolveServeGithubCompanions(hostApp, hostStateRoot) }),
         };
     // Before this daemon anchors itself, it speaks for whatever the last one
     // could not (slice #3028). The host singleton is the only process guaranteed

@@ -10,6 +10,11 @@ import { homedir, totalmem } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
 import {
+  githubAppBlockIn,
+  resolveGithubAppCredential,
+  type GithubAppCredential,
+} from "@reddb-io/github";
+import {
   resolveHostCeiling,
   type RedskilledHostCeiling,
   type RedskilledHostSettingSource,
@@ -62,6 +67,33 @@ export function resolveRedskilledHostEventSinks(
     ...(config.notifications == null ? {} : { notifications: config.notifications }),
     platform,
   };
+}
+
+/**
+ * The GitHub App this host declares, or `null` when it declares none.
+ *
+ * The daemon needs it for ONE reason: to measure the App's ceiling beside the
+ * operator's. It never authenticates a write with it and never routes a read
+ * through it — that routing is per repository and belongs to the dev runtime,
+ * which is where the App actually spends. Here the App is a payer to MEASURE,
+ * not a credential to act as.
+ *
+ * A misdeclared block answers `null` rather than throwing: a daemon that
+ * refused to boot over an optional measurement would trade the whole host for a
+ * number. The dev runtime states the same refusal loudly where it matters.
+ */
+export async function readRedskilledHostGithubApp(
+  homeDir: string = homedir(),
+): Promise<GithubAppCredential | null> {
+  try {
+    const text = await readFile(join(homeDir, REDSKILLED_HOST_CONFIG_PATH), "utf8");
+    return resolveGithubAppCredential({
+      configBlock: githubAppBlockIn(parse(text) as unknown),
+      expandHome: (path) => (path.startsWith("~/") ? join(homeDir, path.slice(2)) : path),
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** Read `plugins.dev.redskilled` from the operator's host file. */

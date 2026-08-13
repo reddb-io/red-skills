@@ -181,6 +181,7 @@ export {
   GITHUB_APP_KEY_ENV,
   createGithubIdentityRouter,
   createGithubInstallationLookup,
+  githubAppBlockIn,
   githubBalanceFileName,
   githubIdentityRef,
   signGithubAppJwt,
@@ -195,6 +196,11 @@ export {
   type GithubIdentityRouterOptions,
   type GithubInstallationLookup,
 } from "./app-credential.js";
+
+export {
+  createGithubAppBalanceTransport,
+  mintGithubInstallationToken,
+} from "./app-balance.js";
 
 export {
   githubCoveragePath,

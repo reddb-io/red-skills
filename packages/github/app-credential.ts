@@ -221,6 +221,26 @@ export function githubIdentityRef(identity: GithubIdentity): string {
 }
 
 /**
+ * Where the `github_app` block lives inside a parsed host config document.
+ *
+ * The daemon and the dev runtime each parse `~/.red/config.yaml` with their own
+ * YAML dependency, so the PATH is the one thing they must agree on. Two hand-
+ * written navigations of the same four keys drift into two different answers —
+ * one of them silently reading no App at all, which is indistinguishable from a
+ * host that declared none.
+ */
+export function githubAppBlockIn(document: unknown): unknown {
+  if (document === null || typeof document !== "object") return null;
+  const plugins = (document as Record<string, unknown>).plugins;
+  if (plugins === null || typeof plugins !== "object") return null;
+  const dev = (plugins as Record<string, unknown>).dev;
+  if (dev === null || typeof dev !== "object") return null;
+  const redskilled = (dev as Record<string, unknown>).redskilled;
+  if (redskilled === null || typeof redskilled !== "object") return null;
+  return (redskilled as Record<string, unknown>).github_app ?? null;
+}
+
+/**
  * Read the App credential from an operator's parsed host config.
  *
  * The environment is for a one-run override; the FILE is the onboarding
