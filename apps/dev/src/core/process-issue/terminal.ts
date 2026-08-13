@@ -113,6 +113,7 @@ import {
 } from "../triage-labels.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
+import { validationBlockerSummary } from "./validation-park.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editIssueLifecycleLabels, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
@@ -252,7 +253,7 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
     case "feedback-failed":
       return makeBlocker({
         kind: "validation",
-        summary: oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
+        summary: validationBlockerSummary(sections.validation) ?? oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
         next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
       });
     case "no-sentinel":
@@ -358,7 +359,6 @@ export function parkLoopFor(
     nowEpoch: deps.nowEpoch(),
   });
 }
-
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
   if (!existing) return false;
   if (next.kind !== "runner") return false;

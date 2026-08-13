@@ -186,11 +186,13 @@ list and also skips loudly.
 | Merge queue | The repository's required CI checks run on the merge group. This is configured at the forge, not in RedSkills. | The merge queue is the CI-side final Validation moment and owns freshness against the merged result. |
 
 `plugins.dev.afk.validation.subsecond_failures_are_branch_fault` is an optional
-boolean declaration beside that schedule. Leave it absent/`false` for the safe
-default: a failed suite command measured under one second is environment fault.
-Set it to `true` only when this repository's declared suite legitimately finishes
-that quickly; its fast failures are then branch fault. This declaration replaces
-the removed runtime classification hook.
+boolean declaration beside that schedule. Verdict first trusts structured branch
+evidence: a compiler diagnostic, failing assertion, or invariant finding is a
+branch fault at any duration, including a turbo cache hit returned in milliseconds.
+Without concrete evidence, an absent/`false` declaration lets a sub-second failure
+remain suspect infrastructure; set it to `true` when every fast failure in this
+repository should default to branch fault. This declaration replaces the removed
+runtime classification hook.
 
 `setup` and `format` remain separate declarations rather than Validation
 moments. `/red-setup` inventories the repository's real scripts, proposes the

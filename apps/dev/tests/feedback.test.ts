@@ -423,6 +423,35 @@ describe("runFeedback", () => {
     expect(check?.record.summary).toContain("suspect-infra");
   });
 
+  it("records a turbo-cached compiler diagnostic as a branch fault (#3773)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["typecheck"] },
+    });
+    const { exec } = fakeExec([
+      {
+        match: (a) => a.includes("typecheck"),
+        result: {
+          code: 2,
+          stdout: "apps/dev/src/runtime/wire/boot.ts(649,21): error TS2345: Argument is not assignable",
+        },
+      },
+    ]);
+    const result = await runFeedback(exec, {
+      worktree: "afk/3773-validation-evidence",
+      worktreeKind: "branch",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(26),
+    });
+
+    const check = result.checks.find((ch) => ch.name === "typecheck:apps/dev");
+    expect(check?.record.durationMs).toBe(26);
+    expect(check?.record.exitCode).toBe(2);
+    expect(check?.record.suspectInfra).toBeUndefined();
+    expect(verdictIsEnvironment(result)).toBe(false);
+  });
+
   it("leaves a plausibly-timed failure unflagged (#3041)", async () => {
     const layout = fakeLayout({
       packages: ["apps/dev"],
