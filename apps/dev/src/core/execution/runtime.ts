@@ -170,7 +170,7 @@ export const HEARTBEAT_DEDUP_MS = 500;
  * sandcastle's own DEFAULT_MAX_ITERATIONS is 1 (run.js), which cuts the inner
  * agent off after a SINGLE agentic invocation — it explores / writes files but
  * exhausts that one iteration's budget BEFORE it can emit `<promise>DONE</promise>`,
- * so AFK sees no completionSignal → no-sentinel → blocked:crashed and never
+ * so AFK sees no completionSignal → no-sentinel → blocked:runner and never
  * merges. The completionSignal (DONE/BLOCKED) is the REAL terminator; this is
  * only the safety ceiling for "the agent never signals". 20 is generous vs the
  * broken 1 yet bounded vs runaway: each iteration is itself bounded by
