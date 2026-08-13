@@ -86,6 +86,8 @@ import type {
   ResourceIncidentStore,
   ResourceIncidentTracker,
 } from "../resource-incidents.js";
+import type { RedskilledResourceLeaseRuntime } from "../resource-lease.js";
+import type { RedskilledResourceLeaseStore } from "../resource-lease-store.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
   /** Test seam; production detects the kernel-side topology at daemon start. */
@@ -135,6 +137,10 @@ export interface RedskilledDaemonOptions {
   readonly eventLane?: RedskilledEventLane;
   /** The durable registration snapshot; defaults to this session's own. */
   readonly registrationIntentStore?: RedskilledRegistrationIntentStore;
+  /** Durable generic host-resource authority; injected for handover tests. */
+  readonly resourceLeaseStore?: RedskilledResourceLeaseStore;
+  /** Real available memory, sampled only while deciding generic resource admission. */
+  readonly availableMemoryBytes?: () => number | Promise<number>;
   /** How the daemon asks whether a re-attached Worker is still running. */
   readonly liveness?: RedskilledLivenessProbe;
   /** How the daemon reads systemd's retained exit receipt for a dead Worker unit. */
@@ -462,9 +468,11 @@ export interface RedskilledDaemon {
       readonly launch?: RedskilledLaunchTemplate;
     },
   ): RedskilledProjectRenewed;
+  /** Run the registration liveness belt once; snapshot reads never invoke it. */
+  sweepRegistrations(): readonly RedskilledProjectRegistration[];
   /** Explicitly clear this project's birth breaker. */
   resetProjectBirthBreaker(projectLabel: string, sessionProject?: string): RedskilledProjectReset;
-  /** The registrations this daemon holds, ordered by project label; lapsed ones swept. */
+  /** The registrations this daemon currently holds, ordered by project label. Pure snapshot. */
   registrations(): readonly RedskilledProjectRegistration[];
   hostState(): RedskilledHostState;
   /** Run the background trunk-refresh body now; exposed so timer behavior is fixture-driven. */
@@ -502,6 +510,8 @@ export interface RedskilledDaemon {
    * read, never a reason for a serving daemon to fall over.
    */
   renewLease(): Promise<RedskilledLease | null>;
+  /** Generic host-resource lease runtime, exposed for deterministic fixtures. */
+  readonly resourceLeases: RedskilledResourceLeaseRuntime;
   /**
    * Store one Worker's last logged line, exactly as it was published.
    *
