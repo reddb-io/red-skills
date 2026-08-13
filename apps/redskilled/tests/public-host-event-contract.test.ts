@@ -19,6 +19,7 @@ const PUBLIC_HOST_EVENT_FIELDS = [
   "fork_sha",
   "heal_kind",
   "isolated",
+  "journal_tail",
   "kind",
   "log_path",
   "memory_high",
