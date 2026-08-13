@@ -137,6 +137,8 @@ describe("the memory floor", () => {
       idleMs: 60_000,
       // Unarmed: this test drives the tick itself, so nothing races it.
       sampleMs: 0,
+      budgetGraceMs: 0,
+      signalWorkerForBudgetGrace: () => true,
       stopWorker: (w) => {
         stopped.push(w.worker_id);
         return true;
@@ -161,6 +163,8 @@ describe("the memory floor", () => {
       paths,
       idleMs: 60_000,
       sampleMs: 0,
+      budgetGraceMs: 0,
+      signalWorkerForBudgetGrace: () => true,
       stopWorker: (w) => {
         stopped.push(w.worker_id);
         return true;
@@ -188,6 +192,8 @@ describe("the memory floor", () => {
       paths,
       idleMs: 60_000,
       sampleMs: 0,
+      budgetGraceMs: 0,
+      signalWorkerForBudgetGrace: () => true,
       stopWorker: () => true,
       treeSampler: () => ({ rss: { "w-1": 3 * 1024 ** 3 }, cpu_seconds: {} }),
     });
@@ -214,6 +220,8 @@ describe("the memory floor", () => {
       paths,
       idleMs: 60_000,
       sampleMs: 0,
+      budgetGraceMs: 0,
+      signalWorkerForBudgetGrace: () => true,
       stopWorker: () => true,
       treeSampler: () => ({ rss: { "w-1": 900 * 1024 * 1024 }, cpu_seconds: {} }),
     });
