@@ -17,6 +17,7 @@ export interface AdversarialReviewConfig {
   readonly maxIterations: number;
   readonly reviewerCount: number;
   readonly quorum: AdversarialReviewQuorum;
+  readonly appraisalFloor?: number;
   readonly runner?: AgentRunner;
   readonly model?: string;
   readonly effort?: AgentEffort;
@@ -90,15 +91,23 @@ function readEffort(raw: string): AgentEffort | undefined {
   return (AGENT_EFFORTS as readonly string[]).includes(raw) ? (raw as AgentEffort) : undefined;
 }
 
+function readAppraisalFloor(raw: string): number | undefined {
+  if (raw.trim().toLowerCase() === "off") return undefined;
+  const floor = Number(raw);
+  return Number.isFinite(floor) && floor >= 0 && floor <= 1 ? floor : undefined;
+}
+
 export function resolveAdversarialReviewConfig(get: (key: string) => string): AdversarialReviewConfig {
   const runner = get("dev.review.runner").trim();
   const model = get("dev.review.model").trim();
   const effort = readEffort(get("dev.review.effort"));
+  const appraisalFloor = readAppraisalFloor(get("dev.review.appraisal_floor"));
   return {
     enabled: get("dev.review.enabled") === "true",
     maxIterations: readPositiveInteger(get("dev.review.max_iterations"), 1),
     reviewerCount: readPositiveInteger(get("dev.review.reviewer_count"), 1),
     quorum: readQuorum(get("dev.review.quorum")),
+    ...(appraisalFloor !== undefined ? { appraisalFloor } : {}),
     ...(runner && isRunner(runner) ? { runner: toAgentRunner(runner) } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
@@ -232,8 +241,23 @@ export function aggregateAdversarialReviewFindings(
 /** PURE and cap-free: one blocking finding blocks, nothing else does. What the
  * engine then DOES about it — draw a Re-seed round or park — is the Re-seed
  * budget's decision, not the reviewer's. */
-export function decideAdversarialReview(findings: AdversarialReviewFindings): AdversarialReviewDecision {
-  return findings.findings.some((finding) => finding.blocking) ? "blocking" : "not-blocking";
+export function appraisalBlocker(
+  findings: AdversarialReviewFindings,
+  floor: number | undefined = undefined,
+): string | undefined {
+  if (floor === undefined || !Number.isFinite(floor) || floor < 0 || floor > 1 || findings.score >= floor) {
+    return undefined;
+  }
+  return `Appraisal score ${findings.score} is below the configured floor ${floor}.`;
+}
+
+export function decideAdversarialReview(
+  findings: AdversarialReviewFindings,
+  appraisalFloor: number | undefined = undefined,
+): AdversarialReviewDecision {
+  return findings.findings.some((finding) => finding.blocking) || appraisalBlocker(findings, appraisalFloor)
+    ? "blocking"
+    : "not-blocking";
 }
 
 export function buildAdversarialReviewPrompt(context: AdversarialReviewContext): string {
@@ -327,16 +351,20 @@ export function renderAdversarialReviewComment(
 export function renderAdversarialReviewBlockerSummary(
   findings: AdversarialReviewFindings,
   cap: number,
+  appraisalFloor: number | undefined = undefined,
 ): string {
   const blocking = findings.findings.filter((finding) => finding.blocking);
+  const appraisal = appraisalBlocker(findings, appraisalFloor);
   const renderedFindings = blocking
     .map((finding, idx) => `${idx + 1}. ${finding.path}:${finding.line} ${finding.body}`)
     .join("; ");
   const roundWord = cap === 1 ? "round" : "rounds";
   return [
     `Re-seed budget exhausted for the review stage after ${cap} reserved ${roundWord}`,
-    `with ${blocking.length} blocking finding(s):`,
-    renderedFindings || findings.summary || "Blocking adversarial review findings remain.",
+    `with ${blocking.length} blocking finding(s)${appraisal ? " and a blocking Appraisal" : ""}:`,
+    [renderedFindings, appraisal].filter(Boolean).join("; ") ||
+      findings.summary ||
+      "Blocking adversarial review findings remain.",
   ].join(" ");
 }
 
