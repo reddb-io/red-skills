@@ -6,7 +6,9 @@
 // allowed through as failures: neither is evidence that the held answer is still
 // current.
 
+import { createAppAuth } from "@octokit/auth-app";
 import { retry } from "@octokit/plugin-retry";
+import { readGithubAppPrivateKey, type GithubAppCredential } from "./app-credential.js";
 import { throttling } from "@octokit/plugin-throttling";
 import { Octokit as RestOctokit } from "@octokit/rest";
 
@@ -143,7 +145,10 @@ export interface GithubGraphqlAttribution {
 }
 
 export interface CreateGithubClientOptions {
+  /** The personal credential; ignored when `app` names an installation. */
   readonly token: string;
+  /** Authenticate as a GitHub App installation instead of as a person. */
+  readonly app?: GithubAppCredential;
   readonly baseUrl?: string;
   readonly fetchImpl?: GithubRequestFetch;
   readonly etags?: GithubEtagStore;
@@ -241,8 +246,23 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl as unknown as typeof fetch } : {}),
     timeoutMs,
   });
+  // An App installation token expires in an hour, so the credential is handed
+  // over as a STRATEGY rather than a string: Octokit mints the first token on
+  // the first request and re-mints when it expires, which is the difference
+  // between a daemon that survives its second hour and one that does not.
+  const appAuth = options.app === undefined
+    ? {}
+    : {
+        authStrategy: createAppAuth,
+        auth: {
+          appId: options.app.appId,
+          installationId: options.app.installationId,
+          privateKey: readGithubAppPrivateKey(options.app),
+        },
+      };
   const octokit = new Octokit({
     auth: options.token,
+    ...appAuth,
     // REST.js logs every non-2xx before the caller can classify it, including
     // the expected 304 that is this client's success path. Outcomes travel as
     // typed returns/errors instead of turning every quiet poll into stderr.

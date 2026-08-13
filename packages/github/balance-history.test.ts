@@ -45,6 +45,7 @@ describe("the GitHub pool curve", () => {
     expect(rows.filter((row) => row.pool === "graphql")).toEqual([
       {
         ts: "2026-08-11T21:00:01.000Z",
+        identity: "pat",
         pool: "graphql",
         remaining: 1_000,
         used: 4_000,
@@ -54,6 +55,7 @@ describe("the GitHub pool curve", () => {
       },
       {
         ts: "2026-08-11T21:10:01.000Z",
+        identity: "pat",
         pool: "graphql",
         remaining: 700,
         used: 4_300,
@@ -63,6 +65,7 @@ describe("the GitHub pool curve", () => {
       },
       {
         ts: "2026-08-11T21:10:16.000Z",
+        identity: "pat",
         pool: "graphql",
         remaining: 0,
         used: 5_000,

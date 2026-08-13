@@ -335,9 +335,21 @@ jobs:
       # against the embedded RedDb elision store, and `rsp setup` provisions
       # through the same binary. With REDDB_SKIP_POSTINSTALL=1 every
       # built-bundle resident test dies with `reddb: binary "red" not found`.
+      # ...and that download has no retry of its own. GitHub Releases answers 503
+      # under load, which failed this job twice in one evening on a byte nobody
+      # changed — the same lesson the pinned `tq` install above already learned,
+      # applied to the one step that had not. Coverage is not the thing to drop
+      # when the network is the thing that failed.
       - name: Install workspace dependencies
         if: env.RUN_RSP == 'true'
-        run: pnpm install --frozen-lockfile
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then exit 0; fi
+            echo "::warning::dependency install attempt $attempt failed; retrying (the @reddb-io/sdk postinstall downloads the red binary from GitHub Releases)"
+            sleep $((attempt * 20))
+          done
+          pnpm install --frozen-lockfile
 
       - name: Build distributable RSP bundle
         if: env.RUN_RSP == 'true'

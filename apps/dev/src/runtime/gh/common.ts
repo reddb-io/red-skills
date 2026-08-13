@@ -1,12 +1,21 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import yaml from "js-yaml";
 import { join } from "node:path";
 import {
   createGithubAttributionLedger,
   createGithubClient,
+  createGithubInstallationLookup,
+  githubCoveragePath,
+  openGithubCoverageCache,
   planGithubRestRead,
+  resolveGithubAppCredential,
+  type GithubAppCredential,
   type GithubClient,
   type GithubConditionalRestRequest,
 } from "@reddb-io/github";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { stateDir } from "@reddb-io/shared/red-paths.js";
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
 import { resolveGhQuotaBackoff, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
@@ -186,8 +195,12 @@ export function githubReadClient(
   if (held) return held;
   const token = trackerToken();
   if (token === "") throw new Error("GitHub reads require an authenticated tracker credential");
+  const app = coveringApp(ctx);
+  // Read-only by construction: writes leave through `runGithubWrite` into the
+  // `gh` CLI on the OPERATOR's credential, so the App pays and the operator signs.
   const client = createGithubClient({
     token,
+    ...(app === null ? {} : { app }),
     attribution: createGithubAttributionLedger({
       path: join(stateDir(ctx.cwd), "github", "spend.toonl"),
     }),
@@ -253,4 +266,66 @@ export function apiPath(ctx: GhContext, suffix: string): string {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The App credential when it stands in THIS repository, else `null`.
+ *
+ * The daemon is host-global but an installation covers an account, so the
+ * operator is routinely in a repository the App was never installed on. That
+ * request must still go out, on the personal token — this is a router, not a
+ * switch, and the person remains the floor.
+ *
+ * The decision is synchronous because the transport is built synchronously: a
+ * remembered answer decides now, and an unknown repository is paid for by the
+ * person while the answer is learned in the background for every process after
+ * this one. Learning costs one request and is never allowed to fail a read.
+ */
+function coveringApp(ctx: GhContext): GithubAppCredential | null {
+  let app: GithubAppCredential | null;
+  try {
+    app = resolveGithubAppCredential({
+      configBlock: readHostGithubAppBlock(),
+      expandHome: (path) => (path.startsWith("~/") ? join(homedir(), path.slice(2)) : path),
+    });
+  } catch {
+    return null; // a misdeclared App must not take the personal token down with it
+  }
+  if (app === null) return null;
+  const repo = githubRepo(ctx);
+  if (!repo) return null;
+
+  const cachePath = githubCoveragePath(
+    join(redskilledHomeDir(homedir()), "state"),
+    app.installationId,
+  );
+  const cache = openGithubCoverageCache(cachePath);
+  const remembered = cache.covered(repo.owner, repo.repo);
+  if (remembered !== undefined) return remembered ? app : null;
+
+  void createGithubInstallationLookup(app)(repo.owner, repo.repo)
+    .then((covered) => { if (covered !== null) cache.remember(repo.owner, repo.repo, covered); })
+    .catch(() => undefined);
+  return null;
+}
+
+/**
+ * The operator's `github_app` block from the host policy file.
+ *
+ * The file is the onboarding surface — three exported variables are a setup
+ * nobody remembers doing and nobody finds again — and an absent or malformed
+ * file simply leaves the person as this host's identity.
+ */
+function readHostGithubAppBlock(): unknown {
+  try {
+    const document = yaml.load(
+      readFileSync(join(homedir(), ".red", "config.yaml"), "utf8"),
+    ) as Record<string, unknown> | null;
+    const plugins = document?.plugins as Record<string, unknown> | undefined;
+    const dev = plugins?.dev as Record<string, unknown> | undefined;
+    const redskilled = dev?.redskilled as Record<string, unknown> | undefined;
+    return redskilled?.github_app ?? null;
+  } catch {
+    return null;
+  }
 }

@@ -174,3 +174,31 @@ export {
   type GithubWriteContext,
   type GithubWritePlan,
 } from "./write-plan.js";
+
+export {
+  GITHUB_APP_ID_ENV,
+  GITHUB_APP_INSTALLATION_ENV,
+  GITHUB_APP_KEY_ENV,
+  createGithubIdentityRouter,
+  createGithubInstallationLookup,
+  githubBalanceFileName,
+  githubIdentityRef,
+  signGithubAppJwt,
+  readGithubAppCredentialFromConfig,
+  readGithubAppCredentialFromEnv,
+  resolveGithubAppCredential,
+  readGithubAppPrivateKey,
+  type GithubAppCredential,
+  type GithubIdentity,
+  type GithubIdentityDecision,
+  type GithubIdentityRouter,
+  type GithubIdentityRouterOptions,
+  type GithubInstallationLookup,
+} from "./app-credential.js";
+
+export {
+  githubCoveragePath,
+  openGithubCoverageCache,
+  type GithubCoverageCache,
+  type GithubCoverageEntry,
+} from "./app-coverage.js";

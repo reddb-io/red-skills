@@ -13,6 +13,16 @@ import type { GithubRateBudget } from "./surface.js";
 
 export interface GithubBalanceHistoryRow {
   readonly ts: string;
+  /**
+   * WHICH bucket this row measures — `pat` or `app:<installation>`.
+   *
+   * Two identities on one host have two independent 5,000/hour ceilings, and a
+   * series that does not say whose it is cannot be plotted, summed safely, or
+   * compared over time: a consumer would read two interleaved sawtooths as one
+   * impossible one. Rows written before identities existed carry no column, so
+   * a reader treats an absent value as the personal token.
+   */
+  readonly identity: string;
   readonly pool: GithubRateBudget;
   readonly remaining: number;
   readonly used: number;
@@ -27,6 +37,8 @@ export interface GithubBalanceHistory {
 
 export interface CreateGithubBalanceHistoryOptions {
   readonly path: string;
+  /** The identity whose ceiling this history measures. Defaults to the person. */
+  readonly identity?: string;
   readonly clock?: () => string;
   /** Test override; production uses the registry-declared ceiling. */
   readonly maxBytes?: number;
@@ -39,6 +51,7 @@ export function createGithubBalanceHistory(
   const clock = options.clock ?? (() => new Date().toISOString());
   const policy = LANE_RETENTION_REGISTRY["github-balance-history"];
   const maxBytes = options.maxBytes ?? policy.maxBytes;
+  const identity = options.identity ?? "pat";
   let pendingWrite = Promise.resolve();
   return {
     async append(balance): Promise<void> {
@@ -49,6 +62,7 @@ export function createGithubBalanceHistory(
         if (observed === null) continue;
         rows.push({
           ts,
+          identity,
           pool,
           remaining: observed.remaining,
           used: observed.used,

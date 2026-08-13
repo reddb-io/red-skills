@@ -31,6 +31,16 @@ export interface GithubSpendObservation {
   readonly version: 1;
   readonly observed_at: string;
   readonly operation_key: string;
+  /**
+   * WHICH bucket paid — `pat` or `app:<installation>`.
+   *
+   * Attribution answers "what spent the quota", and with two identities on one
+   * host that question has two answers at once: the same operation key against
+   * two repositories may draw on two different ceilings. A ledger that omits
+   * the payer can total a bucket that never paid. Absent means the person, so
+   * rows written before identities existed still read.
+   */
+  readonly identity?: string;
   readonly pool: GithubRateBudget;
   /** Process/work owner when the transport can name one (for example a Worker). */
   readonly actor?: string;
@@ -82,6 +92,8 @@ export interface CreateGithubAttributionLedgerOptions {
   /** Durable TOONL path. The caller owns where project/host state lives. */
   readonly path: string;
   readonly now?: () => string;
+  /** The bucket that pays through this ledger. Defaults to the person. */
+  readonly identity?: string;
   /** Override the production byte ceiling; exposed for tiny-lane tests. */
   readonly maxBytes?: number;
 }
@@ -110,7 +122,13 @@ export function createGithubAttributionLedger(
 
   return {
     record(input): Promise<void> {
-      const observation = makeObservation(input.operation, input.cost, input.observedAt ?? now(), input.actor);
+      const observation = makeObservation(
+        input.operation,
+        input.cost,
+        input.observedAt ?? now(),
+        input.actor,
+        options.identity,
+      );
       const segment = encodeToonlLines().push(toToonlRecord(observation));
       // A FAILED write must not become every later caller's failure. Chaining the
       // tail onto the raw promise meant one rejection — the lane-ceiling throw
@@ -223,6 +241,7 @@ function makeObservation(
   cost: number,
   observedAt: string,
   actor?: string,
+  identity?: string,
 ): GithubSpendObservation {
   instant(observedAt, "GitHub spend observation");
   if (!Number.isSafeInteger(cost) || cost < 0) {
@@ -235,6 +254,7 @@ function makeObservation(
     version: 1,
     observed_at: observedAt,
     operation_key: operation.key,
+    ...(identity === undefined ? {} : { identity }),
     pool: operation.budget,
     ...(actor === undefined ? {} : { actor }),
     cost,
@@ -288,6 +308,7 @@ function toToonlRecord(observation: GithubSpendObservation): ToonlRecord {
     version: observation.version,
     observed_at: observation.observed_at,
     operation_key: observation.operation_key,
+    ...(observation.identity === undefined ? {} : { identity: observation.identity }),
     pool: observation.pool,
     ...(observation.actor === undefined ? {} : { actor: observation.actor }),
     cost: observation.cost,

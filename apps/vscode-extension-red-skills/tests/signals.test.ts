@@ -54,6 +54,10 @@ function event(overrides: Partial<RedskilledHostEvent>): RedskilledHostEvent {
     reason: null,
     exit_code: 0,
     signal: null,
+    systemd_result: null,
+    memory_peak_bytes: null,
+    memory_swap_peak_bytes: null,
+    journal_tail: null,
     ...overrides,
   };
 }
