@@ -2,10 +2,10 @@ import type { AgentEffort, AgentRunner } from "./execution.js";
 import type { RunOptions } from "@reddb-io/red-castle";
 import { defaultTier, type AfkModelTier } from "./config.js";
 import {
-  reviewFindingsSchema,
+  scoredReviewFindingsSchema,
   resolveMaxRetries,
   type InlineComment,
-  type ReviewFindings,
+  type ScoredReviewFindings,
   type StandardSchemaLike,
 } from "./review.js";
 import type { ReviewExtractDeps } from "./review-extract.js";
@@ -30,6 +30,7 @@ export interface AdversarialReviewFinding extends InlineComment {
 
 export interface AdversarialReviewFindings {
   readonly summary: string;
+  readonly score: number;
   readonly findings: readonly AdversarialReviewFinding[];
 }
 
@@ -52,10 +53,10 @@ export interface AdversarialReviewContext {
  * budget now lives in the Re-seed budget, which parks uniformly when exhausted. */
 export type AdversarialReviewDecision = "blocking" | "not-blocking";
 
-export interface AdversarialReviewExtractDeps extends Omit<ReviewExtractDeps, "output"> {
+export interface AdversarialReviewExtractDeps extends Omit<ReviewExtractDeps<ScoredReviewFindings>, "output"> {
   output: (opts: {
     tag: string;
-    schema: StandardSchemaLike<ReviewFindings>;
+    schema: StandardSchemaLike<ScoredReviewFindings>;
     maxRetries: number;
   }) => RunOptions["output"];
 }
@@ -199,7 +200,7 @@ export function aggregateAdversarialReviewFindings(
   quorum: AdversarialReviewQuorum,
 ): AdversarialReviewFindings {
   if (reviews.length === 0) {
-    return { summary: "No adversarial reviewers ran.", findings: [] };
+    return { summary: "No adversarial reviewers ran.", score: 0, findings: [] };
   }
   const threshold = quorumThreshold(quorum, reviews.length);
   const byKey = new Map<string, AdversarialReviewFinding>();
@@ -224,7 +225,8 @@ export function aggregateAdversarialReviewFindings(
       ? reviews[0]!.summary
       : `Aggregated ${reviews.length} adversarial reviewer(s) with quorum ${String(quorum)}. ` +
         reviews.map((review, idx) => `Reviewer ${idx + 1}: ${review.summary}`).join(" ");
-  return { summary, findings };
+  const score = reviews.reduce((total, review) => total + review.score, 0) / reviews.length;
+  return { summary, score, findings };
 }
 
 /** PURE and cap-free: one blocking finding blocks, nothing else does. What the
@@ -258,6 +260,7 @@ export function buildAdversarialReviewPrompt(context: AdversarialReviewContext):
     "</worktree-diff>",
     "",
     "Review the diff for correctness defects and conformance to the Issue's `## Acceptance criteria` section.",
+    "Set `score` to a holistic number from 0 to 1 answering: does this branch answer what was asked, and is it good enough to land?",
     "Every finding must be concrete and actionable. Set each finding's `blocking` flag to true when it must be fixed before merge.",
     "This pass is advisory only: do not push code, modify files, or instruct another process.",
     "",
@@ -266,6 +269,7 @@ export function buildAdversarialReviewPrompt(context: AdversarialReviewContext):
     JSON.stringify(
       {
         summary: "<one-paragraph overall assessment>",
+        score: 0.8,
         inlineComments: [{ path: "<file from the diff>", line: 1, body: "<finding>", blocking: false }],
         blocking: false,
       },
@@ -279,9 +283,10 @@ export function buildAdversarialReviewPrompt(context: AdversarialReviewContext):
   ].join("\n");
 }
 
-export function normalizeAdversarialFindings(findings: ReviewFindings): AdversarialReviewFindings {
+export function normalizeAdversarialFindings(findings: ScoredReviewFindings): AdversarialReviewFindings {
   return {
     summary: findings.summary,
+    score: findings.score,
     findings: findings.inlineComments.map((comment) => ({
       ...comment,
       blocking: (comment as Partial<AdversarialReviewFinding>).blocking ?? findings.blocking,
@@ -298,6 +303,7 @@ export function renderAdversarialReviewComment(
     "## AFK adversarial review",
     "",
     `Decision: ${decisionText}`,
+    `Appraisal: ${findings.score}`,
     "",
     findings.summary,
     "",
@@ -352,7 +358,7 @@ export function makeExtractAdversarialReview(
       logging: { type: "stdout" },
       output: deps.output({
         tag: ADVERSARIAL_REVIEW_OUTPUT_TAG,
-        schema: reviewFindingsSchema,
+        schema: scoredReviewFindingsSchema,
         maxRetries: resolveMaxRetries(input.runner),
       }),
     });
