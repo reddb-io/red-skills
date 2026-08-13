@@ -41,6 +41,8 @@
  *    operator's registry decide a unit test. Pinned `off`: a suite that means to
  *    exercise the floor states its own policy explicitly, which is the same
  *    "own the absence" rule the four pins above hold.
+ * 7. `REDSKILLED_UNIT_DISCOVERY` — host unit adoption. A sandbox claim must not
+ *    adopt the operator's real systemd Workers into its accounting or event lane.
  *
  * Every pin is an environment variable rather than an injected parameter,
  * because the leak is in the DEFAULT derivation — a test that had to remember to
@@ -77,6 +79,7 @@ export function pinIsolatedRedskilledHost(env: NodeJS.ProcessEnv = process.env):
   // than as a broken installation.
   env.REDSKILLED_BIN = join(root, "no-daemon-in-this-sandbox");
   env.RED_DEV_ENGINE_FLOOR = "off";
+  env.REDSKILLED_UNIT_DISCOVERY = "off";
   for (const variable of PLUGIN_ROOT_ENV) delete env[variable];
   mkdirSync(env.XDG_RUNTIME_DIR, { recursive: true });
   mkdirSync(env.REDSKILLED_MACHINE_DIR, { recursive: true });

@@ -85,6 +85,27 @@ function procHost(rows: ReadonlyArray<{ readonly pid: number; readonly ppid: num
 }
 
 describe("reported memory tracks the cgroup", () => {
+  it("leaves CPU unreported for a unit whose cpu.stat the kernel does not expose", () => {
+    // `cgroupHost` omits `cpu.stat` when no cpuUsec is stated, which is the shape
+    // of a unit the kernel accounts for memory and not for CPU. The forensic
+    // reader is TOTAL by design — an absent counter comes back as a stated zero
+    // so an incident record has no missing fields — and the daemon stamps a FRESH
+    // `sampled_at` on every CPU entry it is handed. So recording that zero dates
+    // a reading nobody took, and the Worker loses the last one it really had.
+    const { cgroupRoot, selfCgroupPath } = cgroupHost({
+      "red-worker-acme-widgets-w1.service": { bytes: 512 * 1024 * 1024 },
+    });
+
+    const reading = sampleWorkerTrees(
+      [worker({ worker_id: "w1", unit: "red-worker-acme-widgets-w1.service" })],
+      { platform: "linux", cgroupRoot, selfCgroupPath, procRoot: procHost([]), uid: 1000 },
+    );
+
+    expect(reading.rss.w1).toBe(512 * 1024 * 1024);
+    expect(reading.sources?.w1).toBe("cgroup");
+    expect(reading.cpu_seconds.w1).toBeUndefined();
+  });
+
   it("reports the unit's own memory.current, not a walk over the recorded pid", () => {
     // The exact shape of the defect: the pid the daemon holds is the
     // `systemd-run --wait` client, a small process in the DAEMON's cgroup, while

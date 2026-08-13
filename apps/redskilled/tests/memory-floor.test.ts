@@ -369,7 +369,7 @@ describe("the memory floor", () => {
   });
 
   it("measures nothing when no process table can be read at all, rather than reporting zero", () => {
-    const empty = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
+    const empty = { rss: {}, cpu_seconds: {}, processes: {}, sources: {}, resource_samples: {} };
     expect(sampleWorkerTrees([worker()], { platform: "aix" })).toEqual(empty);
     expect(sampleWorkerTrees([worker()], { platform: "darwin", psTable: () => "" })).toEqual(empty);
   });

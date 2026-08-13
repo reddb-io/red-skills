@@ -30,6 +30,14 @@ import type { RedskilledBirthLatch } from "./demand-loop.js";
 import type { RedskilledQueueDiscovery, RedskilledQueueOutcome } from "./queue-discovery.js";
 import type { RedskilledMajorHold, RedskilledReplacementHoldReason } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
+import type { ResourceIncidentSummary } from "./resource-incidents.js";
+
+export interface RedskilledResourceIncidentState {
+  readonly source: "cgroup-v2-preferred";
+  readonly active: number;
+  readonly retained: number;
+  readonly latest: readonly ResourceIncidentSummary[];
+}
 
 /**
  * Which instrument produced an RSS reading.
@@ -361,6 +369,8 @@ export interface RedskilledHostState {
   readonly budget_accounting: RedskilledBudgetAccounting;
   /** Running version against published version, and what is being done about it. */
   readonly upgrade: RedskilledUpgradeState;
+  /** Bounded forensic captures; absent only for daemons predating instrumentation. */
+  readonly resource_incidents?: RedskilledResourceIncidentState;
 }
 
 export interface BuildHostStateInput {
@@ -412,6 +422,7 @@ export interface BuildHostStateInput {
    * registration nobody has renewed in an hour `renewing`.
    */
   readonly now?: string;
+  readonly resourceIncidents?: RedskilledResourceIncidentState;
   /** The version observation; a daemon that never checked reports unknown. */
   readonly published?: {
     readonly version: string | null;
@@ -467,6 +478,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
       hostCeilingBytes: input.ceiling?.memory_bytes ?? input.hostCeilingBytes ?? null,
     }),
     upgrade: buildUpgradeState(input),
+    ...(input.resourceIncidents === undefined ? {} : { resource_incidents: input.resourceIncidents }),
   };
 }
 
@@ -597,7 +609,17 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // bundle versions (ADR 0130 rule 3), so a field this bundle added must not
     // make an older daemon's complete answer read as malformed — while a field
     // that IS there and is the wrong shape still fails closed.
-    (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade));
+    (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade)) &&
+    (state.resource_incidents === undefined || isResourceIncidentState(state.resource_incidents));
+}
+
+function isResourceIncidentState(value: unknown): value is RedskilledResourceIncidentState {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Record<string, unknown>;
+  return state.source === "cgroup-v2-preferred" &&
+    Number.isInteger(state.active) && Number(state.active) >= 0 &&
+    Number.isInteger(state.retained) && Number(state.retained) >= 0 &&
+    Array.isArray(state.latest);
 }
 
 function isRedskilledRequestHealth(value: unknown): value is RedskilledRequestHealth {
