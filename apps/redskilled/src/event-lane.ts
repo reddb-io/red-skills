@@ -217,6 +217,12 @@ export interface RedskilledHostEvent {
   readonly exit_code: number | null;
   /** The signal that ended the Worker, when one did. */
   readonly signal: string | null;
+  /** systemd's service result for a unit-backed Worker, when retained. */
+  readonly systemd_result: string | null;
+  /** Peak anonymous/file memory charged to the unit, in bytes. */
+  readonly memory_peak_bytes: number | null;
+  /** Peak swap charged to the unit, in bytes. */
+  readonly memory_swap_peak_bytes: number | null;
 }
 
 /** A host-event record whose discriminator carries the public stability promise. */
@@ -241,6 +247,9 @@ export interface RecordEventInput {
   readonly detail?: string | null;
   readonly exitCode?: number | null;
   readonly signal?: string | null;
+  readonly systemdResult?: string | null;
+  readonly memoryPeakBytes?: number | null;
+  readonly memorySwapPeakBytes?: number | null;
   readonly reason?: string | null;
 }
 
@@ -252,6 +261,9 @@ export interface RecordWorkerEventInput {
   readonly detail?: string | null;
   readonly exitCode?: number | null;
   readonly signal?: string | null;
+  readonly systemdResult?: string | null;
+  readonly memoryPeakBytes?: number | null;
+  readonly memorySwapPeakBytes?: number | null;
   readonly admissionVerdict?: string | null;
   readonly phase?: string | null;
   readonly step?: string | null;
@@ -308,6 +320,9 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     detail: input.detail ?? null,
     exit_code: input.exitCode ?? null,
     signal: input.signal ?? null,
+    systemd_result: input.systemdResult ?? null,
+    memory_peak_bytes: input.memoryPeakBytes ?? null,
+    memory_swap_peak_bytes: input.memorySwapPeakBytes ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
   };
 }
@@ -343,6 +358,9 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     detail: input.detail,
     exit_code: null,
     signal: null,
+    systemd_result: null,
+    memory_peak_bytes: null,
+    memory_swap_peak_bytes: null,
     reason: null,
   };
 }
@@ -778,6 +796,13 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     // an old row would tell a project a crashed Worker finished its work.
     exit_code: record.exit_code == null || record.exit_code === "" ? null : Number(record.exit_code),
     signal: text(record.signal),
+    systemd_result: text(record.systemd_result),
+    memory_peak_bytes: record.memory_peak_bytes == null || record.memory_peak_bytes === ""
+      ? null
+      : Number(record.memory_peak_bytes),
+    memory_swap_peak_bytes: record.memory_swap_peak_bytes == null || record.memory_swap_peak_bytes === ""
+      ? null
+      : Number(record.memory_swap_peak_bytes),
     // A lane written before stops were recorded reads them as absent, never as a
     // crash: "this daemon did not say why it left" is the honest answer for a row
     // whose writer had no way to say anything.
