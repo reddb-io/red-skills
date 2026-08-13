@@ -52,7 +52,11 @@ export function resolveProjectLabelForDir(dir: string): string {
 /** The full identity, for a caller that needs the slug as well as the name. */
 export function resolveProjectIdentityForDir(dir: string): ProjectIdentity {
   const declared = readDeclaredProjectName(dir);
-  const gitCommonDir = gitOutput(dir, ["rev-parse", "--absolute-git-dir"]) ??
+  // Ask for the COMMON directory explicitly. `--absolute-git-dir` names a
+  // linked worktree's private `.git/worktrees/<name>` directory and therefore
+  // gives every sibling a different identity. The path-format form also keeps
+  // the fallback independent from the caller's current directory.
+  const gitCommonDir = gitOutput(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) ??
     gitOutput(dir, ["rev-parse", "--git-common-dir"]);
   const remoteUrl = gitOutput(dir, ["remote", "get-url", "origin"]);
   return resolveProjectIdentity({

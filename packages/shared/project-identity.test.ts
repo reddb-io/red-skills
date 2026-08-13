@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   declaredProjectNameInConfig,
@@ -5,6 +9,7 @@ import {
   resolveProjectIdentity,
   type ProjectIdentityInput,
 } from "./project-identity.js";
+import { resolveProjectIdentityForDir } from "./project-identity-resolve.js";
 
 /**
  * Table-driven and filesystem-free by contract: every case is a literal input
@@ -190,5 +195,24 @@ describe("resolveProjectIdentity — purity", () => {
     const input = { ...MAIN };
     resolveProjectIdentity(input);
     expect(input).toEqual(MAIN);
+  });
+});
+
+describe("resolveProjectIdentityForDir — git fixtures", () => {
+  it("resolves a primary checkout and sibling worktree to one project", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "project-identity-worktree-"));
+    const primary = join(fixture, "primary");
+    const sibling = join(fixture, "sibling");
+    mkdirSync(primary);
+    execFileSync("git", ["init", "-q"], { cwd: primary });
+    execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: primary });
+    execFileSync("git", ["config", "user.name", "Fixture"], { cwd: primary });
+    execFileSync("git", ["remote", "add", "origin", "git@example.invalid:owner/project.git"], { cwd: primary });
+    writeFileSync(join(primary, "README.md"), "fixture\n", "utf8");
+    execFileSync("git", ["add", "README.md"], { cwd: primary });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: primary });
+    execFileSync("git", ["worktree", "add", "-q", "-b", "fixture-sibling", sibling], { cwd: primary });
+
+    expect(resolveProjectIdentityForDir(sibling)).toEqual(resolveProjectIdentityForDir(primary));
   });
 });

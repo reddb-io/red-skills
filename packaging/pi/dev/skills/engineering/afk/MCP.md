@@ -8,6 +8,14 @@ The name identifies the operator-facing system boundary; `red-castle` remains
 the execution substrate and its `Castle*` contracts remain internal. This file
 is the client contract; the skills that reference it never restate the tool list.
 
+**The stdio server is a wire client, not the resident.** One versioned Castle
+resident per canonical project owns engine state, GitHub adapters, registration
+renewal, and background belts (ADR 0143); the Primary checkout and sibling
+Worktrees rendezvous through Git's common directory. `redskilled` remains the
+separate host authority for process birth, death, placement, and budgets. A
+typed `INCOMPATIBLE_RESIDENT_PROTOCOL` response is terminal for the call —
+surface it directly because no client carries an in-process workflow fallback.
+
 ## How to reach the tools
 
 The server is registered as `redskilled` in `plugins/dev/.mcp.json`, so a host that
@@ -81,8 +89,8 @@ remain available for specialized lifecycle operations during consolidation.
 
 When `.red/config.yaml` declares both
 `plugins.dev.afk.standing.runner` and `plugins.dev.afk.standing.target`, MCP
-startup calls the same ensure-style drain automatically and renews it for the
-session lifetime. The standing marker travels in the registration, allowing the
+startup reaches the Castle resident, which calls the same ensure-style drain
+automatically and renews it for the resident lifetime. The standing marker travels in the registration, allowing the
 daemon to retain its recoverable intent while a counted backlog remains. Without
 that block, startup preserves the explicit-only `drain`/`project_start` behavior.
 
