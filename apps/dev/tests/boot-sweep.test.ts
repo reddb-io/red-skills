@@ -349,7 +349,7 @@ describe("executeUnblockSweep", () => {
       { number: 7, labels: ["blocked:dependency", "req:101", "req:102"], body: "" },
     ];
     const rec = recordingGh();
-    const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "CLOSED" }), rec.gh);
+    const { promoted } = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "CLOSED" }), rec.gh);
 
     expect(promoted).toEqual([7]);
     expect(rec.edits).toEqual([
@@ -384,7 +384,7 @@ describe("executeUnblockSweep", () => {
       { number: 7, labels: ["blocked:dependency", "req:101", "req:102"], body: "" },
     ];
     const rec = recordingGh();
-    const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "OPEN" }), rec.gh);
+    const { promoted } = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "OPEN" }), rec.gh);
 
     expect(promoted).toEqual([]);
     expect(rec.edits).toEqual([]);
@@ -396,7 +396,7 @@ describe("executeUnblockSweep", () => {
       { number: 7, labels: ["ready-for-human", "req:101"], body: "## Blocked by\n- [ ] #101\n" },
     ];
     const rec = recordingGh();
-    const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED" }), rec.gh);
+    const { promoted } = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED" }), rec.gh);
 
     expect(promoted).toEqual([]);
     expect(rec.edits).toEqual([]);
@@ -410,7 +410,7 @@ describe("executeUnblockSweep", () => {
       { number: 9, labels: ["ready-for-human", "req:103"], body: "" }, // human gate → never
     ];
     const rec = recordingGh();
-    const promoted = await executeUnblockSweep(
+    const { promoted } = await executeUnblockSweep(
       candidates,
       lookupFor({ 101: "CLOSED", 102: "OPEN", 103: "CLOSED" }),
       rec.gh,
@@ -451,7 +451,7 @@ describe("executeUnblockSweep — HUMAN-ONLY type routing", () => {
       { number: 12, labels: ["blocked:dependency", "req:8", "wayfinder:grilling"], body: "" },
     ];
     const rec = recordingGh();
-    const promoted = await executeUnblockSweep(
+    const { promoted } = await executeUnblockSweep(
       candidates,
       lookupFor({ 8: "CLOSED" }),
       rec.gh,
@@ -472,7 +472,7 @@ describe("executeUnblockSweep — HUMAN-ONLY type routing", () => {
       { number: 13, labels: ["blocked:dependency", "req:8", "wayfinder:task"], body: "" },
     ];
     const rec = recordingGh();
-    const promoted = await executeUnblockSweep(
+    const { promoted } = await executeUnblockSweep(
       candidates,
       lookupFor({ 8: "CLOSED" }),
       rec.gh,

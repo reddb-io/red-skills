@@ -295,8 +295,12 @@ export function createDefaultDevAfkMcpOperations(
       // own schedule. The lane comes from THIS repo's installed vocabulary
       // (#2966), so a HUMAN-ONLY dependent parks for its human instead of
       // joining the queue.
-      const promoted = await runRepoUnblockPass(root);
-      return { promoted };
+      // The answer carries the per-candidate account, not the promoted numbers
+      // alone: an empty list used to be the sweep's whole vocabulary, so "no
+      // candidate matched", "a blocker still reads open" and "the transition was
+      // refused" were one indistinguishable silence to whoever called this.
+      const { promoted, outcomes } = await runRepoUnblockPass(root);
+      return { promoted, outcomes };
     },
     async gateRun(input) {
       const paths = afkPaths(root);

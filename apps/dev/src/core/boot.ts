@@ -39,6 +39,7 @@ import {
 import {
   executeMixedBlockedNormalize,
   executeUnblockSweep,
+  type UnblockOutcome,
   planReconcileSweep,
   stragglerCounts,
   shouldWarnStragglers,
@@ -816,6 +817,9 @@ export interface BranchCleanupResult {
 
 export interface UnblockSweepResult {
   promoted: number[];
+  /** Why each candidate ended where it did — see `UnblockOutcome`. Optional so a
+   * caller that only ever wanted the promoted numbers keeps compiling. */
+  outcomes?: UnblockOutcome[];
 }
 
 export interface MixedBlockedNormalizeResult {
@@ -1504,13 +1508,13 @@ async function runUnblockSweep(
   // periodic supervisor sweep (#844) promote through exactly one code path.
   // The repo's own vocabulary decides the LANE (#2966): a dependent carrying a
   // declared HUMAN-ONLY type parks for its human instead of joining the queue.
-  const promoted = await executeUnblockSweep(
+  const report = await executeUnblockSweep(
     candidates,
     deps.lookups.blockerState,
     deps.gh,
     readHitlTypeLabels(deps.config ?? {}),
   );
-  return { promoted };
+  return report;
 }
 
 /** Step 6a0: mixed-blocked normalizer (#1481). Heal any issue found in the illegal

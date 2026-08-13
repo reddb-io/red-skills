@@ -28,6 +28,7 @@ import {
 } from "@reddb-io/red-castle/engine";
 import { resolveRepoRoot } from "@reddb-io/shared/repo-root.js";
 import { readPidStartTime } from "./core/state.js";
+import type { UnblockSweepReport } from "./core/boot-sweep.js";
 import { runRepoUnblockPass } from "./runtime/unblock-pass.js";
 
 /** How often the belt re-runs after its start-time pass. Matched to the
@@ -47,7 +48,7 @@ export interface ResidentUnblockTimers {
 export interface ResidentUnblockOptions {
   readonly root?: string;
   /** The pass to run. Injected in tests; the default is the real `gh` pass. */
-  readonly pass?: (root: string) => Promise<number[]>;
+  readonly pass?: (root: string) => Promise<UnblockSweepReport>;
   readonly leases?: SingletonLeaseStore;
   readonly owner?: SingletonLeaseOwner;
   readonly intervalMs?: number;
@@ -58,7 +59,7 @@ export interface ResidentUnblockOptions {
 export interface ResidentUnblockSweep {
   /** Run one pass now, returning the promoted issue numbers. Concurrent callers
    * share the in-flight pass rather than doubling the tracker reads. */
-  sweep(): Promise<number[]>;
+  sweep(): Promise<UnblockSweepReport>;
   /** Stop the belt, drain any in-flight pass, and release the singleton. */
   stop(): Promise<void>;
 }
@@ -101,17 +102,17 @@ export async function startResidentUnblockSweep(
   const pass = options.pass ?? runRepoUnblockPass;
   const notice = options.notice ?? (() => undefined);
   const timers = options.timers ?? defaultTimers();
-  let running: Promise<number[]> | undefined;
+  let running: Promise<UnblockSweepReport> | undefined;
   let timer: unknown;
 
-  const sweep = (): Promise<number[]> => {
+  const sweep = (): Promise<UnblockSweepReport> => {
     if (running) return running;
     running = pass(root)
-      .catch((error): number[] => {
+      .catch((error): UnblockSweepReport => {
         notice(
           `unblock sweep failed: ${error instanceof Error ? error.message : String(error)}`,
         );
-        return [];
+        return { promoted: [], outcomes: [] };
       })
       .finally(() => {
         running = undefined;
