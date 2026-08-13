@@ -186,9 +186,12 @@ function remediationFor(input: VerdictInput, fault: VerdictFault): VerdictRemedi
  */
 export function decideVerdict(input: VerdictInput): Verdict {
   if (blockingValidationChecks(input.checks).length === 0) {
-    throw new Error(
-      "Verdict refused a failed Validation round with all-green validation evidence",
-    );
+    return {
+      fault: { kind: "branch" },
+      budgetEffect: { kind: "none" },
+      parkNow: false,
+      reason: "Verdict refused to park a failed Validation round with all-green validation evidence",
+    };
   }
   const fault = faultFor(input);
   const remediation = remediationFor(input, fault);
