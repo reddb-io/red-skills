@@ -22,6 +22,7 @@
 // envelope status, so the multi-enum-desync bug class becomes impossible.
 
 import type { AttemptStatus } from "./envelope.js";
+import type { SpinPattern } from "@reddb-io/red-castle/engine";
 import {
   LABEL_QUOTA,
   LABEL_RUNNER_TRANSIENT,
@@ -35,12 +36,34 @@ import {
   LABEL_SIGNAL_KILLED,
   LABEL_POLICY,
   LABEL_STALLED,
+  LABEL_SPIN,
   LABEL_WALL_CLOCK_CAPPED,
   LABEL_INFRA,
   LABEL_BUDGET,
   LABEL_TRUNK_DIVERGED,
   LABEL_BASE_STALE,
 } from "./triage-labels.js";
+
+export type SpinOutcome = `spin:${SpinPattern}`;
+
+const SPIN_OUTCOMES: readonly SpinOutcome[] = [
+  "spin:repeated-action-observation",
+  "spin:error-streak",
+  "spin:monologue",
+  "spin:alternating-ping-pong",
+];
+
+export function spinOutcome(pattern: SpinPattern): SpinOutcome {
+  return `spin:${pattern}`;
+}
+
+export function isSpinOutcome(value: string): value is SpinOutcome {
+  return (SPIN_OUTCOMES as readonly string[]).includes(value);
+}
+
+export function spinPatternFromOutcome(value: SpinOutcome): SpinPattern {
+  return value.slice("spin:".length) as SpinPattern;
+}
 
 /**
  * Every terminal ending an AFK iteration can have — the UNION of what
@@ -123,7 +146,8 @@ export type WorkerOutcome =
   // behind the last-known remote-tracking tip. The worker never starts from that
   // rotten local base; the issue parks for a human/network recovery.
   | "base-stale"
-  | "infra";
+  | "infra"
+  | SpinOutcome;
 
 /**
  * The recovery-policy view of a terminal failure — the RECOVERABLE subset of the
@@ -176,6 +200,7 @@ export function sweepDiscardsWorkspace(o: WorkerOutcome): boolean {
  * ready-for-agent).
  */
 export function blockedLabelFor(o: WorkerOutcome): string | null {
+  if (isSpinOutcome(o)) return LABEL_SPIN;
   switch (o) {
     case "exhausted":
       return LABEL_QUOTA;
@@ -249,6 +274,7 @@ export function blockedLabelFor(o: WorkerOutcome): string | null {
  * the mapping total without inventing a new status.
  */
 export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
+  if (isSpinOutcome(o)) return "blocked";
   switch (o) {
     case "done":
       return "done";
@@ -322,6 +348,9 @@ export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
  * a second outer retry policy would be a rival environment budget.
  */
 export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
+  // Persistent Spin already spent the Worker's in-place Re-seed ladder. A
+  // second, outer recovery budget would restart the same futile loop.
+  if (isSpinOutcome(o)) return null;
   switch (o) {
     case "exhausted":
       return "quota";
