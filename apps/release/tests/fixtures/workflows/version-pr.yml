@@ -7,6 +7,8 @@ on:
   pull_request:
     branches: [main]
     types: [closed]
+  schedule:
+    - cron: '*/20 * * * *'
 
 permissions: {}
 
@@ -65,3 +67,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npx -y -p @reddb-io/red-skills@3.9.0 red-skills-release run
+
+  watch-version-pr:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Signal a stalled Version PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx -y -p @reddb-io/red-skills@3.9.0 red-skills-release watch

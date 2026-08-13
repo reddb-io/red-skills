@@ -16,7 +16,12 @@ version bump is a reviewed PR like any other.
    to `main`. The engine consumes the queue, writes every confirmed
    `release.version_surfaces` entry, and opens or updates
    `red-release/version-pr`.
-3. **Merge the Version-PR to publish.** The merge event runs the same engine at
+3. **Approval waits reach the Issue tracker.** Every 20 minutes, the workflow
+   inspects the open Version-PR's current revision. Runs held at
+   `action_required` and required contexts that never started open or refresh a
+   durable GitHub Ticket. A merely-behind branch, an ordinary pending check, or
+   a failing check stays classified separately and does not raise that alert.
+4. **Merge the Version-PR to publish.** The merge event runs the same engine at
    the merge commit. It creates `vX.Y.Z`, publishes rendered notes, and attaches
    `release-manifest.json` plus `release-manifest.toon`. Every step is
    idempotent, so a rerun converges rather than duplicating a tag or asset.

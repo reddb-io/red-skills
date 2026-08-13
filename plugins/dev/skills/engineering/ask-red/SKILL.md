@@ -166,9 +166,12 @@ their override precedence, and `/red-setup` interview ->
 `plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/red-setup` Release standard (`release.*` contract, including the detect–propose–confirm
-pass over Version surfaces and the `RELEASE_PAT` triggering-push prerequisite) ->
-`plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
-`plugins/dev/skills/engineering/red-setup/config-template.yaml`;
+pass over Version surfaces, the `RELEASE_PAT` triggering-push prerequisite, and the
+scheduled Version-PR wait signal that separates approval-held runs, never-started
+required contexts, and harmless strict-base lag) ->
+`plugins/dev/skills/engineering/red-setup/INTERVIEW.md`,
+`plugins/dev/skills/engineering/red-setup/config-template.yaml`, and
+`plugins/dev/skills/engineering/red-setup/WORKFLOWS.md`;
 `/afk` ADR 0136 ownership (Landing hands native intent to the Queue Custodian
 and ends, Verdict has no classification hook, and the Park exposes one
 authority-parameterized requeue door) ->

@@ -100,6 +100,39 @@ describe("release workflow generator", () => {
     expect(source).not.toContain("npx");
   });
 
+  it("schedules the Version-PR wait signal without changing auto mode", () => {
+    const versionPullRequest = renderReleaseWorkflow({
+      trigger: "version-pr",
+      execution: "vendored",
+      engineVersion: ENGINE_VERSION,
+    });
+    const auto = renderReleaseWorkflow({
+      trigger: "auto",
+      execution: "vendored",
+      engineVersion: ENGINE_VERSION,
+    });
+    const workflow = parse(versionPullRequest) as {
+      on: { schedule: Array<{ cron: string }> };
+      jobs: Record<string, { permissions: Record<string, string>; steps: Array<{ run?: string }> }>;
+    };
+
+    expect(workflow.on.schedule).toEqual([{ cron: "*/20 * * * *" }]);
+    expect(workflow.jobs["watch-version-pr"]?.permissions).toEqual({
+      actions: "read",
+      checks: "read",
+      contents: "read",
+      issues: "write",
+      "pull-requests": "read",
+    });
+    expect(workflow.jobs["watch-version-pr"]?.steps).toContainEqual({
+      name: "Signal a stalled Version PR",
+      env: { GITHUB_TOKEN: "${{ github.token }}" },
+      run: `node ${VENDORED_RELEASE_BUNDLE_PATH} watch`,
+    });
+    expect(auto).not.toContain("watch-version-pr");
+    expect(auto).not.toContain("schedule:");
+  });
+
   it("floors the pin at the version that introduced the binary", () => {
     // The generator stamps the version the repo is AT, which is one behind the
     // feature the first time it runs: a repo on 3.8.0 generated a workflow
