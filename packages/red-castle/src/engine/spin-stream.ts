@@ -19,6 +19,8 @@ export interface SpinStreamProcessorOptions {
 
 export interface SpinStreamProcessor {
   observe(event: AgentStreamEvent): Promise<SpinVerdict | null>;
+  /** A fresh Spin window observed after the episode's one steer. */
+  persistentPattern(): SpinPattern | undefined;
 }
 
 const MAX_SPIN_WINDOW = Math.max(
@@ -55,8 +57,10 @@ export function createSpinStreamProcessor(
 ): SpinStreamProcessor {
   const events: NormalizedRunnerStreamEvent[] = [];
   let lastReportedPattern: SpinPattern | undefined;
+  let persistentPattern: SpinPattern | undefined;
 
   return {
+    persistentPattern: () => persistentPattern,
     async observe(event) {
       const normalized = normalizeSpinEvent(event);
       if (!normalized) return null;
@@ -64,8 +68,17 @@ export function createSpinStreamProcessor(
       if (events.length > MAX_SPIN_WINDOW) events.shift();
 
       const verdict = evaluateSpin(events);
-      if (!verdict || verdict.pattern === lastReportedPattern) return verdict;
+      if (!verdict) return null;
+      if (lastReportedPattern !== undefined) {
+        persistentPattern ??= verdict.pattern;
+        return verdict;
+      }
       lastReportedPattern = verdict.pattern;
+
+      // Persistence must be proved by a fresh threshold-sized window after the
+      // steer. Without this reset, the very next event would merely re-detect
+      // the original window and falsely call every episode persistent.
+      events.length = 0;
 
       const logWrite = options.workerLog.append({
         kind: "worker.spin",
