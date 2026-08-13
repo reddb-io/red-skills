@@ -162,6 +162,7 @@ describe("a launch client that dies is not a Worker that died", () => {
         signal: "SIGKILL",
         memory_peak_bytes: 2_684_354_560,
         memory_swap_peak_bytes: 3_221_225_472,
+        journal_tail: "Main process exited, code=killed, status=9/KILL",
       }),
       unitInventory: () => [],
     });
@@ -179,6 +180,7 @@ describe("a launch client that dies is not a Worker that died", () => {
       systemd_result: "oom-kill",
       memory_peak_bytes: 2_684_354_560,
       memory_swap_peak_bytes: 3_221_225_472,
+      journal_tail: "Main process exited, code=killed, status=9/KILL",
     });
 
     const death = daemon.statuslinePayload().deaths?.latest;
