@@ -32,6 +32,8 @@ export function createRedskilledRegistrationIntentStore(
 ): RedskilledRegistrationIntentStore {
   let tail: Promise<unknown> = Promise.resolve();
   let failure: unknown | null = null;
+  let pending: readonly RedskilledProjectRegistration[] | null = null;
+  let draining = false;
 
   async function read(): Promise<readonly RedskilledProjectRegistration[]> {
     await tail;
@@ -63,16 +65,32 @@ export function createRedskilledRegistrationIntentStore(
   return {
     read,
     replace(registrations) {
-      const writeSnapshot = tail.then(() => write(registrations));
-      tail = writeSnapshot.then(
+      pending = [...registrations];
+      if (!draining) {
+        draining = true;
+        tail = tail.then(async () => {
+          while (pending !== null) {
+            const next = pending;
+            pending = null;
+            await write(next);
+          }
+        }).then(
+          () => {
+            failure = null;
+            draining = false;
+          },
+          (error: unknown) => {
+            failure = error;
+            draining = false;
+          },
+        );
+      }
+      return tail.then(
         () => {
-          failure = null;
+          if (failure != null) throw failure;
         },
-        (error: unknown) => {
-          failure = error;
-        },
+        (error: unknown) => { throw error; },
       );
-      return writeSnapshot;
     },
     async flush() {
       await tail;
