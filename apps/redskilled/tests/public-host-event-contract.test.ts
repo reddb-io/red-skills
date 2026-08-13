@@ -30,6 +30,7 @@ const PUBLIC_HOST_EVENT_FIELDS = [
   "pgid",
   "phase",
   "pid",
+  "pids_peak",
   "proc_start_time",
   "project_label",
   "reason",
