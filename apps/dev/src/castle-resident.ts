@@ -7,6 +7,7 @@ import {
   type CastleMcpTool,
 } from "@reddb-io/red-castle/mcp-server";
 import {
+  CASTLE_RESIDENT_PROTOCOL_VERSION,
   resolveCastleResidentPaths,
   startCastleResident,
 } from "@reddb-io/red-castle/resident";
@@ -14,6 +15,7 @@ import {
   ResourceIncidentTracker,
   createResourceIncidentStore,
   sampleCurrentProcessResources,
+  type RedskilledResourceSample,
 } from "@reddb-io/redskilled/resource-incidents";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import { resolveProjectIdentityForDir } from "@reddb-io/shared/project-identity-resolve.js";
@@ -27,7 +29,7 @@ import { createResidentWebhook } from "./resident-webhook.js";
 import {
   startResidentIssueCurator,
   startResidentRegistrationDelivery,
-} from "./mcp-server.js";
+} from "./resident-authority.js";
 import { resolveRepoSlug } from "./runtime/wire.js";
 
 const buildInfo = readBuildInfo("castle-resident");
@@ -35,6 +37,8 @@ const RESOURCE_SAMPLE_MS = 15_000;
 
 /** Run every Castle workflow concern inside the project's one resident PID. */
 export async function runCastleResident(root = process.cwd()): Promise<void> {
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   const identity = resolveProjectIdentityForDir(root);
   const tools = new Map<string, CastleMcpTool>(
     createCastleMcpTools(createCastleMcpDependencies(root)).map((tool) => [tool.name, tool]),
@@ -65,13 +69,20 @@ export async function runCastleResident(root = process.cwd()): Promise<void> {
   await Promise.all([janitor.start(), webhook.start()]);
 
   const incidentSampler = startCastleResourceEvidence(identity.slug, identity.name);
-  const server = await startCastleResident({
+  let server!: Awaited<ReturnType<typeof startCastleResident>>;
+  server = await startCastleResident({
     paths: resolveCastleResidentPaths(root),
     residentVersion: buildInfo.version,
     invoke: async (method, input) => {
       const tool = tools.get(method);
       if (tool === undefined) throw new Error(`unknown Castle method ${JSON.stringify(method)}`);
-      return await tool.invoke(input);
+      const result = await tool.invoke(input);
+      return attachResidentProjectStatus(method, input, result, {
+        activity: server.activity.snapshot(),
+        startedAt,
+        startedAtMs,
+        resources: incidentSampler.latest(),
+      });
     },
     notify: (topic, value) => applyActivityNotification(server.activity, topic, value),
   });
@@ -111,11 +122,19 @@ function applyActivityNotification(
   else if (topic === "obligation-disarmed") activity.disarmObligation(id);
 }
 
-function startCastleResourceEvidence(projectId: string, projectLabel: string): { stop(): void } {
+function startCastleResourceEvidence(
+  projectId: string,
+  projectLabel: string,
+): { stop(): void; latest(): RedskilledResourceSample } {
   const tracker = new ResourceIncidentTracker({ normalCadenceMs: RESOURCE_SAMPLE_MS });
   const hostPaths = resolveRedskilledPaths();
   const store = createResourceIncidentStore({
     root: join(dirname(hostPaths.eventLanePath), "state", "incidents"),
+  });
+  let latest = sampleCurrentProcessResources({
+    kind: "castle-resident",
+    id: projectId,
+    project_label: projectLabel,
   });
   const tick = async () => {
     const sample = sampleCurrentProcessResources({
@@ -123,13 +142,59 @@ function startCastleResourceEvidence(projectId: string, projectLabel: string): {
       id: projectId,
       project_label: projectLabel,
     });
+    latest = sample;
     const result = tracker.ingest(sample);
     if (result.kind !== "buffered") await store.save(result.incident).catch(() => undefined);
   };
   void tick();
   const timer = setInterval(() => void tick(), RESOURCE_SAMPLE_MS);
   timer.unref();
-  return { stop: () => clearInterval(timer) };
+  return { stop: () => clearInterval(timer), latest: () => latest };
+}
+
+function attachResidentProjectStatus(
+  method: string,
+  input: Record<string, unknown>,
+  result: unknown,
+  context: {
+    activity: { clients: number; draining: boolean };
+    startedAt: string;
+    startedAtMs: number;
+    resources: RedskilledResourceSample;
+  },
+): unknown {
+  if (method !== "project_status" && !(method === "status" && input.scope === "project")) {
+    return result;
+  }
+  const project = method === "project_status" && isRecord(result) && isRecord(result.result)
+    ? result.result
+    : result;
+  if (!isRecord(project)) return result;
+  const sample = context.resources;
+  const resident = {
+    health: "ready" as const,
+    version: buildInfo.version,
+    protocol: CASTLE_RESIDENT_PROTOCOL_VERSION,
+    pid: process.pid,
+    started_at: context.startedAt,
+    uptime_ms: Math.max(0, Date.now() - context.startedAtMs),
+    client_count: context.activity.clients,
+    handover: context.activity.draining ? "draining" as const : "serving" as const,
+    resources: {
+      sampled_at: sample.sampled_at,
+      source: sample.source,
+      memory_current_bytes: sample.memory.current_bytes,
+      memory_peak_bytes: sample.memory.peak_bytes,
+      cpu_usage_usec: sample.cpu.usage_usec,
+      pids_current: sample.pids.current,
+    },
+  };
+  if (method === "project_status") return { ...(result as Record<string, unknown>), result: { ...project, resident } };
+  return { ...project, resident };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const isDirectExecution =

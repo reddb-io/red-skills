@@ -156,7 +156,9 @@ read-only diagnostics, and a visible project `birth_latch` routes through its
 structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 Castle resident lifecycle (one project identity across Worktrees, versioned
-wire, spawn/handover/idle rules, and the `redskilled` host-authority boundary) ->
+wire, spawn/handover/idle rules, matching proxy/resident artifacts, bounded
+project-status health, the local 1/4/8-session diagnostic, and the `redskilled`
+host-authority boundary) ->
 `.red/adr/0143-castle-resident-is-project-workflow-truth.md` and
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->

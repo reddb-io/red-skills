@@ -82,6 +82,34 @@ describe("observability output contracts", () => {
     expect(projectStatusOutputSchema.parse(PROJECT_STATUS).slots.interactive_reservation).toBe(1);
   });
 
+  it("accepts bounded Castle resident health without socket secrets or argv", () => {
+    const parsed = projectStatusOutputSchema.parse({
+      ...PROJECT_STATUS,
+      resident: {
+        health: "ready",
+        version: "3.18.6",
+        protocol: "1.0.0",
+        pid: 4321,
+        started_at: "2026-08-13T22:00:00.000Z",
+        uptime_ms: 12_000,
+        client_count: 4,
+        handover: "serving",
+        resources: {
+          sampled_at: "2026-08-13T22:00:12.000Z",
+          source: "process-tree",
+          memory_current_bytes: 42_000_000,
+          memory_peak_bytes: 45_000_000,
+          cpu_usage_usec: 120_000,
+          pids_current: 1,
+        },
+      },
+    });
+
+    expect(parsed.resident?.client_count).toBe(4);
+    expect(parsed.resident).not.toHaveProperty("socket");
+    expect(parsed.resident).not.toHaveProperty("argv");
+  });
+
   it("requires the narrated Validation moment schedule", () => {
     const { validation_schedule: _schedule, ...withoutSchedule } = PROJECT_STATUS;
     expect(projectStatusOutputSchema.safeParse(withoutSchedule).success).toBe(false);

@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveProjectIdentity } from "@reddb-io/shared/project-identity.js";
 import {
   CASTLE_RESIDENT_PROTOCOL_VERSION,
+  CastleResidentClient,
+  CastleResidentRequestError,
   castleResidentPathsForIdentity,
   sendCastleResidentRequest,
   startCastleResident,
@@ -65,6 +67,66 @@ describe("Castle resident", () => {
       expect(notify).toHaveBeenCalledWith("worker-state", { worker: "w1" });
       expect(resident.activity.snapshot()).toMatchObject({ clients: 1, calls: 0 });
     } finally {
+      await resident.close();
+    }
+  });
+
+  it("counts four lightweight session clients against one resident", async () => {
+    const root = mkdtempSync(join(tmpdir(), "castle-clients-"));
+    const paths = castleResidentPathsForIdentity(resolveProjectIdentity({ checkoutPath: root }));
+    const resident = await startCastleResident({
+      paths,
+      residentVersion: "3.18.6",
+      invoke: async () => null,
+    });
+    const clients = Array.from({ length: 4 }, () => new CastleResidentClient({
+      cwd: root,
+      paths,
+      clientVersion: "3.18.6",
+      serverCommand: process.execPath,
+      serverArgs: [],
+    }));
+    try {
+      await Promise.all(clients.map((client) => client.open()));
+      expect(resident.activity.snapshot().clients).toBe(4);
+      expect(await clients[0]!.status()).toMatchObject({
+        health: "ready",
+        residentVersion: "3.18.6",
+        protocolVersion: CASTLE_RESIDENT_PROTOCOL_VERSION,
+        pid: process.pid,
+        clients: 4,
+        handover: "serving",
+      });
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await resident.close();
+    }
+  });
+
+  it("preserves typed resident failures without running a local fallback", async () => {
+    const root = mkdtempSync(join(tmpdir(), "castle-typed-error-"));
+    const paths = castleResidentPathsForIdentity(resolveProjectIdentity({ checkoutPath: root }));
+    const resident = await startCastleResident({
+      paths,
+      residentVersion: "3.18.6",
+      invoke: async () => {
+        throw Object.assign(new Error("resident is draining"), { code: "RESIDENT_DRAINING" });
+      },
+    });
+    const client = new CastleResidentClient({
+      cwd: root,
+      paths,
+      clientVersion: "3.18.6",
+      serverCommand: process.execPath,
+      serverArgs: [],
+    });
+    try {
+      await client.open();
+      const failure = await client.call("queue_status", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(CastleResidentRequestError);
+      expect(failure).toMatchObject({ code: "RESIDENT_DRAINING" });
+    } finally {
+      await client.close();
       await resident.close();
     }
   });

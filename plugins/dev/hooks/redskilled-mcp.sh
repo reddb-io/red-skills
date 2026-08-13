@@ -40,9 +40,10 @@ fi
 repo="$PWD"
 if [ -f "$repo/pnpm-workspace.yaml" ] && \
    [ -f "$repo/apps/dev/package.json" ] && \
-   [ -f "$repo/dist/redskilled-mcp.bundle.min.mjs" ]; then
+   [ -f "$repo/dist/redskilled-mcp.bundle.min.mjs" ] && \
+   [ -f "$repo/dist/castle-resident.bundle.min.mjs" ]; then
   exec node "$repo/dist/redskilled-mcp.bundle.min.mjs"
 fi
 
-printf 'redskilled: could not locate redskilled-mcp.bundle.min.mjs\n' >&2
+printf 'redskilled: could not locate matching redskilled-mcp and castle-resident bundles\n' >&2
 exit 1

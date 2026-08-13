@@ -15,6 +15,14 @@ Worktrees rendezvous through Git's common directory. `redskilled` remains the
 separate host authority for process birth, death, placement, and budgets. A
 typed `INCOMPATIBLE_RESIDENT_PROTOCOL` response is terminal for the call —
 surface it directly because no client carries an in-process workflow fallback.
+The proxy and resident are a matching-version artifact pair in development,
+installed-cache, npm, and Release layouts; a launcher must refuse a missing
+half instead of falling back to a local engine. `status { scope: project }`
+reports the resident version, protocol, PID, uptime, client count, handover
+state, and a bounded resource sample without socket secrets or process argv.
+For local 1/4/8-session comparison after `pnpm -C apps/dev build`, run
+`pnpm -C apps/dev diagnose:castle-sessions`; it prints diagnostics to stdout
+and never writes benchmark results into the repository or Issue tracker.
 
 ## How to reach the tools
 
