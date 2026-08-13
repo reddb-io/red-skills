@@ -421,6 +421,7 @@ jobs:
         ${{ contains(fromJSON(needs.scope.outputs.test_packages), 'packages/red-castle')
         || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/opencode-host')
         || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/afk-container')
+        || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/redskilled')
         || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/herdr-plugin-red-skills')
         || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/vscode-extension-red-skills') }}
     steps:
@@ -464,6 +465,10 @@ jobs:
       # The vendored herdr plugin (ADR 0131). Its `test` script is the manifest
       # check and the `node --test` suite in that order, so the manifest a pane
       # is opened from is validated by the same command as the code behind it.
+      - name: Test apps/redskilled
+        if: contains(fromJSON(env.PACKAGES), 'apps/redskilled')
+        run: pnpm -C apps/redskilled test
+
       - name: Test apps/herdr-plugin-red-skills
         if: contains(fromJSON(env.PACKAGES), 'apps/herdr-plugin-red-skills')
         run: pnpm -C apps/herdr-plugin-red-skills test
