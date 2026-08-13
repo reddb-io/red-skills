@@ -57,6 +57,8 @@ export interface RedskilledPaths {
   readonly eventLanePath: string;
   /** The durable project registrations a successor daemon rehydrates. */
   readonly registrationIntentPath: string;
+  /** Generic host-resource leases retained across daemon handover. */
+  readonly resourceLeasePath: string;
   /** The canonical claim path resolved for this host and resolver environment. */
   readonly machineClaimPathOfThisHost: string;
   /**
@@ -144,6 +146,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     // the socket stranded every drain when one process resolved XDG_RUNTIME_DIR
     // and its successor used the uid fallback (or vice versa).
     registrationIntentPath: join(redskilledHomeDir(homeDir), "redskilled.registrations.toon"),
+    resourceLeasePath: join(redskilledHomeDir(homeDir), "redskilled.resources.toon"),
     machineClaimPathOfThisHost,
     machineClaimPath: options.machineClaimPath ?? machineClaimPathOfThisHost,
   };

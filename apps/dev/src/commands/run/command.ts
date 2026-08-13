@@ -382,13 +382,14 @@ export async function runCommand(options: RunOptions): Promise<number> {
     },
     onGateWait: (notice) => {
       const waiting = notice.state === "waiting";
+      const stall = notice.infraEvidence?.kind === "stall" ? notice.infraEvidence : undefined;
       if (current.attemptDir !== "") {
         const line = waiting
           ? `⏳ /afk gate: waiting on ${notice.subject} (pid ${notice.pid}).`
           : notice.state === "stalled"
             ? `⛔ /afk gate: reaped stalled ${notice.subject} (pid ${notice.pid}); ` +
-              `${notice.infraEvidence?.cpuDeltaMs ?? 0}ms CPU over ` +
-              `${notice.infraEvidence?.sampleWindowMs ?? 0}ms.`
+              `${stall?.cpuDeltaMs ?? 0}ms CPU over ` +
+              `${stall?.sampleWindowMs ?? 0}ms.`
             : `✅ /afk gate: ${notice.subject} exited (pid ${notice.pid}).`;
         gateWaitPublication = gateWaitPublication.then(async () => {
           await updateState(workerStatePath(current.attemptDir), {
@@ -409,8 +410,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
             deadline: notice.deadline,
             escalation: notice.escalation,
             infra: notice.infraEvidence?.kind ?? "",
-            cpu_delta_ms: notice.infraEvidence?.cpuDeltaMs ?? 0,
-            sample_window_ms: notice.infraEvidence?.sampleWindowMs ?? 0,
+            cpu_delta_ms: stall?.cpuDeltaMs ?? 0,
+            sample_window_ms: stall?.sampleWindowMs ?? 0,
             wall_time_ms: notice.infraEvidence?.wallTimeMs ?? 0,
           }, line);
         }).catch(() => {});

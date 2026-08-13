@@ -64,7 +64,9 @@ describe("execTool", () => {
         kind: "stall",
         cpuDeltaMs: 0,
       });
-      expect(r.infraEvidence!.sampleWindowMs).toBeGreaterThanOrEqual(100);
+      expect(r.infraEvidence?.kind).toBe("stall");
+      if (r.infraEvidence?.kind !== "stall") throw new Error("expected stall evidence");
+      expect(r.infraEvidence.sampleWindowMs).toBeGreaterThanOrEqual(100);
       expect(r.infraEvidence!.wallTimeMs).toBeGreaterThanOrEqual(200);
       expect(r.stderr).toContain("validation child stalled");
     },

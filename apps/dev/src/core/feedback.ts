@@ -58,12 +58,9 @@ export interface ExecResult {
   stdout: string;
   stderr: string;
   /** Typed infrastructure evidence from the real validation process boundary. */
-  infraEvidence?: {
-    kind: "stall";
-    wallTimeMs: number;
-    sampleWindowMs: number;
-    cpuDeltaMs: number;
-  };
+  infraEvidence?:
+    | { kind: "stall"; wallTimeMs: number; sampleWindowMs: number; cpuDeltaMs: number }
+    | { kind: "admission-timeout"; wallTimeMs: number };
   /**
    * The ABSOLUTE directory the command actually ran in, when the executor
    * rewrote the `-C` token (#3041). The AFK gate is posed with a branch NAME;
@@ -87,6 +84,8 @@ export interface ExecResult {
 export interface FeedbackExecOptions {
   /** Explicit validation subprocess environment. Never default to the worker shell. */
   env: NodeJS.ProcessEnv;
+  /** Castle's command classification; the host adapter decides admission. */
+  weight?: "light" | "heavy";
 }
 
 /** Injected `pnpm` executor. Receives a full argv (incl. the `pnpm` head). */
@@ -228,6 +227,13 @@ export interface PackageLayout {
 export const FEEDBACK_SCRIPTS = ["test", "typecheck", "lint", "build"] as const;
 export type FeedbackScript = (typeof FEEDBACK_SCRIPTS)[number];
 
+/** Castle owns validation meaning; redskilled only sees a generic lease request. */
+export function validationWeight(scope: string, script: string): "light" | "heavy" {
+  return scope === "." && (script === "test" || script === "typecheck" || script === "build")
+    ? "heavy"
+    : "light";
+}
+
 /** The literal sidecar schema id. */
 export const VALIDATION_SCHEMA = "red.afk.validation.v1" as const;
 
@@ -257,7 +263,7 @@ export interface ValidationRecord {
    */
   suspectInfra?: true;
   /** The command ran, but infrastructure reaped it after observing no progress. */
-  infra?: "stall";
+  infra?: "stall" | "admission-timeout";
   /** What the host was carrying while this check ran, when it was measured. */
   resources?: ValidationResourceEvidence;
 }
@@ -403,7 +409,7 @@ export function buildValidationRecord(input: {
   summary?: string;
   setup?: string;
   suspectInfra?: boolean;
-  infra?: "stall";
+  infra?: "stall" | "admission-timeout";
   resources?: ValidationResourceEvidence;
 }): ValidationRecord {
   const record: ValidationRecord = {
@@ -437,7 +443,7 @@ function buildRanRecord(input: {
   output: string;
   summary: string;
   setup?: string;
-  infra?: "stall";
+  infra?: "stall" | "admission-timeout";
   resources?: ValidationResourceEvidence;
 }): ValidationRecord {
   const suspect = isSuspectInfraFailure({
@@ -747,7 +753,10 @@ async function runChecksForBaseline(
     if (!layout.hasScript(scope, command)) continue;
     const dir = scopeDir(baselineWorktree, scope);
     const cacheKey = `${scope} ${command}`;
-    const result = executed.get(cacheKey) ?? (await exec(["pnpm", "-C", dir, command], { env }));
+    const result = executed.get(cacheKey) ?? (await exec(["pnpm", "-C", dir, command], {
+      env,
+      weight: validationWeight(scope, command),
+    }));
     executed.set(cacheKey, result);
     if (result.code === 0) {
       out.set(name, { status: "passed" });
@@ -995,7 +1004,10 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
 
       const composed = composeValidationCommand({ target, scope, script, extraArgs: excludeArgs });
       const start = now();
-      const result = await exec(composed.args, { env: subprocessEnv });
+      const result = await exec(composed.args, {
+        env: subprocessEnv,
+        weight: validationWeight(scope, script),
+      });
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
@@ -1032,7 +1044,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const scope = ".";
     const composed = composeValidationCommand({ target, scope: ".", script: "typecheck" });
     const start = now();
-    const result = await exec(composed.args, { env: subprocessEnv });
+    const result = await exec(composed.args, { env: subprocessEnv, weight: "heavy" });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
@@ -1079,7 +1091,10 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     }
     const composed = composeValidationCommand({ target, scope: run.scope, script: run.script });
     const start = now();
-    const result = await exec(composed.args, { env: subprocessEnv });
+    const result = await exec(composed.args, {
+      env: subprocessEnv,
+      weight: validationWeight(run.scope, run.script),
+    });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;

@@ -85,6 +85,7 @@ export function decodeHostEventRow(record: ToonlRecord): RedskilledHostEvent {
     systemd_result: text(record.systemd_result),
     memory_peak_bytes: numberOrNull(record.memory_peak_bytes),
     memory_swap_peak_bytes: numberOrNull(record.memory_swap_peak_bytes),
+    pids_peak: numberOrNull(record.pids_peak),
     journal_tail: text(record.journal_tail),
     // Legacy rows predate daemon stop reasons; absence remains honest.
     reason: text(record.reason),

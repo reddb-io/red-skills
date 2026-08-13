@@ -99,6 +99,7 @@ import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "@redd
 import { isRedskilledDashboard, type RedskilledDashboard } from "@reddb-io/redskilled-render";
 import type { RedskilledWorkerDisplay } from "./worker-display.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
+import type { RedskilledResourceLease, RedskilledResourceLeaseRequest } from "./resource-lease.js";
 
 /** The wire version. A daemon states it; a client that cannot read it must not proceed. */
 export const REDSKILLED_PROTOCOL_VERSION = 1;
@@ -204,6 +205,9 @@ export type RedskilledRequest =
   | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec; session_project?: string }
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
+  | { id: string; op: "resource-acquire"; request: RedskilledResourceLeaseRequest }
+  | { id: string; op: "resource-renew"; lease_id: string; ttl_ms?: number }
+  | { id: string; op: "resource-release"; lease_id: string }
   | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
   | {
     id: string;
@@ -230,6 +234,20 @@ export type RedskilledRequest =
 export type RedskilledResponse =
   | { id: string; ok: true; value: unknown }
   | { id: string; ok: false; error: string };
+
+export interface RedskilledResourceLeaseReleased {
+  readonly version: 1;
+  readonly lease_id: string;
+  readonly released: boolean;
+}
+
+export function isRedskilledResourceLeaseReleased(value: unknown): value is RedskilledResourceLeaseReleased {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const released = value as Record<string, unknown>;
+  return released.version === 1 && typeof released.lease_id === "string" && typeof released.released === "boolean";
+}
+
+export type { RedskilledResourceLease };
 
 export interface RedskilledPong {
   readonly pong: true;

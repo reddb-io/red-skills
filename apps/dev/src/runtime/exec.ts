@@ -71,12 +71,9 @@ export interface ExecOutput {
   resources?: import("../core/validation-resources.js").ValidationResourceEvidence;
 }
 
-export interface ValidationInfraEvidence {
-  kind: "stall";
-  wallTimeMs: number;
-  sampleWindowMs: number;
-  cpuDeltaMs: number;
-}
+export type ValidationInfraEvidence =
+  | { kind: "stall"; wallTimeMs: number; sampleWindowMs: number; cpuDeltaMs: number }
+  | { kind: "admission-timeout"; wallTimeMs: number };
 
 export interface ValidationStallDetection {
   /** Do not judge CPU idleness until the command exceeds its normal envelope. */
@@ -345,7 +342,7 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
         return;
       }
       if (timedOut || signal !== null) {
-        const stallMessage = infraEvidence
+        const stallMessage = infraEvidence?.kind === "stall"
           ? `validation child stalled: ${infraEvidence.cpuDeltaMs}ms CPU over ` +
             `${infraEvidence.sampleWindowMs}ms while wall time reached ${infraEvidence.wallTimeMs}ms`
           : undefined;

@@ -29,11 +29,13 @@ export interface ExecResult {
   stderr: string;
 }
 
-export type FeedbackExec = (args: string[]) => Promise<ExecResult>;
+export type ValidationResourceClass = "light" | "heavy";
+export type FeedbackExec = (args: string[], options?: { weight: ValidationResourceClass }) => Promise<ExecResult>;
 export type BackpressureExec = (input: {
   command: string;
   cwd: string;
   timeoutMs: number;
+  weight?: ValidationResourceClass;
 }) => Promise<ExecResult>;
 
 export interface ScriptLayout extends PackageLayout {
@@ -88,6 +90,13 @@ export interface CastleGateResult {
 function gateWeightForScope(scope: ValidationScope): GateWeightClass {
   if (scope.type === "whole-workspace") return "full-workspace";
   return scope.packages.length > 1 ? "heavy-cone" : "light-cone";
+}
+
+/** Castle classifies command meaning; the host only admits a generic weight. */
+export function validationResourceClass(scope: string, script: string): ValidationResourceClass {
+  return scope === "." && (script === "test" || script === "typecheck" || script === "build")
+    ? "heavy"
+    : "light";
 }
 
 export function classifyFinding(finding: GateFinding): "mechanical" | "intent" {
@@ -167,7 +176,9 @@ async function runFeedbackChecks(
       const dir = scopeDir(input.worktree, scope);
       const command = `pnpm -C ${dir} ${script}`;
       const start = input.now();
-      const result = await input.feedbackExec(["pnpm", "-C", dir, script]);
+      const result = await input.feedbackExec(["pnpm", "-C", dir, script], {
+        weight: validationResourceClass(scope, script),
+      });
       const durationMs = input.now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") ok = false;
@@ -200,7 +211,7 @@ async function runBackpressureChecks(
     if (command === "") continue;
     const name = `backpressure:${command}`;
     const start = input.now();
-    const result = await input.backpressureExec({ command, cwd: input.worktree, timeoutMs });
+    const result = await input.backpressureExec({ command, cwd: input.worktree, timeoutMs, weight: "heavy" });
     const durationMs = input.now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") ok = false;

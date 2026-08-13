@@ -82,6 +82,7 @@ export type RedskilledWorkerEventKind =
   | "worker-birth"
   | "worker-activity"
   | "worker-metrics"
+  | "worker-resource"
   | "worker-drift"
   | "worker-heal"
   | "worker-death"
@@ -91,6 +92,7 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-birth",
   "worker-activity",
   "worker-metrics",
+  "worker-resource",
   "worker-drift",
   "worker-heal",
   "worker-death",
@@ -99,6 +101,7 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-birth",
   "worker-activity",
   "worker-metrics",
+  "worker-resource",
   "worker-drift",
   "worker-heal",
   "worker-death",
@@ -233,6 +236,8 @@ export interface RedskilledHostEvent {
   readonly memory_peak_bytes: number | null;
   /** Peak swap charged to the unit, in bytes. */
   readonly memory_swap_peak_bytes: number | null;
+  /** Peak process count observed for the Worker's unit/tree. */
+  readonly pids_peak: number | null;
   /** Bounded unit journal tail retained when the transient unit was collected. */
   readonly journal_tail: string | null;
 }
@@ -262,6 +267,7 @@ export interface RecordEventInput {
   readonly systemdResult?: string | null;
   readonly memoryPeakBytes?: number | null;
   readonly memorySwapPeakBytes?: number | null;
+  readonly pidsPeak?: number | null;
   readonly journalTail?: string | null;
   readonly reason?: string | null;
 }
@@ -277,6 +283,7 @@ export interface RecordWorkerEventInput {
   readonly systemdResult?: string | null;
   readonly memoryPeakBytes?: number | null;
   readonly memorySwapPeakBytes?: number | null;
+  readonly pidsPeak?: number | null;
   readonly journalTail?: string | null;
   readonly admissionVerdict?: string | null;
   readonly phase?: string | null;
@@ -337,6 +344,7 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     systemd_result: input.systemdResult ?? null,
     memory_peak_bytes: input.memoryPeakBytes ?? null,
     memory_swap_peak_bytes: input.memorySwapPeakBytes ?? null,
+    pids_peak: input.pidsPeak ?? null,
     journal_tail: input.journalTail ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
   };
@@ -376,6 +384,7 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     systemd_result: null,
     memory_peak_bytes: null,
     memory_swap_peak_bytes: null,
+    pids_peak: null,
     journal_tail: null,
     reason: null,
   };

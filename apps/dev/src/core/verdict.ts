@@ -27,6 +27,7 @@ export type EnvironmentCause =
   | "prior-environment"
   | "suspect-infra"
   | "stall"
+  | "admission-timeout"
   | "oom"
   | "setup"
   | "baseline"
@@ -120,6 +121,7 @@ function checkEnvironmentCause(
     const record = check.record;
     if (record.suspectInfra === true && !subsecondFailuresAreBranchFault) return "suspect-infra";
     if (record.infra === "stall") return "stall";
+    if (record.infra === "admission-timeout") return "admission-timeout";
     const summary = record.summary ?? "";
     if (record.exitCode === 137 || summary.includes("SIGKILL") || /\b137\b/.test(summary)) return "oom";
     if (

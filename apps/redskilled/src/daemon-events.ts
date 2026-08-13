@@ -94,6 +94,7 @@ function buildDaemonLifecycleEvent(
     systemd_result: null,
     memory_peak_bytes: null,
     memory_swap_peak_bytes: null,
+    pids_peak: null,
     journal_tail: null,
     reason,
   };
