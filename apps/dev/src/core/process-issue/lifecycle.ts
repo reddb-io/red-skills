@@ -80,10 +80,9 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
-  isSpinOutcome,
-  spinPatternFromOutcome,
   type WorkerOutcome,
 } from "../worker-outcome.js";
+import type { SpinPattern } from "@reddb-io/red-castle/engine";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
@@ -162,11 +161,8 @@ import type { ReseedOutstanding, ReseedSectionTag } from "./reseed-handoff.js";
 import {
   EMPTY_RESEED_OUTSTANDING,
   composeReseedHandoff,
-  gateReseedDirectives,
   noteReseedSignature,
-  reviewReseedDirectives,
-  spinReseedDirectives,
-  tierEscalationDirectives,
+  reseedRoundProjection,
   withGateOutstanding,
   withReviewOutstanding,
   withoutGateOutstanding,
@@ -185,6 +181,7 @@ import {
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { reportValidationEvidenceInconsistency } from "./validation-park.js";
 import { setupFailureExcerpt } from "./setup-failure.js";
+import { resolvePersistentSpin } from "./spin-lifecycle.js";
 
 /** Recorded when the forge refused the merge and the PR state did not explain it
  * (#2807). It says the cause is unknown rather than inventing a probable one. */
@@ -832,7 +829,7 @@ export async function processIssue(
      * against, which become the review half of the outstanding state. */
     review?: { summary: string; findings: readonly AdversarialReviewFinding[]; diff: string };
     /** Persistent Spin only — the pattern that survived the free steer. */
-    spinPattern?: ReturnType<typeof spinPatternFromOutcome>;
+    spinPattern?: SpinPattern;
     /** The round's failure signature, when the caller already derived it to
      * decide something (the tier escalation does). Absent, it is derived here
      * from `sidecar` — one key either way. */
@@ -917,50 +914,20 @@ export async function processIssue(
         : withGateOutstanding(reseedOutstanding, { gate, validation: req.validation ?? "" }),
       signature,
     );
-    const gateSpend = reseedSpend.gate ?? 0;
-    /** The round's one-line account. It reaches the iteration log AND the trail's
-     * two projections, so the surfaces cannot disagree about what the round was
-     * asked to fix. */
-    let note: string;
-    if (req.trigger === "spin") {
-      const pattern = req.spinPattern ?? "monologue";
-      currentHandoff = composeReseed(
-        "spin-correction",
-        spinReseedDirectives({ pattern, retry: gateSpend, cap: gateSubCap }),
-      );
-      note =
-        `🤖 ${reseedLane}: spin:${pattern} persisted after the in-session steer; ` +
-        `correction retry ${gateSpend}/${gateSubCap}.`;
-    } else if (req.trigger === "review-finding") {
-      const reviewSpend = reseedSpend.review ?? 0;
-      currentHandoff = composeReseed(
-        "adversarial-review-correction",
-        reviewReseedDirectives({ retry: reviewSpend, cap: reseedBudget.subCaps.review }),
-      );
-      note =
-        `🤖 ${reseedLane}: adversarial review found blocking issue(s); ` +
-        `correction retry ${reviewSpend}/${reseedBudget.subCaps.review}.`;
-    } else if (req.trigger === "tier-escalation") {
-      currentHandoff = composeReseed(
-        "tier-escalation",
-        tierEscalationDirectives({
-          from: req.tiers?.from ?? "",
-          to: req.tiers?.to ?? "",
-          retry: reseedSpend.tier ?? 0,
-          cap: reseedBudget.subCaps.tier,
-        }),
-        req.tiers?.to,
-      );
-      note =
-        `🤖 ${reseedLane}: ${req.tiers?.from ?? ""}-tier feedback failed for #${issue}; ` +
-        `re-seeding on the ${req.tiers?.to ?? ""} tier before terminal validation routing.`;
-    } else {
-      currentHandoff = composeReseed(
-        isGoLane ? "go-machine-gate-retry" : "afk-gate-correction",
-        gateReseedDirectives({ gate, retry: gateSpend, cap: gateSubCap }),
-      );
-      note = `🤖 ${reseedLane}: ${gate} machine gate failed after DONE; correction retry ${gateSpend}/${gateSubCap}.`;
-    }
+    /** One projection owns both the prompt and its durable one-line account. */
+    const projection = reseedRoundProjection({
+      trigger: req.trigger,
+      gate,
+      spinPattern: req.spinPattern,
+      tiers: req.tiers,
+      spend: reseedSpend,
+      budget: reseedBudget,
+      lane: reseedBudget.lane,
+      goLane: isGoLane,
+      issue,
+    });
+    currentHandoff = composeReseed(projection.tag, projection.directives, projection.tier);
+    const note = projection.note;
     deps.appendIterLog(note);
     await publishReseedTrail({ round: reseedRound, trigger: req.trigger, cause, note });
     deps.recordWorkerEvent?.("worker.reseeded", {
@@ -1336,31 +1303,21 @@ export async function processIssue(
       model: initialTier.model,
       effort: initialTier.effort,
     } satisfies StageCommon;
-    if (isSpinOutcome(run.outcome)) {
-      const pattern = spinPatternFromOutcome(run.outcome);
-      await fireHook("post_attempt", postAttemptContext(current, workerBranch, "fail", run.outcome));
-      const branchBudgetAvailable = reseedDraw(reseedBudget, "gate", reseedSpend).allowed;
-      const verdict = decideVerdict({
-        checks: [],
-        signature: run.outcome,
-        spinPattern: pattern,
-        history: { environment: environmentLedger, branchBudgetAvailable },
-        environment: {},
-      });
-      if (!verdict.parkNow) {
-        const reseed = await requestReseed({
-          trigger: "spin",
-          spinPattern: pattern,
-          validation: run.outcome,
-          signature: run.outcome,
-        });
-        if (reseed === "granted") continue;
-      }
-      const evidence = `${run.outcome} fault: ${verdict.reason}`;
-      await parkReseedTrail(evidence);
-      return await terminalFailure(common, run.outcome, "spin", {
-        notes: `Verdict: ${evidence}`,
-        log: run.stdout,
+    const spin = await resolvePersistentSpin({
+      outcome: run.outcome,
+      log: run.stdout,
+      environment: environmentLedger,
+      branchBudgetAvailable: reseedDraw(reseedBudget, "gate", reseedSpend).allowed,
+      firePostAttempt: (outcome) => fireHook("post_attempt", postAttemptContext(current, workerBranch, "fail", outcome)),
+      requestReseed: (pattern, outcome) =>
+        requestReseed({ trigger: "spin", spinPattern: pattern, validation: outcome, signature: outcome }),
+      parkReseedTrail,
+    });
+    if (spin.kind === "reseed") continue;
+    if (spin.kind === "terminal") {
+      return await terminalFailure(common, spin.outcome, "spin", {
+        notes: `Verdict: ${spin.evidence}`,
+        log: spin.log,
       });
     }
     if (input.runMode === "scout" && run.outcome === "no-sentinel" && scoutCapturedDone(run, scoutTextChunks)) {
