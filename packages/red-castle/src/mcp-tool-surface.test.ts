@@ -100,7 +100,7 @@ const SURFACE: ReadonlyArray<{
     name: "queue_status",
     title: "Read AFK queues",
     description:
-      "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview the producer's scoped view of the ready queue (same facets as its work selector, e.g. tags/user).",
+      "Return ready-for-agent and ready-for-human queue candidates, retaining successful candidates and naming partial trust-read failures as a degraded result. Pass `selector` to preview the producer's scoped view of the ready queue (same facets as its work selector, e.g. tags/user).",
     schema: ["selector"],
   },
   {
