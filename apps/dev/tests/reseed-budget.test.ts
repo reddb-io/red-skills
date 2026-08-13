@@ -269,6 +269,7 @@ describe("Re-seed budget — no config value reaches a landing with a blocking f
   it("leaves the reviewer's verdict binary and cap-free, so blocking never renders as pass", () => {
     const blocking = {
       summary: "one blocker",
+      score: 0.2,
       findings: [{ path: "a.ts", line: 1, body: "must fix", blocking: true }],
     };
     expect(decideAdversarialReview(blocking)).toBe("blocking");
