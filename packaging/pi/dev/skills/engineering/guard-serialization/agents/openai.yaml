@@ -1,0 +1,3 @@
+interface:
+  display_name: "Guard Serialization"
+  short_description: "Keeps default structured data on TOON snapshots, TOONL streams, and TOON wire frames. Use when changing JavaScript or TypeScript source under apps or packages that reads, writes, or transports structured data."

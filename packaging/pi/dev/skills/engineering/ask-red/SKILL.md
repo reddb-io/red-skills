@@ -136,7 +136,7 @@ Next handoff: <what must be true before the next command>
 ## Coverage Inventory
 
 The router must mention every published dev skill so `/red-doctor` can flag drift:
-`/afk`, `/ask-red`, `/go`, `/manager`, `/wayfinder`, `/model-tier-policy`, `/curate`,
+`/afk`, `/ask-red`, `/guard-process-birth`, `/guard-serialization`, `/go`, `/manager`, `/wayfinder`, `/model-tier-policy`, `/curate`,
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
 `/ground-truth`, `/red-doctor`, `/adr-editor`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
@@ -227,6 +227,7 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 ## Standalone And Maintenance Routes
 
+- `/guard-process-birth` and `/guard-serialization` are path-declared briefs delivered on first touch of their governed source surfaces; they are invariant context, not operator-selected workflow routes.
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set, reports/fixes ADR 0098 tmp janitor hygiene, and
   runs the shared operational probe registry that fleet boot also consumes. It
