@@ -1,7 +1,13 @@
 import type { HandoffComment } from "../../core/handoff.js";
 import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { ActorTrustVerdict } from "../../core/trust-gate.js";
-import { apiPath, runGithubRestRead, type GhContext } from "./common.js";
+import {
+  apiPath,
+  githubReadClient,
+  githubRepo,
+  runGithubRestRead,
+  type GhContext,
+} from "./common.js";
 
 export type CommentTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
 
@@ -126,27 +132,47 @@ export async function issueComments(
   issue: number,
   resolveTrust?: CommentTrustResolver,
 ): Promise<HandoffComment[]> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, `issues/${issue}/comments`), [
-    "--paginate", "--slurp", "--jq",
-    '{comments: (add | map({body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}))}',
-  ]);
-  if (r.code !== 0) return [];
-  let parsed: {
-    comments?: Array<{
-      body?: string;
-      author?: { login?: string; is_bot?: boolean };
-      authorAssociation?: string;
-      createdAt?: string;
-      reactionGroups?: RawGhComment["reactionGroups"];
-    }>;
-  };
+  // Paginated through the shared client rather than `gh api --paginate --slurp
+  // --jq`: the binary REFUSES `--slurp` beside `--jq`, and this caller read the
+  // resulting non-zero exit as "no comments". Directive blocks are how human
+  // guidance reaches a Worker, so the silent empty list did not degrade the
+  // read — it erased the instruction (#3734).
+  const repo = githubRepo(ctx);
+  if (!repo) return [];
+  let rows: readonly RestIssueComment[];
   try {
-    parsed = JSON.parse(r.stdout);
-  } catch {
+    const answer = await githubReadClient(ctx).conditionalPaginate<RestIssueComment>({
+      cacheKey: `gh:comments:${repo.owner}/${repo.repo}:${issue}`,
+      route: "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      parameters: { ...repo, issue_number: issue, per_page: 100 },
+      operation: { key: "issue comments", budget: "rest" },
+      actor: "dev:comments",
+    });
+    rows = answer.data;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `🤖 /afk comment read failed for #${issue}; treating as empty: ${detail}\n`,
+    );
     return [];
   }
-  if (!Array.isArray(parsed.comments)) return [];
-  return projectComments(parsed.comments, resolveTrust);
+  return projectComments(
+    rows.map((row) => ({
+      body: String(row.body ?? ""),
+      author: { login: String(row.user?.login ?? ""), is_bot: row.user?.type === "Bot" },
+      authorAssociation: String(row.author_association ?? ""),
+      createdAt: String(row.created_at ?? ""),
+    })),
+    resolveTrust,
+  );
+}
+
+/** The REST shape of one issue comment, projected to what the handoff renders. */
+interface RestIssueComment {
+  readonly body?: string | null;
+  readonly user?: { readonly login?: string; readonly type?: string } | null;
+  readonly author_association?: string;
+  readonly created_at?: string;
 }
 
 function restCommentJq(): string {

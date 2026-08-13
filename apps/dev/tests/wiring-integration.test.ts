@@ -379,14 +379,11 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
       // editLabels reads the current set, then PATCHes the FULL set (#3728).
       { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
       { cmd: "gh", args: ["api", "-X", "PATCH", "repos/acme/widgets/issues/42", "-F", "labels[]=running"], cwd: root },
-      {
-        cmd: "gh",
-        args: [
-          "api", "repos/acme/widgets/issues/42/comments", "--paginate", "--slurp", "--jq",
-          '{comments: (add | map({body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}))}',
-        ],
-        cwd: root,
-      },
+      // The handoff comment read paginates through the shared client. It used to
+      // build `--paginate --slurp … --jq …`, which the `gh` binary REFUSES; the
+      // fake exec here recorded that argv without ever running it, so this
+      // assertion pinned a command production could not execute (#3734).
+      { cmd: "gh", args: ["api", "--paginate", "repos/acme/widgets/issues/42/comments"], cwd: root },
       { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
       { cmd: "git", args: ["-C", root, "push", "origin", `${branch}:refs/heads/${branch}`], cwd: root },
       { cmd: "git", args: ["-C", root, "merge", "--ff-only", "origin/main"], cwd: root },
@@ -401,9 +398,8 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
       {
         cmd: "gh",
         args: [
-          "api", "repos/acme/widgets/issues", "--method", "GET", "--paginate", "--slurp",
+          "api", "--paginate", "repos/acme/widgets/issues",
           "-f", "state=open", "-f", "labels=req:42", "-f", "per_page=100",
-          "--jq", "add | map(select(.pull_request == null) | {number, labels})",
         ],
         cwd: root,
       },

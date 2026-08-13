@@ -8,8 +8,73 @@ import {
 } from "../../core/triage-labels.js";
 import type { IssueOpenState } from "../../core/reclaim.js";
 import type { ReconcileSweepCandidate, UnblockCandidate } from "../../core/boot-sweep.js";
-import { apiPath, runGithubRestRead, type GhContext } from "./common.js";
+import { githubReadClient, githubRepo, type GhContext } from "./common.js";
 import { readSingleObject } from "./single-object.js";
+
+/**
+ * One issue-collection read, paginated by the shared client.
+ *
+ * These listings used to be `gh api` invocations carrying `--paginate --slurp
+ * … --jq …`, a flag combination the `gh` binary REFUSES (`the --slurp option is
+ * not supported with --jq or --template`). The planner that shaped that argv
+ * could not have caught it: it validates the REQUEST — no mutation, an explicit
+ * `--method GET` so `-f` params stay in the query string — while the
+ * incompatibility lives in the CLI. The caller then read the non-zero exit as an
+ * empty collection, so the Unblock Sweep, the close cascade's dependent lookup
+ * and the parked-mechanical sweep all reported "nothing to do" while the
+ * tracker was full (#3734 introduced it; the sweep answered `promoted: []`
+ * against two promotable issues).
+ *
+ * Paginating through the typed client removes the whole category: there is no
+ * argv to get wrong, `per_page` and page walking are the client's concern, and
+ * the read inherits conditional caching, spend attribution and the retry policy
+ * the CLI path forfeited.
+ */
+interface GithubIssueListItem {
+  readonly number?: number;
+  readonly title?: string;
+  readonly body?: string | null;
+  readonly labels?: ReadonlyArray<string | { readonly name?: string }>;
+  readonly pull_request?: unknown;
+}
+
+/** Label names as plain strings, whichever shape the REST payload used. */
+function labelNames(labels: GithubIssueListItem["labels"]): string[] {
+  if (!Array.isArray(labels)) return [];
+  return labels.map((label) => (typeof label === "string" ? label : String(label.name ?? "")));
+}
+
+/**
+ * Name a failed sweep read on stderr before answering with the conservative
+ * empty collection.
+ *
+ * The empty answer itself is deliberate — a sweep that cannot see the tracker
+ * must not promote, reconcile or excuse anything. What was NOT deliberate is
+ * doing it in silence: an unreachable read and a genuinely quiet repository
+ * produced byte-identical output, which is how a broken listing survived a day
+ * of sweeps reporting success.
+ */
+function reportSweepReadFailure(surface: string, error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`🤖 /afk sweep read failed (${surface}); treating as empty: ${detail}\n`);
+}
+
+async function listIssuesViaClient(
+  ctx: GhContext,
+  cacheKey: string,
+  parameters: Readonly<Record<string, unknown>>,
+): Promise<readonly GithubIssueListItem[]> {
+  const repo = githubRepo(ctx);
+  if (!repo) throw new Error("GitHub sweep listing needs an owner/repository slug");
+  const answer = await githubReadClient(ctx).conditionalPaginate<GithubIssueListItem>({
+    cacheKey: `gh:sweeps:${repo.owner}/${repo.repo}:${cacheKey}`,
+    route: "GET /repos/{owner}/{repo}/issues",
+    parameters: { ...repo, per_page: 100, state: "open", ...parameters },
+    operation: { key: "issue list", budget: "rest" },
+    actor: "dev:sweeps",
+  });
+  return answer.data.filter((issue) => issue.pull_request == null);
+}
 
 export async function orphanState(
   ctx: GhContext,
@@ -72,24 +137,17 @@ export async function blockerState(ctx: GhContext, issue: number): Promise<strin
 }
 
 export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, "issues"), [
-    "--paginate", "--slurp", "-f", "state=open", "-f", `labels=${LABEL_DEPENDENCY}`,
-    "-f", "per_page=100", "--jq", "add | map(select(.pull_request == null) | {number, body, labels})",
-  ]);
-  if (r.code !== 0) return [];
   try {
-    const rows = JSON.parse(r.stdout) as Array<{
-      number?: number;
-      body?: string;
-      labels?: Array<{ name?: string }>;
-    }>;
-    if (!Array.isArray(rows)) return [];
+    const rows = await listIssuesViaClient(ctx, `unblock:${LABEL_DEPENDENCY}`, {
+      labels: LABEL_DEPENDENCY,
+    });
     return rows.map((row): UnblockCandidate => ({
       number: Number(row.number ?? 0),
       body: String(row.body ?? ""),
-      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+      labels: labelNames(row.labels),
     }));
-  } catch {
+  } catch (error) {
+    reportSweepReadFailure("unblock candidates", error);
     return [];
   }
 }
@@ -100,19 +158,14 @@ export async function listByLabel(
   ctx: GhContext,
   label: string,
 ): Promise<{ number: number; labels: string[] }[]> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, "issues"), [
-    "--paginate", "--slurp", "-f", "state=open", "-f", `labels=${label}`,
-    "-f", "per_page=100", "--jq", "add | map(select(.pull_request == null) | {number, labels})",
-  ]);
-  if (r.code !== 0) return [];
   try {
-    const rows = JSON.parse(r.stdout) as Array<{ number?: number; labels?: Array<{ name?: string }> }>;
-    if (!Array.isArray(rows)) return [];
+    const rows = await listIssuesViaClient(ctx, `by-label:${label}`, { labels: label });
     return rows.map((row) => ({
       number: Number(row.number ?? 0),
-      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+      labels: labelNames(row.labels),
     }));
-  } catch {
+  } catch (error) {
+    reportSweepReadFailure(`issues labelled ${label}`, error);
     return [];
   }
 }
@@ -152,26 +205,16 @@ export async function listParkedMechanicalCandidates(
 
 /** List open issues carrying `label` with number, title, body, and labels. */
 async function listIssuesByLabel(ctx: GhContext, label: string): Promise<ReconcileSweepCandidate[]> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, "issues"), [
-    "--paginate", "--slurp", "-f", "state=open", "-f", `labels=${label}`,
-    "-f", "per_page=100", "--jq", "add | map(select(.pull_request == null) | {number, title, body, labels})",
-  ]);
-  if (r.code !== 0) return [];
   try {
-    const rows = JSON.parse(r.stdout) as Array<{
-      number?: number;
-      title?: string;
-      body?: string;
-      labels?: Array<{ name?: string }>;
-    }>;
-    if (!Array.isArray(rows)) return [];
+    const rows = await listIssuesViaClient(ctx, `mechanical:${label}`, { labels: label });
     return rows.map((row): ReconcileSweepCandidate => ({
       number: Number(row.number ?? 0),
       title: String(row.title ?? ""),
       body: String(row.body ?? ""),
-      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+      labels: labelNames(row.labels),
     }));
-  } catch {
+  } catch (error) {
+    reportSweepReadFailure(`parked candidates labelled ${label}`, error);
     return [];
   }
 }
@@ -188,23 +231,29 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
 export async function listOpenPullRequests(
   ctx: GhContext,
 ): Promise<Array<{ number: number; headRefName: string; body?: string }>> {
-  const r = await runGithubRestRead(ctx, apiPath(ctx, "pulls"), [
-    "--paginate", "--slurp", "-f", "state=open", "-f", "per_page=100",
-    "--jq", "add | map({number, headRefName: .head.ref, body})",
-  ]);
-  if (r.code !== 0) return [];
+  const repo = githubRepo(ctx);
+  if (!repo) return [];
   try {
-    const rows = JSON.parse(r.stdout || "[]") as unknown;
-    if (!Array.isArray(rows)) return [];
-    return rows
-      .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
+    const answer = await githubReadClient(ctx).conditionalPaginate<{
+      number?: number;
+      head?: { ref?: string };
+      body?: string | null;
+    }>({
+      cacheKey: `gh:sweeps:${repo.owner}/${repo.repo}:open-pulls`,
+      route: "GET /repos/{owner}/{repo}/pulls",
+      parameters: { ...repo, per_page: 100, state: "open" },
+      operation: { key: "pr list", budget: "rest" },
+      actor: "dev:sweeps",
+    });
+    return answer.data
       .map((row) => ({
         number: Number(row.number ?? 0),
-        headRefName: String(row.headRefName ?? ""),
+        headRefName: String(row.head?.ref ?? ""),
         ...(typeof row.body === "string" ? { body: row.body } : {}),
       }))
       .filter((row) => row.number > 0 && row.headRefName.length > 0);
-  } catch {
+  } catch (error) {
+    reportSweepReadFailure("open pull requests", error);
     return [];
   }
 }
