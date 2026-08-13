@@ -1404,7 +1404,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       locked: false,
       worktreeDiff: "diff --git a/packages/x/src/a.ts b/packages/x/src/a.ts\n+const fromWorktree = true;\n",
       adversarialReview: { enabled: true, maxIterations: 2, reviewerCount: 1, quorum: "any" },
-      adversarialFindings: { summary: "Clean.", findings: [] },
+      adversarialFindings: { summary: "Clean.", score: 0.9, findings: [] },
     });
     const result = await processIssue(deps, input);
 
@@ -1433,6 +1433,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       adversarialReview: { enabled: true, maxIterations: 2, reviewerCount: 1, quorum: "any" },
       adversarialFindings: {
         summary: "Stubbed adversarial review summary.",
+        score: 0.1,
         findings: [
           {
             path: "packages/x/src/a.ts",
@@ -1462,6 +1463,9 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     expect(body).toContain("blocking: false");
     expect(body).toContain("Acceptance criteria conformance finding.");
     expect(trace.comments).toContainEqual({ issue: 9, body });
+    const envelope = trace.envelopeBodies.at(-1) ?? "";
+    expect(envelope).toContain('<details data-section="appraisal">');
+    expect(envelope).toContain("Score: 0.1");
     // No PR exists yet, so no PR comment was posted.
     expect(trace.comments.some((comment) => comment.issue === 42)).toBe(false);
   });
@@ -1476,7 +1480,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       reseedGateBudget: 0,
       locked: false,
       adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
-      adversarialFindings: { summary: "Never asked.", findings: [] },
+      adversarialFindings: { summary: "Never asked.", score: 0.9, findings: [] },
     });
     const result = await processIssue(deps, input);
 
@@ -1495,6 +1499,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       adversarialFindingsSequence: [
         {
           summary: "One blocking acceptance gap.",
+          score: 0.2,
           findings: [
             {
               path: "packages/x/src/a.ts",
@@ -1512,6 +1517,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
         },
         {
           summary: "Clean after correction.",
+          score: 0.9,
           findings: [],
         },
       ],
@@ -1565,6 +1571,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       adversarialFindingsSequence: [
         {
           summary: "One blocking acceptance gap.",
+          score: 0.2,
           findings: [
             {
               path: "packages/x/src/a.ts",
@@ -1604,6 +1611,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
       adversarialFindings: {
         summary: "Only suggestions.",
+        score: 0.7,
         findings: [
           {
             path: "packages/x/src/a.ts",
@@ -1645,6 +1653,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       adversarialFindingsSequence: [
         {
           summary: "First reviewer found a bug.",
+          score: 0.3,
           findings: [
             {
               path: "packages/x/src/a.ts",
@@ -1656,6 +1665,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
         },
         {
           summary: "Second reviewer found no bug.",
+          score: 0.9,
           findings: [],
         },
       ],
@@ -1683,6 +1693,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     // Re-seed cause.
     const blocking = {
       summary: "Blocking acceptance gaps remain.",
+      score: 0.2,
       findings: [
         {
           path: "packages/x/src/a.ts",
@@ -1738,6 +1749,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       adversarialFindingsSequence: [
         {
           summary: "Blocking finding after three gate corrections.",
+          score: 0.2,
           findings: [
             {
               path: "packages/x/src/a.ts",
@@ -1747,7 +1759,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
             },
           ],
         },
-        { summary: "Clean after the review correction.", findings: [] },
+        { summary: "Clean after the review correction.", score: 0.9, findings: [] },
       ],
     });
     const result = await processIssue(deps, input);
@@ -1810,7 +1822,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
         model: "gpt-5.6-sol",
         effort: "medium",
       },
-      adversarialFindings: { summary: "Clean.", findings: [] },
+      adversarialFindings: { summary: "Clean.", score: 0.9, findings: [] },
     });
     const result = await processIssue(deps, input);
 
@@ -2180,6 +2192,7 @@ describe("processIssue — an exhausted Re-seed budget parks with the draft open
   const reviewExhaustion = () => {
     const blocking = {
       summary: "Blocking acceptance gaps remain.",
+      score: 0.2,
       findings: [
         {
           path: "packages/x/src/a.ts",
