@@ -370,8 +370,8 @@ describe("makeFeedbackWorktree declared setup authority (#3268)", () => {
   });
 });
 
-describe("host-wide validation gate semaphore (#2487)", () => {
-  it("never runs a reconcile gate command alongside a live worker gate command", async () => {
+describe("host-wide heavy-validation admission (#3802)", () => {
+  it("never runs two heavy commands concurrently and never serializes a light command", async () => {
     let held = false;
     const waiters: Array<() => void> = [];
     const releases: Array<() => void> = [];
@@ -408,17 +408,22 @@ describe("host-wide validation gate semaphore (#2487)", () => {
       cacheEnabled: false,
     });
 
-    const first = worker.pnpm(["pnpm", "-C", "afk/wLIVE/1-work", "test"]);
+    const first = worker.pnpm(["pnpm", "-C", "afk/wLIVE/1-work", "test"], { env: {}, weight: "heavy" });
     while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve));
-    const second = reconcile.pnpm(["pnpm", "-C", "afk/wBOOT/2-reconcile", "test"]);
+    const light = reconcile.pnpm(["pnpm", "-C", "afk/wBOOT/2-reconcile", "lint"], { env: {}, weight: "light" });
+    while (releases.length < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(maxActive).toBe(2);
+    releases.pop()?.();
+    await light;
+    const second = reconcile.pnpm(["pnpm", "-C", "afk/wBOOT/2-reconcile", "test"], { env: {}, weight: "heavy" });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(maxActive).toBe(1);
+    expect(active).toBe(1);
     releases.shift()?.();
     while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve));
     releases.shift()?.();
     await Promise.all([first, second]);
-    expect(maxActive).toBe(1);
+    expect(maxActive).toBe(2);
   });
 });
 
@@ -1184,7 +1189,7 @@ describe("the gate's lock waits reach the caller's sink (#2985)", () => {
       cacheEnabled: false,
       onLockWait: sink,
     });
-    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/1-x", "test"]);
+    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/1-x", "test"], { env: {}, weight: "heavy" });
 
     expect(reached.map((r) => r.lock).sort()).toEqual(["feedback-worktree", "validation-gate"]);
     // A sink that reaches only one lock leaves the other silent — which is the
@@ -1213,7 +1218,7 @@ describe("the gate's lock waits reach the caller's sink (#2985)", () => {
     };
 
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
-    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/1-x", "test"]);
+    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/1-x", "test"], { env: {}, weight: "heavy" });
 
     expect(seen).toEqual([undefined, undefined]);
   });
