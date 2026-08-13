@@ -100,7 +100,6 @@ import {
   REDSKILLED_LIVENESS_GRACE_MS,
   sweepHeldWorkerLiveness,
   stopWorker,
-  type RedskilledUnitExitFacts,
 } from "../reattach.js";
 import {
   type RedskilledRequest,
@@ -220,29 +219,9 @@ import {
 import { replaceWithViableSuccessor } from "./takeover.js";
 import { createRemotePollDeadline } from "./remote-poll.js";
 import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
+import { resolveUnitDeath } from "./unit-death.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
 export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
-
-/** Render the structured unit receipt once for evidence-bearing human surfaces. */
-function describeUnitExitReceipt(receipt: RedskilledUnitExitFacts): string {
-  const parts: string[] = [];
-  if (receipt.systemd_result != null) parts.push(`systemd result=${receipt.systemd_result}`);
-  if (receipt.signal != null) parts.push(`main process signal=${receipt.signal}`);
-  else if (receipt.exit_code != null) parts.push(`main process exit code=${receipt.exit_code}`);
-  if (receipt.memory_peak_bytes != null) {
-    const swap = receipt.memory_swap_peak_bytes == null
-      ? ""
-      : ` + ${formatGib(receipt.memory_swap_peak_bytes)} swap`;
-    parts.push(`memory peak=${formatGib(receipt.memory_peak_bytes)}${swap}`);
-  } else if (receipt.memory_swap_peak_bytes != null) {
-    parts.push(`swap peak=${formatGib(receipt.memory_swap_peak_bytes)}`);
-  }
-  return parts.length === 0 ? "systemd retained the unit without exit details" : parts.join("; ");
-}
-
-function formatGib(bytes: number): string {
-  return `${(bytes / (1024 ** 3)).toFixed(2)} GiB`;
-}
 
 export async function startRedskilledDaemon(options: RedskilledDaemonOptions): Promise<RedskilledDaemon> {
   const { paths } = options;
@@ -1294,23 +1273,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       );
       return;
     }
-    const receipt = worker.unit == null || worker.unit === ""
-      ? null
-      : await Promise.resolve(unitExitFacts(worker.unit)).catch(() => null);
-    const resolvedCode = receipt == null ? code : receipt.exit_code;
-    const resolvedSignal = receipt == null ? signal : receipt.signal;
-    const unitDetail = receipt == null ? null : describeUnitExitReceipt(receipt);
+    const death = await resolveUnitDeath(worker, unitExitFacts, {
+      detail: ended,
+      facts: { exitCode: code, signal },
+    });
     const refusal = worker.log_path == null
       ? null
       : bootRefusalFromLog(await readLogTail(worker.log_path).catch(() => null));
     forgetWorker(worker.worker_id);
-    record("worker-death", worker, refusal == null ? unitDetail ?? ended : `session-error: ${refusal}`, {
-      exitCode: resolvedCode,
-      signal: resolvedSignal,
-      systemdResult: receipt?.systemd_result,
-      memoryPeakBytes: receipt?.memory_peak_bytes,
-      memorySwapPeakBytes: receipt?.memory_swap_peak_bytes,
-      journalTail: receipt?.journal_tail,
+    record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, {
+      ...death.facts,
       refusal,
     });
     armIdleTimer();
@@ -1740,20 +1712,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       workers: [...workers.values()], reattached_worker_ids: reattached,
       now_ms: Date.parse(clock()), grace_ms: livenessGraceMs, probe: liveness,
       on_dead: async (worker) => {
-        const receipt = worker.unit == null || worker.unit === ""
-          ? null
-          : await Promise.resolve(unitExitFacts(worker.unit)).catch(() => null);
-        forgetWorker(worker.worker_id);
-        record("worker-death", worker, receipt == null
-          ? "the host no longer confirms this Worker"
-          : describeUnitExitReceipt(receipt), {
-          exitCode: receipt?.exit_code,
-          signal: receipt?.signal,
-          systemdResult: receipt?.systemd_result,
-          memoryPeakBytes: receipt?.memory_peak_bytes,
-          memorySwapPeakBytes: receipt?.memory_swap_peak_bytes,
-          journalTail: receipt?.journal_tail,
+        const death = await resolveUnitDeath(worker, unitExitFacts, {
+          detail: "the host no longer confirms this Worker",
+          facts: {},
         });
+        forgetWorker(worker.worker_id);
+        record("worker-death", worker, death.detail, death.facts);
       },
     });
     if (dead.length > 0) armIdleTimer();
