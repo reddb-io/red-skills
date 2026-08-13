@@ -78,7 +78,7 @@ describe("Unblock pass (#3014)", () => {
       hitlTypes: () => [],
     };
 
-    await expect(runUnblockPass(io)).resolves.toEqual([17]);
+    await expect(runUnblockPass(io)).resolves.toMatchObject({ promoted: [17] });
     expect(edits).toHaveLength(1);
     expect(edits[0]!.issue).toBe(17);
     expect(edits[0]!.remove).toContain("blocked:dependency");
@@ -103,7 +103,7 @@ describe("Unblock pass (#3014)", () => {
       hitlTypes: () => [],
     };
 
-    await expect(runUnblockPass(io)).resolves.toEqual([]);
+    await expect(runUnblockPass(io)).resolves.toMatchObject({ promoted: [] });
     expect(edits).toEqual([]);
   });
 
@@ -119,7 +119,7 @@ describe("Unblock pass (#3014)", () => {
       hitlTypes: () => [],
     };
 
-    await expect(runUnblockPass(io)).resolves.toEqual([]);
+    await expect(runUnblockPass(io)).resolves.toMatchObject({ promoted: [] });
     expect(issueClosed).not.toHaveBeenCalled();
   });
 });
@@ -128,7 +128,7 @@ describe("resident Unblock belt (#3014)", () => {
   // The session-boot clearer: starting the belt sweeps immediately, which is the
   // whole point on a repo where the only thing that ever wakes is a live session.
   it("sweeps once at start without waiting for the interval", async () => {
-    const pass = vi.fn(async () => [17]);
+    const pass = vi.fn(async () => ({ promoted: [17], outcomes: [] }));
     const timers = manualTimers();
 
     const belt = await startResidentUnblockSweep({
@@ -145,7 +145,7 @@ describe("resident Unblock belt (#3014)", () => {
   });
 
   it("re-sweeps on every interval tick", async () => {
-    const pass = vi.fn(async () => []);
+    const pass = vi.fn(async () => ({ promoted: [], outcomes: [] }));
     const timers = manualTimers();
 
     const belt = await startResidentUnblockSweep({
@@ -171,7 +171,7 @@ describe("resident Unblock belt (#3014)", () => {
     const pass = vi.fn(async () => {
       calls += 1;
       if (calls === 1) throw new Error("tracker unavailable");
-      return [17];
+      return { promoted: [17], outcomes: [] };
     });
     const timers = manualTimers();
 
@@ -185,12 +185,12 @@ describe("resident Unblock belt (#3014)", () => {
     await belt!.sweep();
 
     expect(notices[0]).toContain("tracker unavailable");
-    await expect(belt!.sweep()).resolves.toEqual([17]);
+    await expect(belt!.sweep()).resolves.toMatchObject({ promoted: [17] });
   });
 
   // Several stdio hosts for one repo must not each sweep the same tracker.
   it("stands down when another live host owns the singleton", async () => {
-    const pass = vi.fn(async () => []);
+    const pass = vi.fn(async () => ({ promoted: [], outcomes: [] }));
 
     const belt = await startResidentUnblockSweep({
       pass,
@@ -208,7 +208,7 @@ describe("resident Unblock belt (#3014)", () => {
     const leases = leaseStore();
 
     const belt = await startResidentUnblockSweep({
-      pass: async () => [],
+      pass: async () => ({ promoted: [], outcomes: [] }),
       leases,
       owner: { pid: 4242, startTime: "start" },
       timers,

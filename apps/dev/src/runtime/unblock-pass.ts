@@ -27,7 +27,11 @@
 // schedule it on its own belt (`resident-unblock.ts`) where no unrelated halt
 // can starve it. The IO is injected, so the promote path is provable without a
 // tracker.
-import { executeUnblockSweep, type UnblockCandidate } from "../core/boot-sweep.js";
+import {
+  executeUnblockSweep,
+  type UnblockCandidate,
+  type UnblockSweepReport,
+} from "../core/boot-sweep.js";
 import { loadConfig, readHitlTypeLabels } from "../core/config.js";
 import * as ghx from "./gh.js";
 import { afkPaths, resolveRepoContext } from "./wire.js";
@@ -64,9 +68,9 @@ export interface UnblockPassIo {
  * single mutation path, so a boot-time sweep, the MCP tool, and this pass all
  * promote identically.
  */
-export async function runUnblockPass(io: UnblockPassIo): Promise<number[]> {
+export async function runUnblockPass(io: UnblockPassIo): Promise<UnblockSweepReport> {
   const candidates = await io.listCandidates();
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) return { promoted: [], outcomes: [] };
   return executeUnblockSweep(
     candidates,
     async (issue) => ((await io.issueClosed(issue)) ? "CLOSED" : "OPEN"),
@@ -99,6 +103,6 @@ export async function createUnblockPassIo(root: string): Promise<UnblockPassIo> 
 }
 
 /** Run one Unblock pass against the real repo at `root`. */
-export async function runRepoUnblockPass(root: string): Promise<number[]> {
+export async function runRepoUnblockPass(root: string): Promise<UnblockSweepReport> {
   return runUnblockPass(await createUnblockPassIo(root));
 }

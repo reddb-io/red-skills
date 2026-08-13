@@ -235,6 +235,28 @@ export interface UnblockCandidate {
 export type DependencyClosureLookup = (issue: number) => Promise<string | undefined>;
 
 /** One planned promotion: the issue to flip plus its audit comment. */
+/** Why the sweep did what it did, for ONE candidate.
+ *
+ * The sweep used to answer with promoted numbers alone, which made its silence
+ * unreadable: "no candidate carried the label", "a blocker still reads open" and
+ * "the transition planner refused" all left the same empty list, so diagnosing a
+ * stuck dependency gate meant re-running the core by hand to find out which of
+ * the three had happened (#3801). Every path that declines to promote now says
+ * so here. */
+export interface UnblockOutcome {
+  readonly issue: number;
+  readonly outcome: "promoted" | "held" | "refused";
+  /** Plain-words account an operator can act on, never an enum to look up. */
+  readonly reason: string;
+}
+
+/** Everything one sweep did: the promoted numbers callers already consumed, and
+ * the per-candidate account that explains the ones missing from it. */
+export interface UnblockSweepReport {
+  readonly promoted: number[];
+  readonly outcomes: UnblockOutcome[];
+}
+
 export interface PromotionPlan {
   /** The dependency-blocked issue to promote to `ready-for-agent`. */
   number: number;
@@ -271,11 +293,19 @@ export async function planUnblockSweep(
   candidates: readonly UnblockCandidate[],
   fetchBlockerState: DependencyClosureLookup,
   hitlTypes: readonly string[] = [],
+  held: UnblockOutcome[] = [],
 ): Promise<PromotionPlan[]> {
   const plans: PromotionPlan[] = [];
   for (const candidate of candidates) {
     const labels = candidate.labels ?? [];
-    if (!labels.includes(LABEL_DEPENDENCY)) continue;
+    if (!labels.includes(LABEL_DEPENDENCY)) {
+      held.push({
+        issue: candidate.number,
+        outcome: "held",
+        reason: `listed as a candidate but carries no ${LABEL_DEPENDENCY} label`,
+      });
+      continue;
+    }
 
     const reqIds = parseReqLabels(labels);
     // The LANE is the candidate's own type, not the sweep's default (#2966):
@@ -299,6 +329,17 @@ export async function planUnblockSweep(
           lane,
           hitlTypes: carried,
         });
+      } else {
+        // A blocker that did not answer is reported the same as one still open:
+        // the lookup answers `open-or-unknown` for both, and the sweep holds in
+        // either case. Naming the numbers is what turns "still blocked" into a
+        // line an operator can check against the tracker.
+        const pending = reqIds.filter((_, index) => states[index] !== "CLOSED");
+        held.push({
+          issue: candidate.number,
+          outcome: "held",
+          reason: `blocker(s) not confirmed closed: ${pending.map((n) => `#${n}`).join(", ")}`,
+        });
       }
       continue;
     }
@@ -306,7 +347,14 @@ export async function planUnblockSweep(
     // Legacy fallback: the `## Blocked by` body parse, restricted to issues
     // whose label state still says "dependency wait".
     const refs = parseBlockedBy(candidate.body);
-    if (refs.length === 0) continue;
+    if (refs.length === 0) {
+      held.push({
+        issue: candidate.number,
+        outcome: "held",
+        reason: "no req:* label and no parseable `## Blocked by` entry, so nothing declares what it waits for",
+      });
+      continue;
+    }
 
     const states: DependencyClosureState[] = [];
     for (const ref of refs) {
@@ -323,6 +371,12 @@ export async function planUnblockSweep(
         comment: auditComment(refs) + promotionLaneNote(lane, carried, hitlTypes),
         lane,
         hitlTypes: carried,
+      });
+    } else {
+      held.push({
+        issue: candidate.number,
+        outcome: "held",
+        reason: `\`## Blocked by\` entries not confirmed closed: ${refs.join(", ")}`,
       });
     }
   }
@@ -360,8 +414,9 @@ export async function executeUnblockSweep(
   fetchBlockerState: DependencyClosureLookup,
   gh: UnblockSweepGh,
   hitlTypes: readonly string[] = [],
-): Promise<number[]> {
-  const plans = await planUnblockSweep(candidates, fetchBlockerState, hitlTypes);
+): Promise<UnblockSweepReport> {
+  const outcomes: UnblockOutcome[] = [];
+  const plans = await planUnblockSweep(candidates, fetchBlockerState, hitlTypes, outcomes);
   // Resolve each promoted issue's holding label from its candidate label set.
   const labelsByIssue = new Map<number, string[]>();
   for (const c of candidates) labelsByIssue.set(c.number, c.labels ?? []);
@@ -376,6 +431,14 @@ export async function executeUnblockSweep(
     if (plan && !isRefused(plan)) {
       await gh.editLabels(p.number, [...plan.remove], [...plan.add]);
     } else if (plan && isRefused(plan)) {
+      // The one silent exit this sweep had: a refused transition dropped the
+      // candidate with no record anywhere, so an operator watching an empty
+      // promotion list could not tell a refusal from an absence.
+      outcomes.push({
+        issue: p.number,
+        outcome: "refused",
+        reason: `the state transition was refused: ${refusalReason(plan)}`,
+      });
       continue;
     } else {
       const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
@@ -392,8 +455,21 @@ export async function executeUnblockSweep(
       : p.comment;
     await gh.comment(p.number, comment);
     promoted.push(p.number);
+    outcomes.push({
+      issue: p.number,
+      outcome: "promoted",
+      reason: `every blocker closed; routed to the ${p.lane} lane`,
+    });
   }
-  return promoted;
+  return { promoted, outcomes };
+}
+
+/** The refusal's own words when it carries them, and a stated fallback when it
+ * does not — never an empty string, which reads as "no reason" rather than "the
+ * refusal named none". */
+function refusalReason(plan: unknown): string {
+  const reason = (plan as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason !== "" ? reason : "the planner named no reason";
 }
 
 /** Counts of open issues in states /afk cannot consume. Mirrors the three
