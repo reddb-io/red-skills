@@ -28,6 +28,7 @@
  * The probes are injected, so both branches are provable without systemd.
  */
 import { spawn, spawnSync } from "node:child_process";
+import { constants as osConstants } from "node:os";
 import { killTreeAndWait } from "@reddb-io/shared/kill-tree.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -35,6 +36,20 @@ import { DEFAULT_WORKER_UNIT_PREFIX } from "./worker-placement.js";
 
 /** Answers "is this Worker still running?" for one Worker. */
 export type RedskilledLivenessProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
+
+/** The exit receipt systemd retains for a transient Worker unit. */
+export interface RedskilledUnitExitFacts {
+  readonly systemd_result: string | null;
+  readonly exit_code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly memory_peak_bytes: number | null;
+  readonly memory_swap_peak_bytes: number | null;
+}
+
+/** Reads the exit receipt for a unit that the host no longer reports active. */
+export type RedskilledUnitExitFactsProbe = (
+  unit: string,
+) => RedskilledUnitExitFacts | null | Promise<RedskilledUnitExitFacts | null>;
 
 /** Stops one Worker; returns whether the host confirmed its death. */
 export type RedskilledStopProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
@@ -130,6 +145,68 @@ export function isUnitActive(unit: string): boolean {
   const probe = spawnSync("systemctl", ["--user", "is-active", "--quiet", unit], { stdio: "ignore" });
   if (probe.error != null) return false;
   return probe.status === 0;
+}
+
+/**
+ * Ask systemd for the unit's own exit, never the `systemd-run --wait` client's.
+ *
+ * `ExecMainCode=1` is CLD_EXITED and makes `ExecMainStatus` an exit status;
+ * CLD_KILLED/CLD_DUMPED make it a signal number. Missing or collected units
+ * answer `null` rather than turning the launch client's generic 255 into fact.
+ */
+export function detectUnitExitFacts(unit: string): RedskilledUnitExitFacts | null {
+  const probe = spawnSync(
+    "systemctl",
+    [
+      "--user",
+      "show",
+      "--no-pager",
+      "--property=Result",
+      "--property=ExecMainCode",
+      "--property=ExecMainStatus",
+      "--property=MemoryPeak",
+      "--property=MemorySwapPeak",
+      unit,
+    ],
+    { encoding: "utf8" },
+  );
+  if (probe.error != null || probe.status !== 0) return null;
+  const properties = new Map(
+    (probe.stdout ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.includes("="))
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return [line.slice(0, separator), line.slice(separator + 1)] as const;
+      }),
+  );
+  const mainCode = parseSystemdNumber(properties.get("ExecMainCode"));
+  const mainStatus = parseSystemdNumber(properties.get("ExecMainStatus"));
+  return {
+    systemd_result: nonempty(properties.get("Result")),
+    exit_code: mainCode === 1 ? mainStatus : null,
+    signal: mainCode === 2 || mainCode === 3 ? signalName(mainStatus) : null,
+    memory_peak_bytes: parseSystemdNumber(properties.get("MemoryPeak")),
+    memory_swap_peak_bytes: parseSystemdNumber(properties.get("MemorySwapPeak")),
+  };
+}
+
+function nonempty(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed == null || trimmed === "" ? null : trimmed;
+}
+
+function parseSystemdNumber(value: string | undefined): number | null {
+  if (value == null || !/^\d+$/.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function signalName(number: number | null): NodeJS.Signals | null {
+  if (number == null) return null;
+  const match = Object.entries(osConstants.signals).find(([, value]) => value === number)?.[0];
+  return match?.startsWith("SIG") ? match as NodeJS.Signals : null;
 }
 
 /** Answers "which process is this unit actually running?"; null when unresolvable. */
