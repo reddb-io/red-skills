@@ -62,6 +62,12 @@ export interface ReviewFindings {
   readonly blocking: boolean;
 }
 
+/** The gate review's structured output. Appraisal rides the existing reviewer
+ * pass, while the standalone PR-review flow keeps its original contract. */
+export interface ScoredReviewFindings extends ReviewFindings {
+  readonly score: number;
+}
+
 export interface PrContext {
   readonly number: number;
   readonly title: string;
@@ -259,8 +265,7 @@ function parseInlineComment(value: unknown): InlineComment {
   };
 }
 
-/** Standard Schema validator for {@link ReviewFindings}, used by `Output.object`. */
-export const reviewFindingsSchema = standardSchema<ReviewFindings>((value) => {
+function parseReviewFindings(value: unknown): ReviewFindings {
   const record = asRecord(value, "review output");
   const rawComments = record.inlineComments ?? [];
   if (!Array.isArray(rawComments)) throw new Error("inlineComments must be an array");
@@ -269,6 +274,20 @@ export const reviewFindingsSchema = standardSchema<ReviewFindings>((value) => {
     inlineComments: rawComments.map(parseInlineComment),
     blocking: record.blocking === true,
   };
+}
+
+/** Standard Schema validator for {@link ReviewFindings}, used by `Output.object`. */
+export const reviewFindingsSchema = standardSchema<ReviewFindings>(parseReviewFindings);
+
+/** Standard Schema validator for the gate review, whose Appraisal score is
+ * required so malformed output enters structured-output retry. */
+export const scoredReviewFindingsSchema = standardSchema<ScoredReviewFindings>((value) => {
+  const record = asRecord(value, "review output");
+  const score = record.score;
+  if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) {
+    throw new Error("score must be a number from 0 to 1");
+  }
+  return { ...parseReviewFindings(record), score };
 });
 
 // ---------------------------------------------------------------------------
