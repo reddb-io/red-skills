@@ -312,7 +312,24 @@ export function planWorkerDirJanitor(
       everyIssueKnown &&
       anyIssueOpen &&
       nowS - entry.mtimeS >= DEAD_WORKER_DIR_TTL_S;
-    if (entry.liveness === "dead" && (everyIssueClosed || openIssueTtlExpired)) {
+    // The CORPSE case, and the one that made this lane grow without bound: a
+    // dead Worker whose directory holds no parseable issue child at all —
+    // because its workspaces were already reclaimed, or because it died before
+    // claiming anything. Both predicates above gate on `issues.length > 0`, so
+    // such a lane answered `false` to every question and fell to `spare` at ANY
+    // age, forever. Seventy-six of them were reported as workers on this host
+    // while the sweep ran every five minutes and freed none.
+    //
+    // It is held to the same TTL as an open-issue lane rather than removed on
+    // sight: a Worker that has just died still owns evidence somebody may be
+    // reading, and `liveness === "dead"` is the daemon's fresh answer, never a
+    // missing pid file (#2679).
+    const emptyLaneTtlExpired =
+      issues.length === 0 && nowS - entry.mtimeS >= DEAD_WORKER_DIR_TTL_S;
+    if (
+      entry.liveness === "dead" &&
+      (everyIssueClosed || openIssueTtlExpired || emptyLaneTtlExpired)
+    ) {
       reclaim.push(entry);
     } else {
       spare.push(entry);
