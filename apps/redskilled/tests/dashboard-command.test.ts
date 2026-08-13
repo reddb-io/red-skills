@@ -29,7 +29,7 @@ describe("the dashboard is reachable before anything works", () => {
   it("names the scope word the statusline uses, not a second vocabulary", () => {
     // `global` means here exactly what it means there; two spellings of one
     // scope is how a second vocabulary starts.
-    expect(REDSKILLED_USAGE).toContain("dashboard [global]");
+    expect(REDSKILLED_USAGE).toContain("dashboard [local]");
   });
 });
 

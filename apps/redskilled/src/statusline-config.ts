@@ -79,6 +79,18 @@ export interface ResolveStatuslineOptionsInput {
   readonly flags?: RedskilledStatuslineFlags;
   /** The project this session belongs to, resolved by its own authority. */
   readonly project?: string | null;
+  /**
+   * What `mode` means when NOBODY declared one — the caller's default, not the
+   * vocabulary's.
+   *
+   * The statusline and the dashboard share this resolver and disagree here on
+   * purpose. A status bar is one line about the repository you are standing in,
+   * so `local` is right for it. A dashboard is the HOST's screen: scoping it to
+   * the caller's directory made every other project on the machine invisible,
+   * so an operator asking what redskilled was doing saw a view of wherever they
+   * happened to be. A flag or a config entry still outranks this.
+   */
+  readonly defaultMode?: RedskilledStatuslineMode;
 }
 
 export interface ResolvedStatuslineOptions {
@@ -211,7 +223,7 @@ export function resolveRedskilledStatuslineOptions(
   return {
     options: {
       ...REDSKILLED_STATUSLINE_DEFAULTS,
-      mode: flags.mode ?? read.config.mode ?? REDSKILLED_STATUSLINE_DEFAULTS.mode,
+      mode: flags.mode ?? read.config.mode ?? input.defaultMode ?? REDSKILLED_STATUSLINE_DEFAULTS.mode,
       project: flags.project !== undefined ? flags.project : input.project ?? REDSKILLED_STATUSLINE_DEFAULTS.project,
       maxWorkers: flags.maxWorkers ?? read.config.maxWorkers ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWorkers,
       maxProjects: flags.maxProjects ?? read.config.maxProjects ?? REDSKILLED_STATUSLINE_DEFAULTS.maxProjects,
