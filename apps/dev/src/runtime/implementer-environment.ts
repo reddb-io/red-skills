@@ -229,7 +229,15 @@ function projectedMcpServers(
     const plugin = mcpPlugin(name, pluginRoots);
     const sourceRoot = plugin ? pluginRoots[plugin] : undefined;
     if (!plugin || !sourceRoot) throw new Error(`enabled implementer MCP '${name}' is not installed`);
-    const manifest = JSON.parse(readFileSync(join(sourceRoot, ".mcp.json"), "utf8")) as McpManifest;
+    // Named like its two neighbours below. An installed plugin that carries no
+    // `.mcp.json` is a real shape — the declaration is a separate file from the
+    // manifest — and a bare ENOENT names a path instead of the projection that
+    // wanted it, leaving the reader to work backwards from a temp directory.
+    const declaration = join(sourceRoot, ".mcp.json");
+    if (!existsSync(declaration)) {
+      throw new Error(`enabled implementer MCP '${name}' declares no transport: ${declaration} is absent`);
+    }
+    const manifest = JSON.parse(readFileSync(declaration, "utf8")) as McpManifest;
     const server = manifest.mcpServers?.[name];
     if (!server) throw new Error(`enabled implementer MCP '${name}' has no transport`);
     servers[name] = {
