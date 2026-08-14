@@ -182,6 +182,10 @@ _Avoid_: hand-authored `opencode.json` per project, second source of truth for t
 The provider-facing runner set (`AgentRunner` = claude | codex | opencode | claude-minimax) and the single descriptor table that owns each runner's provider policy — its accepted efforts, whether effort rides the numeric `effort` knob or OpenCode's free-form `variant` channel, any forced model (claude-minimax → MiniMax-M3), and its auth-env resolver. `toAgentRunner` projects the broader orchestrator **Runner** (which also includes the runner-neutral `hermes`) onto this set, collapsing any provider-less runner to `claude`. Adding a provider becomes one table row instead of parallel edits across `buildAgent`, `effortForProvider`, and the tier-table coercion.
 _Avoid_: runner detection (that resolves *which* Runner to use; a Runner spec defines *what each provider runner accepts*)
 
+**Agent transport**:
+The communication mode by which an **Agent runner** exchanges prompts, session state, control requests, and events with its underlying coding agent, independently of the runner's identity and policy.
+_Avoid_: ACP runner, transport runner, agent provider
+
 **Implementer environment**:
 The loaded surface (plugins, MCP servers, hooks, rsp) an inner agent receives when a **Worker** spawns it. Derived strictly from the repo's `.red/config.yaml` activation gates — a plugin or rsp rides along only when its existing `enabled: true` key says so (ADR 0067 strict opt-in is the payload declaration); everything else stays out of the spawn. Minimal by construction, never by a separate list.
 _Avoid_: implementer payload list, full-environment inheritance
