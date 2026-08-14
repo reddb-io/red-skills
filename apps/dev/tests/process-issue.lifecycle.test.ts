@@ -946,11 +946,15 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 
     expect(result.outcome).toBe("no-sentinel");
     expect(result.preserved).toBe(true);
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:crashed"]);
+    // `blocked:runner`, not `blocked:crashed`: a Worker that died on its runner is
+    // parked under the kind the body already records, so the label and the body
+    // name one thing (#3541). The old spelling was the mismatch that made these
+    // Parks unreconcilable by any tool.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:runner"]);
     const nsEdit = trace.labelEdits.at(-1)!;
     expect(nsEdit.add).toContain("ready-for-human");
-    expect(nsEdit.add).toContain("blocked:crashed");
-    expect(trace.ensuredLabels).toContain("blocked:crashed");
+    expect(nsEdit.add).toContain("blocked:runner");
+    expect(trace.ensuredLabels).toContain("blocked:runner");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
     expect(trace.statePatches).toContainEqual({
       "current.phase": "terminal",

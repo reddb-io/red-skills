@@ -109,7 +109,7 @@ import {
 } from "../triage-labels.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { markTerminalState, recoveryOrdinalFor } from "./types.js";
-import { validationBlockerSummary } from "./validation-park.js";
+import { validationFailureBlocker } from "./validation-park.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editIssueLifecycleLabels, routeRecovery } from "./recovery.js";
 import { emitFailure as emitFailureEnvelope } from "./terminal-envelope.js";
@@ -223,21 +223,11 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: oneLine(sections.notes, "Inner agent emitted BLOCKED."),
         next: "Review the blocker envelope and add human guidance.",
       });
+    // Both validation Parks are described where the descriptors live, so the two
+    // kinds cannot drift apart in this switch.
     case "feedback-failed":
-      return makeBlocker({
-        kind: "validation",
-        summary: validationBlockerSummary(sections.validation) ?? oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
-        next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
-      });
     case "feedback-failed-infra":
-      return makeBlocker({
-        kind: "validation-infra",
-        summary: oneLine(
-          sections.validation ?? sections.log,
-          "The declared validation gate could not run because its infrastructure failed.",
-        ),
-        next: "Restore the validation infrastructure, then requeue the declared gate.",
-      });
+      return validationFailureBlocker(outcome, sections);
     case "no-sentinel":
       return makeBlocker({
         kind: "runner",
