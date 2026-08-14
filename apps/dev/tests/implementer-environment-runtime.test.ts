@@ -37,6 +37,25 @@ function plugin(
   const manifest = JSON.stringify({ name, version: "1.0.0", skills }, null, 2);
   writeFileSync(join(dir, ".claude-plugin", "plugin.json"), manifest);
   writeFileSync(join(dir, ".codex-plugin", "plugin.json"), manifest);
+  // The transports the projection reads, which live in their own file beside the
+  // manifests exactly as they do in this repository. `dev` is the plugin that
+  // owns `navigator` and `rsp`, so a fixture without them projects an MCP it
+  // cannot describe.
+  writeFileSync(
+    join(dir, ".mcp.json"),
+    JSON.stringify({
+      mcpServers: Object.fromEntries(
+        // The servers each plugin really owns, mirroring this repository's own
+        // `.mcp.json` files: dev has navigator and rsp, memory has red-memory,
+        // brain has brain, and both carry red-ui.
+        ({
+          dev: ["navigator", "rsp"],
+          memory: ["red-memory", "red-ui"],
+          brain: ["brain", "red-ui"],
+        })[name].map((server) => [server, { command: "sh", args: ["-c", "true"] }]),
+      ),
+    }, null, 2),
+  );
   return dir;
 }
 
@@ -89,15 +108,12 @@ describe("prepareImplementerEnvironment", () => {
       join(attemptDir, "implementer", "plugins", "dev"),
       join(attemptDir, "implementer", "plugins", "memory"),
     ]);
-    expect(prepared.runtime.codexConfigOverrides).toContain(
-      'plugins."dev@red-skills".enabled=false',
-    );
-    expect(prepared.runtime.codexConfigOverrides).toContain(
-      'plugins."memory@red-skills".enabled=false',
-    );
-    expect(prepared.runtime.codexConfigOverrides).toContain(
-      'plugins."brain@red-skills".enabled=false',
-    );
+    // Ambient plugins are refused wholesale rather than disabled one name at a
+    // time (#3801): an empty map cannot be outvoted by a plugin this projection
+    // has never heard of, which naming each one always could.
+    expect(prepared.runtime.codexConfigOverrides).toContain("features.plugins=false");
+    expect(prepared.runtime.codexConfigOverrides).toContain("plugins={}");
+    expect(prepared.runtime.codexConfigOverrides).toContain("marketplaces={}");
     expect(prepared.runtime.codexConfigOverrides).toContain(
       `skills.config=[{path=${JSON.stringify(
         join(

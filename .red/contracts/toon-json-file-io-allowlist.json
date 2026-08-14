@@ -66,7 +66,7 @@
       "moveKey": "f632cd5f3c50"
     },
     {
-      "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#bafaadf297bb",
+      "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#9172f7efb8b1",
       "classification": "external",
       "reason": ".mcp.json is MCP ecosystem JSON used to project permitted plugin transports.",
       "moveKey": "f632cd5f3c50"
