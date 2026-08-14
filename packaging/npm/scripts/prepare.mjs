@@ -29,6 +29,7 @@ const destDist = join(pkgRoot, "dist");
 const BUNDLES = [
   { dest: "dev.bundle.min.mjs", sources: ["dev.bundle.min.mjs"] },
   { dest: "redskilled-mcp.bundle.min.mjs", sources: ["redskilled-mcp.bundle.min.mjs"] },
+  { dest: "castle-resident.bundle.min.mjs", sources: ["castle-resident.bundle.min.mjs"] },
   { dest: "code-nav.bundle.min.mjs", sources: ["code-nav.bundle.min.mjs", "code-nav-mcp.bundle.min.mjs"] },
   { dest: "memory.bundle.min.mjs", sources: ["memory.bundle.min.mjs"] },
   { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },

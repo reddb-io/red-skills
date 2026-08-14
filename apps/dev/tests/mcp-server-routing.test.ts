@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { connectResidentMcp, main } from "../src/mcp-server.js";
+import {
+  connectResidentMcp,
+  main,
+  resolveCastleResidentBundle,
+} from "../src/mcp-server.js";
 
 describe("dev:afk MCP entrypoint routing", () => {
+  it("resolves the dedicated Castle resident beside plain and versioned MCP bundles", () => {
+    expect(resolveCastleResidentBundle("/plugin/dist/redskilled-mcp.bundle.min.mjs"))
+      .toBe("/plugin/dist/castle-resident.bundle.min.mjs");
+    expect(resolveCastleResidentBundle("/cache/dist/redskilled-mcp-3.18.6.bundle.min.mjs"))
+      .toBe("/cache/dist/castle-resident-3.18.6.bundle.min.mjs");
+  });
   // ADR 0130 Amendment 4 removed the per-project process (#2909), so
   // `__supervise` is no longer a role this bundle owns — it is refused by name
   // like any other unroutable subcommand rather than silently starting one.

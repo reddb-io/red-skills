@@ -32,6 +32,12 @@
       "moveKey": "24cdd7f5b667"
     },
     {
+      "id": "apps/dev/src/core/path-brief-hook.ts#json-parse-file-read#05d430724ad8",
+      "classification": "external",
+      "reason": "Claude plugin manifests are JSON by host contract.",
+      "moveKey": "f632cd5f3c50"
+    },
+    {
       "id": "apps/dev/src/core/toon-version.ts#json-parse-file-read#155234ba4b8b",
       "classification": "external",
       "reason": "package.json is ecosystem JSON.",

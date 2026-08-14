@@ -77,7 +77,11 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **Operating project execution** -> the `redskilled` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
   from live host state; it is the sole runtime source of execution choreography
-  (ADR 0134). `/afk` and `/go` are clients of that canonical interface. The
+  (ADR 0134). The stdio MCP is a client of the project's one versioned **Castle
+  resident** (ADR 0143), which owns engine state, GitHub adapters, registration,
+  and background belts; use the MCP response for project workflow truth and
+  `/redskilled` for host process/budget truth. `/afk` and `/go` are clients of
+  that canonical interface. The
   tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
@@ -132,7 +136,7 @@ Next handoff: <what must be true before the next command>
 ## Coverage Inventory
 
 The router must mention every published dev skill so `/red-doctor` can flag drift:
-`/afk`, `/ask-red`, `/go`, `/manager`, `/wayfinder`, `/model-tier-policy`, `/curate`,
+`/afk`, `/ask-red`, `/guard-process-birth`, `/guard-serialization`, `/go`, `/manager`, `/wayfinder`, `/model-tier-policy`, `/curate`,
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
 `/ground-truth`, `/red-doctor`, `/adr-editor`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
@@ -151,6 +155,12 @@ Capability references registered by owner:
 read-only diagnostics, and a visible project `birth_latch` routes through its
 structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
+Castle resident lifecycle (one project identity across Worktrees, versioned
+wire, spawn/handover/idle rules, matching proxy/resident artifacts, bounded
+project-status health, the local 1/4/8-session diagnostic, and the `redskilled`
+host-authority boundary) ->
+`.red/adr/0143-castle-resident-is-project-workflow-truth.md` and
+`plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` standing drain policy (`plugins.dev.afk.standing.{runner,target}`), including
@@ -164,6 +174,11 @@ or a blocking 0–1 floor) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` inner-agent GitHub reads (explicit `gh api` REST forms for issues, pull
 requests, and check runs) -> `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`;
+Path briefs across Claude Code, Codex, and OpenCode (automatic first-touch
+injection from a skill's `paths:` frontmatter, once per session per skill) ->
+`scripts/lib/path-briefs.mjs`, `apps/dev/src/core/path-brief-hook.ts`,
+`plugins/dev/hooks/{claude,codex}.hooks.json`, and
+`apps/opencode-host/src/hooks-to-events.ts`;
 `/afk` task-class runner routes (`plugins.dev.afk.routes.{validate,simple,complex,think}`),
 their override precedence, and `/red-setup` interview ->
 `plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
@@ -214,6 +229,7 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 ## Standalone And Maintenance Routes
 
+- `/guard-process-birth` and `/guard-serialization` are path-declared briefs delivered on first touch of their governed source surfaces; they are invariant context, not operator-selected workflow routes.
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set, reports/fixes ADR 0098 tmp janitor hygiene, and
   runs the shared operational probe registry that fleet boot also consumes. It

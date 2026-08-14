@@ -40,8 +40,8 @@
     "defaultPrompt": [
       "Use $afk when this workspace needs it.",
       "Use $ask-red when this workspace needs it.",
-      "Use $go when this workspace needs it.",
-      "Use $manager when this workspace needs it."
+      "Use $guard-process-birth when this workspace needs it.",
+      "Use $guard-serialization when this workspace needs it."
     ],
     "brandColor": "#D92D20"
   }
