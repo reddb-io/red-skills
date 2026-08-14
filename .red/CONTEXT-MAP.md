@@ -48,3 +48,23 @@ domain language or writing ADRs.
 ADRs remain in the root `.red/adr/` sequence unless a future context needs its
 own local ADR subtree. Cross-plugin decisions should stay global and link back
 to the relevant context files.
+
+## Pending decomposition
+
+Revisit the context boundaries before the next broad glossary pass. `Dev` now
+mixes plugin product language with host control-plane, disposable workload,
+GitHub gateway, and repository-internal concerns, while `Memory` and `Brain`
+are separated primarily by product/plugin. Start the review with these
+candidate owning contexts:
+
+- `plugin-dev`
+- `plugin-memory`
+- `plugin-brain`
+- `plugin-internal`
+- `redskilled`
+- `worker`
+
+Add further contexts only where the concept and relationship inventory shows a
+distinct authority and vocabulary. The review must decide whether plugin,
+runtime, or authority boundaries are canonical before moving entries; do not
+mechanically split the current files by package path.

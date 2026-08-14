@@ -135,8 +135,48 @@ The developer's main working clone of the repo, contrasted with an AFK **Worktre
 _Avoid_: main repo, root checkout
 
 **Worker**:
-A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
-_Avoid_: agent, slot, runner
+A disposable, project-versioned workload admitted, budgeted, observed, and eventually reaped by **redskilled**. A Worker performs bounded work in an isolated **Worktree** and carries no durable project-control authority: Workers are cattle, while their outcomes and recoverable evidence survive in the control plane and the Issue tracker.
+_Avoid_: Project coordinator Worker, resident, daemon, durable Worker, pet process
+
+**Project control state**:
+The stateful per-project partition inside **redskilled** that understands the project's workflow policy, maintains queue consumption, and decides which disposable **Workers** to request. It is daemon state, not a separate project process, resident, or special Worker.
+_Avoid_: Project coordinator Worker, Castle resident, Demand producer, Project listener, project daemon
+
+**Project**:
+One logical GitHub repository under **redskilled** control, canonically keyed by GitHub's stable repository identity rather than by a checkout path or mutable `owner/repo` spelling. One Project owns one queue view, GitHub cache and budget ledger, pending-write outbox, **Drain intent**, and daemon-managed **Project workspace**.
+_Avoid_: checkout, Git common directory, worktree, project clone, `owner/repo` as immutable identity
+
+**Project workspace**:
+The one canonical repository workspace that **redskilled** owns and maintains for a **Project** under daemon-managed storage. It supplies the mirror, base commits, and isolated **Worktrees** in which disposable **Workers** execute. Editor checkouts and other local clones are clients that identify and control the Project; they are never execution authorities or alternate workspace pools.
+_Avoid_: Primary checkout, editor checkout, registered clone, workspace pool, client-owned worktree root
+
+**GitHub credential profile**:
+A daemon-owned GitHub authentication identity and its rate-budget domain. Each **Project** binds to one named profile; **redskilled** alone resolves and uses its secret for cache refreshes and durable writes. MCPs, ACP clients, and **Workers** refer only to the Project and never forward a GitHub token per call. A host may keep several profiles for distinct organizations, installations, or access scopes without fragmenting one Project across credentials.
+_Avoid_: client token, Worker credential, per-request authentication, project secret copy
+
+**GitHub gateway**:
+The sole managed path from a host's RedSkills workflows to GitHub. **redskilled** owns REST, GraphQL, and authenticated Git transport under the Project's **GitHub credential profile**: it coalesces and caches API reads, budgets and serializes API writes, refreshes the managed repository, and publishes Worker commits or branches. Workers operate only on their local **Worktree** and request refresh or publication through ACP; they never receive GitHub credentials or independently fetch, push, open PRs, or mutate Issues.
+_Avoid_: Worker `gh`, delegated Git token, direct Worker push, API-only gateway, per-client GitHub access
+
+**Client checkout**:
+A human- or editor-owned clone that resolves its GitHub repository identity and connects a client surface to the corresponding **Project** in **redskilled**. Its uncommitted files, local branches, and Git common directory do not become Worker input or project-control truth; deliberate work enters through GitHub or an explicit control-plane operation.
+_Avoid_: Project workspace, Worker root, execution checkout, daemon mirror
+
+**Client authority**:
+The capability scope granted to one authenticated **redskilled** connection. A project-scoped MCP or editor client may mutate only the **Project** resolved from its **Client checkout**; an explicitly administrative client may observe and operate host-wide state. Socket access alone never silently upgrades a project client into host administration.
+_Avoid_: Docker-socket authority, ambient host admin, client-declared project trust, all-or-nothing local access
+
+**Project authority split**:
+The deliberate boundary between durable workflow truth and operational control truth. GitHub's **Issue tracker** owns Tickets, labels, dependencies, discussions, and human decisions; **redskilled** owns the registered drain intent, GitHub cache and cursors, pending-write outbox, local claims, Worker lifecycle, budgets, and placement. On disagreement, redskilled reconciles its operational state toward fresh GitHub truth without discarding still-pending writes or pretending stale cache is current.
+_Avoid_: redskilled issue tracker, GitHub runtime state, dual workflow truth, cache as truth
+
+**Project policy precedence**:
+The three-layer resolution of a **Project**'s effective execution policy: host-owned policy sets non-negotiable permissions, budgets, and placement limits; explicit durable control intents choose behaviour within those limits; tracked `.red/config.yaml` from the **Project workspace**'s refreshed Trunk supplies versioned defaults and requirements. **Client checkout** state never participates. Same-major compatible changes reconcile live; a cross-major change requires a **Major handover**.
+_Avoid_: client config upload, dirty-checkout policy, daemon-only project config, project override of host limits
+
+**Drain intent**:
+The durable instruction in a **Project control state** that eligible Issues should continue being consumed until an explicit stop changes that desired state. It outlives the MCP, CLI, editor, or ACP session that created it; client presence may tune observation cadence but never silently cancels the drain.
+_Avoid_: client lease, session drain, connected-mode execution, idle cancellation
 
 **Attempt / Attempt record — EXTINCT (ADR 0130)**:
 The retired name for one **Worker** × one **Ticket** × one try, and for the durable per-try record that carried its narrative on `.red/state/castle/attempts.toonl`. Neither named a fact the **Worker** did not already carry: ADR 0103 had made a retry a fresh Worker, so a Worker *is* that unit, and the record was a third copy of pointers the **Issue tracker** and git already own. ADR 0130 removed the noun, the lane, the `red.castle.attempt.v1` contract and the retention rule together; what the record got right moved rather than died — process liveness re-anchored onto the **Liveness anchor**'s daemon read, and reclaim onto the **Worker reclaim rule**. The **redskilled** host event lane keeps the one fact no other authority holds, Worker-to-process: birth, death, and a budget-driven kill. The term survives only for reading the archived ADR 0128, ADR 0129, and historical **Envelopes**; never describe live execution with it.
@@ -185,6 +225,70 @@ _Avoid_: runner detection (that resolves *which* Runner to use; a Runner spec de
 **Agent transport**:
 The communication mode by which an **Agent runner** exchanges prompts, session state, control requests, and events with its underlying coding agent, independently of the runner's identity and policy.
 _Avoid_: ACP runner, transport runner, agent provider
+
+**RedSkills identity**:
+The public product identity presented by agent-facing surfaces, independent of the underlying **Agent runner**, **Agent transport**, Castle resident, MCP, or **redskilled** daemon.
+_Avoid_: Codex identity, runner identity, Castle identity, redskilled identity
+
+**ACP conformance**:
+The product property that the **RedSkills identity** satisfies both ACP agent and ACP client contracts through separate surfaces with independently verified protocol behaviour.
+_Avoid_: ACP opt-in, ACP runner, ACP-compatible mode
+
+**ACP draft revision**:
+The RedSkills-namespaced wire identifier that distinguishes incompatible ACP v2 drafts which share the same `protocolVersion: 2` major.
+_Avoid_: ACP protocol version, SDK version, artifact version
+
+**RedSkills wire major**:
+The product-contract major exchanged independently of the ACP protocol version. A **redskilled** daemon, its MCP adapters, and its **Workers** interoperate whenever this RedSkills major matches; minor and patch differences are compatible by contract and never form a routing or admission boundary. A cross-major peer is refused before work or session state can cross the wire. Supporting ACP v1 and ACP v2 does not imply supporting two RedSkills wire majors.
+_Avoid_: ACP major, exact package version handshake, minor-version routing, bundle equality
+
+**Major handover**:
+The quiescent, single-authority cutover between two **RedSkills wire majors**. The old **redskilled** major stops new Worker admissions, drains or terminally accounts for its live Workers, flushes pending GitHub writes, persists a migration checkpoint, and exits before the new major migrates state and assumes the one host endpoint. Workflow traffic never crosses majors and two majors never concurrently own project state, Workers, or the GitHub budget.
+_Avoid_: rolling mixed-major operation, parallel major daemons, cross-major Worker compatibility, kill-and-replace upgrade
+
+**ACP workflow session**:
+An ACP agent session through which a client directs and observes **redskilled** workflows while every concrete change remains isolated in a **Worker**'s **Worktree**.
+_Avoid_: editor workspace session, direct coding session, ACP Worktree
+
+**RedSkills ACP extension**:
+The capability-advertised family of typed ACP extension methods under the `_redskills/*` namespace for deterministic control-plane operations such as Project drain, stop, status, Worker control, and governed GitHub access. Methods use ACP's standard JSON-RPC extension mechanism and advertise their schemas or capability versions in `_meta.redskills`; MCP and CLI adapters translate to them rather than opening a private daemon wire.
+_Avoid_: private RPC, Castle wire, ACP-like protocol, prompt-encoded control API, unnamespaced custom method
+
+**ACP core parity**:
+The guarantee that a generic ACP client can reach the complete RedSkills workflow through standard sessions, prompts, slash commands, plans, tool-call updates, cancellation, and permissions without understanding the **RedSkills ACP extension**. `_redskills/*` provides deterministic typed access to the same governed capabilities; it never unlocks a workflow that is impossible through ACP core or creates a second implementation.
+_Avoid_: extension-required mode, read-only generic client, MCP-only capability, prompt-only duplicate implementation
+
+**Worker-backed Agent**:
+The split behind the public RedSkills ACP Agent: **redskilled** owns sessions, deterministic operations, permissions, routing, and durable control state, while every generative turn runs in an admitted, budgeted, replaceable **Worker**. A Worker may act as an ACP Client of child agents; “Manager” names at most a temporary Worker role and never a third architectural player or model runtime embedded in the daemon.
+_Avoid_: daemon model, redskilled runner, Manager service, resident agent, unadmitted generation
+
+**Workflow Worker**:
+A **Worker** whose lifetime is bounded by one active workflow rather than by an ACP connection or one prompt turn. It may serve several related turns while retaining one Ticket and isolated **Worktree**, then ends on workflow completion, idle policy, budget verdict, or replacement. An **ACP workflow session** may route and observe several Workflow Workers over time; its **ACP session journal** preserves continuity above them.
+_Avoid_: session Worker, turn Worker, project Worker, persistent manager, one Worker per editor
+
+**ACP session journal**:
+The daemon-owned durable record of one ACP session's observable prompts, relevant updates, plans, permission decisions, workflow pointers, and replacement checkpoints. **redskilled** uses it to reconstruct a **Worker-backed Agent** after Worker death without making a runner-native resume feature authoritative. Provider-native transcripts remain **Session evidence** and may optimize a warm resume, but their absence never erases the public session identity or governed workflow state.
+_Avoid_: runner session as truth, Worker-owned transcript, chain-of-thought store, disposable ACP session
+
+**Detached permission rule**:
+How **redskilled** resolves an ACP permission request when no authorized interactive client can answer. Project and host policy may pre-authorize the action; anything outside that policy terminates or checkpoints the Worker and records the pending decision through the ordinary **HITL resolution** path. A Worker never holds admission indefinitely awaiting reconnection, and absence of a client is never implicit approval. When an authorized client is attached, redskilled may project the same request upstream without bypassing its **Client authority**.
+_Avoid_: permission zombie, auto-approve-on-disconnect, client-presence requirement, private Worker prompt
+
+**Linux ACP rendezvous**:
+The local transport layout in which clients reach the one **redskilled** authority through its known Unix socket and redskilled reaches each independently managed **Worker** through a daemon-assigned per-Worker Unix socket. Editor-facing adapters may accept ACP over stdio, and a Worker may launch a direct child agent over ACP stdio, but both are transport projections of the same protocol and own no state or workflow logic.
+_Avoid_: Castle socket, private daemon RPC, shared Worker bus, stdio-owned lifecycle, adapter service
+
+**Local ACP endpoint**:
+The platform abstraction for reconnectable host-local ACP: a Unix socket on Linux and a Windows Named Pipe on Windows. **redskilled** owns one known endpoint and assigns one endpoint to each independently managed **Worker**; endpoint permissions enforce the first local boundary before ACP authentication and **Client authority** narrow the connection further. Loopback TCP is not the default local control plane.
+_Avoid_: cross-platform TCP port, socket-only contract, Windows stdio fallback, transport-specific workflow API
+
+**Worker placement driver**:
+The host implementation that materializes an admitted **Worker** as a native process or through Docker or Podman while preserving the same lifecycle, budget, workspace, and ACP contracts. A Project may declare execution requirements or preferences; **redskilled** chooses a compatible driver under host policy and refuses admission when none qualifies. A placement driver is an internal mechanism, never a Worker kind or public architectural player.
+_Avoid_: container Worker, Docker agent, native Worker identity, sandbox as protocol, project-selected host authority
+
+**Worker ACP chain**:
+The recursive interaction model in which **redskilled** acts as an ACP Client of each **Worker**, each Worker is an ACP Agent to its parent, and a Worker may itself act as an ACP Client of child agents. Protocol interaction is ACP throughout; Worker admission, placement, budgets, project state, and reaping remain control-plane responsibilities of redskilled.
+_Avoid_: Castle wire, internal MCP chain, Project coordinator Worker
 
 **Implementer environment**:
 The loaded surface (plugins, MCP servers, hooks, rsp) an inner agent receives when a **Worker** spawns it. Derived strictly from the repo's `.red/config.yaml` activation gates — a plugin or rsp rides along only when its existing `enabled: true` key says so (ADR 0067 strict opt-in is the payload declaration); everything else stays out of the spawn. Minimal by construction, never by a separate list.
@@ -243,8 +347,8 @@ The gitignored durable generated-knowledge home at `.red/researches/`, used for 
 _Avoid_: tmp research reports
 
 **redskilled**:
-The host-scoped execution daemon that owns worker **processes** across every project on one machine — birth, death, limits, and placement — while each project's bundle keeps owning the work (ADR 0130, decided and being implemented). Exactly one instance per machine behind a unix socket — another environment of the same OS user joins the live socket named by the machine claim even when XDG resolution differs, while a second OS user is refused by name rather than served from the first user's daemon (ADR 0130 Amendments 3 and 11) — it carries no project execution semantics: it receives an argv, a placement target, a budget, and an opaque project label, and never derives repository layout, which is what lets one daemon serve checkouts pinned to different bundle versions. Workers run as transient init-system units rather than as its children, so it restarts and re-attaches instead of taking every project's work with it; when it is unreachable no worker is born at all. Its reach is asymmetric by design: a session reads every project on the host and writes only its own.
-_Avoid_: supervisor, fleet supervisor (the per-project **Demand producer** is a different thing and stays in the repo), resident (that names the rsp core, ADR 0126), fleet (extinct — ADR 0130), scheduler (it admits and places, it never chooses whose work runs next)
+The host-scoped, stateful RedSkills control-plane daemon. Exactly one instance per machine owns disposable **Worker** admission, birth, death, limits, placement, observation, and reaping across projects; holds one **Project control state** per registered project on that host; and guarantees that eligible Issues continue to be consumed. MCP servers, CLIs, editors, and other surfaces are clients rather than alternate owners. It is also the sole GitHub gateway for managed workflows on the host: requests are coalesced and budgeted centrally, reads are served from an age-stamped cache, writes are serialized or durably scheduled, and no local client or Worker independently spends the shared API rate limit. Another host may manage the same GitHub repository through its own daemon; the daemons do not form a cluster, and GitHub claims plus durable workflow state remain their coordination boundary. Workers run as transient init-system units rather than as daemon children, so redskilled can restart and re-attach without taking their work with it; when redskilled is unreachable no Worker is born.
+_Avoid_: thin supervisor, fleet supervisor, Castle resident, Demand producer, alternate GitHub client, fleet (extinct — ADR 0130)
 
 **Budget grace**:
 The bounded checkpoint window between the **redskilled** daemon's budget verdict and the kill: the daemon signals, the Worker gets a fixed deadline to commit, push, and write its Envelope, and then dies regardless. Never a live pause — a Worker holding a slot and a claim while awaiting a human decision is the zombie the daemon exists to prevent. "Extend the budget?" is an extractable HITL decision on the parked Ticket, answered through the ordinary requeue door, never by resuscitating the process.
@@ -258,17 +362,17 @@ _Avoid_: the repo's `.red/` (a different directory under a different authority),
 How a program **outside** RedSkills learns that the **redskilled** daemon's state changed, without polling for it (#3503). Two consumers share the public `worker-birth` / `worker-death` / `worker-budget-kill` vocabulary. An unregistered consumer watches the rotating host event lane and re-baselines through `host-state` when its generation is stale. An operator may instead declare an event-keyed argv under `plugins.dev.redskilled.hooks` in `~/.red/config.yaml`; the daemon births it asynchronously as an admitted, budgeted `redskilled/host-events` **Worker** and writes the complete versioned `host-state` JSON document to its stdin. The snapshot is taken before the sink Worker is counted. `notifications` is the parallel native desktop sink for the same declared kinds. These declarations survive restart because machine policy is operator-owned and re-read at daemon start, never copied into the daemon-written registration snapshot. A registered project may also declare its own callback under Amendment 1 of ADR 0140, charged to that project. **A Host hook is a notification, never a veto**: failure or refusal changes nothing about the triggering Worker, and sink Worker events do not recurse. The lane remains the zero-registration extension point and all non-public event kinds remain internal. First consumer: **Redwall** (`red-dev#52`), the wallpaper that draws the live **Worker** count.
 _Avoid_: **Webhook** (that is the opposite direction — see below), subscriber, daemon push, socket subscription (the protocol is request/response and stays that way), agent hook (that names the Claude/Codex/opencode lifecycle hooks a plugin installs), lifecycle hook (that names the **Demand producer**'s in-process `onLifecycle` seam), unadmitted callback process
 
-**Castle resident**:
-The single versioned per-project process that owns workflow truth (ADR 0143): engine state, GitHub adapters, project registration renewal, and every Castle background belt. Its identity hashes Git's common directory, so the **Primary checkout** and sibling **Worktrees** share one socket, spawn lock, registry, and heavy PID. MCP stdio hosts are clients over its versioned wire. A protocol-major mismatch is a typed refusal with no in-process fallback; handover accounts for in-flight calls within 30 seconds; idle exit requires five minutes with no clients, **Workers**, calls, or armed obligations. It registers `castle-resident` evidence in the host resource-incident store while leaving process birth, death, placement, and budgets to **redskilled**.
-_Avoid_: redskilled (host process truth), MCP server (a client surface), Demand producer (one workflow role the resident owns), rsp resident (a different per-project core with fail-open command semantics), supervisor
+**Castle resident — RETIRED**:
+The discarded per-project process boundary from ADR 0143. Its useful responsibilities — workflow truth, project registration, GitHub adapters, and background belts — belong to **redskilled**'s **Project control state**, without a second resident process or control wire. ADR 0143 requires supersession before implementation follows this glossary decision.
+_Avoid_: reviving a project resident, Project coordinator Worker, project daemon
 
 **Webhook**:
 How the **redskilled** daemon learns that something changed at GitHub, **inbound**, so its queue polling can stop asking on a timer (#3387, #2425/#2365). The opposite direction from a **Host hook**, which is why the two keep separate names: one is the world telling this machine, the other is this machine telling its own desktop. Transport, credential scope and the fallback ladder back to polling are still open under the Wayfinder map (#3381).
 _Avoid_: **Host hook**, hook unqualified (the bare word has meant both directions and that is the collision these two entries exist to end)
 
-**Demand producer**:
-The per-project runtime that owns knowledge about *work* and holds none about *processes* (ADR 0130). It refreshes the **Trunk** mirror, samples queue depth, resolves an elastic target, carries runner directives, reconciles claims and fires lifecycle hooks; it holds no slot table, no birth, no reaping, no respawn and no resource sampling, because authority over the process belongs to the **redskilled** daemon. It says "I want N **Workers** with this profile" and consumes what the host grants, **which may be fewer** — a smaller grant is an ordinary answer from the only authority that sees every project at once, so the producer records the shortfall with the host's own reason and ends the tick rather than re-asking a full machine in a busy loop. **There is exactly one per project**: with the Fleet extinct, several **Work selectors** are an ordered priority *inside* one producer, and the registry refuses a second producer instead of serialising it, because a second loop is a bug to surface and never a queue to drain.
-_Avoid_: fleet supervisor, fleet, named fleet, `--fleet`, slot manager, process manager (all extinct with the Fleet, ADR 0130 — an invocation that names one is refused with its replacement); daemon (that is **redskilled**, host-scoped and outside the repo); Claude fleet, task mirror, auto-monitor loop (observers, never producers)
+**Demand producer — RETIRED**:
+The discarded standalone owner of per-project queue demand. Queue sampling, selector policy, claims, elastic target resolution, and continued consumption now belong to the project's **Project control state** inside **redskilled**, beside the daemon's admission authority. There is no producer process or second control loop to rendezvous with.
+_Avoid_: producer process, Project coordinator Worker, fleet supervisor, project resident
 
 **Launch template**:
 What a project states its NEXT **Worker** should be started with — an argv and an env, both opaque to the **redskilled** daemon (ADR 0130 Amendment 5). It exists because a Worker's runner, model tier, effort and slot-scoped env are decided *per birth* while a registration carries *one* launch, and one frozen argv cannot express a decision made per Worker. **It is restated, never frozen**: a tick that swapped the runner sends the new pair on the renewal its session already sends, so a swap costs no new op, no round trip, and no window where the host holds no record of a project that is still draining. Facts the project cannot know in advance — the Worker's id, its slot, its workspace, its log path — are stated as `{{worker_id}}`-style placeholders and substituted by the daemon at birth, which is the whole of what the daemon contributes: it reads no word, refuses an unknown placeholder rather than starting a Worker with it, and still does not know what a runner is. Model and effort stay *out* of the launch on purpose — they resolve per tier, per run, inside the Worker, from the project's own config.
@@ -582,8 +686,30 @@ _Avoid_: gate stage (the gate is the semaphore, not the schedule), "the feedback
 - A non-delegable **HITL resolution** keeps the **Issue** in `ready-for-human` with the next pending decision stated explicitly.
 - A delegable **HITL resolution** moves the **Issue** to `ready-for-agent` and removes all labels that keep it in the **HITL queue**.
 - An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
-- A **Demand producer** asks for AFK **Workers** and **redskilled** births them; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
-- There is exactly one **Demand producer** per project and one **redskilled** daemon per host; each **Worker** resolves exactly one **Issue** and holds one **Worktree**, and its process liveness resolves through the **Liveness anchor**'s daemon read, never a pid file.
+- A **Project control state** chooses eligible work and **redskilled** births disposable **Workers**; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
+- An **ACP workflow session** routes explicit commands deterministically and delegates free-form prompts to a **Manager**.
+- There is exactly one **Project control state** per registered project and one **redskilled** daemon per host; each **Worker** resolves exactly one **Issue** and holds one **Worktree**, and its process liveness resolves through the **Liveness anchor**'s daemon read, never a pid file.
+- One **Project** represents one logical GitHub repository and owns one daemon-managed **Project workspace**; any number of **Client checkouts** may control it without becoming execution roots or duplicating its queue, cache, **Drain intent**, or GitHub budget.
+- MCP servers, CLIs, and editors are clients of **redskilled**; they never own project state or call GitHub independently on behalf of a managed workflow.
+- **redskilled** is the sole GitHub gateway for managed workflows, coalescing reads and enforcing the shared API budget across every project client and **Worker**.
+- The **Project authority split** keeps durable Ticket semantics in GitHub and operational consumption state in **redskilled**; neither side is a full duplicate of the other.
+- **Project policy precedence** resolves host limits before explicit durable intents and tracked Trunk defaults; uncommitted **Client checkout** configuration is never an input.
+- A **redskilled** daemon, its MCP adapters, and its **Workers** must share one **RedSkills wire major**; minor and patch differences interoperate, while ACP protocol-version negotiation remains a separate concern.
+- A **Major handover** reaches quiescence before a new **RedSkills wire major** assumes the host endpoint; mixed-major workflow operation is never a supported state.
+- A **Drain intent** survives every client disconnect and changes only through an explicit control-plane operation.
+- **redskilled** authority is host-local: daemons never cluster or share live control state, and separate hosts coordinate work only through GitHub's durable workflow and claim facts.
+- Every **Project** binds to one daemon-owned **GitHub credential profile**; local clients and **Workers** never possess or select the underlying token per request.
+- The **GitHub gateway** gives **redskilled** exclusive ownership of managed REST, GraphQL, fetch, and push operations; Workers only edit and commit locally before requesting publication through ACP.
+- **Client authority** scopes every connection before operations begin: project clients mutate one **Project**, while host-wide control requires an explicit administrative capability.
+- Deterministic control-plane calls use the **RedSkills ACP extension**; MCP and CLI adapters are ACP clients and never introduce a second daemon protocol.
+- **ACP core parity** keeps generic editors fully functional; the **RedSkills ACP extension** is a typed projection of the same operations, not an opt-in feature gate.
+- The public RedSkills ACP Agent is a **Worker-backed Agent**: **redskilled** owns control and durable routing, while admitted **Workers** perform all generative execution.
+- An **ACP session journal** lets **redskilled** replace a dead Worker while preserving the public session and its governed workflow pointers; provider-native session artifacts are subordinate evidence or resume optimizations.
+- A **Workflow Worker** may serve several related prompt turns, but remains bounded to one Ticket and **Worktree**; ACP session lifetime never determines Worker lifetime.
+- The **Detached permission rule** applies policy first, projects eligible decisions to an attached authorized client, and routes uncovered detached decisions to HITL without retaining a blocked Worker.
+- The **Linux ACP rendezvous** uses one Unix socket per authority boundary and ACP stdio only at process-launch edges; every hop carries ACP even when its transport differs.
+- A **Local ACP endpoint** is a Unix socket on Linux and a Windows Named Pipe on Windows; both transport the same ACP contract and support daemon/Worker reattachment.
+- A **Worker placement driver** may use a native process, Docker, or Podman without changing Worker identity or ACP behaviour; final placement authority remains with **redskilled**.
 - A **Worker reclaim rule** verdict decides what a dead **Worker**'s artifacts cost to keep; the daemon's answer is the only authority that releases them.
 - A **Worker kind** distinguishes `/afk`, `/go`, and `/go --scout` inside the shared Worker root without creating separate live worker namespaces.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
