@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/red-skills-dev",
-  "version": "3.18.7",
+  "version": "3.18.8",
   "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, /go dispatch, triage, tdd, diagnose, graph-aware codebase understanding, ...)",
   "license": "Apache-2.0",
   "homepage": "https://github.com/reddb-io/red-skills",
