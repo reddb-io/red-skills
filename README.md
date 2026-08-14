@@ -399,7 +399,7 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/inst
 
 The installer resolves the latest GitHub Release, stores it under
 `~/.red-skills/versions/<tag>`, updates `~/.red-skills/current`, detects which
-supported CLIs are present (`claude`, `codex`, `opencode`, `pi`), then installs
+supported CLIs are present (`claude`, `codex`, `opencode`, `redcode`, `pi`), then installs
 the right surface for each host:
 
 | Host | What the installer does |
@@ -408,6 +408,7 @@ the right surface for each host:
 | Codex CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
 | Gemini CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
 | OpenCode | Generates and installs OpenCode plugin modules, skills, MCP config, provider config, and TUI attention config. |
+| RedCode | Installs the same generated host surface independently under `~/.config/redcode/`. |
 | Pi | Registers one Pi package per plugin via `pi install`, exposes the same skill buckets through the standard agent skills protocol. |
 
 OpenCode installs use the published `opencode-host.bundle.min.mjs` asset when
@@ -423,6 +424,7 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/inst
 
 # install only one host
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --only opencode
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --only redcode
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --only pi
 
 # pin a release
@@ -532,6 +534,7 @@ knowledge the human wants preserved, searched, and cited later.
 | Codex CLI | Marketplace plugins, `$skill` invocation, MCP servers, footer integration | Namespace-qualified skill names may appear depending on client version. |
 | Gemini CLI | Marketplace plugins, skills, hooks, MCP servers | Fully natively supported via generated manifests. |
 | OpenCode | Generated `.opencode/skills`, plugin modules, MCP config, provider config, TUI attention config | Installed through `scripts/install-opencode.sh`. |
+| RedCode | OpenCode-compatible generated skills, plugin modules, MCP config, provider config, TUI attention config | Installed independently under `~/.config/redcode/` through `scripts/install-opencode.sh --host redcode`. |
 | Pi | One npm-published package per plugin (`@reddb-io/red-skills-<plugin>` on npm, staged under `packaging/pi/<name>/`) carrying the shared skill buckets | Installed through `pi install npm:@reddb-io/red-skills-<plugin>`, or via `scripts/install-pi.sh` for repo-scoped installs and the `--source-dir` dev path. |
 | GitHub Actions | Reusable attempt workflow and composable action | Runs one autonomous attempt per issue in adopter repos — see [GitHub Actions Lane](#github-actions-lane). |
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/install-opencode.sh — install the RedSkills opencode-host
-# adapter into a target directory or the user-scoped OpenCode config.
+# adapter into a target directory or a user-scoped OpenCode-compatible config.
 #
 # The generated OpenCode surface includes provider/model config, MCP servers,
 # flat skills, plugin event modules, and TUI attention config. The generator
@@ -11,7 +11,7 @@
 #   scripts/install-opencode.sh [TARGET_DIR]
 #   scripts/install-opencode.sh --copy   [TARGET_DIR]
 #   scripts/install-opencode.sh --dry-run [TARGET_DIR]
-#   scripts/install-opencode.sh --global
+#   scripts/install-opencode.sh --global [--host opencode|redcode]
 #   scripts/install-opencode.sh --uninstall [--global] [TARGET_DIR]
 #
 # Positional TARGET_DIR (default $PWD):
@@ -61,11 +61,16 @@ OUT_DIR="$REPO_ROOT/dist/opencode"
 PREGENERATED_TREE_MARKER="$OUT_DIR/.release-generated"
 MANIFEST_FILE=""
 MANIFEST_TMP=""
+HOST="opencode"
+HOST_LABEL="OpenCode"
+HOST_COMMAND="opencode"
+HOST_CONFIG_DIR="opencode"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/install-opencode.sh [TARGET_DIR]
                                   [--global]
+                                  [--host opencode|redcode]
                                   [--uninstall]
                                   [--copy] [--dry-run]
 
@@ -73,8 +78,9 @@ Positional:
   TARGET_DIR              install into this directory (default: $PWD)
 
 Options:
-  --global                install into ~/.config/opencode/plugins/ instead
-  --uninstall             remove RedSkills OpenCode files/config
+  --global                install into the selected host's user config
+  --host <host>           OpenCode-compatible host (default: opencode)
+  --uninstall             remove RedSkills files/config for the selected host
   --copy                  copy SKILL.md instead of symlinking
   --dry-run               print the steps, do not write
 
@@ -82,6 +88,7 @@ Examples:
   scripts/install-opencode.sh                         # install into $PWD
   scripts/install-opencode.sh /path/to/my-project
   scripts/install-opencode.sh --global                # user-scoped install
+  scripts/install-opencode.sh --global --host redcode # ~/.config/redcode
   scripts/install-opencode.sh --uninstall --global    # remove user-scoped install
   scripts/install-opencode.sh --copy /path/to/project # cross-fs safety
 EOF
@@ -90,6 +97,11 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --global)  MODE="global" ;;
+    --host)
+      [ $# -ge 2 ] || { echo "error: --host requires a value" >&2; exit 2; }
+      HOST="$2"
+      shift
+      ;;
     --uninstall) ACTION="uninstall" ;;
     --copy)    COPY="true" ;;
     --dry-run) DRY_RUN="true" ;;
@@ -100,12 +112,26 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+case "$HOST" in
+  opencode)
+    HOST_LABEL="OpenCode"
+    HOST_COMMAND="opencode"
+    HOST_CONFIG_DIR="opencode"
+    ;;
+  redcode)
+    HOST_LABEL="RedCode"
+    HOST_COMMAND="redcode"
+    HOST_CONFIG_DIR="redcode"
+    ;;
+  *) printf 'install-opencode: unsupported host %s (expected opencode or redcode)\n' "$HOST" >&2; exit 1 ;;
+esac
+
 if [ "$MODE" = "local" ] && [ -z "$TARGET_DIR" ]; then
   TARGET_DIR="$PWD"
 fi
 
-log() { printf 'install-opencode: %s\n' "$*"; }
-die() { printf 'install-opencode: %s\n' "$*" >&2; exit 1; }
+log() { printf 'install-%s: %s\n' "$HOST" "$*"; }
+die() { printf 'install-%s: %s\n' "$HOST" "$*" >&2; exit 1; }
 
 run_rm() {
   path="$1"
@@ -122,7 +148,7 @@ begin_manifest() {
   mkdir -p "$(dirname "$MANIFEST_FILE")"
   MANIFEST_TMP="$MANIFEST_FILE.tmp-$$"
   {
-    printf '# RedSkills OpenCode install manifest\n'
+    printf '# RedSkills %s install manifest\n' "$HOST_LABEL"
     printf '# One absolute path per line. Used by scripts/install-opencode.sh --uninstall.\n'
   } > "$MANIFEST_TMP"
 }
@@ -251,12 +277,12 @@ remove_local_install() {
   remove_generated_config "$TARGET_DIR/opencode.jsonc"
   remove_redskills_tui "$TARGET_DIR/tui.json"
   remove_redskills_tui "$TARGET_DIR/tui.jsonc"
-  log "done. removed RedSkills OpenCode files from $TARGET_DIR"
+  log "done. removed RedSkills $HOST_LABEL files from $TARGET_DIR"
 }
 
 remove_global_install() {
   XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-  OPENCODE_ROOT="$XDG_CONFIG_HOME/opencode"
+  OPENCODE_ROOT="$XDG_CONFIG_HOME/$HOST_CONFIG_DIR"
   GLOBAL_PLUGINS_DIR="$OPENCODE_ROOT/plugins"
   GLOBAL_SKILLS_DIR="$OPENCODE_ROOT/skills"
   manifest="$OPENCODE_ROOT/redskills-install-manifest.txt"
@@ -273,7 +299,7 @@ remove_global_install() {
   remove_generated_config "$OPENCODE_ROOT/opencode.jsonc"
   remove_redskills_tui "$OPENCODE_ROOT/tui.json"
   remove_redskills_tui "$OPENCODE_ROOT/tui.jsonc"
-  log "done. removed RedSkills OpenCode files from $OPENCODE_ROOT"
+  log "done. removed RedSkills $HOST_LABEL files from $OPENCODE_ROOT"
 }
 
 if [ "$ACTION" = "uninstall" ]; then
@@ -431,14 +457,15 @@ TUI
   fi
 
   finish_manifest
-  log "done. run: cd $TARGET_DIR && opencode ."
+  log "done. run: cd $TARGET_DIR && $HOST_COMMAND ."
 else
   # global mode
   XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-  GLOBAL_PLUGINS_DIR="$XDG_CONFIG_HOME/opencode/plugins"
-  GLOBAL_SKILLS_DIR="$XDG_CONFIG_HOME/opencode/skills"
-  GLOBAL_CFG="$XDG_CONFIG_HOME/opencode/opencode.json"
-  [ -f "$XDG_CONFIG_HOME/opencode/opencode.jsonc" ] && GLOBAL_CFG="$XDG_CONFIG_HOME/opencode/opencode.jsonc"
+  HOST_ROOT="$XDG_CONFIG_HOME/$HOST_CONFIG_DIR"
+  GLOBAL_PLUGINS_DIR="$HOST_ROOT/plugins"
+  GLOBAL_SKILLS_DIR="$HOST_ROOT/skills"
+  GLOBAL_CFG="$HOST_ROOT/opencode.json"
+  [ -f "$HOST_ROOT/opencode.jsonc" ] && GLOBAL_CFG="$HOST_ROOT/opencode.jsonc"
   declare -A INSTALLED_SKILLS=()
 
   if [ "$DRY_RUN" = "true" ]; then
@@ -447,7 +474,7 @@ else
     log "(dry-run) merge provider block into $GLOBAL_CFG"
   else
     mkdir -p "$GLOBAL_PLUGINS_DIR" "$GLOBAL_SKILLS_DIR"
-    begin_manifest "$XDG_CONFIG_HOME/opencode/redskills-install-manifest.txt"
+    begin_manifest "$HOST_ROOT/redskills-install-manifest.txt"
     for plugin in $PLUGINS; do
       SRC="$OUT_DIR/$plugin/.opencode"
       [ -d "$SRC/plugin" ] && for src_ts in "$SRC/plugin"/*.ts; do
@@ -495,12 +522,12 @@ else
     fi
 
     # Slice 4: merge the tui.json with attention.enabled. opencode
-    # reads tui.json (or tui.jsonc) at $XDG_CONFIG_HOME/opencode/
+    # reads tui.json (or tui.jsonc) at the selected host config root
     # on every session start, so this enables the built-in
     # done / error / permission / question / subagent_done
     # sounds + notifications globally.
-    GLOBAL_TUI="$XDG_CONFIG_HOME/opencode/tui.json"
-    [ -f "$XDG_CONFIG_HOME/opencode/tui.jsonc" ] && GLOBAL_TUI="$XDG_CONFIG_HOME/opencode/tui.jsonc"
+    GLOBAL_TUI="$HOST_ROOT/tui.json"
+    [ -f "$HOST_ROOT/tui.jsonc" ] && GLOBAL_TUI="$HOST_ROOT/tui.jsonc"
     if [ "$DRY_RUN" = "true" ]; then
       log "(dry-run) write $GLOBAL_TUI (Slice 4: tui.json with attention.enabled)"
     else
@@ -525,5 +552,5 @@ TUI
     finish_manifest
   fi
 
-  log "done. opencode in any directory now picks up the same model + plugins."
+  log "done. $HOST_COMMAND in any directory now picks up the same model + plugins."
 fi
