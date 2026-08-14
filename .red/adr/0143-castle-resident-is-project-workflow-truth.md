@@ -1,6 +1,6 @@
 # 0143 — The Castle resident is project workflow truth
 
-- **Status**: accepted
+- **Status**: superseded by ADR 0144
 - **Date**: 2026-08-13
 - **Related**: ADR 0113 (Castle owns truth), ADR 0120 (Castle MCP), ADR 0126 (rsp resident core), ADR 0130 (`redskilled` host process truth), Spec #3799, Ticket #3803
 
