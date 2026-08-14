@@ -3,7 +3,7 @@ import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
-import { basename, dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CASTLE_MCP_PROMPTS,
@@ -138,7 +138,7 @@ async function run(): Promise<void> {
     cwd: root,
     clientVersion: buildInfo.version,
     serverCommand: process.execPath,
-    serverArgs: [resolveCastleResidentBundle(fileURLToPath(import.meta.url))],
+    serverArgs: [fileURLToPath(import.meta.url), "__castle-resident"],
   });
   await client.open();
   const server = createRedskilledMcpServer(root, (method, input) => client.call(method, input));
@@ -173,12 +173,6 @@ async function run(): Promise<void> {
 }
 
 /** Resolve the resident shipped beside this MCP bundle, preserving cache keys. */
-export function resolveCastleResidentBundle(caller: string): string {
-  const file = basename(caller);
-  const match = /^redskilled-mcp(?<version>-[^.]+(?:\.[^.]+)*)?\.bundle\.min\.mjs$/.exec(file);
-  const suffix = match?.groups?.version ?? "";
-  return join(dirname(caller), `castle-resident${suffix}.bundle.min.mjs`);
-}
 
 export interface McpEntrypointDependencies {
   startCurator(): Promise<void>;
@@ -194,6 +188,9 @@ export interface McpEntrypointDependencies {
   /** The lane's own canary (#2706). Optional so every existing caller keeps
    * working; omitted means the real probe. */
   canary?(args: string[]): Promise<number>;
+  /** The Castle resident, run as a role of this same bundle. Optional so every
+   * existing caller keeps working; omitted means the real resident. */
+  resident?(args: string[]): Promise<number>;
 }
 
 /**
@@ -208,6 +205,7 @@ export const REDSKILLED_MCP_USAGE = `Usage: red-skills-redskilled-mcp [command]
 Commands:
   (none)        serve the redskilled MCP surface over stdio
   --version     print the build stamp (--json for the build info)
+  __castle-resident   run the project's Castle resident (spawned, not typed)
   --help        print this usage
 
 Worker subcommands (run, monitor, fleet, …) belong to red-skills-dev.
@@ -241,6 +239,21 @@ export async function main(
       (async (args: string[]) =>
         (await import("./commands/mcp-lane-canary.js")).mcpLaneCanaryCommand(args));
     return canary(argv.slice(1));
+  }
+  // The resident is a ROLE of this bundle, not a second artifact (#3804 shipped
+  // it as a sibling file, which made five places enforce that two files travel
+  // together). The process boundary ADR 0143 asks for is unchanged: this branch
+  // runs in the process the proxy SPAWNS, so the stdio host still owns no engine
+  // and still crosses the socket for every call. Dynamic, like `__mcp-canary`
+  // above, so the static serve path imports no engine module.
+  if (argv[0] === "__castle-resident") {
+    const resident =
+      dependencies.resident ??
+      (async () => {
+        await (await import("./castle-resident.js")).runCastleResident();
+        return 0;
+      });
+    return resident(argv.slice(1));
   }
   if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
     process.stdout.write(

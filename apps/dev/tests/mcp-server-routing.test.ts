@@ -1,16 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  connectResidentMcp,
-  main,
-  resolveCastleResidentBundle,
-} from "../src/mcp-server.js";
+import { connectResidentMcp, main } from "../src/mcp-server.js";
 
 describe("dev:afk MCP entrypoint routing", () => {
-  it("resolves the dedicated Castle resident beside plain and versioned MCP bundles", () => {
-    expect(resolveCastleResidentBundle("/plugin/dist/redskilled-mcp.bundle.min.mjs"))
-      .toBe("/plugin/dist/castle-resident.bundle.min.mjs");
-    expect(resolveCastleResidentBundle("/cache/dist/redskilled-mcp-3.18.6.bundle.min.mjs"))
-      .toBe("/cache/dist/castle-resident-3.18.6.bundle.min.mjs");
+  // The resident used to live in a sibling FILE, resolved by filename
+  // arithmetic that carried the version suffix across so a cache-keyed proxy
+  // spawned its matching cache-keyed resident. It is a role of THIS bundle now,
+  // which makes that guarantee unbreakable rather than merely tested: one file
+  // cannot skew against itself, and no layout can ship half of it.
+  it("routes the Castle resident as a role of this bundle", async () => {
+    const resident = vi.fn(async () => 0);
+    const connect = vi.fn(async () => undefined);
+
+    await expect(
+      main(["__castle-resident"], {
+        startCurator: async () => undefined,
+        startMergeDriver: async () => undefined,
+        connect,
+        resident,
+      }),
+    ).resolves.toBe(0);
+
+    expect(resident).toHaveBeenCalledWith([]);
+    // The role is not the stdio surface: routing to it must not also serve MCP.
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("passes the resident its own arguments and never treats it as unroutable", async () => {
+    const resident = vi.fn(async () => 0);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    await main(["__castle-resident", "--root", "/tmp/x"], {
+      startCurator: async () => undefined,
+      startMergeDriver: async () => undefined,
+      connect: async () => undefined,
+      resident,
+    });
+
+    expect(resident).toHaveBeenCalledWith(["--root", "/tmp/x"]);
+    expect(stderr).not.toHaveBeenCalled();
+    stderr.mockRestore();
   });
   // ADR 0130 Amendment 4 removed the per-project process (#2909), so
   // `__supervise` is no longer a role this bundle owns — it is refused by name
