@@ -72,14 +72,15 @@ version (never verbose), and a flag the schema does not declare fails with exit
 ## Universal install (recommended)
 
 For normal user installs, use the root universal installer. It resolves the
-latest RedSkills release, detects `opencode` alongside Claude Code and Codex,
-and invokes the OpenCode adapter when OpenCode is present:
+latest RedSkills release, detects `opencode` and `redcode` alongside Claude Code
+and Codex, and invokes the adapter for every host present:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
 ```
 
-That path installs OpenCode globally under `~/.config/opencode/` and also keeps
+That path installs OpenCode under `~/.config/opencode/`, RedCode under
+`~/.config/redcode/`, and also keeps
 Claude/Codex marketplace installs in sync when those CLIs are present. It uses
 the published `opencode-host.bundle.min.mjs` release asset when available, so
 normal installs need `node` but do not need a local workspace build.
@@ -97,8 +98,14 @@ git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
 cd ~/code/red-skills
 scripts/install-opencode.sh --global
 
+# global RedCode — isolated from an existing OpenCode install
+scripts/install-opencode.sh --global --host redcode
+
 # global — remove RedSkills from ~/.config/opencode/
 scripts/install-opencode.sh --uninstall --global
+
+# remove only the RedCode surface
+scripts/install-opencode.sh --uninstall --global --host redcode
 
 # local — install into the current directory's .opencode/
 scripts/install-opencode.sh
@@ -123,8 +130,9 @@ cd /path/to/your-project
 opencode .
 ```
 
-The global install writes `~/.config/opencode/plugins/`,
-`~/.config/opencode/skills/`, `opencode.json(c)`, and `tui.json(c)`. The local
+The global install writes the selected host's `plugins/`, `skills/`,
+`opencode.json(c)`, and `tui.json(c)` beneath `~/.config/opencode/` or
+`~/.config/redcode/`. The local
 install writes the same OpenCode surface under the target repo's `.opencode/`
 plus project-local `opencode.json` and `tui.json`. Existing global config files
 are timestamp-backed-up before replacement. Uninstall removes manifest-recorded
