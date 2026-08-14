@@ -107,6 +107,12 @@ async function liveHost(queueDepth?: number): Promise<RedskilledDaemon> {
   const daemon = await startRedskilledDaemon({
     paths,
     idleMs: 60_000,
+    // The belt is what RETIRES a lapsed registration and writes the lapse record
+    // these tests read (`lapsed_at`, "nothing renewed it"). Reads are pure
+    // snapshots by contract (#3802), so nothing on the read path can do it. Left
+    // at its production default of 60s, a test asserting a 20ms window asserts
+    // against a sweep that has not run — a deadline these tests never declared.
+    registrationSustainMs: 10,
     ...(queueDepth == null
       ? {}
       : {
