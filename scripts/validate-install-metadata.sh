@@ -16,6 +16,8 @@ trap 'rm -rf "$tmp"' EXIT
 
 bash -n scripts/install.sh || fail "scripts/install.sh has invalid bash syntax"
 bash -n scripts/install-opencode.sh || fail "scripts/install-opencode.sh has invalid bash syntax"
+bash scripts/test-install-redcode-host.sh \
+  || fail "RedCode host install regression test failed"
 bash -n scripts/install-pi.sh || fail "scripts/install-pi.sh has invalid bash syntax"
 node scripts/generate-pi-manifests.mjs --root "$REPO" --check \
   || fail "plugins/<name>/package.json Pi manifests are stale; run pnpm pi:manifests"

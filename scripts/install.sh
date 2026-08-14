@@ -8,7 +8,7 @@
 # tree under ~/.red-skills, detects supported local CLIs, then wires each host:
 #   - Claude Code: marketplace + plugins
 #   - Codex CLI: marketplace + plugins
-#   - OpenCode: generated plugin/skill/MCP/statusline surface
+#   - OpenCode/RedCode: generated plugin/skill/MCP/statusline surface
 #
 # The Claude and Codex marketplaces are registered from the GitHub source
 # (reddb-io/red-skills), not from the downloaded snapshot: `plugin marketplace
@@ -17,7 +17,7 @@
 # into the directory form for offline and dev installs; re-running the installer
 # on a machine that already carries a directory registration replaces it.
 #
-# It also supports --uninstall for the same host set. OpenCode uninstall is
+# It also supports --uninstall for the same host set. OpenCode-compatible uninstall is
 # conservative: manifest-recorded files are removed, generated modules/configs
 # are removed when they still match RedSkills output, and unrelated user files
 # are kept.
@@ -53,6 +53,7 @@ Installs RedSkills into every detected supported CLI:
   claude   -> Claude Code marketplace + dev/memory/brain plugins
   codex    -> Codex marketplace + dev/memory/brain plugins
   opencode -> generated OpenCode plugins, skills, MCP config, and TUI config
+  redcode  -> generated RedCode plugins, skills, MCP config, and TUI config
   pi       -> per-plugin Pi packages installed via `pi install`, registered in
               ~/.pi/agent/settings.json (or .pi/settings.json with --project)
 
@@ -61,7 +62,7 @@ Options:
                         Pins the downloaded source cache, not the marketplace;
                         combine with --local-marketplace to pin Claude/Codex too.
   --install-root <dir>  Install source cache here (default: ~/.red-skills)
-  --only <list>         Comma list: claude,codex,opencode,pi (default: auto-detect)
+  --only <list>         Comma list: claude,codex,opencode,redcode,pi (default: auto-detect)
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
   --source-dir <dir>    Use an existing red-skills checkout instead of downloading
@@ -73,7 +74,7 @@ Options:
   --force               Reinstall plugins where the host supports removal
   --purge               With --uninstall, also remove the RedSkills source cache
   --refresh             Re-download the selected release source
-  --opencode-copy       Copy OpenCode SKILL.md files instead of symlinking
+  --opencode-copy       Copy OpenCode-compatible SKILL.md files instead of symlinking
   --dry-run             Print actions without writing
   -h, --help            Show this help
 
@@ -138,9 +139,9 @@ has_uninstall_target() {
   fi
 
   case "$target" in
-    opencode)
-      command -v opencode >/dev/null 2>&1 && return 0
-      [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]] && return 0
+    opencode|redcode)
+      command -v "$target" >/dev/null 2>&1 && return 0
+      [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/$target" ]] && return 0
       return 1
       ;;
     pi)
@@ -456,9 +457,11 @@ install_codex() {
   done
 }
 
-install_opencode() {
-  if ! command -v opencode >/dev/null 2>&1; then
-    warn "opencode not found; skipping OpenCode"
+install_opencode_compatible() {
+  local host="$1"
+  local label="$2"
+  if ! command -v "$host" >/dev/null 2>&1; then
+    warn "$host not found; skipping $label"
     return 0
   fi
 
@@ -470,11 +473,14 @@ install_opencode() {
     fi
   fi
 
-  local args=("$SOURCE_DIR/scripts/install-opencode.sh" "--global")
+  local args=("$SOURCE_DIR/scripts/install-opencode.sh" "--global" "--host" "$host")
   [[ "$OPENCODE_COPY" == "true" ]] && args+=("--copy")
-  log "installing OpenCode generated plugin surface from $SOURCE_DIR"
+  log "installing $label generated plugin surface from $SOURCE_DIR"
   run "${args[@]}"
 }
+
+install_opencode() { install_opencode_compatible opencode OpenCode; }
+install_redcode() { install_opencode_compatible redcode RedCode; }
 
 install_pi() {
   if ! command -v pi >/dev/null 2>&1; then
@@ -662,19 +668,21 @@ uninstall_pi() {
   warn "no RedSkills source checkout found; skipped Pi uninstall"
 }
 
-uninstall_opencode() {
+uninstall_opencode_compatible() {
+  local host="$1"
+  local label="$2"
   local source
   if source="$(opencode_source_dir_for_uninstall)"; then
-    log "uninstalling OpenCode RedSkills files via $source/scripts/install-opencode.sh"
-    run "$source/scripts/install-opencode.sh" --uninstall --global
+    log "uninstalling $label RedSkills files via $source/scripts/install-opencode.sh"
+    run "$source/scripts/install-opencode.sh" --uninstall --global --host "$host"
     return 0
   fi
 
   local xdg_root="${XDG_CONFIG_HOME:-$HOME/.config}"
-  local opencode_root="$xdg_root/opencode"
+  local opencode_root="$xdg_root/$host"
   local plugins_dir="$opencode_root/plugins"
   local skills_dir="$opencode_root/skills"
-  log "uninstalling OpenCode RedSkills files from $opencode_root"
+  log "uninstalling $label RedSkills files from $opencode_root"
 
   local file
   for file in "$plugins_dir"/redskills-*.ts; do
@@ -698,7 +706,7 @@ uninstall_opencode() {
   if matching_source="$(opencode_source_dir_for_matching)"; then
     remove_matching_opencode_skills "$skills_dir" "$matching_source"
   else
-    warn "no RedSkills source checkout found; skipped OpenCode skill comparison cleanup"
+    warn "no RedSkills source checkout found; skipped $label skill comparison cleanup"
   fi
 
   remove_generated_config "$opencode_root/opencode.json"
@@ -706,6 +714,9 @@ uninstall_opencode() {
   remove_redskills_tui "$opencode_root/tui.json"
   remove_redskills_tui "$opencode_root/tui.jsonc"
 }
+
+uninstall_opencode() { uninstall_opencode_compatible opencode OpenCode; }
+uninstall_redcode() { uninstall_opencode_compatible redcode RedCode; }
 
 run_uninstall() {
   local touched_any="false"
@@ -721,6 +732,10 @@ run_uninstall() {
     uninstall_opencode
     touched_any="true"
   fi
+  if has_uninstall_target redcode; then
+    uninstall_redcode
+    touched_any="true"
+  fi
   if has_uninstall_target pi; then
     uninstall_pi
     touched_any="true"
@@ -731,7 +746,7 @@ run_uninstall() {
   fi
 
   if [[ "$touched_any" != "true" ]]; then
-    warn "no supported CLIs/configs detected (claude, codex, opencode, pi)"
+    warn "no supported CLIs/configs detected (claude, codex, opencode, redcode, pi)"
   fi
 }
 
@@ -842,7 +857,7 @@ case "$ONLY" in
     IFS=',' read -r -a requested_targets <<<"$ONLY"
     for target in "${requested_targets[@]}"; do
       case "$target" in
-        claude|codex|opencode|pi) ;;
+        claude|codex|opencode|redcode|pi) ;;
         *) die "--only contains unsupported target '$target'" ;;
       esac
     done
@@ -871,13 +886,17 @@ if has_target opencode; then
   install_opencode
   installed_any="true"
 fi
+if has_target redcode; then
+  install_redcode
+  installed_any="true"
+fi
 if has_target pi; then
   install_pi
   installed_any="true"
 fi
 
 if [[ "$installed_any" != "true" ]]; then
-  warn "no supported CLIs detected (claude, codex, opencode, pi)"
+  warn "no supported CLIs detected (claude, codex, opencode, redcode, pi)"
 fi
 
 log "done"

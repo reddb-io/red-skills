@@ -197,6 +197,14 @@ opencode-host plan. The Slice 1 + 2 generator contract
 (ADR 0075 / 0076 / 0077) is unchanged; this ADR adds the
 operational install wrapper.
 
+## Amendment 1 — RedCode host destination
+
+The same generated OpenCode-compatible surface may be installed for RedCode
+with `scripts/install-opencode.sh --global --host redcode`. Global state is
+isolated under `~/.config/redcode/`; OpenCode continues to use
+`~/.config/opencode/`. Detection, installation, manifests, and uninstall run
+independently so choosing RedCode never mutates an existing OpenCode setup.
+
 ## Related
 
 - **0075** — Slice 1 (provider block).
