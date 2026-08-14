@@ -3,7 +3,7 @@ import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
-import { basename, dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CASTLE_MCP_PROMPTS,
