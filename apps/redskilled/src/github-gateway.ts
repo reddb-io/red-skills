@@ -8,6 +8,8 @@
  * the authority boundary before any authenticated transport is reached.
  */
 import {
+  GithubBackpressureError,
+  classifyGithubLimit,
   createGithubCache,
   type GithubCacheOutcome,
 } from "@reddb-io/github";
@@ -108,6 +110,7 @@ export interface CreateRedskilledGithubUpstreamOptions {
   readonly graphqlEndpoint?: string;
   readonly fetchImpl?: typeof fetch;
   readonly fetchRepository?: (input: RedskilledGithubUpstreamInput) => Promise<unknown>;
+  readonly clock?: () => string;
 }
 
 interface KeptGithubAnswer extends RedskilledGithubUpstreamAnswer {}
@@ -191,6 +194,7 @@ export function createRedskilledGithubUpstream(
   const graphqlEndpoint = options.graphqlEndpoint ?? `${origin}/graphql`;
   const fetchImpl = options.fetchImpl ?? fetch;
   const fetchRepository = options.fetchRepository ?? fetchCanonicalRepository;
+  const clock = options.clock ?? (() => new Date().toISOString());
 
   return async (input) => {
     if (input.read.kind === "repository-fetch") {
@@ -203,7 +207,10 @@ export function createRedskilledGithubUpstream(
         method: "GET",
         headers: githubHeaders(input.credential.secret),
       });
-      if (!response.ok) throw upstreamRefusal("REST", response.status);
+      if (!response.ok) {
+        const pool = input.read.path.replace(/^\/+/, "").startsWith("search/") ? "search" : "rest";
+        throw upstreamRefusal("REST", pool, response, clock());
+      }
       return {
         value: await responseValue(response),
         budget: budgetFromHeaders("rest", response.headers),
@@ -219,7 +226,7 @@ export function createRedskilledGithubUpstream(
       headers: { ...githubHeaders(input.credential.secret), "content-type": "application/json" },
       body: JSON.stringify({ query }),
     });
-    if (!response.ok) throw upstreamRefusal("GraphQL", response.status);
+    if (!response.ok) throw upstreamRefusal("GraphQL", "graphql", response, clock());
     const body = await response.json() as {
       readonly data?: { readonly repository?: unknown; readonly rateLimit?: unknown };
       readonly errors?: readonly unknown[];
@@ -400,8 +407,20 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function upstreamRefusal(surface: string, status: number): Error {
-  return new Error(`redskilled GitHub ${surface} read failed with status ${status}`);
+function upstreamRefusal(
+  surface: string,
+  pool: "rest" | "graphql" | "search",
+  response: Response,
+  now: string,
+): Error {
+  const observed = {
+    status: response.status,
+    response: { headers: Object.fromEntries(response.headers.entries()) },
+  };
+  const fact = classifyGithubLimit(observed, pool, Date.parse(now));
+  return fact === null
+    ? new Error(`redskilled GitHub ${surface} read failed with status ${response.status}`)
+    : new GithubBackpressureError(fact);
 }
 
 async function fetchCanonicalRepository(input: RedskilledGithubUpstreamInput): Promise<unknown> {
