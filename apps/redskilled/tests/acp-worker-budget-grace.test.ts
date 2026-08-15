@@ -9,7 +9,7 @@ describe("ACP Worker Budget grace", () => {
   it("cancels, checkpoints, requests tokenless publication, writes its Envelope, and exits in order", async () => {
     const order: string[] = [];
     let envelope: WorkerBudgetGraceEnvelope | undefined;
-    const requestPublication = vi.fn(async () => {
+    const requestPublication = vi.fn(async (_request: unknown) => {
       order.push("publication");
       return { publication_id: "queued:worker-budget-grace:wGRACE" };
     });
