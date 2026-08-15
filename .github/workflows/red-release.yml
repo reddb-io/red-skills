@@ -39,7 +39,13 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Maintain Version PR
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # The checkout token above only covers the git PUSH. OPENING the
+          # Version PR is an API call, and one made with github.token lands
+          # its pull_request runs in `action_required` — every release then
+          # waits on a human approval click that nobody is told to make.
+          # Observed twice on 2026-08-15 (01:28 and 13:38) before the same
+          # runs went green the moment they were approved by hand.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: node .github/red-skills/release.bundle.mjs run
 
   publish-release:
