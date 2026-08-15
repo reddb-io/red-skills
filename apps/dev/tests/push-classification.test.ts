@@ -164,6 +164,7 @@ describe("#2811 — a blocker's kind and summary cannot contradict", () => {
     const outcomes = [
       "blocked",
       "feedback-failed",
+      "feedback-failed-infra",
       "no-sentinel",
       "host-config",
       "stalled",

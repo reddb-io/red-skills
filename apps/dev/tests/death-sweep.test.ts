@@ -32,10 +32,13 @@ describe("death-sweep (#2526, ADR 0122)", () => {
     expect(reconciled).toBe(2526);
     expect(io.editLabels).toHaveBeenCalledTimes(1);
     const [, add, remove] = io.editLabels.mock.calls[0]!;
-    // Park keeps ready-for-human + blocked:crashed and atomically sheds the
+    // The no-sentinel Park keeps ready-for-human, replaces the stale process-
+    // crash classification with blocked:runner, and atomically sheds the
     // poison pair that froze fleets on 2026-07-22: ready-for-agent + running.
-    expect(new Set(remove as string[])).toEqual(new Set(["ready-for-agent", "running"]));
-    expect(add as string[]).toEqual([]);
+    expect(new Set(remove as string[])).toEqual(
+      new Set(["ready-for-agent", "running", "blocked:crashed"]),
+    );
+    expect(add as string[]).toEqual(["blocked:runner"]);
   });
 
   it("re-queues under the retry cap through the atomic queue transition", async () => {

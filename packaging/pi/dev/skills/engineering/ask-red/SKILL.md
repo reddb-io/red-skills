@@ -192,8 +192,10 @@ required contexts, and harmless strict-base lag) ->
 `plugins/dev/skills/engineering/red-setup/WORKFLOWS.md`;
 `/afk` ADR 0136 ownership (Landing hands native intent to the Queue Custodian
 and ends, Verdict has no classification hook, and the Park exposes one
-authority-parameterized requeue door) ->
-`plugins/dev/skills/engineering/afk/SKILL.md`;
+authority-parameterized requeue door whose HITL repair projects labels from the
+authoritative blocker body) ->
+`plugins/dev/skills/engineering/afk/SKILL.md` and
+`plugins/dev/skills/engineering/hitl/TROUBLESHOOTING.md`;
 `/afk` Verdict policy (one capped environment ledger, repeated-signature park,
 concrete branch evidence outranking duration, and the declared fallback for
 evidence-free sub-second failures beside Validation moments) ->

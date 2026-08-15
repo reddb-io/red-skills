@@ -24,7 +24,7 @@ Attempt Outcome is the runtime's terminal vocabulary. It owns the typed `blocked
 |---|---|---|---|
 | `done` | `done` | none | none |
 | `blocked` | `blocked` | `blocked:spec` | none |
-| `no-sentinel` | `no-sentinel` | `blocked:crashed` | `crashed` |
+| `no-sentinel` | `no-sentinel` | `blocked:runner` | `crashed` |
 | `merge-conflict` | `merge-conflict` | `blocked:merge-conflict` | `merge-conflict` |
 | `feedback-failed` | `blocked` | `blocked:validation` | none |
 | `hook-aborted` | `blocked` | `blocked:policy` | `policy` |

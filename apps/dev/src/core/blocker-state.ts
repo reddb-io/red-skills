@@ -4,6 +4,7 @@
 // needs to be resolved before an agent can continue.
 
 import { readAnchoredRegion, replaceAnchoredRegion } from "./anchored-edit.js";
+import { BLOCKED_LABELS, blockedKindOf } from "./state-transition.js";
 
 export const BLOCKER_HEADING = "Current blocker";
 export const RESOLVED_BLOCKERS_HEADING = "Resolved blockers";
@@ -46,6 +47,29 @@ export interface CurrentBlocker {
 export interface ResolvedBlocker {
   summary: string;
   resolution: string;
+}
+
+/**
+ * Kinds the body writer may persist. Typed Park kinds come from the transition
+ * vocabulary; the remaining kinds are body-only records used by quarantine,
+ * companion, decision, and branch-handoff flows. Parsing deliberately remains
+ * permissive so historical invalid records can still reach reconciliation.
+ */
+export const DECLARED_BLOCKER_KINDS: ReadonlySet<string> = new Set([
+  ...BLOCKED_LABELS.map((label) => blockedKindOf(label)!),
+  "claim-hygiene",
+  "decision",
+  "drift",
+  "manual-landing",
+  "push-failed",
+  "push-rejected",
+  "unclassified",
+]);
+
+function assertDeclaredBlockerKind(kind: string): void {
+  if (!DECLARED_BLOCKER_KINDS.has(kind)) {
+    throw new Error(`blocker-state refused undeclared blocker kind "${kind}"`);
+  }
 }
 
 // ---------- self-consistency (#2811) ----------
@@ -144,7 +168,9 @@ export function makeBlocker(fields: {
   parkedAtEpoch?: number;
   loopNote?: string;
 }): CurrentBlocker {
+  assertDeclaredBlockerKind(fields.kind);
   const kind = reconcileBlockerKind(fields.kind, fields.summary);
+  assertDeclaredBlockerKind(kind);
   let next = BLOCKER_NEXT_BY_KIND[kind] ?? fields.next;
   if (kind !== "merge-conflict" && /resolve the merge conflict/i.test(next)) {
     next = BLOCKER_NEXT_BY_KIND[kind] ?? BLOCKER_NEXT_BY_KIND.unclassified!;
@@ -231,6 +257,7 @@ function formatBlockerFields(blocker: CurrentBlocker): string {
 }
 
 export function formatCurrentBlocker(blocker: CurrentBlocker): string {
+  assertDeclaredBlockerKind(blocker.kind);
   return `${BLOCKER_OPEN}${formatBlockerFields(blocker)}${BLOCKER_CLOSE}`;
 }
 
@@ -259,6 +286,7 @@ function currentBlockerSectionRange(markdown: string): { start: number; end: num
 }
 
 export function upsertCurrentBlocker(markdown: string, blocker: CurrentBlocker): string {
+  assertDeclaredBlockerKind(blocker.kind);
   // Fast path: when the state anchors already exist, edit only the field block
   // between them and leave every other byte (heading, surrounding sections,
   // trailing whitespace) untouched. This avoids regenerating the whole section.

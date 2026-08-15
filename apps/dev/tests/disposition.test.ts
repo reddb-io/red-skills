@@ -24,7 +24,7 @@ interface Row {
 const ROWS: Row[] = [
   // recoverable transient classes
   { outcome: "merge-conflict", typedLabel: "blocked:merge-conflict", envelopeStatus: "merge-conflict", policyKey: "merge-conflict", cap: 3 },
-  { outcome: "no-sentinel", typedLabel: "blocked:crashed", envelopeStatus: "no-sentinel", policyKey: "crashed", cap: 1 },
+  { outcome: "no-sentinel", typedLabel: "blocked:runner", envelopeStatus: "no-sentinel", policyKey: "crashed", cap: 1 },
   { outcome: "hook-aborted", typedLabel: "blocked:policy", envelopeStatus: "blocked", policyKey: "policy", cap: 1 },
   { outcome: "exhausted", typedLabel: "blocked:quota", envelopeStatus: "blocked", policyKey: "quota", cap: 3 },
   { outcome: "runner-transient", typedLabel: "blocked:runner-transient", envelopeStatus: "blocked", policyKey: "runner-transient", cap: 3 },

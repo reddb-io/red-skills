@@ -231,7 +231,7 @@ export async function reconcileDeadWorkerClaim(
 
   // 2. Bounded blocked:crashed recovery via the disposition composer (#402,
   // #822), mirroring the stall-reaper path below. The death-without-envelope
-  // outcome is "no-sentinel" → recovery reason `crashed` + label `blocked:crashed`;
+  // outcome is "no-sentinel" → recovery reason `crashed` + label `blocked:runner`;
   // dispose() owns the retry/escalate decision, label sets, and the budget-
   // exhausted page comment. (Completes #822: this crash path still called the
   // un-imported recoveryDecision/blockedLabelFor/recoveryCap after the stall path

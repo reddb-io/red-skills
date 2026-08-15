@@ -54,6 +54,17 @@ describe("blocker-state", () => {
     expect(next).not.toContain("Old text.");
   });
 
+  it("refuses an undeclared blocker kind at write time and names the value", () => {
+    expect(() =>
+      upsertCurrentBlocker("## Summary\nDo this.\n", {
+        status: "blocked",
+        kind: "runner-typo",
+        summary: "The runner failed.",
+        next: "Repair the runner.",
+      }),
+    ).toThrow(/undeclared blocker kind "runner-typo"/);
+  });
+
   it("clears the active blocker and records it under Resolved blockers", () => {
     const body = upsertCurrentBlocker("## Summary\nDo this.\n", blocker);
     const next = clearCurrentBlocker(body, {

@@ -97,9 +97,26 @@ describe("hitl_resolve decisions (#2369)", () => {
     expect(deps.releaseClaims).not.toHaveBeenCalled();
     expect(deps.closeIssue).not.toHaveBeenCalled();
     const [, remove, add] = deps.editLabels.mock.calls[0]!;
-    expect(add).toContain("ready-for-human");
-    expect(remove).toContain("ready-for-agent");
+    expect(add).toEqual(["ready-for-human"]);
+    expect(remove).toEqual(expect.arrayContaining(["ready-for-agent", "blocked:crashed"]));
     expect(result.actions.some((a) => a.includes("rationale comment posted"))).toBe(true);
+  });
+
+  it("park: plainly refuses a historical body kind with no declared label counterpart", async () => {
+    const body = ACTIVE_BLOCKER_BODY.replace("kind: runner", "kind: runner-typo");
+    const deps = makeDeps(["ready-for-human", "blocked:crashed"], [], body);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 3507,
+      decision: "park",
+      rationale: "keep this parked",
+    });
+
+    expect(result.refused).toContain('body blocker kind "runner-typo"');
+    expect(result.refused).toContain("no coherent parked state exists");
+    expect(result.refused).not.toContain("hitl");
+    expect(deps.comment).not.toHaveBeenCalled();
+    expect(deps.editLabels).not.toHaveBeenCalled();
   });
 
   it("close: strips the park role BEFORE closing, keeping permanent markers (#2749)", async () => {
@@ -150,6 +167,60 @@ describe("hitl_resolve decisions (#2369)", () => {
     expect(writtenBody).toContain("Resolved blockers");
     expect(result.actions.some((a) => a.includes("body blocker cleared"))).toBe(true);
     expect(result.actions.some((a) => a.includes("kind=runner"))).toBe(true);
+  });
+
+  it("requeue: repairs #3507/#3832 by trusting body kind runner over stale blocked:crashed", async () => {
+    const deps = makeDeps(["ready-for-human", "blocked:crashed"], [], ACTIVE_BLOCKER_BODY);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 3507,
+      decision: "requeue",
+      rationale: "runner environment has stabilised",
+    });
+
+    expect(result.refused).toBeUndefined();
+    expect(deps.editLabels).toHaveBeenCalledWith(
+      3507,
+      expect.arrayContaining(["ready-for-human", "blocked:crashed"]),
+      ["ready-for-agent"],
+    );
+    expect(parseCurrentBlocker(deps.editBody.mock.calls[0]![1] as string)).toBeNull();
+  });
+
+  it("requeue: repairs #3511 by shedding a stale blocked label when the body has no blocker", async () => {
+    const body = "## Current blocker\n\nNone\n";
+    const deps = makeDeps(["ready-for-human", "blocked:validation-infra"], [], body);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 3511,
+      decision: "requeue",
+      rationale: "the body records no active Park",
+    });
+
+    expect(result.refused).toBeUndefined();
+    expect(deps.editBody).not.toHaveBeenCalled();
+    expect(deps.editLabels).toHaveBeenCalledWith(
+      3511,
+      expect.arrayContaining(["ready-for-human", "blocked:validation-infra"]),
+      ["ready-for-agent"],
+    );
+  });
+
+  it("park: reconciles the label from the authoritative body kind", async () => {
+    const deps = makeDeps(["ready-for-human", "blocked:crashed"], [], ACTIVE_BLOCKER_BODY);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 3832,
+      decision: "park",
+      rationale: "runner recovery is still pending",
+    });
+
+    expect(result.refused).toBeUndefined();
+    expect(deps.editLabels).toHaveBeenCalledWith(
+      3832,
+      expect.arrayContaining(["blocked:crashed"]),
+      expect.arrayContaining(["blocked:runner"]),
+    );
   });
 
   it("requeues push-failed with human authority through freshness, claim sweep, directive, and one label edit", async () => {

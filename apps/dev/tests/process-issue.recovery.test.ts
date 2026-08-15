@@ -122,13 +122,13 @@ describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)",
     expect(r1.outcome).toBe("no-sentinel");
     expect(retry.trace.labelEdits.at(-1)!.add).toContain("ready-for-agent");
     // #402: clean re-queue — the crash reason no longer tags the ready-for-agent promotion.
-    expect(retry.trace.labelEdits.at(-1)!.add).not.toContain("blocked:crashed");
+    expect(retry.trace.labelEdits.at(-1)!.add).not.toContain("blocked:runner");
 
     const escalate = harness({ outcome: "no-sentinel", attempt: 1, changedFiles: [] }); // default cap 1 → escalate
     const r2 = await processIssue(escalate.deps, escalate.input);
     expect(r2.outcome).toBe("no-sentinel");
     expect(escalate.trace.labelEdits.at(-1)!.add).toContain("ready-for-human");
-    expect(escalate.trace.labelEdits.at(-1)!.add).toContain("blocked:crashed");
+    expect(escalate.trace.labelEdits.at(-1)!.add).toContain("blocked:runner");
   });
 
   it("spec (BLOCKED) ALWAYS escalates to ready-for-human, even at attempt 1 and high attempts", async () => {

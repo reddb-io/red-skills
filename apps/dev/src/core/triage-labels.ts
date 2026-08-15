@@ -89,9 +89,13 @@ export const LABEL_STALLED = "blocked:stalled";
 // forward to the next worker instead of being written off as a dead attempt.
 export const LABEL_WALL_CLOCK_CAPPED = "blocked:wall-clock-capped";
 export const LABEL_CRASHED = "blocked:crashed";
+// A Worker could not complete because its runner died or became unavailable.
+// This is the 1:1 projection of a Current blocker whose kind is `runner`;
+// `blocked:crashed` remains the distinct process-crash classification.
+export const LABEL_RUNNER = "blocked:runner";
 // External-signal kill (#1308): the inner process was terminated by an OS
 // signal (SIGKILL/SIGTERM from the harness or kernel). Distinct from a plain
-// `blocked:crashed` (no-sentinel) so the kill cause is actionable.
+// `blocked:runner` (no-sentinel) so the kill cause is actionable.
 export const LABEL_SIGNAL_KILLED = "blocked:signal-killed";
 export const LABEL_DEPENDENCY = "blocked:dependency";
 export const LABEL_SPEC = "blocked:spec";

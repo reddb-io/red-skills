@@ -31,7 +31,7 @@ import {
   LABEL_SPEC,
   LABEL_VALIDATION,
   LABEL_VALIDATION_INFRA,
-  LABEL_CRASHED,
+  LABEL_RUNNER,
   LABEL_SIGNAL_KILLED,
   LABEL_POLICY,
   LABEL_STALLED,
@@ -198,7 +198,7 @@ export function blockedLabelFor(o: WorkerOutcome): string | null {
       // enters a second, outer recovery economy.
       return LABEL_VALIDATION_INFRA;
     case "no-sentinel":
-      return LABEL_CRASHED;
+      return LABEL_RUNNER;
     case "signal-killed":
       return LABEL_SIGNAL_KILLED;
     case "hook-aborted":

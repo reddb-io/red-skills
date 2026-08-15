@@ -161,10 +161,10 @@ claim the old state.
 
 ### Recover
 
-1. Resolve both surfaces in the same operation: update `## Current blocker` and
-   flip labels together.
-2. Move the resolved blocker into the resolved-blockers history when the issue
-   template has that section.
+1. Use `hitl_resolve` for the requested `requeue`, `retake`, or `park`
+   transition. It treats the body as authoritative and projects labels from it.
+2. A body with no active `red:blocker-state` sheds stale `blocked:*` labels. An
+   active body blocker rewrites a stale typed label to `blocked:<body kind>`.
 3. Never perform a raw label-only requeue or unblock. The issue body is the
    durable contract that explains why the labels changed.
 
@@ -224,9 +224,10 @@ set, or a HITL card refuses `/requeue` for that blocker kind.
 
 1. Use the CLI verb when the blocker kind is supported.
 2. Use a HITL card comment verb when the card supports the transition.
-3. For unsupported `blocked:<kind>` labels, manually update the blocker-state
-   block and labels together, then add a concise sanitized comment explaining
-   the resolution.
+3. For an inconsistent or formerly unsupported `blocked:<kind>` label, use
+   `hitl_resolve`: a resolved body blocker can requeue, while `park` either
+   projects the declared body kind or plainly refuses when no coherent label
+   counterpart exists.
 4. Re-run the gate census so the issue returns to the correct lane.
 
 ### Root fix
