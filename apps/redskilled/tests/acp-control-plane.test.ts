@@ -192,6 +192,108 @@ describe("the public RedSkills ACP v1 control plane", () => {
     daemon.kill("SIGTERM");
   }, 30_000);
 
+  it("replaces a killed /go Worker from the exact journaled Ticket dispatch and refuses an invalid target once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "r-acp-retry-"));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_MACHINE_DIR: root,
+      REDSKILLED_PLACEMENT: "off",
+      REDSKILLED_SESSION: `test:${root}`,
+    };
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
+    const daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
+
+    const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const updates: SessionNotification[] = [];
+    let killedOriginal = false;
+    const acpClient = client({ name: "redskilled-targeted-replacement-test" })
+      .onNotification(methods.client.session.update, async ({ params }) => {
+        updates.push(params);
+        const lifecycle = lifecycleMeta(params);
+        if (lifecycle?.event !== "admission" || lifecycle.dispatch?.workerKind !== "go" || killedOriginal) return;
+        killedOriginal = true;
+        const birth = await waitForEvent(paths.eventLanePath, "worker-birth", lifecycle.workerId);
+        process.kill(birth.pid, "SIGKILL");
+      });
+    const connection = acpClient.connect(childStream(adapter));
+    await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "redskilled-targeted-replacement-test", version: "1" },
+    });
+    const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const dispatch = {
+      version: 1 as const,
+      workerKind: "go" as const,
+      ticket: 3775,
+      selector: { kind: "issues" as const, numbers: [3775], lane: "lane:go" },
+    };
+    const result = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "complete workflow" }],
+      _meta: { redskills: { dispatch } },
+    });
+    expect(result.stopReason).toBe("end_turn");
+    expect(result._meta).toMatchObject({ redskills: { dispatch, replacement: 1 } });
+
+    const lifecycle = updates.map(lifecycleMeta).filter((entry) => entry != null);
+    expect(lifecycle.map((entry) => entry.event)).toEqual([
+      "admission",
+      "death",
+      "replacement",
+      "checkpoint-resume",
+      "tool-activity",
+      "terminal-outcome",
+      "reaping",
+    ]);
+    expect(lifecycle.every((entry) => entry.dispatch?.workerKind === "go")).toBe(true);
+    expect(lifecycle.every((entry) => entry.dispatch?.ticket === 3775)).toBe(true);
+    expect(lifecycle.every((entry) => entry.dispatch?.selector.lane === "lane:go")).toBe(true);
+    expect(lifecycle.some((entry) => entry.dispatch?.selector.lane === "ready-for-agent")).toBe(false);
+
+    const workerEvents = await waitForEvents(paths.eventLanePath, 3);
+    const births = workerEvents.filter((event) => event.kind === "worker-birth");
+    const deaths = workerEvents.filter((event) => event.kind === "worker-death");
+    expect(births).toHaveLength(2);
+    expect(deaths.map((event) => event.worker_id)).toContain(births[0]!.worker_id);
+    expect(births[1]!.worker_id).not.toBe(births[0]!.worker_id);
+
+    updates.length = 0;
+    const birthsBeforeRefusal = births.length;
+    await expect(connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "retry an invalid target" }],
+      _meta: {
+        redskills: {
+          dispatch: {
+            version: 1,
+            workerKind: "go",
+            ticket: 0,
+            selector: { kind: "issues", numbers: [0], lane: "lane:go" },
+          },
+        },
+      },
+    })).rejects.toThrow(/positive Ticket number/);
+    expect(updates.map(lifecycleEvent).filter(Boolean)).toEqual(["refusal"]);
+    const afterRefusal = await readRedskilledEvents(paths.eventLanePath);
+    expect(afterRefusal.filter((event) => event.kind === "worker-birth")).toHaveLength(birthsBeforeRefusal);
+
+    connection.close();
+    adapter.stdin?.end();
+    daemon.kill("SIGTERM");
+  }, 30_000);
+
   it("reuses one bounded Workflow Worker across related turns and reaps every terminal outcome", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-acp-control-plane-"));
     roots.push(root);
@@ -718,8 +820,20 @@ function workerId(meta: unknown): string {
 }
 
 function lifecycleEvent(update: SessionNotification): string | undefined {
-  return (update._meta as { redskills?: { lifecycle?: { event?: string } } } | undefined)
-    ?.redskills?.lifecycle?.event;
+  return lifecycleMeta(update)?.event;
+}
+
+function lifecycleMeta(update: SessionNotification): {
+  readonly event: string;
+  readonly workerId: string;
+  readonly dispatch?: {
+    readonly workerKind: string;
+    readonly ticket: number;
+    readonly selector: { readonly lane: string };
+  };
+} | undefined {
+  return (update._meta as { redskills?: { lifecycle?: unknown } } | undefined)
+    ?.redskills?.lifecycle as ReturnType<typeof lifecycleMeta>;
 }
 
 function permissionResolution(meta: unknown): string | undefined {

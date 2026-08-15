@@ -89,8 +89,15 @@ import {
 } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 import {
+  bindTargetedDispatch,
+  createAcpSessionJournal as createAcpDispatchJournal,
+  type AcpSessionJournal as AcpDispatchJournal,
+  type AcpTargetedDispatchIntent,
+} from "./acp-dispatch-intent.js";
+import {
   cleanupWorkflowWorker,
   notifyWorkerLifecycle,
+  notifySessionLifecycle,
   reapWorkflowWorker,
   requestWorkflowTurn,
   scheduleIdleCleanup,
@@ -98,14 +105,15 @@ import {
   type ActiveWorkflowWorker,
 } from "./acp-worker-lifecycle.js";
 import { admitNativeAcpWorker } from "./acp-native-worker.js";
-
 export { runNativeAcpWorker } from "./acp-native-worker.js";
+import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
 
 interface PublicSession {
   readonly request: NewSessionRequest;
   readonly project: AcpProjectWorkspace;
+  readonly dispatchJournal: AcpDispatchJournal;
 }
 
 export interface RedskillsAcpControlPlane {
@@ -135,7 +143,7 @@ export async function startRedskillsAcpControlPlane(
   const projectControlStore = createProjectControlStore(projectControlStorePath(paths.registrationIntentPath));
   const projectControls = await projectControlStore.read();
   const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
-  const sessionJournal = await createAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
+  const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
   const workspaceFor = (identity: AcpProjectIdentity): Promise<AcpProjectWorkspace> => {
     const held = projects.get(identity.projectId);
     if (held != null) return held;
@@ -183,7 +191,7 @@ async function servePublicConnection(
   workspaceFor: (identity: AcpProjectIdentity) => Promise<AcpProjectWorkspace>,
   projectControls: Map<string, ProjectControlState>,
   persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
-  sessionJournal: AcpSessionJournal,
+  sessionJournal: DurableAcpSessionJournal,
 ): Promise<void> {
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorkflowWorker>();
@@ -268,7 +276,7 @@ async function servePublicConnection(
       githubNotify ??= upstream.notify.bind(upstream);
       const sessionId = randomUUID();
       await sessionJournal.create(sessionId, project);
-      sessions.set(sessionId, { request: params, project });
+      sessions.set(sessionId, { request: params, project, dispatchJournal: createAcpDispatchJournal() });
       return {
         sessionId,
         _meta: {
@@ -286,6 +294,18 @@ async function servePublicConnection(
       const session = sessions.get(params.sessionId);
       if (session == null) throw new Error("unknown RedSkills ACP session");
       if (busy.has(params.sessionId)) throw new Error("this RedSkills ACP session already has an active turn");
+
+      let dispatch: AcpTargetedDispatchIntent | undefined;
+      try {
+        dispatch = bindTargetedDispatch(session.dispatchJournal, params._meta);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        await notifySessionLifecycle(upstream.notify.bind(upstream), params.sessionId, {
+          event: "refusal",
+          reason,
+        });
+        throw RequestError.invalidParams({}, reason);
+      }
       await sessionJournal.prompt(params.sessionId, params.prompt);
 
       if (isAcpRetakePrompt(params.prompt)) {
@@ -314,13 +334,14 @@ async function servePublicConnection(
       }
 
       busy.add(params.sessionId);
-      let worker: ActiveWorkflowWorker | undefined;
       try {
-        const turn = await requestWorkflowTurn(
-          params.sessionId,
+        return await runAcpWorkflowTurn({
+          sessionId: params.sessionId,
+          prompt: params.prompt,
+          ...(params._meta == null ? {} : { meta: params._meta }),
+          ...(dispatch == null ? {} : { dispatch }),
           active,
-          params,
-          (replacement) => admitNativeAcpWorker(
+          admit: (replacement) => admitNativeAcpWorker(
             options,
             sessionJournal,
             session,
@@ -334,34 +355,13 @@ async function servePublicConnection(
               (projected) => upstream.request(methods.client.session.requestPermission, projected),
             ),
             replacement,
+            dispatch,
           ),
-        );
-        worker = turn.worker;
-        const response = turn.response;
-        const outcome = workflowOutcome(response);
-        await sessionJournal.checkpoint(params.sessionId, response, outcome);
-        if (outcome != null) {
-          await notifyWorkerLifecycle(worker, "terminal-outcome", outcome).catch(() => undefined);
-          await reapWorkflowWorker(params.sessionId, worker, active, outcome);
-        } else if (!attached) {
-          await reapWorkflowWorker(params.sessionId, worker, active, "client-detached");
-        } else {
-          scheduleIdleCleanup(params.sessionId, worker, active);
-        }
-        return {
-          ...response,
-          _meta: {
-            ...(response._meta ?? {}),
-            redskills: {
-              ...((response._meta as { redskills?: object } | undefined)?.redskills ?? {}),
-              authority: "redskilled",
-              workerId: worker.workerId,
-            },
-          },
-        } satisfies PromptResponse;
-      } catch (error) {
-        if (worker != null) cleanupWorkflowWorker(params.sessionId, worker, active);
-        throw error;
+          attached: () => attached,
+          notify: upstream.notify.bind(upstream),
+          hostState: options.hostState,
+          checkpoint: (response, outcome) => sessionJournal.checkpoint(params.sessionId, response, outcome),
+        });
       } finally {
         busy.delete(params.sessionId);
       }
@@ -435,6 +435,7 @@ async function servePublicConnection(
             : { additionalDirectories: params.additionalDirectories }),
         },
         project,
+        dispatchJournal: createAcpDispatchJournal(),
       });
       return {
         sessionId,
@@ -526,7 +527,7 @@ async function servePublicConnection(
 
 async function runV2PublicTurn(
   options: StartRedskillsAcpControlPlaneOptions,
-  sessionJournal: AcpSessionJournal,
+  sessionJournal: DurableAcpSessionJournal,
   sessions: Map<string, PublicSession>,
   active: Map<string, ActiveWorkflowWorker>,
   params: acpV2.PromptRequest,

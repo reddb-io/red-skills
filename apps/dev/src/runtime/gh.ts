@@ -5,6 +5,7 @@ export { ghInstalled, ghAuthenticated } from "./gh/auth.js";
 export type { CandidateListDiagnostics, IssueStateRow } from "./gh/candidates.js";
 export {
   listCandidates,
+  resolveDispatchCandidatePool,
   resolveDispatchCandidates,
   listHitlCandidates,
   listIssueStates,

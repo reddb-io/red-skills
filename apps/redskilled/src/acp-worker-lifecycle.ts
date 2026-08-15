@@ -7,6 +7,7 @@ import {
   type PromptRequest,
   type PromptResponse,
 } from "@agentclientprotocol/sdk";
+import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 
 export interface ActiveWorkflowWorker {
   readonly workerId: string;
@@ -16,6 +17,7 @@ export interface ActiveWorkflowWorker {
   readonly endpoint: string;
   readonly publicSessionId: string;
   readonly notify: AgentConnection["client"]["notify"];
+  readonly dispatch?: AcpTargetedDispatchIntent;
   idleTimer?: NodeJS.Timeout;
   cancelled: boolean;
   cleaned: boolean;
@@ -48,10 +50,28 @@ export async function notifyWorkerLifecycle(
   event: string,
   reason?: string,
 ): Promise<void> {
-  await worker.notify(methods.client.session.update, {
-    sessionId: worker.publicSessionId,
+  await notifySessionLifecycle(worker.notify, worker.publicSessionId, {
+    event,
+    workerId: worker.workerId,
+    ...(worker.dispatch == null ? {} : { dispatch: worker.dispatch }),
+    ...(reason == null ? {} : { reason }),
+  });
+}
+
+export async function notifySessionLifecycle(
+  notify: AgentConnection["client"]["notify"],
+  publicSessionId: string,
+  lifecycle: {
+    readonly event: string;
+    readonly workerId?: string;
+    readonly dispatch?: AcpTargetedDispatchIntent;
+    readonly reason?: string;
+  },
+): Promise<void> {
+  await notify(methods.client.session.update, {
+    sessionId: publicSessionId,
     update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } },
-    _meta: { redskills: { lifecycle: { event, workerId: worker.workerId, ...(reason == null ? {} : { reason }) } } },
+    _meta: { redskills: { lifecycle } },
   });
 }
 
