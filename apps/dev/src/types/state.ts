@@ -120,6 +120,17 @@ export const AfkCurrentSchema = z.object({
    * the existing `output_tokens` heartbeat counter for the report surface. */
   output_shaping_variant: z.string().default(""),
   output_shaping_enabled: z.boolean().default(false),
+  /** Re-seed rounds spent by this Worker, retained as an aggregatable fact for
+   * landed-Ticket experiments. Zero is an observed result, never absence. */
+  reseed: z.object({
+    version: z.literal(1).default(1),
+    rounds: z.number().int().nonnegative().default(0),
+    by_cause: z.object({
+      gate: z.number().int().nonnegative().default(0),
+      tier: z.number().int().nonnegative().default(0),
+      review: z.number().int().nonnegative().default(0),
+    }).default({ gate: 0, tier: 0, review: 0 }),
+  }).default({ version: 1, rounds: 0, by_cause: { gate: 0, tier: 0, review: 0 } }),
   /** What the ORCHESTRATOR is blocked on, when it is blocked on something that
    * spawns no child and writes nothing — today the two host-wide gate locks
    * (#2985). Empty means "not blocked". Without it a worker waiting up to an
