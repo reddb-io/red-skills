@@ -692,7 +692,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a seconds-long drain whose boolean return is the report" },
   },
   {
-    path: "apps/redskilled/src/acp-control-plane.ts",
+    path: "apps/redskilled/src/acp-socket.ts",
     fn: "connectWithDeadline",
     subject: "the daemon ACP socket or assigned native Worker ACP socket accepting a local connection",
     deadline: "the caller's `timeoutMs`, 10 seconds for both public and Worker rendezvous",

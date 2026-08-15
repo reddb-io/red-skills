@@ -8,14 +8,12 @@
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { connect, createServer, type Server, type Socket } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
-import { Readable, Writable } from "node:stream";
 import {
   agent,
   client,
   methods,
-  ndJsonStream,
   RequestError,
   type AgentConnection,
   type ClientConnection,
@@ -24,9 +22,25 @@ import {
   type PromptRequest,
   type PromptResponse,
   type SessionNotification,
-  type Stream,
 } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
+import {
+  ACP_PROTOCOL_VERSION,
+  ACP_V2_DRAFT_REVISION,
+  REDSKILLS_WIRE_MAJOR,
+  requireCompatibleWireMajor,
+  requireSupportedV2Revision,
+} from "./acp-compat.js";
+import {
+  abortableDelay,
+  bindWorkerRendezvous,
+  closeServer,
+  connectWithDeadline,
+  listen,
+  socketStream,
+  waitForAbort,
+  withTimeout,
+} from "./acp-socket.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
@@ -37,9 +51,7 @@ import {
 } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 
-const ACP_PROTOCOL_VERSION = 1;
-export const ACP_V2_DRAFT_REVISION = "schema-v2.0.0-alpha.2";
-export const REDSKILLS_WIRE_MAJOR = 1;
+export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
 const TERMINAL_REAP_DELAY_MS = 150;
 
 interface PublicSession {
@@ -288,31 +300,6 @@ async function servePublicConnection(
   for (const [sessionId, worker] of active) cleanupWorker(sessionId, worker, active);
 }
 
-function requireCompatibleWireMajor(meta: unknown, required = false): void {
-  const redskills = record(record(meta)?.redskills);
-  const wireMajor = redskills?.wireMajor;
-  if (wireMajor == null && !required) return;
-  if (wireMajor !== REDSKILLS_WIRE_MAJOR) {
-    const received = typeof wireMajor === "number" ? wireMajor : "omitted";
-    throw RequestError.invalidParams(
-      { redskills: { receivedWireMajor: received, supportedWireMajor: REDSKILLS_WIRE_MAJOR } },
-      `unsupported RedSkills wire major ${received}; expected ${REDSKILLS_WIRE_MAJOR}`,
-    );
-  }
-}
-
-function requireSupportedV2Revision(meta: acpV2.InitializeRequest["_meta"]): void {
-  const redskills = record(meta?.redskills);
-  const revision = redskills?.acpDraftRevision;
-  if (revision !== ACP_V2_DRAFT_REVISION) {
-    const received = typeof revision === "string" ? revision : "omitted";
-    throw acpV2.RequestError.invalidParams(
-      { redskills: { receivedRevision: received, supportedRevision: ACP_V2_DRAFT_REVISION } },
-      `unsupported ACP v2 draft revision ${received}; expected ${ACP_V2_DRAFT_REVISION}`,
-    );
-  }
-}
-
 async function runV2PublicTurn(
   options: StartRedskillsAcpControlPlaneOptions,
   sessions: Map<string, PublicSession>,
@@ -387,12 +374,6 @@ function translateV1UpdateToV2(
     };
   }
   return undefined;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value != null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
 }
 
 async function admitNativeAcpWorker(
@@ -618,86 +599,4 @@ function promptText(params: PromptRequest): string {
     .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
-}
-
-function socketStream(socket: Socket): Stream {
-  return ndJsonStream(
-    Writable.toWeb(socket) as WritableStream<Uint8Array>,
-    Readable.toWeb(socket) as ReadableStream<Uint8Array>,
-  );
-}
-
-async function bindWorkerRendezvous(socketPath: string): Promise<{
-  server: Server;
-  connected: Promise<Socket>;
-}> {
-  await rm(socketPath, { force: true });
-  let accept!: (socket: Socket) => void;
-  const connected = new Promise<Socket>((resolve) => { accept = resolve; });
-  const server = createServer((socket) => accept(socket));
-  await listen(server, socketPath);
-  return { server, connected };
-}
-
-async function listen(server: Server, socketPath: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socketPath, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-}
-
-async function closeServer(server: Server): Promise<void> {
-  if (!server.listening) return;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-}
-
-async function connectWithDeadline(socketPath: string, timeoutMs: number): Promise<Socket> {
-  const deadline = Date.now() + timeoutMs;
-  let cause: unknown;
-  while (Date.now() < deadline) {
-    try {
-      return await new Promise<Socket>((resolve, reject) => {
-        const socket = connect(socketPath);
-        socket.once("connect", () => resolve(socket));
-        socket.once("error", reject);
-      });
-    } catch (error) {
-      cause = error;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  throw new Error(`redskilled ACP endpoint did not answer within ${timeoutMs}ms`, { cause });
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} did not answer within ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer != null) clearTimeout(timer);
-  }
-}
-
-async function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
-  });
-}
-
-async function waitForAbort(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
 }
