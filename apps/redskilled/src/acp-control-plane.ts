@@ -45,7 +45,9 @@ import {
   REDSKILLED_GITHUB_UPDATE_METHOD,
   bindAcpGithubReaderUpdates,
   bindAcpProjectGithubRead,
+  bindAcpProjectGithubWrite,
   githubReadParams,
+  githubWriteParams,
   type AcpGithubUpdateObserver,
 } from "./acp-github.js";
 import {
@@ -58,6 +60,7 @@ import {
 import type { RedskilledHostState } from "./host-state.js";
 import {
   REDSKILLED_GITHUB_READ_METHOD,
+  REDSKILLED_GITHUB_WRITE_METHOD,
   type RedskilledGithubGatewayRegistration,
 } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
@@ -209,6 +212,7 @@ async function servePublicConnection(
       (method, update) => githubNotify!(method, update),
     ));
   });
+  const writeGithub = bindAcpProjectGithubWrite(options.githubGateway, scopedProject);
   const readProjectBudget = bindAcpProjectGithubBudget(options.githubGateway, scopedProject);
   const readHostBudget = bindAcpHostGithubBudget(options.githubGateway, options.hostAdministration === true);
   const emptyParams = () => ({});
@@ -230,7 +234,7 @@ async function servePublicConnection(
             ...(options.githubGateway == null ? {} : {
               githubGateway: {
                 version: 1,
-                methods: [REDSKILLED_GITHUB_READ_METHOD],
+                methods: [REDSKILLED_GITHUB_READ_METHOD, REDSKILLED_GITHUB_WRITE_METHOD],
                 notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
               },
               credentialBudgets: {
@@ -328,6 +332,7 @@ async function servePublicConnection(
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
     .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
+    .onRequest(REDSKILLED_GITHUB_WRITE_METHOD, githubWriteParams, writeGithub)
     .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
     .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
 
@@ -349,7 +354,7 @@ async function servePublicConnection(
             ...(options.githubGateway == null ? {} : {
               githubGateway: {
                 version: 1,
-                methods: [REDSKILLED_GITHUB_READ_METHOD],
+                methods: [REDSKILLED_GITHUB_READ_METHOD, REDSKILLED_GITHUB_WRITE_METHOD],
                 notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
               },
               credentialBudgets: {
@@ -432,6 +437,7 @@ async function servePublicConnection(
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
     .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
+    .onRequest(REDSKILLED_GITHUB_WRITE_METHOD, githubWriteParams, writeGithub)
     .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
     .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
 
