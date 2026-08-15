@@ -12,6 +12,7 @@ import {
   classifyGithubLimit,
   createGithubCache,
   type GithubCacheOutcome,
+  type GithubLimitFact,
 } from "@reddb-io/github";
 import { execFile } from "node:child_process";
 
@@ -72,6 +73,9 @@ export interface RedskilledGithubReadAnswer {
   };
   readonly budget: RedskilledGithubBudgetFacts | null;
   readonly value: unknown;
+  /** Present when an eligible dated cache answered an unavailable live read. */
+  readonly backpressure?: GithubLimitFact;
+  readonly retry_at?: string;
 }
 
 export interface RedskilledGithubProjectReader {
@@ -173,6 +177,21 @@ export function createRedskilledGithubGateway(
                 fresh_ms: kept.fresh_ms,
               });
             })
+            .catch((error: unknown) => {
+              if (
+                error instanceof GithubBackpressureError &&
+                read.kind !== "repository-fetch" &&
+                held.hit && held.value != null && held.fetched_at != null && held.age_ms != null
+              ) {
+                return publicAnswer(project, held.value, "cache", {
+                  outcome: held.outcome,
+                  fetched_at: held.fetched_at,
+                  age_ms: held.age_ms,
+                  fresh_ms: held.fresh_ms,
+                }, error.fact);
+              }
+              throw error;
+            })
             .finally(() => inFlight.delete(key));
           inFlight.set(key, fetch);
           return fetch;
@@ -246,6 +265,7 @@ function publicAnswer(
   answer: KeptGithubAnswer,
   source: RedskilledGithubReadAnswer["source"],
   cache: RedskilledGithubReadAnswer["cache"],
+  backpressure?: GithubLimitFact,
 ): RedskilledGithubReadAnswer {
   return {
     version: 1,
@@ -255,6 +275,10 @@ function publicAnswer(
     cache,
     budget: answer.budget,
     value: answer.value,
+    ...(backpressure === undefined ? {} : {
+      backpressure,
+      retry_at: backpressure.retry_at,
+    }),
   };
 }
 
