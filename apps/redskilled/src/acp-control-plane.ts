@@ -16,6 +16,7 @@ import {
   client,
   methods,
   ndJsonStream,
+  RequestError,
   type AgentConnection,
   type ClientConnection,
   type McpServer,
@@ -32,6 +33,7 @@ import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 
 const ACP_PROTOCOL_VERSION = 1;
 export const ACP_V2_DRAFT_REVISION = "schema-v2.0.0-alpha.2";
+export const REDSKILLS_WIRE_MAJOR = 1;
 const ACP_PROJECT_LABEL = "redskills/acp";
 const TERMINAL_REAP_DELAY_MS = 150;
 
@@ -97,14 +99,17 @@ async function servePublicConnection(
   const active = new Map<string, ActiveWorker>();
 
   const v1App = agent({ name: "RedSkills" })
-    .onRequest(methods.agent.initialize, ({ params }) => ({
-      protocolVersion: params.protocolVersion === ACP_PROTOCOL_VERSION
-        ? params.protocolVersion
-        : ACP_PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
-      agentInfo: { name: "RedSkills", version: "1" },
-      _meta: { redskills: { wireMajor: 1, workerBacked: true } },
-    }))
+    .onRequest(methods.agent.initialize, ({ params }) => {
+      requireCompatibleWireMajor(params._meta);
+      return {
+        protocolVersion: params.protocolVersion === ACP_PROTOCOL_VERSION
+          ? params.protocolVersion
+          : ACP_PROTOCOL_VERSION,
+        agentCapabilities: { promptCapabilities: {} },
+        agentInfo: { name: "RedSkills", version: "1" },
+        _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR, workerBacked: true } },
+      };
+    })
     .onRequest(methods.agent.session.new, ({ params }) => {
       const sessionId = randomUUID();
       sessions.set(sessionId, { request: params });
@@ -158,6 +163,7 @@ async function servePublicConnection(
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
     .onRequest(acpV2.methods.agent.initialize, ({ params }) => {
+      requireCompatibleWireMajor(params._meta);
       requireSupportedV2Revision(params._meta);
       return {
         protocolVersion: acpV2.PROTOCOL_VERSION,
@@ -165,7 +171,7 @@ async function servePublicConnection(
         capabilities: { session: {} },
         _meta: {
           redskills: {
-            wireMajor: 1,
+            wireMajor: REDSKILLS_WIRE_MAJOR,
             workerBacked: true,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
           },
@@ -225,6 +231,19 @@ async function servePublicConnection(
     .connect(socketStream(socket) as unknown as acpV2.Stream);
   await connection.closed;
   for (const [sessionId, worker] of active) cleanupWorker(sessionId, worker, active);
+}
+
+function requireCompatibleWireMajor(meta: unknown, required = false): void {
+  const redskills = record(record(meta)?.redskills);
+  const wireMajor = redskills?.wireMajor;
+  if (wireMajor == null && !required) return;
+  if (wireMajor !== REDSKILLS_WIRE_MAJOR) {
+    const received = typeof wireMajor === "number" ? wireMajor : "omitted";
+    throw RequestError.invalidParams(
+      { redskills: { receivedWireMajor: received, supportedWireMajor: REDSKILLS_WIRE_MAJOR } },
+      `unsupported RedSkills wire major ${received}; expected ${REDSKILLS_WIRE_MAJOR}`,
+    );
+  }
 }
 
 function requireSupportedV2Revision(meta: acpV2.InitializeRequest["_meta"]): void {
@@ -364,12 +383,13 @@ async function admitNativeAcpWorker(
     });
   const connection = downstreamApp.connect(socketStream(workerSocket));
   try {
-    await connection.agent.request(methods.agent.initialize, {
+    const initialized = await connection.agent.request(methods.agent.initialize, {
       protocolVersion: ACP_PROTOCOL_VERSION,
       clientCapabilities: {},
       clientInfo: { name: "redskilled", version: "1" },
-      _meta: { redskills: { wireMajor: 1 } },
+      _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
     });
+    requireCompatibleWireMajor(initialized._meta, true);
     const downstreamSession = await connection.agent.request(methods.agent.session.new, {
       cwd: session.request.cwd,
       mcpServers: session.request.mcpServers as McpServer[],
@@ -443,12 +463,15 @@ export async function runNativeAcpWorker(socketPath: string): Promise<number> {
   const controllers = new Map<string, AbortController>();
   const sessions = new Set<string>();
   const app = agent({ name: "RedSkills native Worker" })
-    .onRequest(methods.agent.initialize, () => ({
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
-      agentInfo: { name: "RedSkills native Worker", version: "1" },
-      _meta: { redskills: { wireMajor: 1, worker: true } },
-    }))
+    .onRequest(methods.agent.initialize, ({ params }) => {
+      requireCompatibleWireMajor(params._meta, true);
+      return {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { promptCapabilities: {} },
+        agentInfo: { name: "RedSkills native Worker", version: "1" },
+        _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR, worker: true } },
+      };
+    })
     .onRequest(methods.agent.session.new, () => {
       const sessionId = randomUUID();
       sessions.add(sessionId);
