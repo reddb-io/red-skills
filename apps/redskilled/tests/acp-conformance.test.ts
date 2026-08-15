@@ -8,7 +8,7 @@ import { Readable, Writable } from "node:stream";
 import * as acpV1 from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import { afterEach, describe, expect, it } from "vitest";
-import { ACP_V2_DRAFT_REVISION } from "../src/acp-control-plane.js";
+import { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "../src/acp-control-plane.js";
 import { readRedskilledHostState } from "../src/client.js";
 import { socketAnswers } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
@@ -38,7 +38,8 @@ interface CorpusClient {
 
 interface SupportedAdapter {
   readonly label: string;
-  connect(child: ChildProcess): CorpusClient;
+  readonly peerVersion: string;
+  connect(child: ChildProcess, peerVersion: string, wireMajor: number): CorpusClient;
 }
 
 afterEach(async () => {
@@ -50,12 +51,22 @@ afterEach(async () => {
 
 describe("the maintained ACP adapters", () => {
   it.each([
-    { label: "ACP v1", connect: connectV1 },
-    { label: `ACP v2 ${ACP_V2_DRAFT_REVISION}`, connect: connectV2 },
-  ] satisfies SupportedAdapter[])("runs the shared RedSkills session corpus through $label", async (adapter) => {
+    { label: "ACP v1 / newer minor component", peerVersion: "1.7.0", connect: connectV1 },
+    { label: "ACP v1 / newer patch component", peerVersion: "1.0.9", connect: connectV1 },
+    {
+      label: `ACP v2 ${ACP_V2_DRAFT_REVISION} / newer minor component`,
+      peerVersion: "1.7.0",
+      connect: connectV2,
+    },
+    {
+      label: `ACP v2 ${ACP_V2_DRAFT_REVISION} / newer patch component`,
+      peerVersion: "1.0.9",
+      connect: connectV2,
+    },
+  ] satisfies SupportedAdapter[])("runs the same-wire-major session corpus through $label", async (adapter) => {
     const runtime = await launchDaemon();
     const stdioAdapter = launchCli(["acp"], runtime.env, ["pipe", "pipe", "pipe"]);
-    const client = adapter.connect(stdioAdapter);
+    const client = adapter.connect(stdioAdapter, adapter.peerVersion, REDSKILLS_WIRE_MAJOR);
 
     await client.initialize();
     const sessionId = await client.newSession(runtime.root);
@@ -91,6 +102,40 @@ describe("the maintained ACP adapters", () => {
     expect(births).toHaveLength(2);
     expect(deaths).toHaveLength(2);
     expect(new Set(deaths.map((event) => event.worker_id))).toEqual(new Set(births.map((event) => event.worker_id)));
+
+    client.close();
+    stdioAdapter.stdin?.end();
+    runtime.daemon.kill("SIGTERM");
+  }, 30_000);
+
+  it.each([
+    { label: "ACP v1", peerVersion: "2.0.0", connect: connectV1 },
+    { label: `ACP v2 ${ACP_V2_DRAFT_REVISION}`, peerVersion: "2.0.0", connect: connectV2 },
+  ] satisfies SupportedAdapter[])("refuses a cross-major $label peer before creating workflow state", async (adapter) => {
+    const runtime = await launchDaemon();
+    const stdioAdapter = launchCli(["acp"], runtime.env, ["pipe", "pipe", "pipe"]);
+    const receivedWireMajor = REDSKILLS_WIRE_MAJOR + 1;
+    const client = adapter.connect(stdioAdapter, adapter.peerVersion, receivedWireMajor);
+
+    await expect(client.initialize()).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringMatching(/RedSkills wire major/),
+      data: {
+        redskills: {
+          receivedWireMajor,
+          supportedWireMajor: REDSKILLS_WIRE_MAJOR,
+        },
+      },
+    });
+
+    expect(await readRedskilledEvents(runtime.paths.eventLanePath)).toEqual([]);
+    const state = await readRedskilledHostState(runtime.paths);
+    expect(state.workers).toEqual([]);
+    expect(state.projects).toEqual([]);
+    expect(state.registrations).toEqual([]);
+    expect((await readdir(runtime.root, { recursive: true })).filter((path) =>
+      /acp.*session|session.*journal/i.test(path),
+    )).toEqual([]);
 
     client.close();
     stdioAdapter.stdin?.end();
@@ -153,7 +198,7 @@ describe("the maintained ACP adapters", () => {
   });
 });
 
-function connectV1(child: ChildProcess): CorpusClient {
+function connectV1(child: ChildProcess, peerVersion: string, wireMajor: number): CorpusClient {
   const updates: NormalizedUpdate[] = [];
   const app = acpV1.client({ name: "redskilled-acp-v1-conformance" })
     .onNotification(acpV1.methods.client.session.update, ({ params }) => {
@@ -169,10 +214,12 @@ function connectV1(child: ChildProcess): CorpusClient {
       const response = await connection.agent.request(acpV1.methods.agent.initialize, {
         protocolVersion: 1,
         clientCapabilities: {},
-        clientInfo: { name: "redskilled-test-client", version: "1" },
+        clientInfo: { name: "redskilled-test-client", version: peerVersion },
+        _meta: { redskills: { wireMajor } },
       });
       expect(response.protocolVersion).toBe(1);
       expect(response.agentInfo?.name).toBe("RedSkills");
+      expect(response._meta).toMatchObject({ redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } });
     },
     async newSession(cwd) {
       return (await connection.agent.request(acpV1.methods.agent.session.new, { cwd, mcpServers: [] })).sessionId;
@@ -196,7 +243,7 @@ function connectV1(child: ChildProcess): CorpusClient {
   };
 }
 
-function connectV2(child: ChildProcess): CorpusClient {
+function connectV2(child: ChildProcess, peerVersion: string, wireMajor: number): CorpusClient {
   const updates: NormalizedUpdate[] = [];
   const app = acpV2.client({ name: "redskilled-acp-v2-conformance" })
     .onNotification(acpV2.methods.client.session.update, ({ params }) => {
@@ -226,13 +273,18 @@ function connectV2(child: ChildProcess): CorpusClient {
     async initialize() {
       const response = await connection.agent.request(acpV2.methods.agent.initialize, {
         protocolVersion: 2,
-        info: { name: "redskilled-test-client", version: "1" },
+        info: { name: "redskilled-test-client", version: peerVersion },
         capabilities: {},
-        _meta: { redskills: { acpDraftRevision: ACP_V2_DRAFT_REVISION } },
+        _meta: { redskills: { wireMajor, acpDraftRevision: ACP_V2_DRAFT_REVISION } },
       });
       expect(response.protocolVersion).toBe(2);
       expect(response.info.name).toBe("RedSkills");
-      expect(response._meta).toMatchObject({ redskills: { acpDraftRevision: ACP_V2_DRAFT_REVISION } });
+      expect(response._meta).toMatchObject({
+        redskills: {
+          wireMajor: REDSKILLS_WIRE_MAJOR,
+          acpDraftRevision: ACP_V2_DRAFT_REVISION,
+        },
+      });
     },
     async newSession(cwd) {
       return (await connection.agent.request(acpV2.methods.agent.session.new, { cwd, mcpServers: [] })).sessionId;
