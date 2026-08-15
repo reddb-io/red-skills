@@ -13,6 +13,8 @@ import {
 } from "@reddb-io/github";
 import { execFile } from "node:child_process";
 
+export const REDSKILLED_GITHUB_READ_METHOD = "_redskills/github_read";
+
 export interface RedskilledGithubProjectAuthority {
   readonly projectId: string;
   /** Canonical `owner/repository` display identity resolved by redskilled. */
@@ -79,6 +81,19 @@ export interface RedskilledGithubGateway {
     authority: RedskilledGithubProjectAuthority,
     credential: RedskilledGithubCredential,
   ): RedskilledGithubProjectReader;
+}
+
+export interface RedskilledGithubCredentialSelection {
+  readonly profile: string;
+  readonly credential: RedskilledGithubCredential;
+}
+
+/** Host registration passed into the control plane; profile policy stays here. */
+export interface RedskilledGithubGatewayRegistration {
+  readonly gateway: RedskilledGithubGateway;
+  readonly credentialForProject: (
+    project: Omit<RedskilledGithubProjectAuthority, "credentialProfile">,
+  ) => RedskilledGithubCredentialSelection | null;
 }
 
 export interface CreateRedskilledGithubGatewayOptions {
@@ -257,9 +272,18 @@ function validateRead(
   request: RedskilledGithubRead,
 ): RedskilledGithubRead {
   if (request == null || typeof request !== "object") return refuse("a GitHub read must be an object");
-  if (request.kind === "rest") return validateRestRead(project, request);
-  if (request.kind === "graphql") return validateGraphqlRead(request);
-  if (request.kind === "repository-fetch") return validateRepositoryFetch(request);
+  if (request.kind === "rest") {
+    requireOnlyKeys(request, ["kind", "path"]);
+    return validateRestRead(project, request);
+  }
+  if (request.kind === "graphql") {
+    requireOnlyKeys(request, ["kind", "selection"]);
+    return validateGraphqlRead(request);
+  }
+  if (request.kind === "repository-fetch") {
+    requireOnlyKeys(request, ["kind", "ref"]);
+    return validateRepositoryFetch(request);
+  }
   return refuse("Project authority permits only REST, GraphQL, and repository-fetch reads");
 }
 
@@ -324,6 +348,13 @@ function cacheKey(project: RedskilledGithubProjectAuthority, read: RedskilledGit
 
 function refuse(message: string): never {
   throw new RedskilledGithubAuthorityError(message);
+}
+
+function requireOnlyKeys(value: object, allowed: readonly string[]): void {
+  const extra = Object.keys(value).find((key) => !allowed.includes(key));
+  if (extra != null) {
+    refuse("a Project GitHub read cannot carry Project, credential, remote, or host authority fields");
+  }
 }
 
 function githubHeaders(secret: string): Record<string, string> {
