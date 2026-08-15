@@ -2411,6 +2411,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       paths,
       startWorker,
       hostState,
+      ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
     });
   } catch (error) {
     await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);

@@ -88,6 +88,7 @@ import type {
 } from "../resource-incidents.js";
 import type { RedskilledResourceLeaseRuntime } from "../resource-lease.js";
 import type { RedskilledResourceLeaseStore } from "../resource-lease-store.js";
+import type { RedskilledGithubGatewayRegistration } from "../github-gateway.js";
 import type { RedskilledBudgetGraceSignal } from "./budget-grace.js";
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
@@ -255,6 +256,8 @@ export interface RedskilledDaemonOptions {
    * full budget is the one answer that admits every call.
    */
   readonly githubBalance?: RedskilledBalanceRegistration;
+  /** Authenticated Project reads, bound to daemon-owned credential profiles. */
+  readonly githubGateway?: RedskilledGithubGatewayRegistration;
   /**
    * How this daemon reaches the tracker for queue depth, and how often.
    *

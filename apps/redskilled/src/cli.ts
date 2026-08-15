@@ -54,7 +54,7 @@ import {
   type GithubAttributionLedger,
   type GithubRateBudget,
 } from "@reddb-io/github";
-import { resolveServeGithubBalanceRegistration } from "./github-companions.js";
+import { resolveServeGithubBalanceRegistration, resolveServeGithubGateway } from "./github-companions.js";
 import { createGitHubActivityTransport } from "./repository-activity.js";
 import {
   reclaimRedskilledRuntimeDirs,
@@ -499,9 +499,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       githubAttribution,
     );
     const resolvedGithubBalance = resolveServeGithubBalance(values);
-    // The App is a PAYER to measure, never a credential this daemon acts as.
-    // Declared → its ceiling is asked on its own installation token and written
-    // to its own file, because two buckets summed into one document would make
+    const githubGateway = resolveServeGithubGateway(resolveRedskilledHostToken(process.env, readTrackerCliToken));
+    // An App's ceiling is measured separately because two buckets summed into one document make
     // the last writer the displayed truth for a ceiling the next request may
     // not draw from.
     const githubBalance = resolveServeGithubBalanceRegistration(
@@ -554,6 +553,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
         // is `unknown`, never a full budget, because a full budget is the one
         // answer that admits every call.
         ...(githubBalance == null ? {} : { githubBalance }),
+        ...(githubGateway == null ? {} : { githubGateway }),
         ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
       });
     } catch (error) {

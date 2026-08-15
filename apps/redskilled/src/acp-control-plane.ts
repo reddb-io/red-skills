@@ -41,7 +41,12 @@ import {
   waitForAbort,
   withTimeout,
 } from "./acp-socket.js";
+import { bindAcpProjectGithubRead, githubReadParams } from "./acp-github.js";
 import type { RedskilledHostState } from "./host-state.js";
+import {
+  REDSKILLED_GITHUB_READ_METHOD,
+  type RedskilledGithubGatewayRegistration,
+} from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   applyProjectControl,
@@ -90,6 +95,7 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly paths: RedskilledPaths;
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
   readonly hostState: () => RedskilledHostState;
+  readonly githubGateway?: RedskilledGithubGatewayRegistration;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -179,6 +185,7 @@ async function servePublicConnection(
   const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
+  const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject);
   const emptyParams = () => ({});
 
   const v1App = agent({ name: "RedSkills" })
@@ -195,6 +202,9 @@ async function servePublicConnection(
             wireMajor: REDSKILLS_WIRE_MAJOR,
             workerBacked: true,
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
+            ...(options.githubGateway == null ? {} : {
+              githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+            }),
           },
         },
       };
@@ -279,7 +289,8 @@ async function servePublicConnection(
     .onRequest("_redskills/host_state", emptyParams, scopedState)
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
-    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl);
+    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
+    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub);
 
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
@@ -296,6 +307,9 @@ async function servePublicConnection(
             workerBacked: true,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
+            ...(options.githubGateway == null ? {} : {
+              githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+            }),
           },
         },
       };
@@ -365,7 +379,8 @@ async function servePublicConnection(
     .onRequest("_redskills/host_state", emptyParams, scopedState)
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
-    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl);
+    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
+    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub);
 
   const connection = acpV2.agentProtocolRouter()
     .withV1(v1App)

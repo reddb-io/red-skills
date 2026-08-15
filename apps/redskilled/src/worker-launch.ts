@@ -278,6 +278,8 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   assertLaunchableSpec(spec);
 
   const env = options.env ?? process.env;
+  const ambientWorkerEnv = credentialFreeWorkerEnv(env);
+  const declaredWorkerEnv = credentialFreeWorkerEnv(spec.env ?? {});
   const clock = options.clock ?? (() => new Date().toISOString());
   const workerId = (spec.worker_id ?? options.workerId)?.trim()
     || mintHostWorkerId(options.liveWorkerIds ?? []);
@@ -308,11 +310,11 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   // missing — while the daemon deciding that is itself running on the node it
   // failed to pass on. `process.execPath` is that answer, already held.
   const workerEnv: Record<string, string> = {
-    ...(spec.env ?? {}),
+    ...declaredWorkerEnv,
     ...(options.forkSha == null || options.forkSha === ""
       ? {}
       : { RED_AFK_FORK_SHA: options.forkSha }),
-    PATH: pathWithEngineNode(spec.env?.PATH ?? env.PATH, options.execPath ?? process.execPath),
+    PATH: pathWithEngineNode(declaredWorkerEnv.PATH ?? ambientWorkerEnv.PATH, options.execPath ?? process.execPath),
   };
   const plan = planWorkerPlacement({
     workerId,
@@ -345,8 +347,8 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     // would drop a Windows Worker's environment — including the placement facts
     // its own death record is written from.
     env: plan.backend === "transient-unit"
-      ? { ...env }
-      : { ...env, ...workerEnv, ...plan.environment },
+      ? ambientWorkerEnv
+      : { ...ambientWorkerEnv, ...workerEnv, ...plan.environment },
   });
   if (spec.input != null) {
     child.stdin?.on("error", () => undefined);
@@ -434,6 +436,34 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     child,
     ...(placed?.job != null ? { job: placed.job } : {}),
   };
+}
+
+/**
+ * Disposable Workers use the ACP gateway, never ambient GitHub or Git
+ * authentication. Strip both secret values and credential-agent doors from the
+ * daemon environment and from caller-declared overrides before placement sees
+ * them.
+ */
+function credentialFreeWorkerEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value == null || isGithubCredentialEnvironmentName(name)) continue;
+    kept[name] = value;
+  }
+  return kept;
+}
+
+function isGithubCredentialEnvironmentName(name: string): boolean {
+  const normalized = name.toUpperCase();
+  if (["SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND"].includes(normalized)) {
+    return true;
+  }
+  if (normalized === "REDSKILLED_HOST_TOKEN") return true;
+  if (/^(?:GH|GITHUB)(?:_[A-Z0-9]+)*_(?:TOKEN|SECRET|KEY|APP_ID|INSTALLATION)$/.test(normalized)) return true;
+  if (/^RED_GITHUB_(?:APP_ID|APP_INSTALLATION|APP_KEY)$/.test(normalized)) return true;
+  // A daemon-side authenticated git invocation may use these transiently. No
+  // inherited git config is allowed to become a Worker's authentication path.
+  return /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/.test(normalized);
 }
 
 /** Read Linux `/proc/<pid>/stat` field 22, omitting it on every unavailable host. */
