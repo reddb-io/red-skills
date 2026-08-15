@@ -39,10 +39,15 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
     const calls: string[] = [];
     let failFirst = true;
     let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
     const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
     const upstream: RedskilledGithubWriteUpstream = async ({ idempotencyKey, write }) => {
       calls.push(`${idempotencyKey}:${write.kind}`);
-      if (idempotencyKey === "push-main") await firstHeld;
+      if (idempotencyKey === "push-main") {
+        markFirstStarted();
+        await firstHeld;
+      }
       if (failFirst) {
         failFirst = false;
         throw new Error("temporary gateway failure");
@@ -66,7 +71,7 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
         idempotency_key: "publish-issue",
         write: { kind: "issue-publication", issue: 3887, body: "publication evidence" },
       });
-      await Promise.resolve();
+      await firstStarted;
       expect(calls).toEqual(["push-main:repository-push"]);
       releaseFirst();
       await expect(push).rejects.toThrow("temporary gateway failure");
