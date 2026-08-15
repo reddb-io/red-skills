@@ -143,15 +143,19 @@ function write(
   surface: GithubApiSurface,
   budget: GithubRateBudget,
   why: string,
+  fallback: GithubApiSurface | NoGithubFallback,
 ): GithubOperation {
+  const fallbackDeclaration =
+    typeof fallback === "string"
+      ? { fallback }
+      : { fallback: null, noFallbackBecause: fallback.none };
   return {
     key,
     kind: "write",
     cardinality: "single-object",
     surface,
     budget,
-    fallback: null,
-    noFallbackBecause: "a mutation has one observed GitHub API method",
+    ...fallbackDeclaration,
     why,
   };
 }
@@ -192,20 +196,20 @@ export const GITHUB_OPERATIONS: readonly GithubOperation[] = [
   read("api rest", "single-object", "one-shot", "rest", noFallback("the caller explicitly chose REST"), "the caller supplies one explicit REST path rather than a routed poll"),
 
   // ── writes: the surface realized by the shared write plan
-  write("issue create", "rest", "rest", "the write plan POSTs to `repos/{o}/{r}/issues` so filing shares the REST mutation rail"),
-  write("issue edit", "rest", "rest", "the write plan PATCHes labels and body at `repos/{o}/{r}/issues/{n}`"),
-  write("issue close", "rest", "rest", "the write plan PATCHes issue state and state reason at `repos/{o}/{r}/issues/{n}`"),
-  write("issue reopen", "graphql", "graphql", "gh reopens with the reopenIssue mutation"),
-  write("issue comment", "rest", "rest", "gh POSTs to `repos/{o}/{r}/issues/{n}/comments`, a REST request"),
-  write("issue develop", "graphql", "graphql", "linked-branch creation is a GraphQL mutation"),
-  write("pr create", "rest", "rest", "gh POSTs to `repos/{o}/{r}/pulls`, a REST request"),
-  write("pr comment", "rest", "rest", "a pull request comment is an issue comment: the same REST POST"),
-  write("pr merge", "rest", "rest", "the default merge uses PUT `repos/{o}/{r}/pulls/{n}/merge` so a dry GraphQL pool cannot strand a finished Worker"),
-  write("pr close", "graphql", "graphql", "gh closes with a GraphQL mutation"),
-  write("pr edit", "graphql", "graphql", "gh edits with GraphQL mutations"),
-  write("pr ready", "graphql", "graphql", "marking ready-for-review is a GraphQL mutation"),
-  write("pr update-branch", "rest", "rest", "gh PUTs `repos/{o}/{r}/pulls/{n}/update-branch`, a REST request"),
-  write("label create", "rest", "rest", "gh POSTs `repos/{o}/{r}/labels`, a REST request"),
+  write("issue create", "rest", "rest", "the write plan POSTs to `repos/{o}/{r}/issues`; GraphQL exposes createIssue", "graphql"),
+  write("issue edit", "rest", "rest", "the write plan PATCHes labels and body; GraphQL exposes updateIssue", "graphql"),
+  write("issue close", "rest", "rest", "the write plan PATCHes issue state; GraphQL exposes closeIssue", "graphql"),
+  write("issue reopen", "graphql", "graphql", "gh uses reopenIssue; REST can PATCH the issue state to open", "rest"),
+  write("issue comment", "rest", "rest", "the write plan POSTs an issue comment; GraphQL exposes addComment", "graphql"),
+  write("issue develop", "graphql", "graphql", "linked-branch creation is a GraphQL mutation", noFallback("linked-branch creation has no REST mutation")),
+  write("pr create", "rest", "rest", "the write plan POSTs a pull request; GraphQL exposes createPullRequest", "graphql"),
+  write("pr comment", "rest", "rest", "a pull request comment is an issue comment; GraphQL exposes addComment", "graphql"),
+  write("pr merge", "rest", "rest", "the default plan PUTs the merge; GraphQL exposes mergePullRequest", "graphql"),
+  write("pr close", "graphql", "graphql", "gh uses closePullRequest; REST can PATCH the pull request state", "rest"),
+  write("pr edit", "graphql", "graphql", "gh uses GraphQL mutations; REST can PATCH pull-request fields and issue labels", "rest"),
+  write("pr ready", "graphql", "graphql", "marking ready-for-review is a GraphQL mutation", noFallback("GitHub exposes no REST ready-for-review mutation")),
+  write("pr update-branch", "rest", "rest", "the write plan PUTs update-branch; GraphQL exposes updatePullRequestBranch", "graphql"),
+  write("label create", "rest", "rest", "the write plan POSTs a label; GraphQL exposes createLabel", "graphql"),
 ];
 
 const BY_KEY: ReadonlyMap<string, GithubOperation> = new Map(
