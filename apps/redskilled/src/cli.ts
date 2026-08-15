@@ -483,11 +483,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       hostConfig,
       redskilledHomeDir(homedir()),
     );
-    // The daemon's own black box (Spec #3022, slice #3023). The event lane already
-    // carries `daemon-stop` for the stop this process CHOSE; this record carries
-    // the death it did not — a signal, an uncaught error — in the one shape every
-    // worker and launcher writes, on a lane that outlives the runtime directory
-    // the event lane lives in.
+    // The daemon's own black box (Spec #3022, slice #3023). The event lane carries
+    // chosen stops; this records unchosen deaths in the shared launcher/worker shape,
+    // on a lane that outlives the runtime directory containing the event lane.
     const hostStateRoot = join(redskilledHomeDir(homedir()), "state");
     const githubAttribution = createGithubAttributionLedger({
       path: join(hostStateRoot, "github", "spend.toonl"),
@@ -502,12 +500,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     const githubGateway = resolveServeGithubGateway({
       profiles: hostConfig.githubProfiles,
       resolvePersonal: () => resolveRedskilledHostToken(process.env, readTrackerCliToken),
-      env: process.env,
-      homeDir: homedir(),
+      env: process.env, homeDir: homedir(),
     });
-    // An App's ceiling is measured separately because two buckets summed into one document make
-    // the last writer the displayed truth for a ceiling the next request may
-    // not draw from.
+    // App ceilings stay separate: summing buckets lets the last writer misstate the next request.
     const githubBalance = resolveServeGithubBalanceRegistration(
       resolvedGithubBalance,
       await readRedskilledHostGithubApp(),
