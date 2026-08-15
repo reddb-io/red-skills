@@ -15,6 +15,10 @@ import {
   type GithubLimitFact,
 } from "@reddb-io/github";
 import { execFile } from "node:child_process";
+import {
+  RedskilledGithubCredentialProfileError,
+  githubCredentialScopeRefusal,
+} from "./github-credential-profiles.js";
 
 export const REDSKILLED_GITHUB_READ_METHOD = "_redskills/github_read";
 
@@ -99,7 +103,7 @@ export interface RedskilledGithubGatewayRegistration {
   readonly gateway: RedskilledGithubGateway;
   readonly credentialForProject: (
     project: Omit<RedskilledGithubProjectAuthority, "credentialProfile">,
-  ) => RedskilledGithubCredentialSelection | null;
+  ) => RedskilledGithubCredentialSelection | null | Promise<RedskilledGithubCredentialSelection | null>;
 }
 
 export interface CreateRedskilledGithubGatewayOptions {
@@ -228,7 +232,7 @@ export function createRedskilledGithubUpstream(
       });
       if (!response.ok) {
         const pool = input.read.path.replace(/^\/+/, "").startsWith("search/") ? "search" : "rest";
-        throw upstreamRefusal("REST", pool, response, clock());
+        throw upstreamRefusal("REST", pool, response, clock(), input.project.credentialProfile);
       }
       return {
         value: await responseValue(response),
@@ -245,11 +249,16 @@ export function createRedskilledGithubUpstream(
       headers: { ...githubHeaders(input.credential.secret), "content-type": "application/json" },
       body: JSON.stringify({ query }),
     });
-    if (!response.ok) throw upstreamRefusal("GraphQL", "graphql", response, clock());
+    if (!response.ok) {
+      throw upstreamRefusal("GraphQL", "graphql", response, clock(), input.project.credentialProfile);
+    }
     const body = await response.json() as {
       readonly data?: { readonly repository?: unknown; readonly rateLimit?: unknown };
       readonly errors?: readonly unknown[];
     };
+    if (body.errors?.some(isGithubScopeError)) {
+      throw githubCredentialScopeRefusal(input.project.credentialProfile);
+    }
     if (body.errors != null && body.errors.length > 0) {
       throw new Error("redskilled GitHub GraphQL read was refused upstream");
     }
@@ -436,15 +445,27 @@ function upstreamRefusal(
   pool: "rest" | "graphql" | "search",
   response: Response,
   now: string,
+  profile: string,
 ): Error {
   const observed = {
     status: response.status,
     response: { headers: Object.fromEntries(response.headers.entries()) },
   };
   const fact = classifyGithubLimit(observed, pool, Date.parse(now));
-  return fact === null
-    ? new Error(`redskilled GitHub ${surface} read failed with status ${response.status}`)
-    : new GithubBackpressureError(fact);
+  if (fact != null) return new GithubBackpressureError(fact);
+  if (response.status === 401) {
+    return new RedskilledGithubCredentialProfileError("invalid-credentials", profile);
+  }
+  if (response.status === 403) return githubCredentialScopeRefusal(profile);
+  return new Error(`redskilled GitHub ${surface} read failed with status ${response.status}`);
+}
+
+function isGithubScopeError(value: unknown): boolean {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.type === "FORBIDDEN" || record.extensions != null &&
+    typeof record.extensions === "object" &&
+    (record.extensions as Record<string, unknown>).type === "FORBIDDEN";
 }
 
 async function fetchCanonicalRepository(input: RedskilledGithubUpstreamInput): Promise<unknown> {
