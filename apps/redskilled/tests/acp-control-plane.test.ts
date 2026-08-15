@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 describe("the public RedSkills ACP v1 control plane", () => {
-  it("routes updates, terminal results, and cancellation through daemon-admitted native Workers", async () => {
+  it("reuses one bounded Workflow Worker across related turns and reaps every terminal outcome", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-acp-control-plane-"));
     roots.push(root);
     const env = {
@@ -44,6 +44,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       REDSKILLED_MACHINE_DIR: root,
       REDSKILLED_PLACEMENT: "off",
       REDSKILLED_SESSION: `test:${root}`,
+      REDSKILLED_ACP_WORKER_IDLE_MS: "100",
     };
     const paths = resolveRedskilledPaths({ env, homeDir: root });
     const daemon = launchCli([
@@ -74,29 +75,37 @@ describe("the public RedSkills ACP v1 control plane", () => {
 
     const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
     const project = projectMeta(session._meta);
-    const completed = await connection.agent.request(methods.agent.session.prompt, {
+    const first = await connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "complete the native tracer" }],
+      prompt: [{ type: "text", text: "start the native tracer" }],
     });
-    expect(completed.stopReason).toBe("end_turn");
+    const second = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "continue the native tracer" }],
+    });
+    expect(first.stopReason).toBe("end_turn");
+    expect(workerId(first._meta)).toBe(workerId(second._meta));
     expect(updates.map((entry) => entry.update.sessionUpdate)).toContain("plan");
-    expect(updates.some((entry) =>
-      entry.update.sessionUpdate === "agent_message_chunk" &&
-      entry.update.content.type === "text" &&
-      entry.update.content.text.includes("native Worker completed"),
-    )).toBe(true);
+    expect(updates.map(lifecycleEvent).filter(Boolean)).toEqual(["admission", "tool-activity", "tool-activity"]);
 
     const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
     expect(firstBirth.project_label).toBe(project.projectId);
     expect(firstBirth.workspace_path).toBe(project.workspacePath);
     expect(firstBirth.pid).toBeGreaterThan(0);
-    const liveAfterTerminal = await connection.agent.request<{ workers: Array<{ worker_id: string }> }>(
+    const liveBetweenTurns = await connection.agent.request<{ workers: Array<{ worker_id: string }> }>(
       "_redskills/host_state",
       {},
     );
-    expect(liveAfterTerminal.workers.map((worker) => worker.worker_id)).toContain(firstBirth.worker_id);
+    expect(liveBetweenTurns.workers.map((worker) => worker.worker_id)).toContain(firstBirth.worker_id);
+    await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "complete workflow" }],
+    });
     const firstDeath = await waitForEvent(paths.eventLanePath, "worker-death", firstBirth.worker_id);
     expect(Date.parse(firstDeath.ts)).toBeGreaterThanOrEqual(Date.parse(firstBirth.ts));
+    expect(updates.map(lifecycleEvent).filter(Boolean).slice(-3)).toEqual([
+      "tool-activity", "terminal-outcome", "reaping",
+    ]);
 
     updates.length = 0;
     const cancelledPrompt = connection.agent.request(methods.agent.session.prompt, {
@@ -116,6 +125,25 @@ describe("the public RedSkills ACP v1 control plane", () => {
     expect(births).toHaveLength(2);
     expect(deaths).toHaveLength(2);
     expect(new Set(deaths.map((event) => event.worker_id))).toEqual(new Set(births.map((event) => event.worker_id)));
+
+    for (const terminal of ["budget verdict", "replace worker", "explicit control"] as const) {
+      updates.length = 0;
+      const result = await connection.agent.request(methods.agent.session.prompt, {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: terminal }],
+      });
+      const id = workerId(result._meta);
+      await waitForEvent(paths.eventLanePath, "worker-death", id);
+      expect(updates.map(lifecycleEvent).filter(Boolean).slice(-2)).toEqual(["terminal-outcome", "reaping"]);
+    }
+
+    updates.length = 0;
+    const idle = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "pause between related turns" }],
+    });
+    await waitForEvent(paths.eventLanePath, "worker-death", workerId(idle._meta));
+    expect(updates.map(lifecycleEvent).filter(Boolean).at(-1)).toBe("reaping");
 
     connection.close();
     adapter.stdin?.end();
@@ -405,6 +433,17 @@ function projectMeta(meta: unknown): { projectId: string; projectLabel: string; 
     projectLabel: project!.projectLabel as string,
     workspacePath: project!.workspacePath as string,
   };
+}
+
+function workerId(meta: unknown): string {
+  const id = (meta as { redskills?: { workerId?: unknown } } | undefined)?.redskills?.workerId;
+  expect(id).toEqual(expect.any(String));
+  return id as string;
+}
+
+function lifecycleEvent(update: SessionNotification): string | undefined {
+  return (update._meta as { redskills?: { lifecycle?: { event?: string } } } | undefined)
+    ?.redskills?.lifecycle?.event;
 }
 
 function git(cwd: string, ...args: string[]): void {
