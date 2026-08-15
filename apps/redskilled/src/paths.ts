@@ -33,6 +33,8 @@ import { resolveMachineClaimPath } from "./machine-scope.js";
 
 /** The socket file name; also the length the runtime dir must accommodate. */
 export const REDSKILLED_SOCKET_FILE = "redskilled.sock";
+/** Daemon-owned ACP endpoint; the stdio command only projects this socket. */
+export const REDSKILLED_ACP_SOCKET_FILE = "redskilled-acp.sock";
 
 /** Env var that pins the session scope explicitly, ahead of every derivation. */
 export const REDSKILLED_SESSION_ENV = "REDSKILLED_SESSION";
@@ -51,6 +53,7 @@ export interface RedskilledPaths {
   readonly machineIdHash: string;
   readonly runtimeDir: string;
   readonly socketPath: string;
+  readonly acpSocketPath: string;
   readonly lockPath: string;
   readonly leasePath: string;
   /** The daemon's append-only structured log, which it rehydrates from. */
@@ -139,6 +142,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     machineIdHash,
     runtimeDir,
     socketPath: join(runtimeDir, REDSKILLED_SOCKET_FILE),
+    acpSocketPath: join(runtimeDir, REDSKILLED_ACP_SOCKET_FILE),
     lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
     eventLanePath: join(redskilledHomeDir(homeDir), REDSKILLED_EVENT_LANE_FILE),
