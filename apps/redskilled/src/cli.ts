@@ -246,9 +246,7 @@ const SERVE_FLAGS = {
   "demand-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
 } as const;
 
-const ACP_WORKER_FLAGS = {
-  socket: { kind: "value", coerce: (raw: string) => raw },
-} as const;
+const ACP_WORKER_FLAGS = { socket: { kind: "value", coerce: (raw: string) => raw } } as const;
 
 /**
  * The env var naming the credential this host polls the tracker with.
