@@ -176,6 +176,19 @@ export {
 } from "./write-plan.js";
 
 export {
+  GithubBackpressureError,
+  classifyGithubLimit,
+  isGithubBackpressureError,
+  routeGithubOperation,
+  type GithubBudgetSnapshot,
+  type GithubLimitFact,
+  type GithubPoolSnapshot,
+  type GithubPrimaryPool,
+  type GithubRouteDecision,
+  type RouteGithubOperationOptions,
+} from "./routing.js";
+
+export {
   GITHUB_APP_ID_ENV,
   GITHUB_APP_INSTALLATION_ENV,
   GITHUB_APP_KEY_ENV,
