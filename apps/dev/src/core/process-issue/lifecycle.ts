@@ -190,7 +190,6 @@ const MERGE_REJECTION_UNEXPLAINED =
  * instead of asserting a failing required check that may well be green (#2807). */
 const MERGE_REJECTION_NEXT =
   "Read the recorded rejection reason above, clear it on the open PR, then merge it (no full agent re-run needed).";
-
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -441,7 +440,6 @@ export async function processIssue(
           : "No adoptable head was found."),
     );
   }
-
   // Branch resume (#2397): continue a prior pushed branch instead of rebuilding.
   // Explicit restart overrides branch-only resume, never an existing open PR.
   const allBranches = await deps.lookups.discoverBranches?.() ?? [];
@@ -1262,6 +1260,7 @@ export async function processIssue(
         log: (message) => deps.appendIterLog(message),
       });
       run = notesOutcome.run;
+      if (run.sessionArtifact) deps.markState?.({ session_artifact: run.sessionArtifact });
       if (isRunnerRecoverableOutcome(run.outcome)) {
         if (!deps.fallbackRunner) {
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
@@ -1301,6 +1300,7 @@ export async function processIssue(
           env: agentEnv,
           sandboxMode: sandboxDecision.sandboxMode,
         });
+        if (run.sessionArtifact) deps.markState?.({ session_artifact: run.sessionArtifact });
         if (isRunnerRecoverableOutcome(run.outcome)) {
           await fireHook("post_attempt", postAttemptContext({ ...input, attempt: roundOrdinal }, branch, "fail", run.outcome));
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);

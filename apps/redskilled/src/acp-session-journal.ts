@@ -46,6 +46,27 @@ export interface AcpSessionJournalRecord {
   readonly project_label: string;
   readonly workspace_path: string;
   readonly entries: readonly AcpSessionJournalEntry[];
+  /** Provider-native artifacts are retained beside, never inside, public history. */
+  readonly session_evidence: readonly AcpSessionEvidenceReference[];
+}
+
+export type AcpSessionEvidenceAvailability = "available" | "absent" | "inaccessible";
+
+export interface ProviderSessionEvidenceReport {
+  readonly provider: string;
+  readonly availability: AcpSessionEvidenceAvailability;
+  readonly reference?: string;
+}
+
+export interface AcpSessionEvidenceReference extends ProviderSessionEvidenceReport {
+  readonly worker_id: string;
+  readonly retention: "evidence";
+}
+
+export interface AcpRetakeEvidenceProjection {
+  readonly version: 1;
+  readonly public_session_id: string;
+  readonly evidence: readonly AcpSessionEvidenceReference[];
 }
 
 interface AcpSessionJournalSnapshot {
@@ -71,8 +92,14 @@ export interface AcpSessionJournal {
     workerSessionId: string,
     replacement: boolean,
   ): Promise<void>;
+  evidence(
+    publicSessionId: string,
+    workerId: string,
+    report: ProviderSessionEvidenceReport,
+  ): Promise<void>;
   checkpoint(publicSessionId: string, response: PromptResponse, workflowOutcome?: string): Promise<void>;
   recovery(publicSessionId: string): AcpSessionRecoveryCheckpoint;
+  retake(publicSessionId: string, authorizedProjectId: string): AcpRetakeEvidenceProjection | undefined;
 }
 
 export function acpSessionJournalPath(registrationIntentPath: string): string {
@@ -107,6 +134,7 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
         project_label: project.projectLabel,
         workspace_path: project.workspacePath,
         entries: [],
+        session_evidence: [],
       });
       return persist();
     },
@@ -128,6 +156,18 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
         replacement,
       });
     },
+    evidence(publicSessionId, workerId, report) {
+      const held = sessions.get(publicSessionId);
+      if (held == null) throw new Error("unknown durable RedSkills ACP session");
+      sessions.set(publicSessionId, {
+        ...held,
+        session_evidence: [
+          ...held.session_evidence,
+          { worker_id: workerId, ...report, retention: "evidence" },
+        ],
+      });
+      return persist();
+    },
     checkpoint(publicSessionId, response, workflowOutcome) {
       return append(publicSessionId, {
         kind: "checkpoint",
@@ -146,6 +186,33 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
         entries: [...held.entries],
       };
     },
+    retake(publicSessionId, authorizedProjectId) {
+      const held = sessions.get(publicSessionId);
+      if (held == null || held.project_id !== authorizedProjectId) return undefined;
+      return {
+        version: 1,
+        public_session_id: publicSessionId,
+        evidence: [...held.session_evidence],
+      };
+    },
+  };
+}
+
+/** Decode only the provider-owned report; redskilled assigns retention itself. */
+export function providerSessionEvidenceFromMeta(meta: unknown): ProviderSessionEvidenceReport | undefined {
+  const root = record(meta);
+  const redskills = record(root?.redskills);
+  const evidence = record(redskills?.sessionEvidence);
+  const provider = nonempty(evidence?.provider);
+  const availability = evidence?.availability;
+  const reference = nonempty(evidence?.reference);
+  if (provider == null ||
+    (availability !== "available" && availability !== "absent" && availability !== "inaccessible")) return undefined;
+  if (availability !== "absent" && reference == null) return undefined;
+  return {
+    provider,
+    availability,
+    ...(reference == null ? {} : { reference }),
   };
 }
 
@@ -195,7 +262,10 @@ async function readSnapshot(path: string): Promise<Map<string, AcpSessionJournal
   }
   const parsed = parseSnapshot(raw);
   if (!isSnapshot(parsed)) return new Map();
-  return new Map(parsed.sessions.map((session) => [session.public_session_id, session]));
+  return new Map(parsed.sessions.map((session) => [session.public_session_id, {
+    ...session,
+    session_evidence: session.session_evidence ?? [],
+  }]));
 }
 
 async function writeSnapshot(path: string, snapshot: AcpSessionJournalSnapshot): Promise<void> {
@@ -228,6 +298,29 @@ function isSnapshot(value: unknown): value is AcpSessionJournalSnapshot {
       typeof session.project_id === "string" &&
       typeof session.project_label === "string" &&
       typeof session.workspace_path === "string" &&
-      Array.isArray(session.entries);
+      Array.isArray(session.entries) &&
+      (session.session_evidence == null ||
+        (Array.isArray(session.session_evidence) && session.session_evidence.every(isEvidenceReference)));
   });
+}
+
+function isEvidenceReference(value: unknown): value is AcpSessionEvidenceReference {
+  const evidence = record(value);
+  return typeof evidence?.worker_id === "string" &&
+    typeof evidence.provider === "string" &&
+    (evidence.availability === "available" ||
+      evidence.availability === "absent" ||
+      evidence.availability === "inaccessible") &&
+    evidence.retention === "evidence" &&
+    (evidence.reference == null || typeof evidence.reference === "string");
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function nonempty(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }

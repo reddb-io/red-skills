@@ -32,13 +32,11 @@ import {
   translateV1SessionUpdateToV2,
 } from "./acp-compat.js";
 import {
-  abortableDelay,
   bindWorkerRendezvous,
   closeServer,
   connectWithDeadline,
   listen,
   socketStream,
-  waitForAbort,
   withTimeout,
 } from "./acp-socket.js";
 import {
@@ -58,9 +56,14 @@ import {
   REDSKILLED_PROJECT_BUDGET_METHOD,
 } from "./acp-budget.js";
 import {
-  acpSessionJournalPath, createAcpSessionJournal, notifySessionRecovery, replacementRecoveryMeta,
-  sessionRecoveryFromMeta, type AcpSessionJournal, type AcpSessionRecoveryCheckpoint,
+  acpSessionJournalPath, createAcpSessionJournal, providerSessionEvidenceFromMeta,
+  replacementRecoveryMeta, type AcpSessionJournal,
 } from "./acp-session-journal.js";
+import {
+  isAcpRetakePrompt,
+  notifyV1AcpRetakeEvidence,
+  notifyV2AcpRetakeEvidence,
+} from "./acp-retake-evidence.js";
 import type { RedskilledHostState } from "./host-state.js";
 import {
   REDSKILLED_GITHUB_READ_METHOD,
@@ -98,6 +101,7 @@ import {
 } from "./acp-worker-lifecycle.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
+export { runNativeAcpWorker } from "./acp-native-worker.js";
 
 interface PublicSession {
   readonly request: NewSessionRequest;
@@ -283,6 +287,16 @@ async function servePublicConnection(
       if (busy.has(params.sessionId)) throw new Error("this RedSkills ACP session already has an active turn");
       await sessionJournal.prompt(params.sessionId, params.prompt);
 
+      if (isAcpRetakePrompt(params.prompt)) {
+        const projection = sessionJournal.retake(params.sessionId, session.project.projectId);
+        if (projection == null) throw new Error("this Project is not authorized for the requested session evidence");
+        await notifyV1AcpRetakeEvidence(upstream, params.sessionId, projection);
+        return {
+          stopReason: "end_turn",
+          _meta: { redskills: { authority: "redskilled" } },
+        } satisfies PromptResponse;
+      }
+
       const controlOperation = coreProjectOperation(params.prompt);
       if (controlOperation != null) {
         const control = await applyProjectControl(
@@ -430,12 +444,21 @@ async function servePublicConnection(
 
       const accepted = new Promise<void>((resolve) => setTimeout(resolve, 0));
       const controlOperation = coreProjectOperation(params.prompt);
+      const retake = isAcpRetakePrompt(params.prompt);
       const turn = accepted
         .then(async () => {
           await sessionJournal.prompt(
             params.sessionId,
             params.prompt as unknown as PromptRequest["prompt"],
           );
+          if (retake) {
+            const session = sessions.get(params.sessionId);
+            if (session == null) return;
+            const projection = sessionJournal.retake(params.sessionId, session.project.projectId);
+            if (projection == null) return;
+            await notifyV2AcpRetakeEvidence(upstream, params.sessionId, projection);
+            return;
+          }
           return controlOperation == null
             ? runV2PublicTurn(options, sessionJournal, sessions, active, params, upstream)
             : runV2ProjectControlTurn(
@@ -625,6 +648,10 @@ async function admitNativeAcpWorker(
     });
     downstreamSessionId = downstreamSession.sessionId;
     await sessionJournal.worker(publicSessionId, launched.worker.worker_id, downstreamSessionId, replacement);
+    const evidence = providerSessionEvidenceFromMeta(downstreamSession._meta);
+    if (evidence != null) {
+      await sessionJournal.evidence(publicSessionId, launched.worker.worker_id, evidence);
+    }
   } catch (error) {
     connection.close();
     workerSocket.destroy();
@@ -682,117 +709,4 @@ export async function runRedskillsAcpAdapter(paths: RedskilledPaths): Promise<nu
     socket.once("error", reject);
   });
   return 0;
-}
-
-/** The daemon-admitted native Workflow Worker. */
-export async function runNativeAcpWorker(socketPath: string): Promise<number> {
-  const controllers = new Map<string, AbortController>();
-  const sessions = new Set<string>();
-  const recoveries = new Map<string, AcpSessionRecoveryCheckpoint>();
-  const app = agent({ name: "RedSkills native Worker" })
-    .onRequest(methods.agent.initialize, ({ params }) => {
-      requireCompatibleWireMajor(params._meta, true);
-      return {
-        protocolVersion: ACP_PROTOCOL_VERSION,
-        agentCapabilities: { promptCapabilities: {} },
-        agentInfo: { name: "RedSkills native Worker", version: "1" },
-        _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR, worker: true } },
-      };
-    })
-    .onRequest(methods.agent.session.new, ({ params }) => {
-      const sessionId = randomUUID();
-      sessions.add(sessionId);
-      const recovery = sessionRecoveryFromMeta(params._meta);
-      if (recovery != null) recoveries.set(sessionId, recovery);
-      return { sessionId };
-    })
-    .onRequest(methods.agent.session.prompt, async ({ params, client: parent }) => {
-      if (!sessions.has(params.sessionId)) throw new Error("unknown native Worker ACP session");
-      const controller = new AbortController();
-      controllers.set(params.sessionId, controller);
-      try {
-        const recovery = recoveries.get(params.sessionId);
-        if (recovery != null) {
-          recoveries.delete(params.sessionId);
-          await notifySessionRecovery(parent, params.sessionId, recovery);
-        }
-        await parent.notify(methods.client.session.update, {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: "plan",
-            entries: [{ content: "Execute the prompt inside the admitted native Worker", priority: "high", status: "in_progress" }],
-          },
-        });
-        await parent.notify(methods.client.session.update, {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "native Worker is executing the prompt\n" },
-          },
-          _meta: { redskills: { lifecycle: { event: "tool-activity" } } },
-        });
-
-        const prompt = promptText(params);
-        if (prompt.includes("wait for cancellation")) {
-          await waitForAbort(controller.signal);
-        } else {
-          await abortableDelay(35, controller.signal);
-        }
-        if (controller.signal.aborted) {
-          await parent.notify(methods.client.session.update, {
-            sessionId: params.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: "native Worker cancelled the prompt\n" },
-            },
-          });
-          return { stopReason: "cancelled" } satisfies PromptResponse;
-        }
-
-        await parent.notify(methods.client.session.update, {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: "plan",
-            entries: [{ content: "Execute the prompt inside the admitted native Worker", priority: "high", status: "completed" }],
-          },
-        });
-        await parent.notify(methods.client.session.update, {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: `native Worker completed: ${prompt}\n` },
-          },
-        });
-        const workflowOutcome = prompt.includes("complete workflow")
-          ? "completion"
-          : prompt.includes("budget verdict")
-            ? "budget-verdict"
-            : prompt.includes("replace worker")
-              ? "replacement"
-              : prompt.includes("explicit control")
-                ? "explicit-control"
-                : undefined;
-        return {
-          stopReason: "end_turn",
-          ...(workflowOutcome == null ? {} : { _meta: { redskills: { workflowOutcome } } }),
-        } satisfies PromptResponse;
-      } finally {
-        controllers.delete(params.sessionId);
-      }
-    })
-    .onNotification(methods.agent.session.cancel, ({ params }) => {
-      controllers.get(params.sessionId)?.abort();
-    });
-
-  const socket = await connectWithDeadline(socketPath, 10_000);
-  const connection = app.connect(socketStream(socket));
-  await connection.closed;
-  return 0;
-}
-
-function promptText(params: PromptRequest): string {
-  return params.prompt
-    .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
 }

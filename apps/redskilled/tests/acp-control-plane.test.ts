@@ -146,6 +146,12 @@ describe("the public RedSkills ACP v1 control plane", () => {
       sessions: Array<{
         public_session_id: string;
         entries: Array<{ kind: string }>;
+        session_evidence: Array<{
+          worker_id: string;
+          provider: string;
+          availability: string;
+          retention: string;
+        }>;
         provider_transcript?: unknown;
       }>;
     };
@@ -162,6 +168,20 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "plan",
       "plan",
       "checkpoint",
+    ]);
+    expect(durable?.session_evidence).toEqual([
+      {
+        worker_id: firstBirth.worker_id,
+        provider: "redskills-native",
+        availability: "absent",
+        retention: "evidence",
+      },
+      {
+        worker_id: workerId(continued._meta),
+        provider: "redskills-native",
+        availability: "absent",
+        retention: "evidence",
+      },
     ]);
     expect(durable).not.toHaveProperty("provider_transcript");
     expect(JSON.stringify(durable)).not.toMatch(/chain[-_ ]of[-_ ]thought|agent_thought/i);

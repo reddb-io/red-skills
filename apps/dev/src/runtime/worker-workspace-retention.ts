@@ -2,7 +2,9 @@ import { readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DEAD_WORKER_WORKTREE_TTL_S } from "../core/reclaim.js";
 import type { WorkerArtifact } from "../core/worker-reclaim.js";
+import { readWorkerStateDocument } from "../core/worker-state-reader.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
+import { workerStatePath } from "../core/state.js";
 
 export const WORKTREE_RECLAIM_TOMBSTONE = "worktree.reclaimed";
 
@@ -38,6 +40,14 @@ export async function collectWorkerWorkspaceArtifacts(
         const issueDir = join(workerPath, issue);
         const parsed = parseReapableWorkerPath(issueDir);
         if (!parsed) continue;
+        const state = readWorkerStateDocument(workerStatePath(issueDir));
+        if (state?.session_artifact) {
+          artifacts.push({
+            worker_id: worker,
+            kind: "session",
+            path: state.session_artifact,
+          });
+        }
         const worktree = join(issueDir, "worktree");
         try {
           if (!(await stat(worktree)).isDirectory()) continue;

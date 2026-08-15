@@ -467,6 +467,21 @@ describe("readWorkerStateDocument", () => {
     expect(decode(text)).toMatchObject({ worker_id: "wZZZZ" });
   });
 
+  it.each([
+    {
+      label: "with session evidence",
+      updates: { session_artifact: "/sessions/wSESS/runner-session.toon" },
+      expected: "/sessions/wSESS/runner-session.toon",
+    },
+    { label: "without session evidence", updates: {}, expected: "" },
+  ])("round-trips a Worker state fixture $label", ({ updates, expected }) => {
+    const dir = join(tmpdir(), `wsd-session-${expected ? "present" : "absent"}`);
+    const path = workerStatePath(dir);
+    initStateSync(path, { worker_id: "wSESS", "current.number": 3834, ...updates });
+
+    expect(readWorkerStateDocument(path)?.session_artifact).toBe(expected);
+  });
+
   it("still reads a pre-migration JSON document", async () => {
     const dir = await mkdtemp(join(tmpdir(), "wsd-json-"));
     const path = workerStatePath(dir);
