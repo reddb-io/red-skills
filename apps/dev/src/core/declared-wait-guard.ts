@@ -692,6 +692,14 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a seconds-long drain whose boolean return is the report" },
   },
   {
+    path: "apps/redskilled/src/acp-control-plane.ts",
+    fn: "connectWithDeadline",
+    subject: "the daemon ACP socket or assigned native Worker ACP socket accepting a local connection",
+    deadline: "the caller's `timeoutMs`, 10 seconds for both public and Worker rendezvous",
+    escalation: "throws a bounded endpoint-specific connection error; no local Worker fallback is permitted",
+    heartbeat: { silent: "a 25ms local socket rendezvous whose terminal throw names the endpoint boundary" },
+  },
+  {
     path: "apps/redskilled/src/client-rendezvous.ts",
     fn: "waitForSupervisedDaemon",
     subject: "the installed supervisor's daemon answering on its same-user client socket",

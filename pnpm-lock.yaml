@@ -345,6 +345,9 @@ importers:
 
   apps/redskilled:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 1.3.0
+        version: 1.3.0(zod@4.4.3)
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
@@ -647,6 +650,11 @@ importers:
         version: 1.0.6
 
 packages:
+
+  '@agentclientprotocol/sdk@1.3.0':
+    resolution: {integrity: sha512-i3h/efaeuMUFAO1HSfo97QZQnnvMd7wWBYtBsdL6UMZg3a78sk3Ffya5Xu7C7tYsXomXoDXJBAzQF2PcFKAhIQ==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -3078,6 +3086,10 @@ packages:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
+
+  '@agentclientprotocol/sdk@1.3.0(zod@4.4.3)':
+    dependencies:
+      zod: 4.4.3
 
   '@clack/core@1.4.3':
     dependencies:

@@ -1,0 +1,447 @@
+/**
+ * ACP v1 control plane — redskilled is the public Agent and the Client of each Worker.
+ *
+ * The public stdio command is only a transport projection onto the daemon-owned
+ * socket. Sessions, admission, Worker rendezvous, cancellation, and terminal
+ * cleanup all live here, in the host authority. The native Worker speaks ACP on
+ * its assigned socket and exits when redskilled closes that connection.
+ */
+import { randomBytes, randomUUID } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
+import { connect, createServer, type Server, type Socket } from "node:net";
+import { join } from "node:path";
+import { Readable, Writable } from "node:stream";
+import {
+  agent,
+  client,
+  methods,
+  ndJsonStream,
+  type AgentConnection,
+  type ClientConnection,
+  type McpServer,
+  type NewSessionRequest,
+  type PromptRequest,
+  type PromptResponse,
+  type SessionNotification,
+  type Stream,
+} from "@agentclientprotocol/sdk";
+import type { RedskilledHostState } from "./host-state.js";
+import type { RedskilledPaths } from "./paths.js";
+import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
+
+const ACP_PROTOCOL_VERSION = 1;
+const ACP_PROJECT_LABEL = "redskills/acp";
+const TERMINAL_REAP_DELAY_MS = 150;
+
+interface PublicSession {
+  readonly request: NewSessionRequest;
+}
+
+interface ActiveWorker {
+  readonly workerId: string;
+  readonly downstreamSessionId: string;
+  readonly connection: ClientConnection;
+  readonly socket: Socket;
+  readonly endpoint: string;
+  cancelled: boolean;
+  cleaned: boolean;
+}
+
+export interface RedskillsAcpControlPlane {
+  readonly socketPath: string;
+  close(): Promise<void>;
+}
+
+export interface StartRedskillsAcpControlPlaneOptions {
+  readonly paths: RedskilledPaths;
+  readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
+  readonly hostState: () => RedskilledHostState;
+}
+
+/** Bind the daemon-owned public ACP endpoint. */
+export async function startRedskillsAcpControlPlane(
+  options: StartRedskillsAcpControlPlaneOptions,
+): Promise<RedskillsAcpControlPlane> {
+  const { paths } = options;
+  const sockets = new Set<Socket>();
+  await mkdir(join(paths.runtimeDir, "acp-workers"), { recursive: true, mode: 0o700 });
+  await rm(paths.acpSocketPath, { force: true });
+
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    void servePublicConnection(socket, options).catch(() => socket.destroy());
+  });
+  await listen(server, paths.acpSocketPath);
+
+  let closed = false;
+  return {
+    socketPath: paths.acpSocketPath,
+    async close() {
+      if (closed) return;
+      closed = true;
+      for (const socket of sockets) socket.destroy();
+      await closeServer(server);
+      await rm(paths.acpSocketPath, { force: true });
+    },
+  };
+}
+
+async function servePublicConnection(
+  socket: Socket,
+  options: StartRedskillsAcpControlPlaneOptions,
+): Promise<void> {
+  const sessions = new Map<string, PublicSession>();
+  const active = new Map<string, ActiveWorker>();
+
+  const app = agent({ name: "RedSkills" })
+    .onRequest(methods.agent.initialize, ({ params }) => ({
+      protocolVersion: params.protocolVersion === ACP_PROTOCOL_VERSION
+        ? params.protocolVersion
+        : ACP_PROTOCOL_VERSION,
+      agentCapabilities: { promptCapabilities: {} },
+      agentInfo: { name: "RedSkills", version: "1" },
+      _meta: { redskills: { wireMajor: 1, workerBacked: true } },
+    }))
+    .onRequest(methods.agent.session.new, ({ params }) => {
+      const sessionId = randomUUID();
+      sessions.set(sessionId, { request: params });
+      return {
+        sessionId,
+        _meta: { redskills: { authority: "redskilled", protocolVersion: ACP_PROTOCOL_VERSION } },
+      };
+    })
+    .onRequest(methods.agent.session.prompt, async ({ params, client: upstream }) => {
+      const session = sessions.get(params.sessionId);
+      if (session == null) throw new Error("unknown RedSkills ACP session");
+      if (active.has(params.sessionId)) throw new Error("this RedSkills ACP session already has an active turn");
+
+      const worker = await admitNativeAcpWorker(options, session, params.sessionId, upstream.notify.bind(upstream));
+      active.set(params.sessionId, worker);
+      try {
+        if (worker.cancelled) {
+          await worker.connection.agent.notify(methods.agent.session.cancel, {
+            sessionId: worker.downstreamSessionId,
+          });
+        }
+        const response = await worker.connection.agent.request(methods.agent.session.prompt, {
+          sessionId: worker.downstreamSessionId,
+          prompt: params.prompt,
+          ...(params._meta == null ? {} : { _meta: params._meta }),
+        });
+        scheduleTerminalCleanup(params.sessionId, worker, active);
+        return {
+          ...response,
+          _meta: {
+            ...(response._meta ?? {}),
+            redskills: { authority: "redskilled", workerId: worker.workerId },
+          },
+        } satisfies PromptResponse;
+      } catch (error) {
+        cleanupWorker(params.sessionId, worker, active);
+        throw error;
+      }
+    })
+    .onNotification(methods.agent.session.cancel, async ({ params }) => {
+      const worker = active.get(params.sessionId);
+      if (worker == null) return;
+      worker.cancelled = true;
+      await worker.connection.agent.notify(methods.agent.session.cancel, {
+        sessionId: worker.downstreamSessionId,
+        ...(params._meta == null ? {} : { _meta: params._meta }),
+      });
+    })
+    .onRequest("_redskills/host_state", () => ({}), () => options.hostState());
+
+  const connection = app.connect(socketStream(socket));
+  await connection.closed;
+  for (const [sessionId, worker] of active) cleanupWorker(sessionId, worker, active);
+}
+
+async function admitNativeAcpWorker(
+  options: StartRedskillsAcpControlPlaneOptions,
+  session: PublicSession,
+  publicSessionId: string,
+  forward: AgentConnection["client"]["notify"],
+): Promise<ActiveWorker> {
+  const endpointId = randomBytes(6).toString("hex");
+  const endpoint = join(options.paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
+  const rendezvous = await bindWorkerRendezvous(endpoint);
+  let launched: LaunchedWorker;
+  try {
+    launched = options.startWorker(nativeWorkerSpec(session.request.cwd, endpoint, options.paths.runtimeDir));
+  } catch (error) {
+    rendezvous.server.close();
+    await rm(endpoint, { force: true });
+    throw error;
+  }
+
+  let workerSocket: Socket;
+  try {
+    workerSocket = await withTimeout(rendezvous.connected, 10_000, "native ACP Worker rendezvous");
+  } catch (error) {
+    rendezvous.server.close();
+    await rm(endpoint, { force: true });
+    throw error;
+  }
+  rendezvous.server.close();
+
+  let downstreamSessionId = "";
+  const downstreamApp = client({ name: "redskilled" })
+    .onNotification(methods.client.session.update, async ({ params }) => {
+      const notice: SessionNotification = {
+        ...params,
+        sessionId: publicSessionId,
+        _meta: {
+          ...(params._meta ?? {}),
+          redskills: { authority: "redskilled", workerId: launched.worker.worker_id },
+        },
+      };
+      await forward(methods.client.session.update, notice);
+    });
+  const connection = downstreamApp.connect(socketStream(workerSocket));
+  try {
+    await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: ACP_PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: "redskilled", version: "1" },
+      _meta: { redskills: { wireMajor: 1 } },
+    });
+    const downstreamSession = await connection.agent.request(methods.agent.session.new, {
+      cwd: session.request.cwd,
+      mcpServers: session.request.mcpServers as McpServer[],
+      ...(session.request.additionalDirectories == null
+        ? {}
+        : { additionalDirectories: session.request.additionalDirectories }),
+    });
+    downstreamSessionId = downstreamSession.sessionId;
+  } catch (error) {
+    connection.close();
+    workerSocket.destroy();
+    await rm(endpoint, { force: true });
+    throw error;
+  }
+
+  return {
+    workerId: launched.worker.worker_id,
+    downstreamSessionId,
+    connection,
+    socket: workerSocket,
+    endpoint,
+    cancelled: false,
+    cleaned: false,
+  };
+}
+
+function nativeWorkerSpec(cwd: string, endpoint: string, runtimeDir: string): RedskilledWorkerSpec {
+  const entry = process.argv[1];
+  if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
+  return {
+    project_label: ACP_PROJECT_LABEL,
+    workspace_path: cwd,
+    command: process.execPath,
+    args: [...process.execArgv, entry, "acp-worker", "--socket", endpoint],
+    log_path: join(runtimeDir, "acp-workers", `${randomBytes(6).toString("hex")}.toonl`),
+  };
+}
+
+function scheduleTerminalCleanup(
+  sessionId: string,
+  worker: ActiveWorker,
+  active: Map<string, ActiveWorker>,
+): void {
+  const timer = setTimeout(() => cleanupWorker(sessionId, worker, active), TERMINAL_REAP_DELAY_MS);
+  timer.unref();
+}
+
+function cleanupWorker(sessionId: string, worker: ActiveWorker, active: Map<string, ActiveWorker>): void {
+  if (worker.cleaned) return;
+  worker.cleaned = true;
+  if (active.get(sessionId) === worker) active.delete(sessionId);
+  worker.connection.close();
+  worker.socket.destroy();
+  void rm(worker.endpoint, { force: true });
+}
+
+/** Stdio launch-edge adapter: transport only; no session state lives here. */
+export async function runRedskillsAcpAdapter(paths: RedskilledPaths): Promise<number> {
+  const socket = await connectWithDeadline(paths.acpSocketPath, 10_000);
+  process.stdin.pipe(socket);
+  socket.pipe(process.stdout);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("close", () => resolve());
+    socket.once("error", reject);
+  });
+  return 0;
+}
+
+/** The daemon-admitted native Workflow Worker. */
+export async function runNativeAcpWorker(socketPath: string): Promise<number> {
+  const controllers = new Map<string, AbortController>();
+  const sessions = new Set<string>();
+  const app = agent({ name: "RedSkills native Worker" })
+    .onRequest(methods.agent.initialize, () => ({
+      protocolVersion: ACP_PROTOCOL_VERSION,
+      agentCapabilities: { promptCapabilities: {} },
+      agentInfo: { name: "RedSkills native Worker", version: "1" },
+      _meta: { redskills: { wireMajor: 1, worker: true } },
+    }))
+    .onRequest(methods.agent.session.new, () => {
+      const sessionId = randomUUID();
+      sessions.add(sessionId);
+      return { sessionId };
+    })
+    .onRequest(methods.agent.session.prompt, async ({ params, client: parent }) => {
+      if (!sessions.has(params.sessionId)) throw new Error("unknown native Worker ACP session");
+      const controller = new AbortController();
+      controllers.set(params.sessionId, controller);
+      try {
+        await parent.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [{ content: "Execute the prompt inside the admitted native Worker", priority: "high", status: "in_progress" }],
+          },
+        });
+        await parent.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "native Worker is executing the prompt\n" },
+          },
+        });
+
+        const prompt = promptText(params);
+        if (prompt.includes("wait for cancellation")) {
+          await waitForAbort(controller.signal);
+        } else {
+          await abortableDelay(35, controller.signal);
+        }
+        if (controller.signal.aborted) {
+          await parent.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "native Worker cancelled the prompt\n" },
+            },
+          });
+          return { stopReason: "cancelled" } satisfies PromptResponse;
+        }
+
+        await parent.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [{ content: "Execute the prompt inside the admitted native Worker", priority: "high", status: "completed" }],
+          },
+        });
+        await parent.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `native Worker completed: ${prompt}\n` },
+          },
+        });
+        return { stopReason: "end_turn" } satisfies PromptResponse;
+      } finally {
+        controllers.delete(params.sessionId);
+      }
+    })
+    .onNotification(methods.agent.session.cancel, ({ params }) => {
+      controllers.get(params.sessionId)?.abort();
+    });
+
+  const socket = await connectWithDeadline(socketPath, 10_000);
+  const connection = app.connect(socketStream(socket));
+  await connection.closed;
+  return 0;
+}
+
+function promptText(params: PromptRequest): string {
+  return params.prompt
+    .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+}
+
+function socketStream(socket: Socket): Stream {
+  return ndJsonStream(
+    Writable.toWeb(socket) as WritableStream<Uint8Array>,
+    Readable.toWeb(socket) as ReadableStream<Uint8Array>,
+  );
+}
+
+async function bindWorkerRendezvous(socketPath: string): Promise<{
+  server: Server;
+  connected: Promise<Socket>;
+}> {
+  await rm(socketPath, { force: true });
+  let accept!: (socket: Socket) => void;
+  const connected = new Promise<Socket>((resolve) => { accept = resolve; });
+  const server = createServer((socket) => accept(socket));
+  await listen(server, socketPath);
+  return { server, connected };
+}
+
+async function listen(server: Server, socketPath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+
+async function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function connectWithDeadline(socketPath: string, timeoutMs: number): Promise<Socket> {
+  const deadline = Date.now() + timeoutMs;
+  let cause: unknown;
+  while (Date.now() < deadline) {
+    try {
+      return await new Promise<Socket>((resolve, reject) => {
+        const socket = connect(socketPath);
+        socket.once("connect", () => resolve(socket));
+        socket.once("error", reject);
+      });
+    } catch (error) {
+      cause = error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw new Error(`redskilled ACP endpoint did not answer within ${timeoutMs}ms`, { cause });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not answer within ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
+}
+
+async function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
+async function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+}

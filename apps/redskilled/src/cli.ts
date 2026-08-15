@@ -76,6 +76,7 @@ import {
 } from "./supervision.js";
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
 import { stabilizeRedskilledEntry } from "./stable-bundle.js";
+import { runNativeAcpWorker, runRedskillsAcpAdapter } from "./acp-control-plane.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -91,6 +92,7 @@ export const REDSKILLED_USAGE = `Usage: redskilled <command> [options]
 Commands:
   host-state (default)  print the host's state as JSON
   serve                 run the daemon in this process
+  acp                   serve the daemon-owned RedSkills ACP Agent over stdio
   statusline [global]   render one agent-host status line
   dashboard [local]     the host's screen; local scopes it to this repo
   github-spend          report which operations spent GitHub budget
@@ -128,6 +130,15 @@ Runs the daemon in this process. Every path is a flag and none is derived
 The poller is armed by a token in REDSKILLED_HOST_TOKEN (GITHUB_TOKEN or
 GH_TOKEN when it is unset). With none, the daemon holds registrations and counts
 no queue — an honest unknown, never a drained one.
+`,
+  acp: `Usage: redskilled acp
+
+Projects the daemon-owned RedSkills ACP v1 Agent over stdin/stdout. The adapter
+owns no session or Worker state; closing it does not stop the host daemon.
+`,
+  "acp-worker": `Usage: redskilled acp-worker --socket <path>
+
+Internal launch edge for a daemon-admitted native ACP Worker.
 `,
   "host-state": `Usage: redskilled host-state
 
@@ -234,6 +245,8 @@ const SERVE_FLAGS = {
   "queue-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
   "demand-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
 } as const;
+
+const ACP_WORKER_FLAGS = { socket: { kind: "value", coerce: (raw: string) => raw } } as const;
 
 /**
  * The env var naming the credential this host polls the tracker with.
@@ -417,6 +430,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 
   const { command, args } = routeCommand<
     | "serve"
+    | "acp"
+    | "acp-worker"
     | "stop"
     | "host-state"
     | "statusline"
@@ -430,6 +445,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   >(argv, {
     commands: {
       serve: {},
+      acp: {},
+      "acp-worker": {},
       stop: {},
       "host-state": {},
       statusline: {},
@@ -578,6 +595,18 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     await daemon.closed;
     deaths.phase("closed");
     return 0;
+  }
+
+  if (command === "acp") {
+    const paths = resolveRedskilledPaths();
+    await ensureRedskilledDaemon(paths);
+    return await runRedskillsAcpAdapter(paths);
+  }
+
+  if (command === "acp-worker") {
+    const { values } = parseFlags(args, ACP_WORKER_FLAGS);
+    if (values.socket == null || values.socket === "") throw new Error("acp-worker requires --socket");
+    return await runNativeAcpWorker(values.socket);
   }
 
   if (command === "stop") return await runStop(args);

@@ -4,6 +4,7 @@ import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
+import { startRedskillsAcpControlPlane, type RedskillsAcpControlPlane } from "../acp-control-plane.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { createWorkerTeardownLedger } from "./worker-teardown.js";
 import { createBudgetGraceRuntime, DEFAULT_REDSKILLED_BUDGET_GRACE_MS, signalWorkerForBudgetGrace } from "./budget-grace.js";
@@ -42,11 +43,7 @@ import {
   type RedskilledDemandGrant,
   type RedskilledDemandTick,
 } from "../demand-loop.js";
-import {
-  buildRedskilledStopReport,
-  type RedskilledDaemonStopped,
-  type RedskilledStopReason,
-} from "../daemon-stop.js";
+import { buildRedskilledStopReport, type RedskilledDaemonStopped, type RedskilledStopReason } from "../daemon-stop.js";
 import {
   buildHostState,
   type RedskilledHostState,
@@ -73,9 +70,7 @@ import {
 } from "../machine-scope.js";
 import { createRedskilledOrphanReaperRuntime } from "../orphan-reaper.js";
 import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-template.js";
-import {
-  createRedskilledRegistrationIntentStore,
-} from "../registration-intent-store.js";
+import { createRedskilledRegistrationIntentStore } from "../registration-intent-store.js";
 import {
   buildRegistrationLapse,
   buildRegistrationStop,
@@ -180,10 +175,7 @@ import {
   type RedskilledTrunkRefreshInput,
   unreachableTrunkAdmission,
 } from "../trunk-mirror.js";
-import {
-  readLastLogLine,
-  type RedskilledWorkerLogLine,
-} from "../worker-log.js";
+import { readLastLogLine, type RedskilledWorkerLogLine } from "../worker-log.js";
 import {
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isLocalRedskilledBuild,
@@ -200,17 +192,8 @@ import {
   type RedskilledReplacementHoldReason,
 } from "../self-replace.js";
 import { measureGithubCompanions } from "../github-companions.js";
-import {
-  createRedskilledLeaseStore,
-  currentProcessOwner,
-  type RedskilledLease,
-} from "../session-lease.js";
-import {
-  REDSKILLED_QUEUE_UNCONFIGURED_REASON,
-  RedskilledDaemon,
-  RedskilledDaemonOptions,
-  RedskilledStopIntent,
-} from "./types.js";
+import { createRedskilledLeaseStore, currentProcessOwner, type RedskilledLease } from "../session-lease.js";
+import { REDSKILLED_QUEUE_UNCONFIGURED_REASON, RedskilledDaemon, RedskilledDaemonOptions, RedskilledStopIntent } from "./types.js";
 import {
   DEFAULT_REDSKILLED_IDLE_MS,
   DEFAULT_REDSKILLED_LEASE_RENEW_MS,
@@ -322,6 +305,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   let server: Server;
+  let acpControlPlane: RedskillsAcpControlPlane | undefined;
   try {
     // The two records that already name this socket's holder. Consulted only to
     // REFUSE — an absent, stale or unreadable record decides nothing and falls
@@ -2202,6 +2186,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await eventLane.flush().catch(() => undefined);
     await registrationIntentStore.flush().catch(() => undefined);
     await resourceLeaseStore.flush().catch(() => undefined);
+    await acpControlPlane?.close().catch(() => undefined);
     // Ownership records go first while the socket still proves this daemon is
     // reachable. If either release stalls or fails, the old daemon stays bound
     // and no successor mistakes a live, socketless pid for the singleton.
@@ -2419,6 +2404,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     } catch (err) {
       return { id: (request as { id?: string }).id ?? randomUUID(), ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  try {
+    acpControlPlane = await startRedskillsAcpControlPlane({
+      paths,
+      startWorker,
+      hostState,
+    });
+  } catch (error) {
+    await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);
+    throw error;
   }
 
   armIdleTimer();
