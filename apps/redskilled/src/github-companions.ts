@@ -52,6 +52,7 @@ export function resolveServeGithubGateway(
   const env = options.env ?? process.env;
   const fetchImpl = createTimedGithubFetch();
   const gateway = createRedskilledGithubGateway({
+    configuredProfiles: ["personal", ...Object.keys(options.profiles ?? {})],
     upstream: createRedskilledGithubUpstream({
       ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
       ...(env.GITHUB_GRAPHQL_URL ? { graphqlEndpoint: env.GITHUB_GRAPHQL_URL } : {}),

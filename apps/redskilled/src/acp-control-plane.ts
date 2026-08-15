@@ -42,6 +42,13 @@ import {
   withTimeout,
 } from "./acp-socket.js";
 import { bindAcpProjectGithubRead, githubReadParams } from "./acp-github.js";
+import {
+  bindAcpHostGithubBudget,
+  bindAcpProjectGithubBudget,
+  emptyBudgetParams,
+  REDSKILLED_HOST_BUDGET_METHOD,
+  REDSKILLED_PROJECT_BUDGET_METHOD,
+} from "./acp-budget.js";
 import type { RedskilledHostState } from "./host-state.js";
 import {
   REDSKILLED_GITHUB_READ_METHOD,
@@ -96,6 +103,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
   readonly hostState: () => RedskilledHostState;
   readonly githubGateway?: RedskilledGithubGatewayRegistration;
+  /** Explicit endpoint authority; ordinary public/project ACP stays false. */
+  readonly hostAdministration?: boolean;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -186,6 +195,8 @@ async function servePublicConnection(
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
   const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject);
+  const readProjectBudget = bindAcpProjectGithubBudget(options.githubGateway, scopedProject);
+  const readHostBudget = bindAcpHostGithubBudget(options.githubGateway, options.hostAdministration === true);
   const emptyParams = () => ({});
 
   const v1App = agent({ name: "RedSkills" })
@@ -204,6 +215,13 @@ async function servePublicConnection(
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
             ...(options.githubGateway == null ? {} : {
               githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+              credentialBudgets: {
+                version: 1,
+                methods: [
+                  REDSKILLED_PROJECT_BUDGET_METHOD,
+                  ...(options.hostAdministration === true ? [REDSKILLED_HOST_BUDGET_METHOD] : []),
+                ],
+              },
             }),
           },
         },
@@ -290,7 +308,9 @@ async function servePublicConnection(
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
-    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub);
+    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
+    .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
+    .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
 
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
@@ -309,6 +329,13 @@ async function servePublicConnection(
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
             ...(options.githubGateway == null ? {} : {
               githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+              credentialBudgets: {
+                version: 1,
+                methods: [
+                  REDSKILLED_PROJECT_BUDGET_METHOD,
+                  ...(options.hostAdministration === true ? [REDSKILLED_HOST_BUDGET_METHOD] : []),
+                ],
+              },
             }),
           },
         },
@@ -380,7 +407,9 @@ async function servePublicConnection(
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
-    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub);
+    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
+    .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
+    .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
 
   const connection = acpV2.agentProtocolRouter()
     .withV1(v1App)
