@@ -161,6 +161,11 @@ pools; warning and density policy stays daemon-owned) -> `/redskilled` and
 read-only diagnostics, and a visible project `birth_latch` routes through its
 structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
+Worker GitHub publication (credential-free Workers request authenticated fetch,
+push, pull-request, and Issue operations through project-scoped ACP; redskilled
+serializes mutations through its durable outbox, so there is no direct `gh` or
+authenticated Git fallback route) ->
+`apps/redskilled/src/github-gateway.ts` and `apps/redskilled/src/acp-github.ts`;
 Castle resident lifecycle (one project identity across Worktrees, versioned
 wire, spawn/handover/idle rules, matching proxy/resident artifacts, bounded
 project-status health, the local 1/4/8-session diagnostic, and the `redskilled`
