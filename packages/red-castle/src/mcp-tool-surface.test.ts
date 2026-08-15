@@ -33,6 +33,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["scope", "worker", "live_only", "fields"],
   },
   {
+    name: "project_activation",
+    title: "Preview this project's redskilled activation",
+    description:
+      "READ-ONLY: report whether this project opted into RedSkills and the canonical runner and target a no-argument drain would register.",
+    schema: [],
+  },
+  {
     name: "project_status",
     title: "Deprecated project status alias",
     description:
@@ -43,7 +50,7 @@ const SURFACE: ReadonlyArray<{
     name: "drain",
     title: "Make this project drain",
     description:
-      "MUTATING: ensure the daemon is reachable and this project is registered at the requested runner and target; repeated calls report what was kept.",
+      "MUTATING: ensure the daemon is reachable and this project is registered. Omitted runner and target resolve from this project's canonical RedSkills configuration; repeated calls report what was kept.",
     schema: ["runner", "target"],
   },
   {

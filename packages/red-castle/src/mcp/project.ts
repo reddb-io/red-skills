@@ -40,8 +40,17 @@ export interface ProjectStartInput {
 }
 
 export interface ProjectDrainInput {
+  runner?: string;
+  target?: number;
+}
+
+export interface ProjectActivationOutput {
+  eligible: boolean;
+  project: string;
   runner: string;
   target: number;
+  standing: boolean;
+  config: string;
 }
 
 export interface ProjectResizeInput {
@@ -61,6 +70,7 @@ export interface ProjectResetInput {
 }
 
 export interface ProjectDependencies {
+  projectActivation(): Promise<ProjectActivationOutput>;
   projectStatus(): Promise<ProjectStatusOutput>;
   drain(input: ProjectDrainInput): Promise<unknown>;
   projectStart(input: ProjectStartInput): Promise<unknown>;
@@ -99,6 +109,14 @@ const removedFleetName = z
 export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
   return [
     {
+      name: "project_activation",
+      title: "Preview this project's redskilled activation",
+      description:
+        "READ-ONLY: report whether this project opted into RedSkills and the canonical runner and target a no-argument drain would register.",
+      inputSchema: {},
+      invoke: () => deps.projectActivation(),
+    },
+    {
       name: "project_status",
       title: "Deprecated project status alias",
       description:
@@ -118,10 +136,10 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       name: "drain",
       title: "Make this project drain",
       description:
-        "MUTATING: ensure the daemon is reachable and this project is registered at the requested runner and target; repeated calls report what was kept.",
+        "MUTATING: ensure the daemon is reachable and this project is registered. Omitted runner and target resolve from this project's canonical RedSkills configuration; repeated calls report what was kept.",
       inputSchema: {
-        runner: z.string().min(1),
-        target: z.number().int().min(0).default(DEFAULT_FLEET_WIDTH),
+        runner: z.string().min(1).optional(),
+        target: z.number().int().min(0).optional(),
       },
       invoke: async (input) => deps.drain(input as unknown as ProjectDrainInput),
     },

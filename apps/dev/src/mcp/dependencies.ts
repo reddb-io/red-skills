@@ -51,6 +51,7 @@ import { createDefaultDevAfkMcpOperations } from "./handlers.js";
 import {
   concretizeSelectorUser,
   drain,
+  projectActivation,
   projectResize,
   projectStart,
   projectStatus,
@@ -151,6 +152,7 @@ export function createCastleMcpDependencies(
   readers: CastleMcpReadPorts = {},
 ): CastleMcpDependencies {
   const baseDeps: CastleMcpDependencies = {
+    projectActivation: async () => projectActivation(root),
     projectStatus: () => projectStatus(root),
     drain: (input) => drain(root, input),
     projectStart: (input) => projectStart(root, input),
