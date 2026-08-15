@@ -354,7 +354,11 @@ async function servePublicConnection(
           ...response,
           _meta: {
             ...(response._meta ?? {}),
-            redskills: { authority: "redskilled", workerId: worker.workerId },
+            redskills: {
+              ...((response._meta as { redskills?: object } | undefined)?.redskills ?? {}),
+              authority: "redskilled",
+              workerId: worker.workerId,
+            },
           },
         } satisfies PromptResponse;
       } catch (error) {
