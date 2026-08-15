@@ -1,11 +1,6 @@
 /**
- * Project-scoped GitHub reads owned by the redskilled daemon.
- *
- * A caller receives a reader already bound to one Project and one named
- * daemon-owned credential profile. It can describe a read, but it cannot name a
- * credential, a second Project, a repository remote, or a host operation. The
- * gateway therefore has one place to coalesce demand and one place to enforce
- * the authority boundary before any authenticated transport is reached.
+ * Project-scoped GitHub reads, coalescing, and authority enforcement owned by
+ * redskilled. Callers receive readers bound to one Project and credential.
  */
 import {
   DEFAULT_GITHUB_CACHE_CAPACITY,
