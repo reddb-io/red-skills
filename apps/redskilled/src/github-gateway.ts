@@ -11,7 +11,6 @@ import {
   DEFAULT_GITHUB_CACHE_CAPACITY,
   DEFAULT_GITHUB_CACHE_FRESH_MS,
   GithubBackpressureError,
-  classifyGithubLimit,
   createGithubCache,
   type GithubCacheOutcome,
   type GithubLimitFact,
@@ -19,14 +18,16 @@ import {
 import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import {
-  RedskilledGithubCredentialProfileError,
   githubCredentialScopeRefusal,
 } from "./github-credential-profiles.js";
 import {
+  budgetFromHeaders,
   budgetKey,
+  graphqlBudget,
   poolForRead,
   projectPools,
   publishableProfile,
+  validatorsFromHeaders,
   type BudgetObservation,
   type RedskilledGithubBudgetFacts,
   type RedskilledGithubBudgetPool,
@@ -51,6 +52,26 @@ import {
   type GithubOutbox,
   validateWriteRequest,
 } from "./github-outbox.js";
+import {
+  githubHeaders,
+  githubUpstreamRefusal,
+  responseValue,
+} from "./github-transport.js";
+import {
+  type RedskilledGithubWriteAnswer,
+  type RedskilledGithubWriteRequest,
+  type RedskilledGithubWriteUpstream,
+} from "./github-write.js";
+
+export {
+  createRedskilledGithubWriteUpstream,
+  type CreateRedskilledGithubWriteUpstreamOptions,
+  type RedskilledGithubWrite,
+  type RedskilledGithubWriteAnswer,
+  type RedskilledGithubWriteRequest,
+  type RedskilledGithubWriteUpstream,
+  type RedskilledGithubWriteUpstreamInput,
+} from "./github-write.js";
 
 export const REDSKILLED_GITHUB_READ_METHOD = "_redskills/github_read";
 export const REDSKILLED_GITHUB_WRITE_METHOD = "_redskills/github_write";
@@ -123,51 +144,6 @@ export interface RedskilledGithubProjectReader {
   write(request: RedskilledGithubWriteRequest): Promise<RedskilledGithubWriteAnswer>;
   /** Retry this Project's durable pending writes after a daemon replacement. */
   resumeWrites(): Promise<readonly RedskilledGithubWriteAnswer[]>;
-}
-
-export type RedskilledGithubWrite =
-  | { readonly kind: "repository-push"; readonly ref: string; readonly sha: string }
-  | {
-      readonly kind: "pull-request";
-      readonly head: string;
-      readonly base: string;
-      readonly title: string;
-      readonly body: string;
-    }
-  | {
-      readonly kind: "issue-publication";
-      /** Absent to open a Ticket; present to publish a comment on that Ticket. */
-      readonly issue?: number;
-      readonly title?: string;
-      readonly body: string;
-    };
-
-export interface RedskilledGithubWriteRequest {
-  /** Stable caller-minted identity. Reusing it returns the durable receipt. */
-  readonly idempotency_key: string;
-  readonly write: RedskilledGithubWrite;
-}
-
-export interface RedskilledGithubWriteUpstreamInput {
-  readonly project: RedskilledGithubProjectAuthority;
-  readonly credential: RedskilledGithubCredential;
-  readonly idempotencyKey: string;
-  readonly write: RedskilledGithubWrite;
-}
-
-export type RedskilledGithubWriteUpstream = (
-  input: RedskilledGithubWriteUpstreamInput,
-) => Promise<unknown>;
-
-export interface RedskilledGithubWriteAnswer {
-  readonly version: 1;
-  readonly project_id: string;
-  readonly credential_profile: string;
-  readonly idempotency_key: string;
-  readonly state: "published";
-  readonly queued_at: string;
-  readonly published_at: string;
-  readonly value: unknown;
 }
 
 export interface RedskilledGithubManagedProjectReader extends RedskilledGithubProjectReader {
@@ -258,13 +234,6 @@ interface RefreshState {
   answer?: KeptGithubAnswer;
   validators?: RedskilledGithubValidators;
   timer?: NodeJS.Timeout;
-}
-
-export interface CreateRedskilledGithubWriteUpstreamOptions {
-  readonly origin?: string;
-  readonly fetchImpl?: typeof fetch;
-  readonly pushRepository?: (input: RedskilledGithubWriteUpstreamInput) => Promise<unknown>;
-  readonly clock?: () => string;
 }
 
 export class RedskilledGithubAuthorityError extends Error {
@@ -594,7 +563,7 @@ export function createRedskilledGithubUpstream(
         };
       }
       if (!response.ok) {
-        throw upstreamRefusal("REST", pool, response, clock(), input.project.credentialProfile);
+        throw githubUpstreamRefusal("REST read", pool, response, clock(), input.project.credentialProfile);
       }
       return {
         value: await responseValue(response),
@@ -613,7 +582,7 @@ export function createRedskilledGithubUpstream(
       body: JSON.stringify({ query }),
     });
     if (!response.ok) {
-      throw upstreamRefusal("GraphQL", "graphql", response, clock(), input.project.credentialProfile);
+      throw githubUpstreamRefusal("GraphQL read", "graphql", response, clock(), input.project.credentialProfile);
     }
     const body = await response.json() as {
       readonly data?: { readonly repository?: unknown; readonly rateLimit?: unknown };
@@ -630,86 +599,6 @@ export function createRedskilledGithubUpstream(
       budget: graphqlBudget(body.data?.rateLimit),
     };
   };
-}
-
-/**
- * Authenticated publication edge. API writes carry a stable invisible outbox
- * marker and reconcile it before POST, closing the response-loss window where
- * GitHub accepted a mutation but the local receipt was not checkpointed.
- */
-export function createRedskilledGithubWriteUpstream(
-  options: CreateRedskilledGithubWriteUpstreamOptions = {},
-): RedskilledGithubWriteUpstream {
-  const origin = (options.origin ?? "https://api.github.com").replace(/\/+$/, "");
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const pushRepository = options.pushRepository ?? pushCanonicalRepository;
-  const clock = options.clock ?? (() => new Date().toISOString());
-
-  return async (input) => {
-    if (input.write.kind === "repository-push") return pushRepository(input);
-    const repository = input.project.projectLabel.split("/").map(encodeURIComponent).join("/");
-    const marker = githubOutboxMarker(input.idempotencyKey);
-    const request = apiWriteRequest(input.write, repository, marker);
-    const headers = { ...githubHeaders(input.credential.secret), "content-type": "application/json" };
-    const lookup = await fetchImpl(`${origin}/${request.lookup}`, { method: "GET", headers });
-    if (!lookup.ok) {
-      throw upstreamRefusal("write reconciliation", "rest", lookup, clock(), input.project.credentialProfile);
-    }
-    const existing = findMarkedPublication(await responseValue(lookup), marker);
-    if (existing != null) return existing;
-
-    const response = await fetchImpl(`${origin}/${request.path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(request.body),
-    });
-    if (!response.ok) {
-      throw upstreamRefusal("write", "rest", response, clock(), input.project.credentialProfile);
-    }
-    return responseValue(response);
-  };
-}
-
-function apiWriteRequest(
-  write: Exclude<RedskilledGithubWrite, { readonly kind: "repository-push" }>,
-  repository: string,
-  marker: string,
-): { readonly lookup: string; readonly path: string; readonly body: Record<string, unknown> } {
-  const marked = (body: string): string => `${body}${body.endsWith("\n") || body === "" ? "" : "\n\n"}${marker}`;
-  if (write.kind === "pull-request") {
-    const owner = repository.split("/", 1)[0]!;
-    return {
-      lookup: `repos/${repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${write.head}`)}` +
-        `&base=${encodeURIComponent(write.base)}&per_page=100`,
-      path: `repos/${repository}/pulls`,
-      body: { head: write.head, base: write.base, title: write.title, body: marked(write.body) },
-    };
-  }
-  if (write.issue != null) {
-    return {
-      lookup: `repos/${repository}/issues/${write.issue}/comments?per_page=100`,
-      path: `repos/${repository}/issues/${write.issue}/comments`,
-      body: { body: marked(write.body) },
-    };
-  }
-  return {
-    lookup: `repos/${repository}/issues?state=all&per_page=100`,
-    path: `repos/${repository}/issues`,
-    body: { title: write.title, body: marked(write.body) },
-  };
-}
-
-function githubOutboxMarker(idempotencyKey: string): string {
-  return `<!-- redskilled:github-outbox:${idempotencyKey} -->`;
-}
-
-function findMarkedPublication(value: unknown, marker: string): unknown | null {
-  if (!Array.isArray(value)) return null;
-  return value.find((candidate) =>
-    candidate != null && typeof candidate === "object" &&
-    typeof (candidate as Record<string, unknown>).body === "string" &&
-    ((candidate as Record<string, unknown>).body as string).includes(marker)
-  ) ?? null;
 }
 
 function publicAnswer(
@@ -852,82 +741,6 @@ function requireOnlyKeys(value: object, allowed: readonly string[]): void {
   }
 }
 
-function githubHeaders(secret: string): Record<string, string> {
-  return {
-    accept: "application/vnd.github+json",
-    authorization: `Bearer ${secret}`,
-    "x-github-api-version": "2022-11-28",
-  };
-}
-
-async function responseValue(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type") ?? "";
-  return contentType.includes("json") ? response.json() : response.text();
-}
-
-function budgetFromHeaders(pool: string, headers: Headers): RedskilledGithubBudgetFacts | null {
-  const remaining = finiteNumber(headers.get("x-ratelimit-remaining"));
-  const limit = finiteNumber(headers.get("x-ratelimit-limit"));
-  const reset = finiteNumber(headers.get("x-ratelimit-reset"));
-  if (remaining == null && limit == null && reset == null) return null;
-  return {
-    pool,
-    remaining,
-    reset_at: reset == null ? null : new Date(reset * 1000).toISOString(),
-    limit,
-  };
-}
-
-function validatorsFromHeaders(
-  headers: Headers,
-  previous: RedskilledGithubValidators | undefined,
-): RedskilledGithubValidators | undefined {
-  const etag = headers.get("etag") ?? previous?.etag;
-  const lastModified = headers.get("last-modified") ?? previous?.lastModified;
-  if (etag == null && lastModified == null) return undefined;
-  return {
-    ...(etag == null ? {} : { etag }),
-    ...(lastModified == null ? {} : { lastModified }),
-  };
-}
-
-function graphqlBudget(value: unknown): RedskilledGithubBudgetFacts | null {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  return {
-    pool: "graphql",
-    remaining: finiteNumber(record.remaining),
-    reset_at: typeof record.resetAt === "string" ? record.resetAt : null,
-    limit: finiteNumber(record.limit),
-  };
-}
-
-function finiteNumber(value: unknown): number | null {
-  if (value == null || value === "") return null;
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function upstreamRefusal(
-  surface: string,
-  pool: "rest" | "graphql" | "search",
-  response: Response,
-  now: string,
-  profile: string,
-): Error {
-  const observed = {
-    status: response.status,
-    response: { headers: Object.fromEntries(response.headers.entries()) },
-  };
-  const fact = classifyGithubLimit(observed, pool, Date.parse(now));
-  if (fact != null) return new GithubBackpressureError(fact);
-  if (response.status === 401) {
-    return new RedskilledGithubCredentialProfileError("invalid-credentials", profile);
-  }
-  if (response.status === 403) return githubCredentialScopeRefusal(profile);
-  return new Error(`redskilled GitHub ${surface} read failed with status ${response.status}`);
-}
-
 function isGithubScopeError(value: unknown): boolean {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -955,25 +768,4 @@ async function fetchCanonicalRepository(input: RedskilledGithubUpstreamInput): P
     }, (error) => error == null ? resolve() : reject(new Error("redskilled repository fetch failed", { cause: error })));
   });
   return { fetched: true, ref: input.read.ref ?? null };
-}
-
-async function pushCanonicalRepository(input: RedskilledGithubWriteUpstreamInput): Promise<unknown> {
-  if (input.write.kind !== "repository-push") throw new Error("repository push received a non-push write");
-  const write = input.write;
-  const authorization = Buffer.from(`x-access-token:${input.credential.secret}`, "utf8").toString("base64");
-  await new Promise<void>((resolve, reject) => {
-    execFile("git", ["push", "origin", `${write.sha}:${write.ref}`], {
-      cwd: input.project.workspacePath,
-      env: {
-        ...process.env,
-        GIT_CONFIG_COUNT: "1",
-        GIT_CONFIG_KEY_0: "http.extraHeader",
-        GIT_CONFIG_VALUE_0: `Authorization: Basic ${authorization}`,
-        GIT_TERMINAL_PROMPT: "0",
-      },
-      windowsHide: true,
-      timeout: 60_000,
-    }, (error) => error == null ? resolve() : reject(new Error("redskilled repository push failed", { cause: error })));
-  });
-  return { pushed: true, ref: write.ref, sha: write.sha };
 }

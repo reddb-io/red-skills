@@ -4,6 +4,7 @@ import type {
   RedskilledGithubManagedGateway,
   RedskilledGithubProjectAuthority,
   RedskilledGithubRead,
+  RedskilledGithubValidators,
 } from "./github-gateway.js";
 
 export interface RedskilledGithubBudgetFacts {
@@ -114,6 +115,43 @@ export function publishableProfile(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value);
 }
 
+export function budgetFromHeaders(pool: string, headers: Headers): RedskilledGithubBudgetFacts | null {
+  const remaining = finiteNumber(headers.get("x-ratelimit-remaining"));
+  const limit = finiteNumber(headers.get("x-ratelimit-limit"));
+  const reset = finiteNumber(headers.get("x-ratelimit-reset"));
+  if (remaining == null && limit == null && reset == null) return null;
+  return {
+    pool,
+    remaining,
+    reset_at: reset == null ? null : new Date(reset * 1000).toISOString(),
+    limit,
+  };
+}
+
+export function validatorsFromHeaders(
+  headers: Headers,
+  previous: RedskilledGithubValidators | undefined,
+): RedskilledGithubValidators | undefined {
+  const etag = headers.get("etag") ?? previous?.etag;
+  const lastModified = headers.get("last-modified") ?? previous?.lastModified;
+  if (etag == null && lastModified == null) return undefined;
+  return {
+    ...(etag == null ? {} : { etag }),
+    ...(lastModified == null ? {} : { lastModified }),
+  };
+}
+
+export function graphqlBudget(value: unknown): RedskilledGithubBudgetFacts | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return {
+    pool: "graphql",
+    remaining: finiteNumber(record.remaining),
+    reset_at: typeof record.resetAt === "string" ? record.resetAt : null,
+    limit: finiteNumber(record.limit),
+  };
+}
+
 function budgetProjection(
   pool: RedskilledGithubBudgetPool,
   observation: BudgetObservation | undefined,
@@ -164,4 +202,10 @@ function budgetWarning(
   if (share <= 0.1) return "critical";
   if (share <= 0.25) return "warning";
   return "normal";
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
