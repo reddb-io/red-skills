@@ -3,6 +3,9 @@ import { GithubBackpressureError } from "@reddb-io/github";
 import {
   RedskilledGithubAuthorityError,
   type RedskilledGithubGatewayRegistration,
+  type RedskilledGithubCustodyHandoff,
+  type RedskilledGithubCustodyRecord,
+  type RedskilledGithubCustodyStatus,
   type RedskilledGithubManagedProjectReader,
   type RedskilledGithubRead,
   type RedskilledGithubUpdate,
@@ -13,6 +16,7 @@ import { RedskilledGithubCredentialProfileError } from "./github-credential-prof
 
 type GithubReadParams = { readonly read: RedskilledGithubRead };
 type GithubWriteParams = RedskilledGithubWriteRequest;
+type GithubCustodyHandoffParams = RedskilledGithubCustodyHandoff;
 
 export const REDSKILLED_GITHUB_UPDATE_METHOD = "_redskills/github_update";
 
@@ -164,6 +168,81 @@ export function bindAcpProjectGithubWrite(
   };
 }
 
+/** Transfer a published PR to daemon custody under this connection's Project. */
+export function bindAcpProjectGithubCustodyHandoff(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  projectForConnection: () => AcpProjectWorkspace,
+) {
+  return async ({ params }: { readonly params: GithubCustodyHandoffParams }): Promise<RedskilledGithubCustodyRecord> => {
+    const { reader } = await custodyReader(gateway, projectForConnection());
+    return reader.handoffMergeCustody(params);
+  };
+}
+
+/** Read custody through ACP without making the observing client an owner. */
+export function bindAcpProjectGithubCustodyStatus(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  projectForConnection: () => AcpProjectWorkspace,
+) {
+  return async (): Promise<RedskilledGithubCustodyStatus | undefined> => {
+    if (gateway == null) return undefined;
+    const project = projectForConnection();
+    const selection = await gateway.credentialForProject({
+      projectId: project.projectId,
+      projectLabel: project.projectLabel,
+      workspacePath: project.workspacePath,
+    });
+    if (selection == null) return undefined;
+    const reader = gateway.gateway.forProject({
+      projectId: project.projectId,
+      projectLabel: project.projectLabel,
+      workspacePath: project.workspacePath,
+      credentialProfile: selection.profile,
+    }, selection.credential);
+    return isCustodyReader(reader) ? reader.mergeCustodyStatus() : undefined;
+  };
+}
+
+async function custodyReader(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  project: AcpProjectWorkspace,
+): Promise<{
+  readonly reader: RedskilledGithubManagedProjectReader;
+}> {
+  const selection = await gateway?.credentialForProject({
+    projectId: project.projectId,
+    projectLabel: project.projectLabel,
+    workspacePath: project.workspacePath,
+  });
+  if (gateway == null || selection == null) {
+    throw RequestError.authRequired(
+      {
+        version: 1,
+        kind: "github-credential-profile",
+        reason: "missing-credentials",
+        credential_profile: "personal",
+      },
+      "this Project has no resolvable daemon-owned GitHub credential profile",
+    );
+  }
+  const reader = gateway.gateway.forProject({
+    projectId: project.projectId,
+    projectLabel: project.projectLabel,
+    workspacePath: project.workspacePath,
+    credentialProfile: selection.profile,
+  }, selection.credential);
+  if (!isCustodyReader(reader)) {
+    throw new RedskilledGithubAuthorityError("this GitHub gateway has no durable merge custodian");
+  }
+  return { reader };
+}
+
+function isCustodyReader(value: unknown): value is RedskilledGithubManagedProjectReader {
+  return value != null && typeof value === "object" &&
+    typeof (value as RedskilledGithubManagedProjectReader).handoffMergeCustody === "function" &&
+    typeof (value as RedskilledGithubManagedProjectReader).mergeCustodyStatus === "function";
+}
+
 /** Reject caller-controlled Project, credential, remote, and host authority. */
 export function githubReadParams(value: unknown): GithubReadParams {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
@@ -196,4 +275,19 @@ export function githubWriteParams(value: unknown): GithubWriteParams {
     throw new RedskilledGithubAuthorityError("a Project GitHub write needs one mutation object");
   }
   return params as unknown as GithubWriteParams;
+}
+
+/** Reject caller-controlled Project and credential authority on custody handoff. */
+export function githubCustodyHandoffParams(value: unknown): GithubCustodyHandoffParams {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RedskilledGithubAuthorityError("merge custody needs one pull request handoff");
+  }
+  const params = value as Record<string, unknown>;
+  const expected = ["pull_request", "owner_ticket", "branch", "base"];
+  if (Object.keys(params).length !== expected.length || expected.some((key) => !(key in params))) {
+    throw new RedskilledGithubAuthorityError(
+      "a Project merge custody handoff cannot name a Project, credential profile, remote, or host operation",
+    );
+  }
+  return params as unknown as GithubCustodyHandoffParams;
 }
