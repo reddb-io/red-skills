@@ -79,6 +79,14 @@ plugins:
       #     argv: [/usr/local/bin/redwall, refresh]
       # notifications:
       #   - worker-death
+      # github_profiles:
+      #   personal:
+      #     kind: personal
+      #   engineering:
+      #     kind: github-app
+      #     app_id: "4575633"
+      #     installation_id: "153309957"
+      #     private_key: ~/.red/redskilled/credentials/engineering.pem
 `;
 
 /**
