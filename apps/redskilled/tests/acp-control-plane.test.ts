@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
-import type { AddressInfo } from "node:net";
+import { Socket, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -10,6 +10,7 @@ import {
   client,
   methods,
   ndJsonStream,
+  RequestError,
   type SessionNotification,
   type Stream,
 } from "@agentclientprotocol/sdk";
@@ -18,6 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { socketAnswers } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
+import { requestWorkflowTurn, type ActiveWorkflowWorker } from "../src/acp-worker-lifecycle.js";
 
 const require_ = createRequire(import.meta.url);
 const tsxLoader = require_.resolve("tsx");
@@ -32,6 +34,50 @@ afterEach(async () => {
   }
   for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()));
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
+describe("ACP Workflow Worker replacement authority", () => {
+  it("does not replace or replay when a live Worker returns a semantic ACP error", async () => {
+    const publicSessionId = "public-session";
+    const semanticError = RequestError.invalidRequest("the live Worker refused this prompt");
+    let promptRequests = 0;
+    let replacementAdmissions = 0;
+    const worker = {
+      workerId: "worker-one",
+      downstreamSessionId: "downstream-session",
+      connection: {
+        agent: {
+          request: async () => {
+            promptRequests += 1;
+            throw semanticError;
+          },
+        },
+        close: () => undefined,
+      },
+      socket: new Socket(),
+      endpoint: "unused-test-endpoint",
+      publicSessionId,
+      notify: async () => undefined,
+      cancelled: false,
+      cleaned: false,
+    } as unknown as ActiveWorkflowWorker;
+    const active = new Map([[publicSessionId, worker]]);
+
+    await expect(requestWorkflowTurn(
+      publicSessionId,
+      active,
+      { sessionId: publicSessionId, prompt: [{ type: "text", text: "perform one semantic request" }] },
+      async () => {
+        replacementAdmissions += 1;
+        throw new Error("a healthy Worker must not be replaced");
+      },
+    )).rejects.toBe(semanticError);
+
+    expect(promptRequests).toBe(1);
+    expect(replacementAdmissions).toBe(0);
+    expect(active.get(publicSessionId)).toBe(worker);
+    expect(worker.cleaned).toBe(false);
+  });
 });
 
 describe("the public RedSkills ACP v1 control plane", () => {

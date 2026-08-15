@@ -74,6 +74,11 @@ export function cleanupWorkflowWorker(
   void rm(worker.endpoint, { force: true });
 }
 
+function workerTransportIsClosed(worker: ActiveWorkflowWorker): boolean {
+  return worker.socket.destroyed || worker.socket.readableEnded || worker.socket.writableEnded ||
+    !worker.socket.readable || !worker.socket.writable;
+}
+
 /** Run one public turn, replacing an unhealthy Worker at most once. */
 export async function requestWorkflowTurn(
   publicSessionId: string,
@@ -103,7 +108,11 @@ export async function requestWorkflowTurn(
   };
   try {
     return { worker, response: await request(worker) };
-  } catch {
+  } catch (error) {
+    if (!workerTransportIsClosed(worker)) {
+      scheduleIdleCleanup(publicSessionId, worker, active);
+      throw error;
+    }
     cleanupWorkflowWorker(publicSessionId, worker, active);
   }
 
