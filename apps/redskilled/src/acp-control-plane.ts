@@ -44,6 +44,18 @@ import {
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
+  applyProjectControl,
+  coreProjectOperation,
+  createProjectControlStore,
+  notifyV1ProjectControl,
+  PROJECT_CONTROL_METHODS,
+  projectControlSnapshot,
+  projectControlStorePath,
+  runV2ProjectControlTurn,
+  type ProjectControlOperation,
+  type ProjectControlState,
+} from "./project-control.js";
+import {
   ensureAcpProjectWorkspace,
   resolveAcpProjectIdentity,
   type AcpProjectIdentity,
@@ -87,6 +99,12 @@ export async function startRedskillsAcpControlPlane(
   const { paths } = options;
   const sockets = new Set<Socket>();
   const projects = new Map<string, Promise<AcpProjectWorkspace>>();
+  // Project control belongs to the daemon endpoint, not to any ACP connection.
+  // Closing the client therefore drops observation only; drain intent remains
+  // until the shared reducer receives an explicit stop.
+  const projectControlStore = createProjectControlStore(projectControlStorePath(paths.registrationIntentPath));
+  const projectControls = await projectControlStore.read();
+  const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
   const workspaceFor = (identity: AcpProjectIdentity): Promise<AcpProjectWorkspace> => {
     const held = projects.get(identity.projectId);
     if (held != null) return held;
@@ -104,7 +122,13 @@ export async function startRedskillsAcpControlPlane(
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    void servePublicConnection(socket, options, workspaceFor).catch(() => socket.destroy());
+    void servePublicConnection(
+      socket,
+      options,
+      workspaceFor,
+      projectControls,
+      persistProjectControls,
+    ).catch(() => socket.destroy());
   });
   await listen(server, paths.acpSocketPath);
 
@@ -125,6 +149,8 @@ async function servePublicConnection(
   socket: Socket,
   options: StartRedskillsAcpControlPlaneOptions,
   workspaceFor: (identity: AcpProjectIdentity) => Promise<AcpProjectWorkspace>,
+  projectControls: Map<string, ProjectControlState>,
+  persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
 ): Promise<void> {
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorker>();
@@ -144,6 +170,17 @@ async function servePublicConnection(
     return projectState(options.hostState(), connectionProject);
   };
 
+  const scopedProject = (): AcpProjectWorkspace => {
+    if (connectionProject == null) {
+      throw RequestError.invalidRequest("a Project session must bind this ACP connection before control can be used");
+    }
+    return connectionProject;
+  };
+  const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
+  const mutateProjectControl = (operation: ProjectControlOperation) =>
+    applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
+  const emptyParams = () => ({});
+
   const v1App = agent({ name: "RedSkills" })
     .onRequest(methods.agent.initialize, ({ params }) => {
       requireCompatibleWireMajor(params._meta);
@@ -153,7 +190,13 @@ async function servePublicConnection(
           : ACP_PROTOCOL_VERSION,
         agentCapabilities: { promptCapabilities: {} },
         agentInfo: { name: "RedSkills", version: "1" },
-        _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR, workerBacked: true } },
+        _meta: {
+          redskills: {
+            wireMajor: REDSKILLS_WIRE_MAJOR,
+            workerBacked: true,
+            projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
+          },
+        },
       };
     })
     .onRequest(methods.agent.session.new, async ({ params }) => {
@@ -180,6 +223,21 @@ async function servePublicConnection(
       const session = sessions.get(params.sessionId);
       if (session == null) throw new Error("unknown RedSkills ACP session");
       if (active.has(params.sessionId)) throw new Error("this RedSkills ACP session already has an active turn");
+
+      const controlOperation = coreProjectOperation(params.prompt);
+      if (controlOperation != null) {
+        const control = await applyProjectControl(
+          session.project,
+          controlOperation,
+          projectControls,
+          persistProjectControls,
+        );
+        await notifyV1ProjectControl(upstream, params.sessionId, controlOperation, control);
+        return {
+          stopReason: "end_turn",
+          _meta: { redskills: { authority: "redskilled", projectControl: control } },
+        } satisfies PromptResponse;
+      }
 
       const worker = await admitNativeAcpWorker(options, session, params.sessionId, upstream.notify.bind(upstream));
       active.set(params.sessionId, worker);
@@ -218,7 +276,10 @@ async function servePublicConnection(
     })
     // Compatibility spelling, but deliberately a Project projection. Ordinary
     // ACP socket access is not an administrative capability.
-    .onRequest("_redskills/host_state", () => ({}), scopedState);
+    .onRequest("_redskills/host_state", emptyParams, scopedState)
+    .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
+    .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
+    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl);
 
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
@@ -234,6 +295,7 @@ async function servePublicConnection(
             wireMajor: REDSKILLS_WIRE_MAJOR,
             workerBacked: true,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
+            projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
           },
         },
       };
@@ -274,8 +336,18 @@ async function servePublicConnection(
       }
 
       const accepted = new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const controlOperation = coreProjectOperation(params.prompt);
       const turn = accepted
-        .then(() => runV2PublicTurn(options, sessions, active, params, upstream))
+        .then(() => controlOperation == null
+          ? runV2PublicTurn(options, sessions, active, params, upstream)
+          : runV2ProjectControlTurn(
+            sessions,
+            params,
+            upstream,
+            controlOperation,
+            projectControls,
+            persistProjectControls,
+          ))
         .catch(() => {})
         .finally(() => v2Turns.delete(params.sessionId));
       v2Turns.set(params.sessionId, turn);
@@ -290,7 +362,10 @@ async function servePublicConnection(
         ...(params._meta == null ? {} : { _meta: params._meta }),
       });
     })
-    .onRequest("_redskills/host_state", () => ({}), scopedState);
+    .onRequest("_redskills/host_state", emptyParams, scopedState)
+    .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
+    .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
+    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl);
 
   const connection = acpV2.agentProtocolRouter()
     .withV1(v1App)
