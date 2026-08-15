@@ -62,6 +62,8 @@ export interface RedskilledPaths {
   readonly registrationIntentPath: string;
   /** Generic host-resource leases retained across daemon handover. */
   readonly resourceLeasePath: string;
+  /** Daemon-managed canonical Project workspaces, keyed below this directory by stable identity. */
+  readonly projectWorkspaceRoot: string;
   /** The canonical claim path resolved for this host and resolver environment. */
   readonly machineClaimPathOfThisHost: string;
   /**
@@ -151,6 +153,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     // and its successor used the uid fallback (or vice versa).
     registrationIntentPath: join(redskilledHomeDir(homeDir), "redskilled.registrations.toon"),
     resourceLeasePath: join(redskilledHomeDir(homeDir), "redskilled.resources.toon"),
+    projectWorkspaceRoot: join(redskilledHomeDir(homeDir), "projects"),
     machineClaimPathOfThisHost,
     machineClaimPath: options.machineClaimPath ?? machineClaimPathOfThisHost,
   };

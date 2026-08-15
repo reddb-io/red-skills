@@ -1,6 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -21,11 +23,13 @@ const tsxLoader = require_.resolve("tsx");
 const cliEntry = resolve(__dirname, "..", "src", "cli.ts");
 const children: ChildProcess[] = [];
 const roots: string[] = [];
+const servers: Server[] = [];
 
 afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode == null && child.signalCode == null) child.kill("SIGKILL");
   }
+  for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()));
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
@@ -69,6 +73,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
     expect(initialized.agentInfo?.name).toBe("RedSkills");
 
     const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const project = projectMeta(session._meta);
     const completed = await connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
       prompt: [{ type: "text", text: "complete the native tracer" }],
@@ -82,7 +87,8 @@ describe("the public RedSkills ACP v1 control plane", () => {
     )).toBe(true);
 
     const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
-    expect(firstBirth.project_label).toBe("redskills/acp");
+    expect(firstBirth.project_label).toBe(project.projectId);
+    expect(firstBirth.workspace_path).toBe(project.workspacePath);
     expect(firstBirth.pid).toBeGreaterThan(0);
     const liveAfterTerminal = await connection.agent.request<{ workers: Array<{ worker_id: string }> }>(
       "_redskills/host_state",
@@ -115,7 +121,152 @@ describe("the public RedSkills ACP v1 control plane", () => {
     adapter.stdin?.end();
     daemon.kill("SIGTERM");
   }, 30_000);
+
+  it("maps clones and a rename to one clean canonical Project workspace and bounds client authority", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-acp-project-"));
+    roots.push(root);
+    const remote = join(root, "acme", "widgets.git");
+    const firstCheckout = join(root, "client-a");
+    const secondCheckout = join(root, "client-b");
+    git(root, "init", "--bare", remote);
+    git(root, "clone", remote, firstCheckout);
+    git(firstCheckout, "config", "user.email", "fixture@example.invalid");
+    git(firstCheckout, "config", "user.name", "Fixture");
+    await writeFile(join(firstCheckout, "tracked.txt"), "committed\n");
+    git(firstCheckout, "add", "tracked.txt");
+    git(firstCheckout, "commit", "-m", "fixture");
+    git(firstCheckout, "push", "origin", "HEAD");
+    git(root, "clone", remote, secondCheckout);
+    await writeFile(join(firstCheckout, "tracked.txt"), "dirty editor state\n");
+    await writeFile(join(firstCheckout, "untracked.txt"), "must not cross\n");
+
+    const github = createServer((request, response) => {
+      const other = request.url?.endsWith("/acme/other") === true;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: other ? 9002 : 9001,
+        node_id: other ? "R_other" : "R_widgets",
+        full_name: other ? "acme/other" : "acme/renamed-widgets",
+      }));
+    });
+    servers.push(github);
+    await new Promise<void>((resolve) => github.listen(0, "127.0.0.1", resolve));
+    const githubOrigin = `http://127.0.0.1:${(github.address() as AddressInfo).port}`;
+
+    const env = {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_MACHINE_DIR: root,
+      REDSKILLED_PLACEMENT: "off",
+      REDSKILLED_SESSION: `test:${root}`,
+      REDSKILLED_HOST_TOKEN: "fixture-token",
+      GITHUB_API_URL: githubOrigin,
+    };
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
+    const daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
+
+    const firstAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const first = client({ name: "project-client-a" }).connect(childStream(firstAdapter));
+    await first.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "project-client-a", version: "1" },
+    });
+    const firstSession = await first.agent.request(methods.agent.session.new, {
+      cwd: firstCheckout,
+      mcpServers: [],
+    });
+    const firstProject = projectMeta(firstSession._meta);
+    expect(firstProject.projectId).toBe("github:9001");
+    expect(firstProject.projectLabel).toBe("acme/renamed-widgets");
+    expect(firstProject.workspacePath).not.toBe(firstCheckout);
+    expect(await readFile(join(firstProject.workspacePath, "tracked.txt"), "utf8")).toBe("committed\n");
+    await expect(readFile(join(firstProject.workspacePath, "untracked.txt"), "utf8")).rejects.toThrow();
+    await first.agent.request(methods.agent.session.prompt, {
+      sessionId: firstSession.sessionId,
+      prompt: [{ type: "text", text: "observe the canonical Project" }],
+    });
+    const projectBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
+    expect(projectBirth.project_label).toBe(firstProject.projectId);
+    expect(projectBirth.workspace_path).toBe(firstProject.workspacePath);
+    const liveScoped = await first.agent.request<{ workers: Array<{ project_label: string }> }>(
+      "_redskills/host_state",
+      {},
+    );
+    expect(liveScoped.workers.map((worker) => worker.project_label)).toEqual([firstProject.projectId]);
+
+    const secondAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const second = client({ name: "project-client-b" }).connect(childStream(secondAdapter));
+    await second.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "project-client-b", version: "1" },
+    });
+    const secondSession = await second.agent.request(methods.agent.session.new, {
+      cwd: secondCheckout,
+      mcpServers: [],
+    });
+    expect(projectMeta(secondSession._meta)).toEqual(firstProject);
+
+    git(secondCheckout, "remote", "set-url", "origin", "https://github.invalid/acme/renamed-widgets.git");
+    const renamedAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const renamed = client({ name: "project-client-renamed" }).connect(childStream(renamedAdapter));
+    await renamed.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "project-client-renamed", version: "1" },
+    });
+    const renamedSession = await renamed.agent.request(methods.agent.session.new, {
+      cwd: secondCheckout,
+      mcpServers: [],
+    });
+    expect(projectMeta(renamedSession._meta)).toEqual(firstProject);
+
+    const other = join(root, "other");
+    git(root, "init", other);
+    git(other, "remote", "add", "origin", "https://github.invalid/acme/other.git");
+    await expect(first.agent.request(methods.agent.session.new, { cwd: other, mcpServers: [] })).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringMatching(/different Project/),
+    });
+    first.close();
+    second.close();
+    renamed.close();
+    firstAdapter.stdin?.end();
+    secondAdapter.stdin?.end();
+    renamedAdapter.stdin?.end();
+    daemon.kill("SIGTERM");
+  }, 30_000);
 });
+
+function projectMeta(meta: unknown): { projectId: string; projectLabel: string; workspacePath: string } {
+  const project = (meta as { redskills?: unknown } | undefined)?.redskills as
+    | { projectId?: unknown; projectLabel?: unknown; workspacePath?: unknown }
+    | undefined;
+  expect(project).toMatchObject({
+    projectId: expect.any(String),
+    projectLabel: expect.any(String),
+    workspacePath: expect.any(String),
+  });
+  return {
+    projectId: project!.projectId as string,
+    projectLabel: project!.projectLabel as string,
+    workspacePath: project!.workspacePath as string,
+  };
+}
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync("git", args, { cwd, stdio: "ignore" });
+}
 
 function launchCli(
   args: readonly string[],

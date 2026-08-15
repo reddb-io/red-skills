@@ -79,7 +79,7 @@ describe("the maintained ACP adapters", () => {
     expect(client.updates.at(-1)).toMatchObject({ kind: "terminal", stopReason: "end_turn" });
 
     const firstBirth = await waitForEvent(runtime.paths.eventLanePath, "worker-birth");
-    expect(firstBirth.project_label).toBe("redskills/acp");
+    expect(firstBirth.project_label).toMatch(/^local:[0-9a-f]{8}$/);
     expect(firstBirth.pid).toBeGreaterThan(0);
     const liveAfterTerminal = await client.hostState();
     expect(liveAfterTerminal.workers.map((worker) => worker.worker_id)).toContain(firstBirth.worker_id);
