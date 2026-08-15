@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./acp-agent-catalog": "./src/acp-agent-catalog.ts",
     "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
     "./daemon": "./src/daemon.ts",
@@ -39,6 +40,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "NODE_OPTIONS=--max-old-space-size=4096 vitest run",
+    "test:acp-agent-catalog": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-agent-catalog.test.ts",
     "test:acp-conformance": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-conformance.test.ts",
     "test:acp-control-plane": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-control-plane.test.ts",
     "test:github-gateway": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/github-gateway.test.ts",
