@@ -133,11 +133,26 @@ export async function readProjectGithubCredentialProfile(workspacePath: string):
     );
   }
 
-  const github = mappingAt(document, ["plugins", "dev", "github"]);
-  const forbidden = Object.keys(github).find((key) => PROJECT_CREDENTIAL_KEY.test(key));
-  if (forbidden != null) {
+  const dev = mappingAt(document, ["plugins", "dev"]);
+  if (dev.github == null) return DEFAULT_REDSKILLED_GITHUB_CREDENTIAL_PROFILE;
+  if (!isMapping(dev.github)) {
+    throw new RedskilledGithubCredentialProfileError(
+      "invalid-project-binding",
+      DEFAULT_REDSKILLED_GITHUB_CREDENTIAL_PROFILE,
+    );
+  }
+  const github = dev.github;
+  const extra = Object.keys(github).find((key) => key !== "credential_profile");
+  const forbidden = extra != null && PROJECT_CREDENTIAL_KEY.test(extra);
+  if (forbidden) {
     throw new RedskilledGithubCredentialProfileError(
       "project-credential-forbidden",
+      profileScalar(github.credential_profile) ?? DEFAULT_REDSKILLED_GITHUB_CREDENTIAL_PROFILE,
+    );
+  }
+  if (extra != null) {
+    throw new RedskilledGithubCredentialProfileError(
+      "invalid-project-binding",
       profileScalar(github.credential_profile) ?? DEFAULT_REDSKILLED_GITHUB_CREDENTIAL_PROFILE,
     );
   }
