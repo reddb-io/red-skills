@@ -479,7 +479,9 @@ function nativeWorkerSpec(
   const entry = process.argv[1];
   if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
   return {
-    project_label: project.projectLabel,
+    // The host's authority key must survive a repository rename. The current
+    // GitHub full name remains display metadata on the public session.
+    project_label: project.projectId,
     workspace_path: project.workspacePath,
     command: process.execPath,
     args: [...process.execArgv, entry, "acp-worker", "--socket", endpoint],
@@ -492,7 +494,7 @@ function projectState(host: RedskilledHostState, project: AcpProjectWorkspace) {
     project_id: project.projectId,
     project_label: project.projectLabel,
     workspace_path: project.workspacePath,
-    workers: host.workers.filter((worker) => worker.project_label === project.projectLabel),
+    workers: host.workers.filter((worker) => worker.project_label === project.projectId),
   };
 }
 
