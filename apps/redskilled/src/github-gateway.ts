@@ -49,6 +49,66 @@ export interface RedskilledGithubBudgetFacts {
   readonly limit?: number | null;
 }
 
+export type RedskilledGithubBudgetPool = "rest" | "graphql" | "search";
+export type RedskilledGithubBudgetEvidenceState =
+  | "authoritative"
+  | "cached"
+  | "unavailable"
+  | "unknown"
+  | "backpressured";
+
+export interface RedskilledGithubBudgetEvidence {
+  readonly state: RedskilledGithubBudgetEvidenceState;
+  readonly authority: "github" | "redskilled-cache" | "redskilled-gateway";
+  readonly observed_at: string | null;
+  readonly age_ms: number | null;
+  readonly fresh: boolean;
+}
+
+export interface RedskilledGithubBudgetPresentation {
+  readonly warning: "normal" | "warning" | "critical" | "unknown";
+  readonly density: "compact" | "expanded";
+}
+
+export interface RedskilledGithubPoolBudgetProjection {
+  readonly pool: RedskilledGithubBudgetPool;
+  readonly remaining: number | null;
+  readonly used: number | null;
+  readonly limit: number | null;
+  readonly reset_at: string | null;
+  readonly retry_at: string | null;
+  readonly evidence: RedskilledGithubBudgetEvidence;
+  readonly active_backpressure: null | {
+    readonly kind: GithubLimitFact["kind"];
+    readonly pool: GithubLimitFact["pool"];
+    readonly retry_at: string;
+    readonly evidence: GithubLimitFact["evidence"];
+  };
+  readonly presentation: RedskilledGithubBudgetPresentation;
+}
+
+export interface RedskilledGithubProjectBudgetProjection {
+  readonly version: 1;
+  readonly scope: "project";
+  readonly project_id: string;
+  readonly project_label: string;
+  readonly credential_profile: string;
+  readonly pools: readonly RedskilledGithubPoolBudgetProjection[];
+}
+
+export interface RedskilledGithubProfileBudgetProjection {
+  readonly credential_profile: string;
+  readonly project_ids: readonly string[];
+  readonly project_labels: readonly string[];
+  readonly pools: readonly RedskilledGithubPoolBudgetProjection[];
+}
+
+export interface RedskilledGithubHostBudgetProjection {
+  readonly version: 1;
+  readonly scope: "host-administration";
+  readonly profiles: readonly RedskilledGithubProfileBudgetProjection[];
+}
+
 export interface RedskilledGithubUpstreamAnswer {
   readonly value: unknown;
   readonly budget: RedskilledGithubBudgetFacts | null;
@@ -93,6 +153,11 @@ export interface RedskilledGithubGateway {
   ): RedskilledGithubProjectReader;
 }
 
+export interface RedskilledGithubBudgetGateway extends RedskilledGithubGateway {
+  projectBudget(authority: RedskilledGithubProjectAuthority): RedskilledGithubProjectBudgetProjection;
+  hostBudget(): RedskilledGithubHostBudgetProjection;
+}
+
 export interface RedskilledGithubCredentialSelection {
   readonly profile: string;
   readonly credential: RedskilledGithubCredential;
@@ -111,6 +176,8 @@ export interface CreateRedskilledGithubGatewayOptions {
   readonly clock?: () => string;
   readonly freshMs?: number;
   readonly capacity?: number;
+  /** Public profile names from host config; credential declarations stay private. */
+  readonly configuredProfiles?: readonly string[];
 }
 
 export interface CreateRedskilledGithubUpstreamOptions {
@@ -122,6 +189,15 @@ export interface CreateRedskilledGithubUpstreamOptions {
 }
 
 interface KeptGithubAnswer extends RedskilledGithubUpstreamAnswer {}
+
+interface BudgetObservation {
+  readonly facts: RedskilledGithubBudgetFacts | null;
+  readonly state: Exclude<RedskilledGithubBudgetEvidenceState, "unknown">;
+  readonly observedAt: string;
+  readonly backpressure?: GithubLimitFact;
+}
+
+const BUDGET_POOLS = ["rest", "graphql", "search"] as const;
 
 export class RedskilledGithubAuthorityError extends Error {
   constructor(message: string) {
@@ -136,13 +212,24 @@ export class RedskilledGithubAuthorityError extends Error {
  */
 export function createRedskilledGithubGateway(
   options: CreateRedskilledGithubGatewayOptions,
-): RedskilledGithubGateway {
+): RedskilledGithubBudgetGateway {
   const cache = createGithubCache({
     ...(options.freshMs == null ? {} : { freshMs: options.freshMs }),
     ...(options.capacity == null ? {} : { capacity: options.capacity }),
   });
   const clock = options.clock ?? (() => new Date().toISOString());
   const inFlight = new Map<string, Promise<RedskilledGithubReadAnswer>>();
+  const profiles = new Set((options.configuredProfiles ?? []).filter(publishableProfile));
+  const projectsByProfile = new Map<string, Map<string, string>>();
+  const observations = new Map<string, BudgetObservation>();
+
+  const observe = (
+    project: RedskilledGithubProjectAuthority,
+    pool: RedskilledGithubBudgetPool,
+    observation: BudgetObservation,
+  ): void => {
+    observations.set(budgetKey(project.credentialProfile, pool), observation);
+  };
 
   return {
     forProject(authority, credential) {
@@ -152,13 +239,23 @@ export function createRedskilledGithubGateway(
           `credential profile ${JSON.stringify(project.credentialProfile)} has no daemon-owned credential`,
         );
       }
+      profiles.add(project.credentialProfile);
+      const attributed = projectsByProfile.get(project.credentialProfile) ?? new Map<string, string>();
+      attributed.set(project.projectId, project.projectLabel);
+      projectsByProfile.set(project.credentialProfile, attributed);
       return {
         async read(request) {
           const read = validateRead(project, request);
+          const pool = poolForRead(read);
           const key = cacheKey(project, read);
           const now = clock();
           const held = cache.read<KeptGithubAnswer>(key, { now });
           if (held.outcome === "fresh" && held.value != null && held.fetched_at != null && held.age_ms != null) {
+            if (pool != null) observe(project, pool, {
+              facts: held.value.budget,
+              state: "cached",
+              observedAt: held.fetched_at,
+            });
             return publicAnswer(project, held.value, "cache", {
               outcome: held.outcome,
               fetched_at: held.fetched_at,
@@ -172,6 +269,11 @@ export function createRedskilledGithubGateway(
           const fetch = options.upstream({ project, credential, read })
             .then((answer) => {
               const fetchedAt = clock();
+              if (pool != null) observe(project, pool, {
+                facts: answer.budget,
+                state: answer.budget == null ? "unavailable" : "authoritative",
+                observedAt: fetchedAt,
+              });
               cache.put({ key, kind: read.kind, value: answer, fetchedAt });
               const kept = cache.read<KeptGithubAnswer>(key, { now: fetchedAt });
               return publicAnswer(project, answer, "upstream", {
@@ -182,6 +284,12 @@ export function createRedskilledGithubGateway(
               });
             })
             .catch((error: unknown) => {
+              if (pool != null) observe(project, pool, {
+                facts: held.value?.budget ?? null,
+                state: error instanceof GithubBackpressureError ? "backpressured" : "unavailable",
+                observedAt: clock(),
+                ...(error instanceof GithubBackpressureError ? { backpressure: error.fact } : {}),
+              });
               if (
                 error instanceof GithubBackpressureError &&
                 read.kind !== "repository-fetch" &&
@@ -202,7 +310,106 @@ export function createRedskilledGithubGateway(
         },
       };
     },
+    projectBudget(authority) {
+      const project = validateAuthority(authority);
+      return {
+        version: 1,
+        scope: "project",
+        project_id: project.projectId,
+        project_label: project.projectLabel,
+        credential_profile: project.credentialProfile,
+        pools: projectPools(project.credentialProfile, observations, clock()),
+      };
+    },
+    hostBudget() {
+      return {
+        version: 1,
+        scope: "host-administration",
+        profiles: [...profiles].sort().map((profile) => {
+          const attributed = projectsByProfile.get(profile) ?? new Map<string, string>();
+          const projects = [...attributed].sort(([left], [right]) => left.localeCompare(right));
+          return {
+            credential_profile: profile,
+            project_ids: projects.map(([id]) => id),
+            project_labels: projects.map(([, label]) => label),
+            pools: projectPools(profile, observations, clock()),
+          };
+        }),
+      };
+    },
   };
+}
+
+function projectPools(
+  profile: string,
+  observations: ReadonlyMap<string, BudgetObservation>,
+  now: string,
+): RedskilledGithubPoolBudgetProjection[] {
+  return BUDGET_POOLS.map((pool) => budgetProjection(pool, observations.get(budgetKey(profile, pool)), now));
+}
+
+function budgetProjection(
+  pool: RedskilledGithubBudgetPool,
+  observation: BudgetObservation | undefined,
+  now: string,
+): RedskilledGithubPoolBudgetProjection {
+  const facts = observation?.facts ?? null;
+  const remaining = facts?.remaining ?? null;
+  const limit = facts?.limit ?? null;
+  const used = remaining == null || limit == null ? null : Math.max(0, limit - remaining);
+  const ageMs = observation == null ? null : Math.max(0, Date.parse(now) - Date.parse(observation.observedAt));
+  const state = observation?.state ?? "unknown";
+  const warning = budgetWarning(state, remaining, limit);
+  const backpressure = observation?.backpressure;
+  return {
+    pool,
+    remaining,
+    used,
+    limit,
+    reset_at: facts?.reset_at ?? null,
+    retry_at: backpressure?.retry_at ?? null,
+    evidence: {
+      state,
+      authority: state === "authoritative" ? "github" : state === "cached" ? "redskilled-cache" : "redskilled-gateway",
+      observed_at: observation?.observedAt ?? null,
+      age_ms: Number.isFinite(ageMs) ? ageMs : null,
+      fresh: state === "authoritative" || state === "cached",
+    },
+    active_backpressure: backpressure == null ? null : {
+      kind: backpressure.kind,
+      pool: backpressure.pool,
+      retry_at: backpressure.retry_at,
+      evidence: backpressure.evidence,
+    },
+    presentation: { warning, density: warning === "normal" ? "compact" : "expanded" },
+  };
+}
+
+function budgetWarning(
+  state: RedskilledGithubBudgetEvidenceState,
+  remaining: number | null,
+  limit: number | null,
+): RedskilledGithubBudgetPresentation["warning"] {
+  if (state === "backpressured") return "critical";
+  if (state === "unknown" || state === "unavailable" || remaining == null || limit == null || limit <= 0) return "unknown";
+  const share = remaining / limit;
+  if (share <= 0.1) return "critical";
+  if (share <= 0.25) return "warning";
+  return "normal";
+}
+
+function budgetKey(profile: string, pool: RedskilledGithubBudgetPool): string {
+  return `${profile}\u0000${pool}`;
+}
+
+function poolForRead(read: RedskilledGithubRead): RedskilledGithubBudgetPool | null {
+  if (read.kind === "graphql") return "graphql";
+  if (read.kind === "repository-fetch") return null;
+  return read.path.replace(/^\/+/, "").startsWith("search/") ? "search" : "rest";
+}
+
+function publishableProfile(value: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value);
 }
 
 /**
@@ -230,13 +437,13 @@ export function createRedskilledGithubUpstream(
         method: "GET",
         headers: githubHeaders(input.credential.secret),
       });
+      const pool = input.read.path.replace(/^\/+/, "").startsWith("search/") ? "search" : "rest";
       if (!response.ok) {
-        const pool = input.read.path.replace(/^\/+/, "").startsWith("search/") ? "search" : "rest";
         throw upstreamRefusal("REST", pool, response, clock(), input.project.credentialProfile);
       }
       return {
         value: await responseValue(response),
-        budget: budgetFromHeaders("rest", response.headers),
+        budget: budgetFromHeaders(pool, response.headers),
       };
     }
 
