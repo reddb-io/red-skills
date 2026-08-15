@@ -11,6 +11,7 @@ import {
 } from "../src/admission.js";
 import {
   REDSKILLED_IDLE_MS_ENV,
+  RedskilledGithubProfileConfigError,
   readRedskilledHostConfig,
   resolveRedskilledHostEventSinks,
   resolveRedskilledHostSettings,
@@ -66,6 +67,54 @@ describe("the daemon-owned host config", () => {
       },
       notifications: ["worker-death", "worker-budget-kill"],
     });
+  });
+
+  it("reads several named personal and GitHub App credential profiles", async () => {
+    const home = await fakeHome();
+    await mkdir(join(home, ".red"), { recursive: true });
+    await writeFile(join(home, ".red", "config.yaml"), [
+      "plugins:",
+      "  dev:",
+      "    redskilled:",
+      "      github_profiles:",
+      "        personal:",
+      "          kind: personal",
+      "        engineering:",
+      "          kind: github-app",
+      "          app_id: '4575633'",
+      "          installation_id: '153309957'",
+      "          private_key: ~/.red/redskilled/credentials/engineering.pem",
+      "",
+    ].join("\n"));
+
+    await expect(readRedskilledHostConfig(home)).resolves.toMatchObject({
+      githubProfiles: {
+        personal: { kind: "personal" },
+        engineering: {
+          kind: "github-app",
+          appId: "4575633",
+          installationId: "153309957",
+          privateKeyPath: "~/.red/redskilled/credentials/engineering.pem",
+        },
+      },
+    });
+  });
+
+  it("rejects unknown credential profile backend kinds instead of ignoring them", async () => {
+    const home = await fakeHome();
+    await mkdir(join(home, ".red"), { recursive: true });
+    await writeFile(join(home, ".red", "config.yaml"), [
+      "plugins:",
+      "  dev:",
+      "    redskilled:",
+      "      github_profiles:",
+      "        hosted:",
+      "          kind: hosted-broker",
+      "",
+    ].join("\n"));
+
+    await expect(readRedskilledHostConfig(home)).rejects.toBeInstanceOf(RedskilledGithubProfileConfigError);
+    await expect(readRedskilledHostConfig(home)).rejects.toThrow(/hosted-broker/);
   });
 
   it("is created only through provisioning and is never overwritten", async () => {
