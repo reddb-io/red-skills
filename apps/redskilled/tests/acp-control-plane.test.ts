@@ -358,13 +358,14 @@ describe("the public RedSkills ACP v1 control plane", () => {
 
     const approved = await connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "request attached approval" }],
+      prompt: [{ type: "text", text: "request permission attached approval" }],
     });
+    expect(permissionRequests).toHaveLength(1);
     expect(permissionResolution(approved._meta)).toBe("attached-approved");
 
     const denied = await connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "request attached denial" }],
+      prompt: [{ type: "text", text: "request permission attached denial" }],
     });
     expect(permissionResolution(denied._meta)).toBe("attached-denied");
     expect(permissionRequests.map((request) => request.toolCall.title)).toEqual([
@@ -375,7 +376,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
     updates.length = 0;
     void connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "request detached pre-authorization" }],
+      prompt: [{ type: "text", text: "request permission detached pre-authorization" }],
     }).catch(() => undefined);
     await waitFor(() => updates.some((update) => lifecycleEvent(update) === "tool-activity"), "detached turn start");
     connection.close();
@@ -402,7 +403,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
     const uncoveredSession = await uncovered.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
     void uncovered.agent.request(methods.agent.session.prompt, {
       sessionId: uncoveredSession.sessionId,
-      prompt: [{ type: "text", text: "request detached uncovered decision" }],
+      prompt: [{ type: "text", text: "request permission detached uncovered decision" }],
     }).catch(() => undefined);
     await waitFor(
       () => uncoveredUpdates.some((update) => lifecycleEvent(update) === "tool-activity"),
