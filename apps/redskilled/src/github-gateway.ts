@@ -60,6 +60,10 @@ import {
   type RedskilledGithubCustodyStatus,
   type RedskilledGithubCustodyUpstream,
 } from "./github-custody.js";
+export {
+  createRedskilledGithubCustodyUpstream,
+  type CreateRedskilledGithubCustodyUpstreamOptions,
+} from "./github-custody-upstream.js";
 import {
   githubHeaders,
   githubUpstreamRefusal,
