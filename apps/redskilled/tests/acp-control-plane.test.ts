@@ -41,7 +41,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       REDSKILLED_PLACEMENT: "off",
       REDSKILLED_SESSION: `test:${root}`,
     };
-    const paths = resolveRedskilledPaths({ env, runtimeDir: root, homeDir: root, machineClaimPath: join(root, "machine.claim") });
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
     const daemon = launchCli([
       "serve",
       "--socket", paths.socketPath,
