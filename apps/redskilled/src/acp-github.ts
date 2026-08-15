@@ -6,6 +6,7 @@ import {
   type RedskilledGithubRead,
 } from "./github-gateway.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
+import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 
 type GithubReadParams = { readonly read: RedskilledGithubRead };
 
@@ -16,31 +17,46 @@ export function bindAcpProjectGithubRead(
 ) {
   return async ({ params: { read } }: { readonly params: GithubReadParams }) => {
     const project = projectForConnection();
-    const selection = gateway?.credentialForProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-    });
-    if (gateway == null || selection == null) {
-      throw RequestError.invalidRequest("this Project has no daemon-owned GitHub credential profile");
-    }
     try {
-      return await gateway.gateway.forProject({
+      const selection = await gateway?.credentialForProject({
         projectId: project.projectId,
         projectLabel: project.projectLabel,
         workspacePath: project.workspacePath,
-        credentialProfile: selection.profile,
-      }, selection.credential).read(read);
-    } catch (error) {
-      if (!(error instanceof GithubBackpressureError)) throw error;
-      throw new RequestError(-32001, error.message, {
-        version: 1,
-        kind: "github-backpressure",
-        project_id: project.projectId,
-        credential_profile: selection.profile,
-        retry_at: error.fact.retry_at,
-        fact: error.fact,
       });
+      if (gateway == null || selection == null) {
+        throw RequestError.authRequired(
+          {
+            version: 1,
+            kind: "github-credential-profile",
+            reason: "missing-credentials",
+            credential_profile: "personal",
+          },
+          "this Project has no resolvable daemon-owned GitHub credential profile",
+        );
+      }
+      try {
+        return await gateway.gateway.forProject({
+          projectId: project.projectId,
+          projectLabel: project.projectLabel,
+          workspacePath: project.workspacePath,
+          credentialProfile: selection.profile,
+        }, selection.credential).read(read);
+      } catch (error) {
+        if (!(error instanceof GithubBackpressureError)) throw error;
+        throw new RequestError(-32001, error.message, {
+          version: 1,
+          kind: "github-backpressure",
+          project_id: project.projectId,
+          credential_profile: selection.profile,
+          retry_at: error.fact.retry_at,
+          fact: error.fact,
+        });
+      }
+    } catch (error) {
+      if (error instanceof RedskilledGithubCredentialProfileError) {
+        throw RequestError.authRequired(error.refusal, error.message);
+      }
+      throw error;
     }
   };
 }
