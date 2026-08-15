@@ -1,0 +1,49 @@
+// red-dashboard — the RedSkills worker dashboard as a Zellij tab.
+//
+// One tab, three panes, every one a LOCAL read (see bin/red-pane.sh for why no
+// pane may touch the GitHub API). The split answers the three questions in the
+// order an operator asks them:
+//
+//   fleet  (large, left)  — what is each Worker doing right now?
+//   host   (top right)    — are there slots, and is a birth latch refusing them?
+//   spend  (bottom right) — did this host burn the API budget the Workers need?
+//
+// `spend` earns its pane because an empty REST pool is invisible in the other
+// two: the fleet just goes quiet and the host just shows zero Workers, while the
+// real cause is a pool this host drained itself.
+//
+// The tab-bar and status-bar live in `default_tab_template`, not beside the
+// `tab` node: Zellij refuses a layout that puts tabs and panes in one node.
+//
+// Run it:
+//   apps/zellij-plugin-dashboard/bin/red-dashboard.sh
+//
+// RED_PANE points at bin/red-pane.sh; the launcher exports it.
+// RED_PANE_INTERVAL overrides the repaint seconds (default 3).
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="red" focus=true {
+        pane split_direction="vertical" {
+            pane name="fleet" size="62%" command="bash" {
+                args "-lc" "exec \"${RED_PANE:?launch via bin/red-dashboard.sh}\" fleet"
+            }
+            pane split_direction="horizontal" {
+                pane name="host" size="55%" command="bash" {
+                    args "-lc" "exec \"${RED_PANE:?launch via bin/red-dashboard.sh}\" host"
+                }
+                pane name="spend" command="bash" {
+                    args "-lc" "exec \"${RED_PANE:?launch via bin/red-dashboard.sh}\" spend"
+                }
+            }
+        }
+    }
+}
