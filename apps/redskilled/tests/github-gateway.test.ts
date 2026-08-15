@@ -208,6 +208,40 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
     expect(publicAnswer).not.toContain("second credential");
   });
 
+  it("returns an eligible dated cache answer before quota backpressure", async () => {
+    let now = "2026-08-15T18:00:00.000Z";
+    let throttled = false;
+    const retryAt = "2026-08-15T19:00:00.000Z";
+    const gateway = createRedskilledGithubGateway({
+      freshMs: 1,
+      clock: () => now,
+      upstream: async () => {
+        if (throttled) {
+          throw new GithubBackpressureError({
+            kind: "primary-rest-exhausted",
+            pool: "rest",
+            retry_at: retryAt,
+            evidence: "balance",
+            message: `REST primary quota is exhausted; retry after ${retryAt}`,
+          });
+        }
+        return { value: { state: "open" }, budget: { pool: "rest", remaining: 1, reset_at: retryAt } };
+      },
+    });
+    const reader = gateway.forProject(PROJECT, { secret: "fixture" });
+    await reader.read({ kind: "rest", path: "issues/17" });
+    throttled = true;
+    now = "2026-08-15T18:00:01.000Z";
+
+    await expect(reader.read({ kind: "rest", path: "issues/17" })).resolves.toMatchObject({
+      source: "cache",
+      cache: { outcome: "stale", age_ms: 1_000 },
+      backpressure: { kind: "primary-rest-exhausted", retry_at: retryAt },
+      retry_at: retryAt,
+      value: { state: "open" },
+    });
+  });
+
   it("cannot address another Project or turn Project authority into host administration", async () => {
     const gateway = createRedskilledGithubGateway({
       upstream: async () => ({ value: {}, budget: null }),
