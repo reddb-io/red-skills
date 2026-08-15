@@ -226,6 +226,26 @@ describe("the reclaim planner stays total", () => {
     ...over,
   });
 
+  it("retains a dead Worker's session artifact as evidence while reclaiming its workspace", () => {
+    const session = "/sessions/wDEAD/runner-session.toon";
+    const plan = planWorkerReclaim(
+      [artifact(), artifact({ kind: "session", path: session })],
+      { liveness: dead, nowIso: NOW_ISO },
+    );
+
+    expect(plan.reclaim.map((verdict) => verdict.artifact.kind)).toEqual(["worktree"]);
+    expect(plan.retain).toEqual([
+      expect.objectContaining({
+        class: "evidence",
+        reclaim: false,
+        verdict: "evidence-retained",
+        artifact: expect.objectContaining({ kind: "session", path: session }),
+      }),
+    ]);
+    expect(plan.dropped).toEqual([]);
+    expect(plan.totals).toEqual({ considered: 2, reclaim: 1, retain: 1, dropped: 0 });
+  });
+
   it("accounts for every artifact exactly once, and states the identity", () => {
     const plan = planWorkerReclaim(
       [

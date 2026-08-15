@@ -62,6 +62,7 @@ export const WORKER_EVIDENCE_ARTIFACT_KINDS = [
   "log",
   "diagnostic",
   "envelope",
+  "session",
   "transcript",
   "patch",
   "handoff",
