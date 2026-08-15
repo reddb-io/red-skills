@@ -772,10 +772,8 @@ export async function processIssue(
     deps.lookups.worktreeDiff !== undefined &&
     // /go direct-PR skips review; /go no-mistakes and /afk run it.
     (!isGoLane || isPrePrPipelineActive(input.runMode, input.laneLabel));
-  // ONE budget for every Re-seed this Worker may spend (ADR 0129): the lane
-  // supplies the ceiling and the review's reservation, the operator's configured
-  // counter supplies only the gate's share. A tier escalation therefore draws
-  // its own round instead of muting gate correction outright.
+  // ONE budget covers every Re-seed this Worker may spend (ADR 0129), including
+  // independent tier-escalation draws and the gate/review shares.
   const reseedBudget = withGateSubCap(
     resolveReseedBudget({
       laneLabel: input.laneLabel,
@@ -792,9 +790,7 @@ export async function processIssue(
   // the composition itself always starts from the ORIGINAL handoff, which is
   // what keeps the prompt flat while the state inside it accumulates.
   let reseedOutstanding: ReseedOutstanding = EMPTY_RESEED_OUTSTANDING;
-  /** Rounds re-seeded so far. Distinct from `roundOrdinal`, which also counts
-   * the recovery re-runs a crashed agent buys — those are not Re-seed rounds and
-   * must not read as budget spent. */
+  /** Re-seed rounds, excluding recovery re-runs counted by `roundOrdinal`. */
   let reseedRound = 0;
   /** Compose the re-seeded prompt from the original handoff plus the current
    * outstanding state, and report the round in one history line. */
