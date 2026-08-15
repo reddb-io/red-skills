@@ -87,7 +87,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
     )).toBe(true);
 
     const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
-    expect(firstBirth.project_label).toBe(project.projectLabel);
+    expect(firstBirth.project_label).toBe(project.projectId);
     expect(firstBirth.workspace_path).toBe(project.workspacePath);
     expect(firstBirth.pid).toBeGreaterThan(0);
     const liveAfterTerminal = await connection.agent.request<{ workers: Array<{ worker_id: string }> }>(
@@ -191,6 +191,18 @@ describe("the public RedSkills ACP v1 control plane", () => {
     expect(firstProject.workspacePath).not.toBe(firstCheckout);
     expect(await readFile(join(firstProject.workspacePath, "tracked.txt"), "utf8")).toBe("committed\n");
     await expect(readFile(join(firstProject.workspacePath, "untracked.txt"), "utf8")).rejects.toThrow();
+    await first.agent.request(methods.agent.session.prompt, {
+      sessionId: firstSession.sessionId,
+      prompt: [{ type: "text", text: "observe the canonical Project" }],
+    });
+    const projectBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
+    expect(projectBirth.project_label).toBe(firstProject.projectId);
+    expect(projectBirth.workspace_path).toBe(firstProject.workspacePath);
+    const liveScoped = await first.agent.request<{ workers: Array<{ project_label: string }> }>(
+      "_redskills/host_state",
+      {},
+    );
+    expect(liveScoped.workers.map((worker) => worker.project_label)).toEqual([firstProject.projectId]);
 
     const secondAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
     const second = client({ name: "project-client-b" }).connect(childStream(secondAdapter));
@@ -226,12 +238,6 @@ describe("the public RedSkills ACP v1 control plane", () => {
       code: -32602,
       message: expect.stringMatching(/different Project/),
     });
-    const scoped = await first.agent.request<{ workers: Array<{ project_label: string }> }>(
-      "_redskills/host_state",
-      {},
-    );
-    expect(scoped.workers.every((worker) => worker.project_label === firstProject.projectLabel)).toBe(true);
-
     first.close();
     second.close();
     renamed.close();
