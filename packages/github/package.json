@@ -10,6 +10,7 @@
     "./attribution.js": "./attribution.ts",
     "./conditional-client.js": "./conditional-client.ts",
     "./surface.js": "./surface.ts",
+    "./routing.js": "./routing.ts",
     "./rest-plan.js": "./rest-plan.ts",
     "./balance.js": "./balance.ts",
     "./deadline.js": "./deadline.ts",
