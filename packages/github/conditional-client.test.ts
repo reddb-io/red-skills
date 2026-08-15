@@ -11,6 +11,7 @@ import {
   isGithubRateLimitError,
   type GithubRequestFetch,
 } from "./conditional-client.js";
+import { GithubBackpressureError } from "./routing.js";
 import type { GithubAttributedOperation } from "./attribution.js";
 import type { GithubBalance } from "./balance.js";
 import { githubSingleObjectCoalescingThreshold } from "./index.js";
@@ -35,6 +36,31 @@ describe("rate-limit reset evidence", () => {
       status: 429,
       response: { headers: { "retry-after": "60" } },
     }, 0)).toBe("1970-01-01T00:01:00.000Z");
+  });
+
+  it("keeps secondary throttling distinct from primary pool exhaustion", async () => {
+    const client = createGithubClient({
+      token: "test-token",
+      now: () => "2026-08-15T21:00:00.000Z",
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async () => new Response(JSON.stringify({ message: "secondary rate limit" }), {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "90", "x-ratelimit-remaining": "4999" },
+      }),
+    });
+
+    const error = await client.graphql("query { viewer { login } }")
+      .then(() => null, (thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(GithubBackpressureError);
+    expect(error).not.toBeInstanceOf(GithubPoolUnavailableError);
+    expect(error).toMatchObject({
+      fact: {
+        kind: "secondary-throttled",
+        pool: "secondary",
+        retry_at: "2026-08-15T21:01:30.000Z",
+      },
+    });
   });
 });
 
