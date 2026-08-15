@@ -11,6 +11,7 @@ import {
   methods,
   ndJsonStream,
   RequestError,
+  type RequestPermissionRequest,
   type SessionNotification,
   type Stream,
 } from "@agentclientprotocol/sdk";
@@ -304,6 +305,121 @@ describe("the public RedSkills ACP v1 control plane", () => {
 
     connection.close();
     adapter.stdin?.end();
+    daemon.kill("SIGTERM");
+  }, 30_000);
+
+  it("projects attached permission decisions and resolves detached requests without an immortal Worker", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-acp-permissions-"));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_MACHINE_DIR: root,
+      REDSKILLED_PLACEMENT: "off",
+      REDSKILLED_SESSION: `test:${root}`,
+      REDSKILLED_ACP_PERMISSION_TIMEOUT_MS: "100",
+      REDSKILLED_ACP_WORKER_IDLE_MS: "100",
+    };
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
+    const daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
+
+    const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const updates: SessionNotification[] = [];
+    const permissionRequests: RequestPermissionRequest[] = [];
+    const connection = client({ name: "redskilled-acp-permission-test" })
+      .onRequest(methods.client.session.requestPermission, ({ params }) => {
+        permissionRequests.push(params);
+        return {
+          outcome: {
+            outcome: "selected",
+            optionId: params.toolCall.title?.includes("denied") === true ? "reject" : "always",
+          },
+        };
+      })
+      .onNotification(methods.client.session.update, ({ params }) => {
+        updates.push(params);
+      })
+      .connect(childStream(adapter));
+    await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "redskilled-permission-client", version: "1" },
+    });
+    const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+
+    const approved = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "request attached approval" }],
+    });
+    expect(permissionResolution(approved._meta)).toBe("attached-approved");
+
+    const denied = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "request attached denial" }],
+    });
+    expect(permissionResolution(denied._meta)).toBe("attached-denied");
+    expect(permissionRequests.map((request) => request.toolCall.title)).toEqual([
+      "governed write",
+      "denied operation",
+    ]);
+
+    updates.length = 0;
+    void connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "request detached pre-authorization" }],
+    }).catch(() => undefined);
+    await waitFor(() => updates.some((update) => lifecycleEvent(update) === "tool-activity"), "detached turn start");
+    connection.close();
+    adapter.stdin?.end();
+
+    const journalPath = join(dirname(paths.registrationIntentPath), "redskilled.acp-sessions.toon");
+    await waitFor(
+      async () => (await permissionDecisions(journalPath, session.sessionId)).includes("policy-pre-authorized"),
+      "detached policy decision",
+    );
+
+    const uncoveredAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const uncoveredUpdates: SessionNotification[] = [];
+    const uncovered = client({ name: "redskilled-acp-uncovered-test" })
+      .onNotification(methods.client.session.update, ({ params }) => uncoveredUpdates.push(params))
+      .connect(childStream(uncoveredAdapter));
+    await uncovered.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "redskilled-uncovered-client", version: "1" },
+    });
+    const uncoveredSession = await uncovered.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    void uncovered.agent.request(methods.agent.session.prompt, {
+      sessionId: uncoveredSession.sessionId,
+      prompt: [{ type: "text", text: "request detached uncovered decision" }],
+    }).catch(() => undefined);
+    await waitFor(
+      () => uncoveredUpdates.some((update) => lifecycleEvent(update) === "tool-activity"),
+      "uncovered turn start",
+    );
+    uncovered.close();
+    uncoveredAdapter.stdin?.end();
+
+    await waitFor(
+      async () => (await permissionDecisions(journalPath, uncoveredSession.sessionId)).includes("hitl-required"),
+      "durable HITL permission fact",
+    );
+    await waitFor(async () => {
+      const events = await readRedskilledEvents(paths.eventLanePath);
+      const births = events.filter((event) => event.kind === "worker-birth");
+      const deaths = events.filter((event) => event.kind === "worker-death");
+      return births.length === deaths.length && births.length >= 2;
+    }, "detached Worker reaping");
+
     daemon.kill("SIGTERM");
   }, 30_000);
 
@@ -601,6 +717,30 @@ function workerId(meta: unknown): string {
 function lifecycleEvent(update: SessionNotification): string | undefined {
   return (update._meta as { redskills?: { lifecycle?: { event?: string } } } | undefined)
     ?.redskills?.lifecycle?.event;
+}
+
+function permissionResolution(meta: unknown): string | undefined {
+  return (meta as { redskills?: { permissionResolution?: string } } | undefined)
+    ?.redskills?.permissionResolution;
+}
+
+async function permissionDecisions(path: string, sessionId: string): Promise<string[]> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return [];
+  }
+  const journal = decode(raw) as unknown as {
+    sessions?: Array<{
+      public_session_id?: string;
+      entries?: Array<{ kind?: string; decision?: string }>;
+    }>;
+  };
+  return journal.sessions
+    ?.find((session) => session.public_session_id === sessionId)
+    ?.entries?.filter((entry) => entry.kind === "permission")
+    .map((entry) => entry.decision ?? "") ?? [];
 }
 
 function agentText(update: SessionNotification): string {
