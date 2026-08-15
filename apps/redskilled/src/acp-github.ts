@@ -6,11 +6,13 @@ import {
   type RedskilledGithubManagedProjectReader,
   type RedskilledGithubRead,
   type RedskilledGithubUpdate,
+  type RedskilledGithubWriteRequest,
 } from "./github-gateway.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 
 type GithubReadParams = { readonly read: RedskilledGithubRead };
+type GithubWriteParams = RedskilledGithubWriteRequest;
 
 export const REDSKILLED_GITHUB_UPDATE_METHOD = "_redskills/github_update";
 
@@ -123,6 +125,45 @@ export function bindAcpProjectGithubRead(
   };
 }
 
+/** Bind one ACP connection to durable publication under its resolved Project. */
+export function bindAcpProjectGithubWrite(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  projectForConnection: () => AcpProjectWorkspace,
+) {
+  return async ({ params }: { readonly params: GithubWriteParams }) => {
+    const project = projectForConnection();
+    try {
+      const selection = await gateway?.credentialForProject({
+        projectId: project.projectId,
+        projectLabel: project.projectLabel,
+        workspacePath: project.workspacePath,
+      });
+      if (gateway == null || selection == null) {
+        throw RequestError.authRequired(
+          {
+            version: 1,
+            kind: "github-credential-profile",
+            reason: "missing-credentials",
+            credential_profile: "personal",
+          },
+          "this Project has no resolvable daemon-owned GitHub credential profile",
+        );
+      }
+      return await gateway.gateway.forProject({
+        projectId: project.projectId,
+        projectLabel: project.projectLabel,
+        workspacePath: project.workspacePath,
+        credentialProfile: selection.profile,
+      }, selection.credential).write(params);
+    } catch (error) {
+      if (error instanceof RedskilledGithubCredentialProfileError) {
+        throw RequestError.authRequired(error.refusal, error.message);
+      }
+      throw error;
+    }
+  };
+}
+
 /** Reject caller-controlled Project, credential, remote, and host authority. */
 export function githubReadParams(value: unknown): GithubReadParams {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
@@ -138,4 +179,21 @@ export function githubReadParams(value: unknown): GithubReadParams {
     throw new RedskilledGithubAuthorityError("a Project GitHub gateway request needs one read object");
   }
   return { read: params.read as RedskilledGithubRead };
+}
+
+/** Reject caller-controlled Project, credential, remote, and host authority. */
+export function githubWriteParams(value: unknown): GithubWriteParams {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RedskilledGithubAuthorityError("a Project GitHub write needs one mutation");
+  }
+  const params = value as Record<string, unknown>;
+  if (Object.keys(params).length !== 2 || !("idempotency_key" in params) || !("write" in params)) {
+    throw new RedskilledGithubAuthorityError(
+      "a Project GitHub write cannot name a Project, credential profile, remote, or host operation",
+    );
+  }
+  if (params.write == null || typeof params.write !== "object" || Array.isArray(params.write)) {
+    throw new RedskilledGithubAuthorityError("a Project GitHub write needs one mutation object");
+  }
+  return params as unknown as GithubWriteParams;
 }
