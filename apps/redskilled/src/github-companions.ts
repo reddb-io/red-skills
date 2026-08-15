@@ -28,6 +28,33 @@ import type {
   RedskilledBalanceCompanion,
   RedskilledBalanceRegistration,
 } from "./daemon/types.js";
+import {
+  createRedskilledGithubGateway,
+  createRedskilledGithubUpstream,
+  type RedskilledGithubGatewayRegistration,
+} from "./github-gateway.js";
+
+/** Bind the host's personal credential to the daemon gateway, never to a client. */
+export function resolveServeGithubGateway(
+  host: { readonly token: string } | null,
+  env: NodeJS.ProcessEnv = process.env,
+): RedskilledGithubGatewayRegistration | undefined {
+  if (host == null) return undefined;
+  const gateway = createRedskilledGithubGateway({
+    upstream: createRedskilledGithubUpstream({
+      ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
+      ...(env.GITHUB_GRAPHQL_URL ? { graphqlEndpoint: env.GITHUB_GRAPHQL_URL } : {}),
+      fetchImpl: createTimedGithubFetch(),
+    }),
+  });
+  return {
+    gateway,
+    credentialForProject: () => ({
+      profile: "host-personal",
+      credential: { secret: host.token },
+    }),
+  };
+}
 
 /**
  * The companions a declared App contributes. One entry today; the shape is a
