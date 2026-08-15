@@ -42,6 +42,12 @@ import {
   withTimeout,
 } from "./acp-socket.js";
 import type { RedskilledHostState } from "./host-state.js";
+import {
+  REDSKILLED_GITHUB_READ_METHOD,
+  RedskilledGithubAuthorityError,
+  type RedskilledGithubGatewayRegistration,
+  type RedskilledGithubRead,
+} from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   applyProjectControl,
@@ -90,6 +96,7 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly paths: RedskilledPaths;
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
   readonly hostState: () => RedskilledHostState;
+  readonly githubGateway?: RedskilledGithubGatewayRegistration;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -179,6 +186,23 @@ async function servePublicConnection(
   const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
+  const readGithub = ({ params: { read } }: { readonly params: { readonly read: RedskilledGithubRead } }) => {
+    const project = scopedProject();
+    const selection = options.githubGateway?.credentialForProject({
+      projectId: project.projectId,
+      projectLabel: project.projectLabel,
+      workspacePath: project.workspacePath,
+    });
+    if (options.githubGateway == null || selection == null) {
+      throw RequestError.invalidRequest("this Project has no daemon-owned GitHub credential profile");
+    }
+    return options.githubGateway.gateway.forProject({
+      projectId: project.projectId,
+      projectLabel: project.projectLabel,
+      workspacePath: project.workspacePath,
+      credentialProfile: selection.profile,
+    }, selection.credential).read(read);
+  };
   const emptyParams = () => ({});
 
   const v1App = agent({ name: "RedSkills" })
@@ -195,6 +219,9 @@ async function servePublicConnection(
             wireMajor: REDSKILLS_WIRE_MAJOR,
             workerBacked: true,
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
+            ...(options.githubGateway == null ? {} : {
+              githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+            }),
           },
         },
       };
@@ -279,7 +306,8 @@ async function servePublicConnection(
     .onRequest("_redskills/host_state", emptyParams, scopedState)
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
-    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl);
+    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
+    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub);
 
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
@@ -296,6 +324,9 @@ async function servePublicConnection(
             workerBacked: true,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
+            ...(options.githubGateway == null ? {} : {
+              githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+            }),
           },
         },
       };
@@ -365,7 +396,8 @@ async function servePublicConnection(
     .onRequest("_redskills/host_state", emptyParams, scopedState)
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
-    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl);
+    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
+    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub);
 
   const connection = acpV2.agentProtocolRouter()
     .withV1(v1App)
@@ -674,4 +706,20 @@ function promptText(params: PromptRequest): string {
     .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+function githubReadParams(value: unknown): { readonly read: RedskilledGithubRead } {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RedskilledGithubAuthorityError("a Project GitHub gateway request needs one read");
+  }
+  const params = value as Record<string, unknown>;
+  if (Object.keys(params).length !== 1 || !("read" in params)) {
+    throw new RedskilledGithubAuthorityError(
+      "a Project GitHub request cannot name a Project, credential profile, remote, or host operation",
+    );
+  }
+  if (params.read == null || typeof params.read !== "object" || Array.isArray(params.read)) {
+    throw new RedskilledGithubAuthorityError("a Project GitHub gateway request needs one read object");
+  }
+  return { read: params.read as RedskilledGithubRead };
 }
