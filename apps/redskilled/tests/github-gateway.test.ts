@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,14 +10,17 @@ import { GithubBackpressureError } from "@reddb-io/github";
 import { describe, expect, it } from "vitest";
 import {
   REDSKILLED_GITHUB_READ_METHOD,
+  REDSKILLED_GITHUB_WRITE_METHOD,
   RedskilledGithubAuthorityError,
   createRedskilledGithubGateway,
   createRedskilledGithubUpstream,
   type RedskilledGithubReadAnswer,
   type RedskilledGithubProjectAuthority,
   type RedskilledGithubUpstream,
+  type RedskilledGithubWriteUpstream,
 } from "../src/github-gateway.js";
 import { bindAcpProjectGithubRead } from "../src/acp-github.js";
+import { decode } from "@reddb-io/toon";
 import { startRedskillsAcpControlPlane } from "../src/acp-control-plane.js";
 import { socketStream } from "../src/acp-socket.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
@@ -30,6 +33,86 @@ const PROJECT: RedskilledGithubProjectAuthority = {
 };
 
 describe("the Project-scoped redskilled GitHub gateway", () => {
+  it("durably serializes writes and resumes a transient failure without duplicate publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-github-outbox-"));
+    const outboxPath = join(root, "github-outbox.toon");
+    const calls: string[] = [];
+    let failFirst = true;
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const upstream: RedskilledGithubWriteUpstream = async ({ idempotencyKey, write }) => {
+      calls.push(`${idempotencyKey}:${write.kind}`);
+      if (idempotencyKey === "push-main") await firstHeld;
+      if (failFirst) {
+        failFirst = false;
+        throw new Error("temporary gateway failure");
+      }
+      return { publication_id: `published:${idempotencyKey}` };
+    };
+
+    try {
+      const firstGateway = createRedskilledGithubGateway({
+        upstream: async () => ({ value: {}, budget: null }),
+        writeUpstream: upstream,
+        outboxPath,
+        clock: () => "2026-08-15T21:00:00.000Z",
+      });
+      const first = firstGateway.forProject(PROJECT, { secret: "daemon-only" });
+      const push = first.write({
+        idempotency_key: "push-main",
+        write: { kind: "repository-push", ref: "refs/heads/worker-3887", sha: "a".repeat(40) },
+      });
+      const issue = first.write({
+        idempotency_key: "publish-issue",
+        write: { kind: "issue-publication", issue: 3887, body: "publication evidence" },
+      });
+      await Promise.resolve();
+      expect(calls).toEqual(["push-main:repository-push"]);
+      releaseFirst();
+      await expect(push).rejects.toThrow("temporary gateway failure");
+      await expect(issue).resolves.toMatchObject({
+        idempotency_key: "publish-issue",
+        state: "published",
+        value: { publication_id: "published:publish-issue" },
+      });
+
+      const persisted = decode((await readFile(outboxPath, "utf8")).trim()) as {
+        entries: Array<{ idempotency_key: string; state: string; credential?: unknown }>;
+      };
+      expect(persisted.entries).toMatchObject([
+        { idempotency_key: "push-main", state: "pending" },
+        { idempotency_key: "publish-issue", state: "published" },
+      ]);
+      expect(JSON.stringify(persisted)).not.toContain("daemon-only");
+
+      const recoveredCalls: string[] = [];
+      const recovered = createRedskilledGithubGateway({
+        upstream: async () => ({ value: {}, budget: null }),
+        writeUpstream: async ({ idempotencyKey }) => {
+          recoveredCalls.push(idempotencyKey);
+          return { publication_id: `published:${idempotencyKey}` };
+        },
+        outboxPath,
+        clock: () => "2026-08-15T21:01:00.000Z",
+      }).forProject(PROJECT, { secret: "rotated-daemon-only" });
+
+      await expect(recovered.resumeWrites()).resolves.toMatchObject([
+        { idempotency_key: "push-main", state: "published" },
+      ]);
+      await expect(recovered.write({
+        idempotency_key: "push-main",
+        write: { kind: "repository-push", ref: "refs/heads/worker-3887", sha: "a".repeat(40) },
+      })).resolves.toMatchObject({
+        idempotency_key: "push-main",
+        state: "published",
+        value: { publication_id: "published:push-main" },
+      });
+      expect(recoveredCalls).toEqual(["push-main"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("isolates secondary throttling by credential profile and coalesces one recovery refresh", async () => {
     let engineeringThrottled = true;
     let engineeringCalls = 0;
@@ -293,6 +376,8 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
         await held;
         return { value: { state: "OPEN" }, budget: { pool: "rest", remaining: 4_700, reset_at: null } };
       },
+      outboxPath: join(root, "github-outbox.toon"),
+      writeUpstream: async ({ idempotencyKey, write }) => ({ idempotencyKey, kind: write.kind }),
     });
     const paths = resolveRedskilledPaths({
       env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
@@ -349,6 +434,23 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
         read: { kind: "rest", path: "issues/17" },
         project_id: "github:202",
       })).rejects.toThrow();
+
+      await expect(connections[1]!.agent.request(REDSKILLED_GITHUB_WRITE_METHOD, {
+        idempotency_key: "worker-pr-3887",
+        write: {
+          kind: "pull-request",
+          head: "worker/3887",
+          base: "main",
+          title: "Publish Worker result",
+          body: "Refs #3887",
+        },
+      })).resolves.toMatchObject({
+        project_id: "github:101",
+        credential_profile: "engineering",
+        idempotency_key: "worker-pr-3887",
+        state: "published",
+        value: { kind: "pull-request" },
+      });
       await expect(connections[0]!.agent.request(REDSKILLED_GITHUB_READ_METHOD, {
         read: { kind: "rest", path: "/user" },
       })).rejects.toThrow();
