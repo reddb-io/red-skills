@@ -133,6 +133,26 @@ async function liveHost(queueDepth?: number): Promise<RedskilledDaemon> {
 }
 
 describe("starting work registers the project", () => {
+  it("previews and applies canonical activation without starting a project process", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+    const deps = createCastleMcpDependencies(root);
+
+    await expect(deps.projectActivation()).resolves.toMatchObject({
+      eligible: true,
+      project: "acme/widgets",
+      runner: "claude",
+      target: 1,
+      standing: false,
+      config: join(root, ".red", "config.yaml"),
+    });
+    await expect(deps.drain({})).resolves.toMatchObject({ outcome: "applied" });
+
+    expect(daemon.registrations()[0]).toMatchObject({ target: 1 });
+    expect(daemon.registrations()[0]?.env.RED_AFK_RUNNER).toBe("claude");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("marks only policy-driven registration as standing", async () => {
     const daemon = await liveHost();
     const root = await project();

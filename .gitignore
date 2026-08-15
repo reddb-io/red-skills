@@ -43,3 +43,5 @@ apps/*/out/
 
 # sandcastle runtime scratch (ADR 0033)
 .sandcastle/
+.red/tmp/
+.red/state/

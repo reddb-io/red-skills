@@ -6,6 +6,14 @@ import {
 
 function deps(): CastleMcpDependencies {
   return {
+    projectActivation: vi.fn(async () => ({
+      eligible: true,
+      project: "red-skills",
+      runner: "codex",
+      target: 2,
+      standing: true,
+      config: "/repo/.red/config.yaml",
+    })),
     projectStatus: vi.fn(async () => ({
       validation_schedule: {
         narration: "Validation moments — iteration: skip (undeclared); post_done: skip (undeclared); landing: skip (undeclared)",
@@ -183,6 +191,7 @@ describe("redskilled MCP tools", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "help",
       "status",
+      "project_activation",
       "project_status",
       "drain",
       "project_start",
@@ -288,6 +297,19 @@ describe("redskilled MCP tools", () => {
     });
   });
 
+  it("previews the canonical project activation without mutating", async () => {
+    const d = deps();
+    const activation = createCastleMcpTools(d).find((candidate) => candidate.name === "project_activation")!;
+    await expect(activation.invoke({})).resolves.toMatchObject({
+      eligible: true,
+      project: "red-skills",
+      runner: "codex",
+      target: 2,
+    });
+    expect(d.projectActivation).toHaveBeenCalledOnce();
+    expect(d.drain).not.toHaveBeenCalled();
+  });
+
   it("ensures a drain through the host adapter", async () => {
     const d = deps();
     const tool = createCastleMcpTools(d).find((candidate) => candidate.name === "drain")!;
@@ -301,6 +323,13 @@ describe("redskilled MCP tools", () => {
       },
     });
     expect(d.drain).toHaveBeenCalledWith({ runner: "codex", target: 2 });
+  });
+
+  it("forwards an empty drain so the project resolves canonical defaults", async () => {
+    const d = deps();
+    const tool = createCastleMcpTools(d).find((candidate) => candidate.name === "drain")!;
+    await tool.invoke({});
+    expect(d.drain).toHaveBeenCalledWith({});
   });
 
   it("resets the named project latch", async () => {
