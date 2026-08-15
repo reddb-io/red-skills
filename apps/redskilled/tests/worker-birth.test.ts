@@ -214,6 +214,48 @@ describe("the daemon accepts the workspace path as given", () => {
     expect(derived.join(" ")).not.toMatch(/\.git|\.red|package\.json|worktree/);
   });
 
+  it("does not copy daemon or caller GitHub credentials into a Worker", () => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    let spawnedArgs: readonly string[] = [];
+    launchWorker({
+      admission: ADMITTED,
+      env: {
+        PATH: "/usr/bin",
+        REDSKILLED_HOST_TOKEN: "daemon credential",
+        GITHUB_TOKEN: "ambient credential",
+        GH_TOKEN: "cli credential",
+        RED_GITHUB_APP_ID: "app id",
+        RED_GITHUB_APP_INSTALLATION: "installation id",
+        RED_GITHUB_APP_KEY: "/credential/key",
+      },
+      spec: {
+        project_label: "github:101",
+        workspace_path: "/project-workspaces/widgets",
+        command: "/bin/true",
+        env: { GITHUB_TOKEN: "caller credential", SAFE_WORKER_FACT: "kept" },
+      },
+      probes: LINUX_WITH_SESSION,
+      spawnFn: (_command, args, options) => {
+        spawnedArgs = args;
+        spawnedEnv = options.env;
+        return { pid: 4242, once: () => undefined, unref: () => undefined } as never;
+      },
+    });
+
+    for (const name of [
+      "REDSKILLED_HOST_TOKEN",
+      "GITHUB_TOKEN",
+      "GH_TOKEN",
+      "RED_GITHUB_APP_ID",
+      "RED_GITHUB_APP_INSTALLATION",
+      "RED_GITHUB_APP_KEY",
+    ]) {
+      expect(spawnedEnv?.[name]).toBeUndefined();
+      expect(spawnedArgs.some((arg) => arg.startsWith(`--setenv=${name}=`))).toBe(false);
+    }
+    expect(spawnedArgs).toContain("--setenv=SAFE_WORKER_FACT=kept");
+  });
+
   it("derives nothing from the host either: probes are all it reads", () => {
     // `detectWorkerPlacementProbes` is the daemon's ONLY host read on the launch
     // path, and it looks at the platform, PATH and XDG_RUNTIME_DIR — never at a
