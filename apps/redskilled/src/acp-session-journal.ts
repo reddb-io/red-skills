@@ -15,6 +15,7 @@ import {
   type NewSessionRequest,
   type PromptRequest,
   type PromptResponse,
+  type RequestPermissionRequest,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
@@ -35,6 +36,15 @@ export type AcpSessionJournalEntry =
     readonly kind: "checkpoint";
     readonly stop_reason: PromptResponse["stopReason"];
     readonly workflow_outcome?: string;
+  }
+  | {
+    readonly sequence: number;
+    readonly kind: "permission";
+    readonly tool_call_id: string;
+    readonly policy_key: string;
+    readonly decision: "attached-approved" | "attached-denied" | "policy-pre-authorized" | "hitl-required";
+    readonly option_id?: string;
+    readonly option_kind?: "allow_once" | "allow_always" | "reject_once" | "reject_always";
   };
 
 type WithoutSequence<T> = T extends unknown ? Omit<T, "sequence"> : never;
@@ -98,6 +108,13 @@ export interface AcpSessionJournal {
     report: ProviderSessionEvidenceReport,
   ): Promise<void>;
   checkpoint(publicSessionId: string, response: PromptResponse, workflowOutcome?: string): Promise<void>;
+  permission(
+    publicSessionId: string,
+    request: RequestPermissionRequest,
+    policyKey: string,
+    decision: Extract<AcpSessionJournalEntry, { kind: "permission" }>["decision"],
+    optionId?: string,
+  ): Promise<void>;
   recovery(publicSessionId: string): AcpSessionRecoveryCheckpoint;
   retake(publicSessionId: string, authorizedProjectId: string): AcpRetakeEvidenceProjection | undefined;
 }
@@ -173,6 +190,18 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
         kind: "checkpoint",
         stop_reason: response.stopReason,
         ...(workflowOutcome == null ? {} : { workflow_outcome: workflowOutcome }),
+      });
+    },
+    permission(publicSessionId, request, policyKey, decision, optionId) {
+      const option = optionId == null
+        ? undefined
+        : request.options.find((candidate) => candidate.optionId === optionId);
+      return append(publicSessionId, {
+        kind: "permission",
+        tool_call_id: request.toolCall.toolCallId,
+        policy_key: policyKey,
+        decision,
+        ...(option == null ? {} : { option_id: option.optionId, option_kind: option.kind }),
       });
     },
     recovery(publicSessionId) {
