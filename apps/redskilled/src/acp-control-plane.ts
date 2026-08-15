@@ -6,20 +6,20 @@
  * cleanup all live here, in the host authority. The native Worker speaks ACP on
  * its assigned socket and exits when redskilled closes that connection.
  */
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import {
   agent,
-  client,
   methods,
   RequestError,
-  type AgentConnection,
   type McpServer,
   type NewSessionRequest,
   type PromptRequest,
   type PromptResponse,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
@@ -32,7 +32,6 @@ import {
   translateV1SessionUpdateToV2,
 } from "./acp-compat.js";
 import {
-  bindWorkerRendezvous,
   closeServer,
   connectWithDeadline,
   listen,
@@ -56,8 +55,7 @@ import {
   REDSKILLED_PROJECT_BUDGET_METHOD,
 } from "./acp-budget.js";
 import {
-  acpSessionJournalPath, createAcpSessionJournal, providerSessionEvidenceFromMeta,
-  replacementRecoveryMeta, type AcpSessionJournal,
+  acpSessionJournalPath, createAcpSessionJournal, type AcpSessionJournal,
 } from "./acp-session-journal.js";
 import {
   isAcpRetakePrompt,
@@ -99,9 +97,11 @@ import {
   workflowOutcome,
   type ActiveWorkflowWorker,
 } from "./acp-worker-lifecycle.js";
+import { admitNativeAcpWorker } from "./acp-native-worker.js";
+
+export { runNativeAcpWorker } from "./acp-native-worker.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
-export { runNativeAcpWorker } from "./acp-native-worker.js";
 
 interface PublicSession {
   readonly request: NewSessionRequest;
@@ -191,6 +191,7 @@ async function servePublicConnection(
   let connectionProject: AcpProjectWorkspace | undefined;
   let githubObserver: Promise<AcpGithubUpdateObserver> | undefined;
   let githubNotify: ((method: string, params?: unknown) => Promise<void>) | undefined;
+  let attached = true;
 
   const bindProject = async (cwd: string, incompatible: () => Error): Promise<AcpProjectWorkspace> => {
     const identity = await resolveAcpProjectIdentity(cwd);
@@ -325,6 +326,13 @@ async function servePublicConnection(
             session,
             params.sessionId,
             upstream.notify.bind(upstream),
+            (request) => resolvePermission(
+              sessionJournal,
+              params.sessionId,
+              request,
+              () => attached,
+              (projected) => upstream.request(methods.client.session.requestPermission, projected),
+            ),
             replacement,
           ),
         );
@@ -333,8 +341,10 @@ async function servePublicConnection(
         const outcome = workflowOutcome(response);
         await sessionJournal.checkpoint(params.sessionId, response, outcome);
         if (outcome != null) {
-          await notifyWorkerLifecycle(worker, "terminal-outcome", outcome);
+          await notifyWorkerLifecycle(worker, "terminal-outcome", outcome).catch(() => undefined);
           await reapWorkflowWorker(params.sessionId, worker, active, outcome);
+        } else if (!attached) {
+          await reapWorkflowWorker(params.sessionId, worker, active, "client-detached");
         } else {
           scheduleIdleCleanup(params.sessionId, worker, active);
         }
@@ -342,7 +352,11 @@ async function servePublicConnection(
           ...response,
           _meta: {
             ...(response._meta ?? {}),
-            redskills: { authority: "redskilled", workerId: worker.workerId },
+            redskills: {
+              ...((response._meta as { redskills?: object } | undefined)?.redskills ?? {}),
+              authority: "redskilled",
+              workerId: worker.workerId,
+            },
           },
         } satisfies PromptResponse;
       } catch (error) {
@@ -460,7 +474,7 @@ async function servePublicConnection(
             return;
           }
           return controlOperation == null
-            ? runV2PublicTurn(options, sessionJournal, sessions, active, params, upstream)
+            ? runV2PublicTurn(options, sessionJournal, sessions, active, params, upstream, () => attached)
             : runV2ProjectControlTurn(
               sessions,
               params,
@@ -498,12 +512,16 @@ async function servePublicConnection(
     .withV2(v2App)
     .connect(socketStream(socket) as unknown as acpV2.Stream);
   await connection.closed;
+  attached = false;
   if (githubObserver != null) {
     const observer = await githubObserver;
     observer.close();
     await observer.settled();
   }
-  for (const [sessionId, worker] of active) cleanupWorkflowWorker(sessionId, worker, active);
+  for (const [sessionId, worker] of active) {
+    if (busy.has(sessionId) || v2Turns.has(sessionId)) continue;
+    cleanupWorkflowWorker(sessionId, worker, active);
+  }
 }
 
 async function runV2PublicTurn(
@@ -513,6 +531,7 @@ async function runV2PublicTurn(
   active: Map<string, ActiveWorkflowWorker>,
   params: acpV2.PromptRequest,
   upstream: acpV2.AgentContext,
+  attached: () => boolean,
 ): Promise<void> {
   const session = sessions.get(params.sessionId);
   if (session == null) return;
@@ -547,6 +566,16 @@ async function runV2PublicTurn(
         session,
         params.sessionId,
         forward,
+        (request) => resolvePermission(
+          sessionJournal,
+          params.sessionId,
+          request,
+          attached,
+          async (projected) => await upstream.request(
+            acpV2.methods.client.session.requestPermission,
+            projected as unknown as acpV2.RequestPermissionRequest,
+          ) as unknown as RequestPermissionResponse,
+        ),
         replacement,
       ),
     );
@@ -555,8 +584,10 @@ async function runV2PublicTurn(
     const outcome = workflowOutcome(response);
     await sessionJournal.checkpoint(params.sessionId, response, outcome);
     if (outcome != null) {
-      await notifyWorkerLifecycle(worker, "terminal-outcome", outcome);
+      await notifyWorkerLifecycle(worker, "terminal-outcome", outcome).catch(() => undefined);
       await reapWorkflowWorker(params.sessionId, worker, active, outcome);
+    } else if (!attached()) {
+      await reapWorkflowWorker(params.sessionId, worker, active, "client-detached");
     } else {
       scheduleIdleCleanup(params.sessionId, worker, active);
     }
@@ -580,116 +611,6 @@ async function runV2PublicTurn(
   }
 }
 
-async function admitNativeAcpWorker(
-  options: StartRedskillsAcpControlPlaneOptions,
-  sessionJournal: AcpSessionJournal,
-  session: PublicSession,
-  publicSessionId: string,
-  forward: AgentConnection["client"]["notify"],
-  replacement: boolean,
-): Promise<ActiveWorkflowWorker> {
-  const endpointId = randomBytes(6).toString("hex");
-  const endpoint = join(options.paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
-  const rendezvous = await bindWorkerRendezvous(endpoint);
-  let launched: LaunchedWorker;
-  try {
-    launched = options.startWorker(nativeWorkerSpec(session.project, endpoint, options.paths.runtimeDir));
-  } catch (error) {
-    rendezvous.server.close();
-    await rm(endpoint, { force: true });
-    throw error;
-  }
-
-  let workerSocket: Socket;
-  try {
-    workerSocket = await withTimeout(rendezvous.connected, 10_000, "native ACP Worker rendezvous");
-  } catch (error) {
-    rendezvous.server.close();
-    await rm(endpoint, { force: true });
-    throw error;
-  }
-  rendezvous.server.close();
-
-  let downstreamSessionId = "";
-  const downstreamApp = client({ name: "redskilled" })
-    .onNotification(methods.client.session.update, async ({ params }) => {
-      const notice: SessionNotification = {
-        ...params,
-        sessionId: publicSessionId,
-        _meta: {
-          ...(params._meta ?? {}),
-          redskills: {
-            ...((params._meta as { redskills?: object } | undefined)?.redskills ?? {}),
-            authority: "redskilled",
-            workerId: launched.worker.worker_id,
-          },
-        },
-      };
-      await sessionJournal.update(publicSessionId, params.update);
-      await forward(methods.client.session.update, notice);
-    });
-  const connection = downstreamApp.connect(socketStream(workerSocket));
-  try {
-    const initialized = await connection.agent.request(methods.agent.initialize, {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: {},
-      clientInfo: { name: "redskilled", version: "1" },
-      _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
-    });
-    requireCompatibleWireMajor(initialized._meta, true);
-    const recovery = replacement ? sessionJournal.recovery(publicSessionId) : undefined;
-    const downstreamSession = await connection.agent.request(methods.agent.session.new, {
-      cwd: session.project.workspacePath,
-      mcpServers: session.request.mcpServers as McpServer[],
-      ...(session.request.additionalDirectories == null
-        ? {}
-        : { additionalDirectories: session.request.additionalDirectories }),
-      ...(recovery == null ? {} : { _meta: replacementRecoveryMeta(session.request._meta, recovery) }),
-    });
-    downstreamSessionId = downstreamSession.sessionId;
-    await sessionJournal.worker(publicSessionId, launched.worker.worker_id, downstreamSessionId, replacement);
-    const evidence = providerSessionEvidenceFromMeta(downstreamSession._meta);
-    if (evidence != null) {
-      await sessionJournal.evidence(publicSessionId, launched.worker.worker_id, evidence);
-    }
-  } catch (error) {
-    connection.close();
-    workerSocket.destroy();
-    await rm(endpoint, { force: true });
-    throw error;
-  }
-
-  return {
-    workerId: launched.worker.worker_id,
-    downstreamSessionId,
-    connection,
-    socket: workerSocket,
-    endpoint,
-    publicSessionId,
-    notify: forward,
-    cancelled: false,
-    cleaned: false,
-  };
-}
-
-function nativeWorkerSpec(
-  project: AcpProjectWorkspace,
-  endpoint: string,
-  runtimeDir: string,
-): RedskilledWorkerSpec {
-  const entry = process.argv[1];
-  if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
-  return {
-    // The host's authority key must survive a repository rename. The current
-    // GitHub full name remains display metadata on the public session.
-    project_label: project.projectId,
-    workspace_path: project.workspacePath,
-    command: process.execPath,
-    args: [...process.execArgv, entry, "acp-worker", "--socket", endpoint],
-    log_path: join(runtimeDir, "acp-workers", `${randomBytes(6).toString("hex")}.toonl`),
-  };
-}
-
 function projectState(host: RedskilledHostState, project: AcpProjectWorkspace) {
   return {
     project_id: project.projectId,
@@ -709,4 +630,84 @@ export async function runRedskillsAcpAdapter(paths: RedskilledPaths): Promise<nu
     socket.once("error", reject);
   });
   return 0;
+}
+type PermissionDecision = Extract<
+  ReturnType<AcpSessionJournal["recovery"]>["entries"][number],
+  { kind: "permission" }
+>;
+
+async function resolvePermission(
+  journal: AcpSessionJournal,
+  publicSessionId: string,
+  request: RequestPermissionRequest,
+  attached: () => boolean,
+  project: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>,
+): Promise<RequestPermissionResponse> {
+  const policyKey = permissionPolicyKey(request);
+  const granted = [...journal.recovery(publicSessionId).entries]
+    .reverse()
+    .find((entry): entry is PermissionDecision => entry.kind === "permission" &&
+      entry.policy_key === policyKey && entry.decision === "attached-approved" &&
+      entry.option_kind === "allow_always");
+  const preAuthorized = granted == null
+    ? undefined
+    : request.options.find((option) => option.optionId === granted.option_id && option.kind === "allow_always");
+  if (preAuthorized != null) {
+    await journal.permission(publicSessionId, request, policyKey, "policy-pre-authorized", preAuthorized.optionId);
+    return permissionAnswer(preAuthorized.optionId, "policy-pre-authorized");
+  }
+
+  if (attached()) {
+    try {
+      const response = await withTimeout(
+        project(request),
+        permissionDecisionTimeoutMs(),
+        "attached ACP permission decision",
+      );
+      const outcome = response.outcome;
+      const selected = outcome.outcome === "selected"
+        ? request.options.find((option) => option.optionId === outcome.optionId)
+        : undefined;
+      if (selected != null) {
+        const approved = selected.kind === "allow_once" || selected.kind === "allow_always";
+        const decision = approved ? "attached-approved" : "attached-denied";
+        await journal.permission(publicSessionId, request, policyKey, decision, selected.optionId);
+        return permissionAnswer(selected.optionId, decision, response._meta);
+      }
+    } catch {
+      // A disconnect or bounded timeout is an uncovered decision, never approval.
+    }
+  }
+
+  await journal.permission(publicSessionId, request, policyKey, "hitl-required");
+  return {
+    outcome: { outcome: "cancelled" },
+    _meta: { redskills: { permissionResolution: "hitl-required", durableHitl: true } },
+  };
+}
+
+function permissionAnswer(
+  optionId: string,
+  permissionResolution: "attached-approved" | "attached-denied" | "policy-pre-authorized",
+  meta?: RequestPermissionResponse["_meta"],
+): RequestPermissionResponse {
+  return {
+    outcome: { outcome: "selected", optionId },
+    _meta: {
+      ...(meta ?? {}),
+      redskills: {
+        ...((meta as { redskills?: object } | undefined)?.redskills ?? {}),
+        permissionResolution,
+      },
+    },
+  };
+}
+
+function permissionPolicyKey(request: RequestPermissionRequest): string {
+  return `${request.toolCall.kind ?? "other"}:${request.toolCall.title ?? "untitled"}`;
+}
+
+function permissionDecisionTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.REDSKILLED_ACP_PERMISSION_TIMEOUT_MS ?? "30000", 10);
+  return Number.isFinite(configured) && configured >= 0 ? configured : 30_000;
 }
