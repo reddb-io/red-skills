@@ -41,12 +41,11 @@ import {
   waitForAbort,
   withTimeout,
 } from "./acp-socket.js";
+import { bindAcpProjectGithubRead, githubReadParams } from "./acp-github.js";
 import type { RedskilledHostState } from "./host-state.js";
 import {
   REDSKILLED_GITHUB_READ_METHOD,
-  RedskilledGithubAuthorityError,
   type RedskilledGithubGatewayRegistration,
-  type RedskilledGithubRead,
 } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
@@ -186,23 +185,7 @@ async function servePublicConnection(
   const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
-  const readGithub = ({ params: { read } }: { readonly params: { readonly read: RedskilledGithubRead } }) => {
-    const project = scopedProject();
-    const selection = options.githubGateway?.credentialForProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-    });
-    if (options.githubGateway == null || selection == null) {
-      throw RequestError.invalidRequest("this Project has no daemon-owned GitHub credential profile");
-    }
-    return options.githubGateway.gateway.forProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-      credentialProfile: selection.profile,
-    }, selection.credential).read(read);
-  };
+  const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject);
   const emptyParams = () => ({});
 
   const v1App = agent({ name: "RedSkills" })
@@ -706,20 +689,4 @@ function promptText(params: PromptRequest): string {
     .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
-}
-
-function githubReadParams(value: unknown): { readonly read: RedskilledGithubRead } {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) {
-    throw new RedskilledGithubAuthorityError("a Project GitHub gateway request needs one read");
-  }
-  const params = value as Record<string, unknown>;
-  if (Object.keys(params).length !== 1 || !("read" in params)) {
-    throw new RedskilledGithubAuthorityError(
-      "a Project GitHub request cannot name a Project, credential profile, remote, or host operation",
-    );
-  }
-  if (params.read == null || typeof params.read !== "object" || Array.isArray(params.read)) {
-    throw new RedskilledGithubAuthorityError("a Project GitHub gateway request needs one read object");
-  }
-  return { read: params.read as RedskilledGithubRead };
 }
