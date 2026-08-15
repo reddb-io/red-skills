@@ -390,7 +390,9 @@ describe("the public RedSkills ACP v1 control plane", () => {
     const uncoveredAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
     const uncoveredUpdates: SessionNotification[] = [];
     const uncovered = client({ name: "redskilled-acp-uncovered-test" })
-      .onNotification(methods.client.session.update, ({ params }) => uncoveredUpdates.push(params))
+      .onNotification(methods.client.session.update, ({ params }) => {
+        uncoveredUpdates.push(params);
+      })
       .connect(childStream(uncoveredAdapter));
     await uncovered.agent.request(methods.agent.initialize, {
       protocolVersion: 1,
