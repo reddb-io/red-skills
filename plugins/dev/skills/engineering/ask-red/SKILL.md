@@ -152,6 +152,10 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 Capability references registered by owner:
+ACP credential-budget observations (Project clients receive only their bound
+profile; explicit host administration receives all configured profiles and
+pools; warning and density policy stays daemon-owned) -> `/redskilled` and
+`apps/redskilled/src/acp-budget.ts`;
 `redskilled` MCP (the canonical project interface; start with its situational
 `help` tool, while `status {scope: worker | project | host}` provides scoped
 read-only diagnostics, and a visible project `birth_latch` routes through its
