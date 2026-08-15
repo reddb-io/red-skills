@@ -1,5 +1,5 @@
 /**
- * ACP v1 control plane — redskilled is the public Agent and the Client of each Worker.
+ * ACP v1/v2 control plane — redskilled is the public Agent and the Client of each Worker.
  *
  * The public stdio command is only a transport projection onto the daemon-owned
  * socket. Sessions, admission, Worker rendezvous, cancellation, and terminal
@@ -25,11 +25,13 @@ import {
   type SessionNotification,
   type Stream,
 } from "@agentclientprotocol/sdk";
+import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 
 const ACP_PROTOCOL_VERSION = 1;
+export const ACP_V2_DRAFT_REVISION = "schema-v2.0.0-alpha.2";
 const ACP_PROJECT_LABEL = "redskills/acp";
 const TERMINAL_REAP_DELAY_MS = 150;
 
@@ -94,7 +96,7 @@ async function servePublicConnection(
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorker>();
 
-  const app = agent({ name: "RedSkills" })
+  const v1App = agent({ name: "RedSkills" })
     .onRequest(methods.agent.initialize, ({ params }) => ({
       protocolVersion: params.protocolVersion === ACP_PROTOCOL_VERSION
         ? params.protocolVersion
@@ -153,9 +155,170 @@ async function servePublicConnection(
     })
     .onRequest("_redskills/host_state", () => ({}), () => options.hostState());
 
-  const connection = app.connect(socketStream(socket));
+  const v2Turns = new Map<string, Promise<void>>();
+  const v2App = acpV2.agent({ name: "RedSkills" })
+    .onRequest(acpV2.methods.agent.initialize, ({ params }) => {
+      requireSupportedV2Revision(params._meta);
+      return {
+        protocolVersion: acpV2.PROTOCOL_VERSION,
+        info: { name: "RedSkills", version: "1" },
+        capabilities: { session: {} },
+        _meta: {
+          redskills: {
+            wireMajor: 1,
+            workerBacked: true,
+            acpDraftRevision: ACP_V2_DRAFT_REVISION,
+          },
+        },
+      };
+    })
+    .onRequest(acpV2.methods.agent.session.new, ({ params }) => {
+      const sessionId = randomUUID();
+      sessions.set(sessionId, {
+        request: {
+          cwd: params.cwd,
+          mcpServers: (params.mcpServers ?? []) as unknown as McpServer[],
+          ...(params.additionalDirectories == null
+            ? {}
+            : { additionalDirectories: params.additionalDirectories }),
+        },
+      });
+      return {
+        sessionId,
+        _meta: {
+          redskills: {
+            authority: "redskilled",
+            protocolVersion: acpV2.PROTOCOL_VERSION,
+            acpDraftRevision: ACP_V2_DRAFT_REVISION,
+          },
+        },
+      };
+    })
+    .onRequest(acpV2.methods.agent.session.prompt, ({ params, client: upstream }) => {
+      if (!sessions.has(params.sessionId)) throw acpV2.RequestError.invalidParams("unknown RedSkills ACP session");
+      if (active.has(params.sessionId) || v2Turns.has(params.sessionId)) {
+        throw acpV2.RequestError.invalidRequest("this RedSkills ACP session already has an active turn");
+      }
+
+      const accepted = new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const turn = accepted
+        .then(() => runV2PublicTurn(options, sessions, active, params, upstream))
+        .catch(() => {})
+        .finally(() => v2Turns.delete(params.sessionId));
+      v2Turns.set(params.sessionId, turn);
+      return {};
+    })
+    .onNotification(acpV2.methods.agent.session.cancel, async ({ params }) => {
+      const worker = active.get(params.sessionId);
+      if (worker == null) return;
+      worker.cancelled = true;
+      await worker.connection.agent.notify(methods.agent.session.cancel, {
+        sessionId: worker.downstreamSessionId,
+        ...(params._meta == null ? {} : { _meta: params._meta }),
+      });
+    })
+    .onRequest("_redskills/host_state", () => ({}), () => options.hostState());
+
+  const connection = acpV2.agentProtocolRouter()
+    .withV1(v1App)
+    .withV2(v2App)
+    .connect(socketStream(socket) as unknown as acpV2.Stream);
   await connection.closed;
   for (const [sessionId, worker] of active) cleanupWorker(sessionId, worker, active);
+}
+
+function requireSupportedV2Revision(meta: acpV2.InitializeRequest["_meta"]): void {
+  const redskills = record(meta?.redskills);
+  const revision = redskills?.acpDraftRevision;
+  if (revision !== ACP_V2_DRAFT_REVISION) {
+    const received = typeof revision === "string" ? revision : "omitted";
+    throw acpV2.RequestError.invalidParams(
+      { redskills: { receivedRevision: received, supportedRevision: ACP_V2_DRAFT_REVISION } },
+      `unsupported ACP v2 draft revision ${received}; expected ${ACP_V2_DRAFT_REVISION}`,
+    );
+  }
+}
+
+async function runV2PublicTurn(
+  options: StartRedskillsAcpControlPlaneOptions,
+  sessions: Map<string, PublicSession>,
+  active: Map<string, ActiveWorker>,
+  params: acpV2.PromptRequest,
+  upstream: acpV2.AgentContext,
+): Promise<void> {
+  const session = sessions.get(params.sessionId);
+  if (session == null) return;
+  const messageId = randomUUID();
+  await upstream.notify(acpV2.methods.client.session.update, {
+    sessionId: params.sessionId,
+    update: { sessionUpdate: "state_update", state: "running" },
+  });
+
+  let worker: ActiveWorker | undefined;
+  try {
+    worker = await admitNativeAcpWorker(options, session, params.sessionId, async (
+      _method: typeof methods.client.session.update,
+      notice: SessionNotification,
+    ) => {
+      const update = translateV1UpdateToV2(notice.update, messageId);
+      if (update == null) return;
+      await upstream.notify(acpV2.methods.client.session.update, {
+        sessionId: params.sessionId,
+        update,
+        _meta: notice._meta,
+      });
+    });
+    active.set(params.sessionId, worker);
+    const response = await worker.connection.agent.request(methods.agent.session.prompt, {
+      sessionId: worker.downstreamSessionId,
+      prompt: params.prompt as unknown as PromptRequest["prompt"],
+      ...(params._meta == null ? {} : { _meta: params._meta }),
+    });
+    scheduleTerminalCleanup(params.sessionId, worker, active);
+    await upstream.notify(acpV2.methods.client.session.update, {
+      sessionId: params.sessionId,
+      update: { sessionUpdate: "state_update", state: "idle", stopReason: response.stopReason },
+      _meta: { redskills: { authority: "redskilled", workerId: worker.workerId } },
+    });
+  } catch (error) {
+    if (worker != null) cleanupWorker(params.sessionId, worker, active);
+    await upstream.notify(acpV2.methods.client.session.update, {
+      sessionId: params.sessionId,
+      update: { sessionUpdate: "state_update", state: "idle", stopReason: "refusal" },
+      _meta: {
+        redskills: {
+          authority: "redskilled",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      },
+    });
+  }
+}
+
+function translateV1UpdateToV2(
+  update: SessionNotification["update"],
+  messageId: string,
+): acpV2.SessionUpdate | undefined {
+  if (update.sessionUpdate === "plan") {
+    return {
+      sessionUpdate: "plan_update",
+      plan: { type: "items", planId: "primary", entries: update.entries },
+    };
+  }
+  if (update.sessionUpdate === "agent_message_chunk") {
+    return {
+      sessionUpdate: "agent_message_chunk",
+      messageId,
+      content: update.content as acpV2.ContentBlock,
+    };
+  }
+  return undefined;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 async function admitNativeAcpWorker(
