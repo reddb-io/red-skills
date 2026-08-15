@@ -1,4 +1,5 @@
 import { RequestError } from "@agentclientprotocol/sdk";
+import { GithubBackpressureError } from "@reddb-io/github";
 import {
   RedskilledGithubAuthorityError,
   type RedskilledGithubGatewayRegistration,
@@ -13,7 +14,7 @@ export function bindAcpProjectGithubRead(
   gateway: RedskilledGithubGatewayRegistration | undefined,
   projectForConnection: () => AcpProjectWorkspace,
 ) {
-  return ({ params: { read } }: { readonly params: GithubReadParams }) => {
+  return async ({ params: { read } }: { readonly params: GithubReadParams }) => {
     const project = projectForConnection();
     const selection = gateway?.credentialForProject({
       projectId: project.projectId,
@@ -23,12 +24,24 @@ export function bindAcpProjectGithubRead(
     if (gateway == null || selection == null) {
       throw RequestError.invalidRequest("this Project has no daemon-owned GitHub credential profile");
     }
-    return gateway.gateway.forProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-      credentialProfile: selection.profile,
-    }, selection.credential).read(read);
+    try {
+      return await gateway.gateway.forProject({
+        projectId: project.projectId,
+        projectLabel: project.projectLabel,
+        workspacePath: project.workspacePath,
+        credentialProfile: selection.profile,
+      }, selection.credential).read(read);
+    } catch (error) {
+      if (!(error instanceof GithubBackpressureError)) throw error;
+      throw new RequestError(-32001, error.message, {
+        version: 1,
+        kind: "github-backpressure",
+        project_id: project.projectId,
+        credential_profile: selection.profile,
+        retry_at: error.fact.retry_at,
+        fact: error.fact,
+      });
+    }
   };
 }
 
