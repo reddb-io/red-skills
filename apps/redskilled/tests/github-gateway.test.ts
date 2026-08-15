@@ -14,6 +14,7 @@ import {
   RedskilledGithubAuthorityError,
   createRedskilledGithubGateway,
   createRedskilledGithubUpstream,
+  createRedskilledGithubWriteUpstream,
   type RedskilledGithubReadAnswer,
   type RedskilledGithubProjectAuthority,
   type RedskilledGithubUpstream,
@@ -113,6 +114,55 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
         value: { publication_id: "published:push-main" },
       });
       expect(recoveredCalls).toEqual(["push-main"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles an accepted GitHub publication after its response is lost", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-github-response-loss-"));
+    const outboxPath = join(root, "github-outbox.toon");
+    let published: Record<string, unknown> | null = null;
+    let posts = 0;
+    const writeUpstream = createRedskilledGithubWriteUpstream({
+      fetchImpl: async (_url, init) => {
+        if (init?.method === "GET") {
+          return Response.json(published == null ? [] : [published]);
+        }
+        posts += 1;
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        published = { id: 17, ...body };
+        throw new Error("connection dropped after GitHub accepted the publication");
+      },
+    });
+    const options = {
+      upstream: async () => ({ value: {}, budget: null }),
+      writeUpstream,
+      outboxPath,
+    };
+
+    try {
+      const request = {
+        idempotency_key: "pr-response-loss",
+        write: {
+          kind: "pull-request" as const,
+          head: "worker/3887",
+          base: "main",
+          title: "Publish result",
+          body: "Refs #3887",
+        },
+      };
+      await expect(createRedskilledGithubGateway(options)
+        .forProject(PROJECT, { secret: "daemon-only" }).write(request))
+        .rejects.toThrow("connection dropped");
+
+      const recovered = createRedskilledGithubGateway(options)
+        .forProject(PROJECT, { secret: "daemon-only" });
+      await expect(recovered.resumeWrites()).resolves.toMatchObject([
+        { idempotency_key: "pr-response-loss", state: "published", value: { id: 17 } },
+      ]);
+      expect(posts).toBe(1);
+      expect(JSON.stringify(published)).toContain("redskilled:github-outbox:pr-response-loss");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
