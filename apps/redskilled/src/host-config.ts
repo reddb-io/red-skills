@@ -26,6 +26,10 @@ import {
 } from "./event-lane.js";
 import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledHostEventSinks } from "./host-event-sink.js";
+import type {
+  RedskilledGithubCredentialProfileDeclaration,
+  RedskilledGithubCredentialProfiles,
+} from "./github-credential-profiles.js";
 
 export const REDSKILLED_IDLE_MS_ENV = "REDSKILLED_IDLE_MS";
 export const REDSKILLED_HOST_CONFIG_PATH = ".red/config.yaml";
@@ -39,6 +43,16 @@ export interface RedskilledHostConfig {
   readonly hooks?: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>>;
   /** Public Worker lifecycle changes also surfaced through the native desktop sink. */
   readonly notifications?: readonly RedskilledPublicHostEventKind[];
+  /** Named daemon-owned GitHub authentication backends. */
+  readonly githubProfiles?: RedskilledGithubCredentialProfiles;
+}
+
+/** A credential backend declaration that must fail closed at daemon boot. */
+export class RedskilledGithubProfileConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RedskilledGithubProfileConfigError";
+  }
 }
 
 export interface RedskilledHostSettingFlags {
@@ -120,13 +134,73 @@ export async function readRedskilledHostConfig(
       ...scalarAt(redskilled, "idle_ms", "idleMs"),
       ...hooksAt(redskilled),
       ...notificationsAt(redskilled),
+      ...githubProfilesAt(redskilled),
     };
   } catch (error) {
+    if (error instanceof RedskilledGithubProfileConfigError) throw error;
     // The same resilience rule as malformed ceiling values: report the broken
     // declaration, but do not turn a typo into a host-wide outage.
     warn(`redskilled: malformed host config ${JSON.stringify(path)}; using environment and defaults instead: ${errorMessage(error)}`);
     return {};
   }
+}
+
+function githubProfilesAt(
+  redskilled: Readonly<Record<string, unknown>>,
+): Pick<RedskilledHostConfig, "githubProfiles"> | Record<never, never> {
+  if (redskilled.github_profiles == null) return {};
+  if (!isMapping(redskilled.github_profiles)) {
+    throw new RedskilledGithubProfileConfigError("github_profiles must be a map keyed by profile name");
+  }
+  const profiles: Record<string, RedskilledGithubCredentialProfileDeclaration> = {};
+  for (const [name, value] of Object.entries(redskilled.github_profiles)) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name)) {
+      throw new RedskilledGithubProfileConfigError("a GitHub credential profile has an invalid public name");
+    }
+    if (!isMapping(value)) {
+      throw new RedskilledGithubProfileConfigError(`GitHub credential profile ${JSON.stringify(name)} must be a map`);
+    }
+    if (value.kind === "personal") {
+      if (Object.keys(value).some((key) => /^(?:token|secret|credential)$/i.test(key))) {
+        throw new RedskilledGithubProfileConfigError(
+          `personal GitHub credential profile ${JSON.stringify(name)} resolves from the daemon environment or gh auth and may not store a token`,
+        );
+      }
+      profiles[name] = { kind: "personal" };
+      continue;
+    }
+    if (value.kind === "github-app") {
+      const appId = optionalScalar(value.app_id, name, "app_id");
+      const installationId = optionalScalar(value.installation_id, name, "installation_id");
+      const privateKeyPath = optionalScalar(value.private_key, name, "private_key");
+      if (privateKeyPath?.includes("-----BEGIN")) {
+        throw new RedskilledGithubProfileConfigError(
+          `GitHub App credential profile ${JSON.stringify(name)} must name a daemon-local PEM path, not PEM content`,
+        );
+      }
+      profiles[name] = {
+        kind: "github-app",
+        ...(appId == null ? {} : { appId }),
+        ...(installationId == null ? {} : { installationId }),
+        ...(privateKeyPath == null ? {} : { privateKeyPath }),
+      };
+      continue;
+    }
+    throw new RedskilledGithubProfileConfigError(
+      `GitHub credential profile ${JSON.stringify(name)} has unknown backend kind ${JSON.stringify(value.kind)}`,
+    );
+  }
+  return { githubProfiles: profiles };
+}
+
+function optionalScalar(value: unknown, profile: string, field: string): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw new RedskilledGithubProfileConfigError(
+      `GitHub credential profile ${JSON.stringify(profile)} ${field} must be a scalar`,
+    );
+  }
+  return String(value).trim();
 }
 
 /** Resolve every daemon-owned setting under one explicit precedence table. */
