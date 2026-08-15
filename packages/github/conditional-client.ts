@@ -31,6 +31,11 @@ import {
   type GithubBudgetGateMode,
 } from "./budget-gate.js";
 import type { GithubApiSurface, GithubRateBudget } from "./surface.js";
+import {
+  GithubBackpressureError,
+  classifyGithubLimit,
+  type GithubLimitFact,
+} from "./routing.js";
 
 const Octokit = RestOctokit.plugin(retry, throttling);
 
@@ -211,15 +216,13 @@ export class GithubCredentialError extends Error {
 }
 
 /** A primary pool cannot serve this request and no equivalent/cache can answer it. */
-export class GithubPoolUnavailableError extends Error {
+export class GithubPoolUnavailableError extends GithubBackpressureError {
   readonly pool: GithubRateBudget;
   readonly resetAt: string;
 
   constructor(pool: GithubRateBudget, resetAt: string, detail?: string, options?: { readonly cause?: unknown }) {
-    super(
-      `${pool} pool is exhausted; parked until ${resetAt}${detail ? ` (${detail})` : ""}`,
-      options,
-    );
+    const fact = primaryUnavailableFact(pool, resetAt, detail);
+    super(fact, options);
     this.name = "GithubPoolUnavailableError";
     this.pool = pool;
     this.resetAt = resetAt;
@@ -354,10 +357,11 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
         if (isGithubRateLimitError(error)) {
           if (held !== undefined) {
-            const unavailable = unavailableFromError(input.operation.budget, error);
-            return cachedAnswer<T>(held, input.operation.budget, unavailable.resetAt, now());
+            const fact = classifyGithubLimit(error, input.operation.budget, Date.parse(now()));
+            if (fact === null) throw error;
+            return cachedAnswer<T>(held, input.operation.budget, fact.retry_at, now());
           }
-          throw unavailableFromError(input.operation.budget, error);
+          throw unavailableFromError(input.operation.budget, error, Date.parse(now()));
         }
         throw error;
       }
@@ -595,7 +599,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       } catch (error) {
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
         if (isGithubRateLimitError(error)) {
-          throw unavailableFromError(attribution?.operation.budget ?? "graphql", error);
+          throw unavailableFromError(attribution?.operation.budget ?? "graphql", error, Date.parse(now()));
         }
         throw error;
       }
@@ -625,13 +629,17 @@ function cachedAnswer<T>(
   };
 }
 
-function unavailableFromError(pool: GithubRateBudget, error: unknown): GithubPoolUnavailableError {
-  const headers = errorHeaders(error);
-  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
-  const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0
-    ? new Date(resetSeconds * 1_000).toISOString()
-    : "an unknown reset instant";
-  return new GithubPoolUnavailableError(pool, resetAt, "GitHub refused the live request", { cause: error });
+function unavailableFromError(
+  pool: GithubRateBudget,
+  error: unknown,
+  nowMs: number,
+): GithubBackpressureError {
+  const fact = classifyGithubLimit(error, pool, nowMs);
+  if (fact?.kind === "secondary-throttled") return new GithubBackpressureError(fact, { cause: error });
+  if (fact !== null) {
+    return new GithubPoolUnavailableError(fact.pool, fact.retry_at, "GitHub refused the live request", { cause: error });
+  }
+  throw error;
 }
 
 function hasNextPage(headers: GithubResponseHeaders): boolean {
@@ -641,7 +649,7 @@ function hasNextPage(headers: GithubResponseHeaders): boolean {
 
 /** Primary/secondary quota refusal, distinct from 304 and transport failure. */
 export function isGithubRateLimitError(error: unknown): boolean {
-  if (error instanceof GithubPoolUnavailableError) return true;
+  if (error instanceof GithubBackpressureError) return true;
   const status = httpStatus(error);
   const headers = errorHeaders(error);
   return status === 429 ||
@@ -651,6 +659,7 @@ export function isGithubRateLimitError(error: unknown): boolean {
 
 /** Reset instant carried by a primary or secondary rate-limit refusal. */
 export function githubRateLimitResetAt(error: unknown, nowMs = Date.now()): string | null {
+  if (error instanceof GithubBackpressureError) return error.retryAt;
   const headers = errorHeaders(error);
   const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
   if (Number.isFinite(resetSeconds) && resetSeconds >= 0) {
@@ -664,6 +673,39 @@ export function githubRateLimitResetAt(error: unknown, nowMs = Date.now()): stri
   }
   const retryAtMs = Date.parse(retryAfter);
   return Number.isFinite(retryAtMs) ? new Date(retryAtMs).toISOString() : null;
+}
+
+function primaryUnavailableFact(
+  pool: GithubRateBudget,
+  retryAt: string,
+  detail?: string,
+): Exclude<GithubLimitFact, { kind: "secondary-throttled" }> {
+  const suffix = detail ? ` (${detail})` : "";
+  if (pool === "rest") {
+    return {
+      kind: "primary-rest-exhausted",
+      pool,
+      retry_at: retryAt,
+      evidence: "balance",
+      message: `REST primary quota (rest pool) is exhausted; retry after ${retryAt}${suffix}`,
+    };
+  }
+  if (pool === "graphql") {
+    return {
+      kind: "primary-graphql-exhausted",
+      pool,
+      retry_at: retryAt,
+      evidence: "balance",
+      message: `GraphQL primary quota (graphql pool) is exhausted; retry after ${retryAt}${suffix}`,
+    };
+  }
+  return {
+    kind: "search-exhausted",
+    pool,
+    retry_at: retryAt,
+    evidence: "balance",
+    message: `GitHub Search quota is exhausted; retry after ${retryAt}${suffix}`,
+  };
 }
 
 function httpStatus(error: unknown): number | undefined {
