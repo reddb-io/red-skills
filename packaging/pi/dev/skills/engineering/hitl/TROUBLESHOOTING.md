@@ -22,12 +22,14 @@ Trust the fresh PR checks and mergeable state over an older card, envelope, or p
 
 ### Recover
 
-When the PR is green and mergeable, resolve the park through the normal `/hitl` contract:
+When the PR is green and mergeable, resolve the park through the normal
+`hitl_resolve` contract:
 
-1. Post a Directive block that records the stale park, the fresh `gh pr checks` result, and the mergeable state.
-2. Clear the active `## Current blocker` only if the blocker was the stale check/mergeability park.
-3. Remove `ready-for-human` and stale `blocked:*` labels that described the false park.
-4. Apply the correct next label for the decision: `ready-for-agent` for a delegable issue, or the HITL card action (`/approve` or `/approve-ci`) when the card owns the merge decision.
+1. Supply the fresh check evidence as the rationale for `requeue` or `retake`.
+2. Let the transition clear and archive the active body blocker, concede stale
+   claims, and shed every stale Park label in one path.
+3. Use the HITL card action (`/approve` or `/approve-ci`) instead when the card
+   owns the merge decision.
 
 Do not raw-flip labels without the blocker-state update. AFK preflight re-reads the active blocker and will re-park an issue whose body still says it is blocked.
 
@@ -63,14 +65,16 @@ Plain English replies may be classified into the same action set, but only trust
 
 ### Recover
 
-If a park was resolved outside the card contract, repair the full state instead of changing one surface:
+If a park was resolved outside the card contract, repair the full state instead
+of changing one surface:
 
 1. Identify the intended verb from the trusted maintainer comment or ask for a new explicit verb.
-2. Post or refresh the Directive block that records the verb, human answer, and disposition.
-3. Make the body match the disposition: clear `## Current blocker` for resolved parks, or write the next pending decision for unresolved ones.
-4. Make labels match the disposition: remove stale `blocked:*` labels when the blocker is gone, remove `ready-for-human` when requeued, and add `ready-for-agent` only when the Agent brief is delegable.
-5. Refresh the card status after PR state changes so the next reader sees current checks and mergeability.
+2. Run the matching `hitl_resolve` decision. The body is authoritative: no
+   active blocker sheds stale typed labels, while an unresolved blocker projects
+   its declared `blocked:<kind>` label.
+3. Refresh the card status after PR state changes so the next reader sees current checks and mergeability.
 
 ### Root fix
 
-This manual reconciliation is a stopgap for #1741. The card implementation should keep making the verb-to-transition contract explicit so humans do not have to infer label and blocker-state updates from a raw comment alone.
+The atomic `hitl_resolve` transition is the repair path; raw body or label edits
+are not a second reconciliation mechanism.
