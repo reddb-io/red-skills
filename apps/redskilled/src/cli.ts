@@ -133,7 +133,7 @@ no queue — an honest unknown, never a drained one.
 `,
   acp: `Usage: redskilled acp
 
-Projects the daemon-owned RedSkills ACP v1 Agent over stdin/stdout. The adapter
+Projects the RedSkills ACP v1/v2 Agent; v2 requires schema-v2.0.0-alpha.2. The adapter
 owns no session or Worker state; closing it does not stop the host daemon.
 `,
   "acp-worker": `Usage: redskilled acp-worker --socket <path>
