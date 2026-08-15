@@ -13,6 +13,7 @@
 // history lane is deliberately shared: one curve file, two labelled series, so a
 // consumer separates them by identity instead of guessing which file is current.
 import { join } from "node:path";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
   createGithubAppBalanceTransport,
   createGithubBalanceHistory,
@@ -31,6 +32,7 @@ import type {
 import {
   createRedskilledGithubGateway,
   createRedskilledGithubUpstream,
+  createRedskilledGithubWriteUpstream,
   type RedskilledGithubGatewayRegistration,
 } from "./github-gateway.js";
 import {
@@ -51,12 +53,20 @@ export function resolveServeGithubGateway(
 ): RedskilledGithubGatewayRegistration {
   const env = options.env ?? process.env;
   const fetchImpl = createTimedGithubFetch();
+  const homeDir = options.homeDir ?? env.HOME;
   const gateway = createRedskilledGithubGateway({
     configuredProfiles: ["personal", ...Object.keys(options.profiles ?? {})],
     upstream: createRedskilledGithubUpstream({
       ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
       ...(env.GITHUB_GRAPHQL_URL ? { graphqlEndpoint: env.GITHUB_GRAPHQL_URL } : {}),
       fetchImpl,
+    }),
+    ...(homeDir == null ? {} : {
+      outboxPath: join(redskilledHomeDir(homeDir), "state", "github", "outbox.toon"),
+      writeUpstream: createRedskilledGithubWriteUpstream({
+        ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
+        fetchImpl,
+      }),
     }),
   });
   return {

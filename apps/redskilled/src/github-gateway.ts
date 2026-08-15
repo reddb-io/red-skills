@@ -11,7 +11,6 @@ import {
   DEFAULT_GITHUB_CACHE_CAPACITY,
   DEFAULT_GITHUB_CACHE_FRESH_MS,
   GithubBackpressureError,
-  classifyGithubLimit,
   createGithubCache,
   type GithubCacheOutcome,
   type GithubLimitFact,
@@ -19,14 +18,16 @@ import {
 import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import {
-  RedskilledGithubCredentialProfileError,
   githubCredentialScopeRefusal,
 } from "./github-credential-profiles.js";
 import {
+  budgetFromHeaders,
   budgetKey,
+  graphqlBudget,
   poolForRead,
   projectPools,
   publishableProfile,
+  validatorsFromHeaders,
   type BudgetObservation,
   type RedskilledGithubBudgetFacts,
   type RedskilledGithubBudgetPool,
@@ -46,8 +47,34 @@ export type {
   RedskilledGithubProfileBudgetProjection,
   RedskilledGithubProjectBudgetProjection,
 } from "./github-budget.js";
+import {
+  createGithubOutbox,
+  type GithubOutbox,
+  validateWriteRequest,
+} from "./github-outbox.js";
+import {
+  githubHeaders,
+  githubUpstreamRefusal,
+  responseValue,
+} from "./github-transport.js";
+import {
+  type RedskilledGithubWriteAnswer,
+  type RedskilledGithubWriteRequest,
+  type RedskilledGithubWriteUpstream,
+} from "./github-write.js";
+
+export {
+  createRedskilledGithubWriteUpstream,
+  type CreateRedskilledGithubWriteUpstreamOptions,
+  type RedskilledGithubWrite,
+  type RedskilledGithubWriteAnswer,
+  type RedskilledGithubWriteRequest,
+  type RedskilledGithubWriteUpstream,
+  type RedskilledGithubWriteUpstreamInput,
+} from "./github-write.js";
 
 export const REDSKILLED_GITHUB_READ_METHOD = "_redskills/github_read";
+export const REDSKILLED_GITHUB_WRITE_METHOD = "_redskills/github_write";
 
 export interface RedskilledGithubProjectAuthority {
   readonly projectId: string;
@@ -114,6 +141,9 @@ export interface RedskilledGithubReadAnswer {
 
 export interface RedskilledGithubProjectReader {
   read(request: RedskilledGithubRead): Promise<RedskilledGithubReadAnswer>;
+  write(request: RedskilledGithubWriteRequest): Promise<RedskilledGithubWriteAnswer>;
+  /** Retry this Project's durable pending writes after a daemon replacement. */
+  resumeWrites(): Promise<readonly RedskilledGithubWriteAnswer[]>;
 }
 
 export interface RedskilledGithubManagedProjectReader extends RedskilledGithubProjectReader {
@@ -170,6 +200,9 @@ export interface RedskilledGithubGatewayRegistration {
 
 export interface CreateRedskilledGithubGatewayOptions {
   readonly upstream: RedskilledGithubUpstream;
+  /** Durable host-state snapshot. Required before this gateway accepts writes. */
+  readonly outboxPath?: string;
+  readonly writeUpstream?: RedskilledGithubWriteUpstream;
   readonly clock?: () => string;
   readonly freshMs?: number;
   readonly capacity?: number;
@@ -357,6 +390,9 @@ export function createRedskilledGithubGateway(
       cache.forget(key);
     }
   };
+  const outbox = options.outboxPath == null || options.writeUpstream == null
+    ? null
+    : createGithubOutbox(options.outboxPath, options.writeUpstream, clock);
 
   return {
     forProject(authority, credential) {
@@ -371,6 +407,12 @@ export function createRedskilledGithubGateway(
       attributed.set(project.projectId, project.projectLabel);
       projectsByProfile.set(project.credentialProfile, attributed);
       const scope = scopeKey(project);
+      const requireOutbox = (): GithubOutbox => {
+        if (outbox == null) {
+          throw new RedskilledGithubAuthorityError("this GitHub gateway has no durable write outbox");
+        }
+        return outbox;
+      };
       return {
         async read(request) {
           const read = validateRead(project, request);
@@ -433,6 +475,12 @@ export function createRedskilledGithubGateway(
             if (scoped!.size === 0) observers.delete(scope);
           };
         },
+        write(request) {
+          return requireOutbox().publish(project, credential, validateWriteRequest(request));
+        },
+        resumeWrites() {
+          return requireOutbox().resume(project, credential);
+        },
       };
     },
     projectBudget(authority) {
@@ -471,6 +519,7 @@ export function createRedskilledGithubGateway(
     },
   };
 }
+
 
 /**
  * The daemon's authenticated external edge. The transport accepts only the
@@ -514,7 +563,7 @@ export function createRedskilledGithubUpstream(
         };
       }
       if (!response.ok) {
-        throw upstreamRefusal("REST", pool, response, clock(), input.project.credentialProfile);
+        throw githubUpstreamRefusal("REST read", pool, response, clock(), input.project.credentialProfile);
       }
       return {
         value: await responseValue(response),
@@ -533,7 +582,7 @@ export function createRedskilledGithubUpstream(
       body: JSON.stringify({ query }),
     });
     if (!response.ok) {
-      throw upstreamRefusal("GraphQL", "graphql", response, clock(), input.project.credentialProfile);
+      throw githubUpstreamRefusal("GraphQL read", "graphql", response, clock(), input.project.credentialProfile);
     }
     const body = await response.json() as {
       readonly data?: { readonly repository?: unknown; readonly rateLimit?: unknown };
@@ -690,82 +739,6 @@ function requireOnlyKeys(value: object, allowed: readonly string[]): void {
   if (extra != null) {
     refuse("a Project GitHub read cannot carry Project, credential, remote, or host authority fields");
   }
-}
-
-function githubHeaders(secret: string): Record<string, string> {
-  return {
-    accept: "application/vnd.github+json",
-    authorization: `Bearer ${secret}`,
-    "x-github-api-version": "2022-11-28",
-  };
-}
-
-async function responseValue(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type") ?? "";
-  return contentType.includes("json") ? response.json() : response.text();
-}
-
-function budgetFromHeaders(pool: string, headers: Headers): RedskilledGithubBudgetFacts | null {
-  const remaining = finiteNumber(headers.get("x-ratelimit-remaining"));
-  const limit = finiteNumber(headers.get("x-ratelimit-limit"));
-  const reset = finiteNumber(headers.get("x-ratelimit-reset"));
-  if (remaining == null && limit == null && reset == null) return null;
-  return {
-    pool,
-    remaining,
-    reset_at: reset == null ? null : new Date(reset * 1000).toISOString(),
-    limit,
-  };
-}
-
-function validatorsFromHeaders(
-  headers: Headers,
-  previous: RedskilledGithubValidators | undefined,
-): RedskilledGithubValidators | undefined {
-  const etag = headers.get("etag") ?? previous?.etag;
-  const lastModified = headers.get("last-modified") ?? previous?.lastModified;
-  if (etag == null && lastModified == null) return undefined;
-  return {
-    ...(etag == null ? {} : { etag }),
-    ...(lastModified == null ? {} : { lastModified }),
-  };
-}
-
-function graphqlBudget(value: unknown): RedskilledGithubBudgetFacts | null {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  return {
-    pool: "graphql",
-    remaining: finiteNumber(record.remaining),
-    reset_at: typeof record.resetAt === "string" ? record.resetAt : null,
-    limit: finiteNumber(record.limit),
-  };
-}
-
-function finiteNumber(value: unknown): number | null {
-  if (value == null || value === "") return null;
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function upstreamRefusal(
-  surface: string,
-  pool: "rest" | "graphql" | "search",
-  response: Response,
-  now: string,
-  profile: string,
-): Error {
-  const observed = {
-    status: response.status,
-    response: { headers: Object.fromEntries(response.headers.entries()) },
-  };
-  const fact = classifyGithubLimit(observed, pool, Date.parse(now));
-  if (fact != null) return new GithubBackpressureError(fact);
-  if (response.status === 401) {
-    return new RedskilledGithubCredentialProfileError("invalid-credentials", profile);
-  }
-  if (response.status === 403) return githubCredentialScopeRefusal(profile);
-  return new Error(`redskilled GitHub ${surface} read failed with status ${response.status}`);
 }
 
 function isGithubScopeError(value: unknown): boolean {
