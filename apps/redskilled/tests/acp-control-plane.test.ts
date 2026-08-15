@@ -259,7 +259,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       REDSKILLED_SESSION: `test:${root}`,
     };
     const paths = resolveRedskilledPaths({ env, homeDir: root });
-    const daemon = launchCli([
+    let daemon = launchCli([
       "serve",
       "--socket", paths.socketPath,
       "--lease", paths.leasePath,
@@ -303,6 +303,19 @@ describe("the public RedSkills ACP v1 control plane", () => {
 
     first.close();
     firstAdapter.stdin?.end();
+
+    const firstDaemonExit = new Promise<void>((resolve) => daemon.once("exit", () => resolve()));
+    daemon.kill("SIGTERM");
+    await firstDaemonExit;
+    daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "replacement redskilled daemon socket");
 
     const secondAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
     const second = client({ name: "project-drain-typed" }).connect(childStream(secondAdapter));

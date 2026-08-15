@@ -46,9 +46,11 @@ import type { RedskilledPaths } from "./paths.js";
 import {
   applyProjectControl,
   coreProjectOperation,
+  createProjectControlStore,
   notifyV1ProjectControl,
   PROJECT_CONTROL_METHODS,
   projectControlSnapshot,
+  projectControlStorePath,
   runV2ProjectControlTurn,
   type ProjectControlOperation,
   type ProjectControlState,
@@ -100,7 +102,9 @@ export async function startRedskillsAcpControlPlane(
   // Project control belongs to the daemon endpoint, not to any ACP connection.
   // Closing the client therefore drops observation only; drain intent remains
   // until the shared reducer receives an explicit stop.
-  const projectControls = new Map<string, ProjectControlState>();
+  const projectControlStore = createProjectControlStore(projectControlStorePath(paths.registrationIntentPath));
+  const projectControls = await projectControlStore.read();
+  const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
   const workspaceFor = (identity: AcpProjectIdentity): Promise<AcpProjectWorkspace> => {
     const held = projects.get(identity.projectId);
     if (held != null) return held;
@@ -118,7 +122,13 @@ export async function startRedskillsAcpControlPlane(
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    void servePublicConnection(socket, options, workspaceFor, projectControls).catch(() => socket.destroy());
+    void servePublicConnection(
+      socket,
+      options,
+      workspaceFor,
+      projectControls,
+      persistProjectControls,
+    ).catch(() => socket.destroy());
   });
   await listen(server, paths.acpSocketPath);
 
@@ -140,6 +150,7 @@ async function servePublicConnection(
   options: StartRedskillsAcpControlPlaneOptions,
   workspaceFor: (identity: AcpProjectIdentity) => Promise<AcpProjectWorkspace>,
   projectControls: Map<string, ProjectControlState>,
+  persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
 ): Promise<void> {
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorker>();
@@ -167,7 +178,7 @@ async function servePublicConnection(
   };
   const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
   const mutateProjectControl = (operation: ProjectControlOperation) =>
-    applyProjectControl(scopedProject(), operation, projectControls);
+    applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
   const emptyParams = () => ({});
 
   const v1App = agent({ name: "RedSkills" })
@@ -215,7 +226,12 @@ async function servePublicConnection(
 
       const controlOperation = coreProjectOperation(params.prompt);
       if (controlOperation != null) {
-        const control = applyProjectControl(session.project, controlOperation, projectControls);
+        const control = await applyProjectControl(
+          session.project,
+          controlOperation,
+          projectControls,
+          persistProjectControls,
+        );
         await notifyV1ProjectControl(upstream, params.sessionId, controlOperation, control);
         return {
           stopReason: "end_turn",
@@ -324,7 +340,14 @@ async function servePublicConnection(
       const turn = accepted
         .then(() => controlOperation == null
           ? runV2PublicTurn(options, sessions, active, params, upstream)
-          : runV2ProjectControlTurn(sessions, params, upstream, controlOperation, projectControls))
+          : runV2ProjectControlTurn(
+            sessions,
+            params,
+            upstream,
+            controlOperation,
+            projectControls,
+            persistProjectControls,
+          ))
         .catch(() => {})
         .finally(() => v2Turns.delete(params.sessionId));
       v2Turns.set(params.sessionId, turn);
