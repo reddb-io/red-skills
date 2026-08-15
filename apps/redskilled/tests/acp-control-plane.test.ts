@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
   client,
@@ -13,6 +13,7 @@ import {
   type SessionNotification,
   type Stream,
 } from "@agentclientprotocol/sdk";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { socketAnswers } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
@@ -34,6 +35,96 @@ afterEach(async () => {
 });
 
 describe("the public RedSkills ACP v1 control plane", () => {
+  it("replaces a dead Worker and resumes the same public session from its observable journal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-acp-replacement-"));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_MACHINE_DIR: root,
+      REDSKILLED_PLACEMENT: "off",
+      REDSKILLED_SESSION: `test:${root}`,
+    };
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
+    const daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
+
+    const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const updates: SessionNotification[] = [];
+    const acpClient = client({ name: "redskilled-acp-replacement-test" })
+      .onNotification(methods.client.session.update, ({ params }) => {
+        updates.push(params);
+      });
+    const connection = acpClient.connect(childStream(adapter));
+    await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "redskilled-replacement-client", version: "1" },
+    });
+    const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const first = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "begin durable workflow" }],
+    });
+    const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth", workerId(first._meta));
+
+    process.kill(firstBirth.pid, "SIGKILL");
+    await waitForEvent(paths.eventLanePath, "worker-death", firstBirth.worker_id);
+    updates.length = 0;
+
+    const continued = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "continue durable workflow" }],
+    });
+    expect(continued.stopReason).toBe("end_turn");
+    expect(workerId(continued._meta)).not.toBe(firstBirth.worker_id);
+    expect(updates.map(lifecycleEvent).filter(Boolean)).toEqual([
+      "replacement",
+      "checkpoint-resume",
+      "tool-activity",
+    ]);
+    expect(new Set(updates.map((update) => update.sessionId))).toEqual(new Set([session.sessionId]));
+    expect(updates.filter(agentText).map(agentText).join("\n")).toContain("resumed 1 completed turn");
+
+    const journalPath = join(dirname(paths.registrationIntentPath), "redskilled.acp-sessions.toon");
+    const journal = decode(await readFile(journalPath, "utf8")) as unknown as {
+      version: number;
+      sessions: Array<{
+        public_session_id: string;
+        entries: Array<{ kind: string }>;
+        provider_transcript?: unknown;
+      }>;
+    };
+    const durable = journal.sessions.find((entry) => entry.public_session_id === session.sessionId);
+    expect(journal.version).toBe(1);
+    expect(durable?.entries.map((entry) => entry.kind)).toEqual([
+      "prompt",
+      "workflow-pointer",
+      "plan",
+      "plan",
+      "checkpoint",
+      "prompt",
+      "workflow-pointer",
+      "plan",
+      "plan",
+      "checkpoint",
+    ]);
+    expect(durable).not.toHaveProperty("provider_transcript");
+    expect(JSON.stringify(durable)).not.toMatch(/chain[-_ ]of[-_ ]thought|agent_thought/i);
+
+    connection.close();
+    adapter.stdin?.end();
+    daemon.kill("SIGTERM");
+  }, 30_000);
+
   it("reuses one bounded Workflow Worker across related turns and reaps every terminal outcome", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-acp-control-plane-"));
     roots.push(root);
@@ -444,6 +535,11 @@ function workerId(meta: unknown): string {
 function lifecycleEvent(update: SessionNotification): string | undefined {
   return (update._meta as { redskills?: { lifecycle?: { event?: string } } } | undefined)
     ?.redskills?.lifecycle?.event;
+}
+
+function agentText(update: SessionNotification): string {
+  if (update.update.sessionUpdate !== "agent_message_chunk" || update.update.content.type !== "text") return "";
+  return update.update.content.text;
 }
 
 function git(cwd: string, ...args: string[]): void {

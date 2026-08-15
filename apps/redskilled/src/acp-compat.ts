@@ -1,4 +1,4 @@
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError, type SessionNotification } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 
 export const ACP_PROTOCOL_VERSION = 1;
@@ -28,6 +28,26 @@ export function requireSupportedV2Revision(meta: acpV2.InitializeRequest["_meta"
       `unsupported ACP v2 draft revision ${received}; expected ${ACP_V2_DRAFT_REVISION}`,
     );
   }
+}
+
+export function translateV1SessionUpdateToV2(
+  update: SessionNotification["update"],
+  messageId: string,
+): acpV2.SessionUpdate | undefined {
+  if (update.sessionUpdate === "plan") {
+    return {
+      sessionUpdate: "plan_update",
+      plan: { type: "items", planId: "primary", entries: update.entries },
+    };
+  }
+  if (update.sessionUpdate === "agent_message_chunk") {
+    return {
+      sessionUpdate: "agent_message_chunk",
+      messageId,
+      content: update.content as acpV2.ContentBlock,
+    };
+  }
+  return undefined;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
