@@ -499,7 +499,12 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       githubAttribution,
     );
     const resolvedGithubBalance = resolveServeGithubBalance(values);
-    const githubGateway = resolveServeGithubGateway(resolveRedskilledHostToken(process.env, readTrackerCliToken));
+    const githubGateway = resolveServeGithubGateway({
+      profiles: hostConfig.githubProfiles,
+      resolvePersonal: () => resolveRedskilledHostToken(process.env, readTrackerCliToken),
+      env: process.env,
+      homeDir: homedir(),
+    });
     // An App's ceiling is measured separately because two buckets summed into one document make
     // the last writer the displayed truth for a ceiling the next request may
     // not draw from.
@@ -553,7 +558,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
         // is `unknown`, never a full budget, because a full budget is the one
         // answer that admits every call.
         ...(githubBalance == null ? {} : { githubBalance }),
-        ...(githubGateway == null ? {} : { githubGateway }),
+        githubGateway,
         ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
       });
     } catch (error) {
