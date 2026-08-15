@@ -161,15 +161,22 @@ function githubProfilesAt(
       throw new RedskilledGithubProfileConfigError(`GitHub credential profile ${JSON.stringify(name)} must be a map`);
     }
     if (value.kind === "personal") {
-      if (Object.keys(value).some((key) => /^(?:token|secret|credential)$/i.test(key))) {
+      if (Object.keys(value).some((key) => key !== "kind")) {
         throw new RedskilledGithubProfileConfigError(
-          `personal GitHub credential profile ${JSON.stringify(name)} resolves from the daemon environment or gh auth and may not store a token`,
+          `personal GitHub credential profile ${JSON.stringify(name)} resolves from the daemon environment or gh auth and accepts only kind`,
         );
       }
       profiles[name] = { kind: "personal" };
       continue;
     }
     if (value.kind === "github-app") {
+      const extra = Object.keys(value).find((key) =>
+        !["kind", "app_id", "installation_id", "private_key"].includes(key));
+      if (extra != null) {
+        throw new RedskilledGithubProfileConfigError(
+          `GitHub App credential profile ${JSON.stringify(name)} has unsupported field ${JSON.stringify(extra)}`,
+        );
+      }
       const appId = optionalScalar(value.app_id, name, "app_id");
       const installationId = optionalScalar(value.installation_id, name, "installation_id");
       const privateKeyPath = optionalScalar(value.private_key, name, "private_key");
