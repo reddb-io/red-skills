@@ -183,6 +183,8 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
       gateway: {
         forProject: () => ({
           read: async () => { throw new GithubBackpressureError(fact); },
+          write: async () => { throw new Error("unused write"); },
+          resumeWrites: async () => [],
         }),
       },
     }, () => ({
