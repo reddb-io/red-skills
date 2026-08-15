@@ -11,6 +11,7 @@ import {
   createGithubCache,
   type GithubCacheOutcome,
 } from "@reddb-io/github";
+import { execFile } from "node:child_process";
 
 export interface RedskilledGithubProjectAuthority {
   readonly projectId: string;
@@ -87,6 +88,13 @@ export interface CreateRedskilledGithubGatewayOptions {
   readonly capacity?: number;
 }
 
+export interface CreateRedskilledGithubUpstreamOptions {
+  readonly origin?: string;
+  readonly graphqlEndpoint?: string;
+  readonly fetchImpl?: typeof fetch;
+  readonly fetchRepository?: (input: RedskilledGithubUpstreamInput) => Promise<unknown>;
+}
+
 interface KeptGithubAnswer extends RedskilledGithubUpstreamAnswer {}
 
 export class RedskilledGithubAuthorityError extends Error {
@@ -153,6 +161,61 @@ export function createRedskilledGithubGateway(
         },
       };
     },
+  };
+}
+
+/**
+ * The daemon's authenticated external edge. The transport accepts only the
+ * already-authorized normalized request emitted above; it has no public socket
+ * or independently selectable credential surface.
+ */
+export function createRedskilledGithubUpstream(
+  options: CreateRedskilledGithubUpstreamOptions = {},
+): RedskilledGithubUpstream {
+  const origin = (options.origin ?? "https://api.github.com").replace(/\/+$/, "");
+  const graphqlEndpoint = options.graphqlEndpoint ?? `${origin}/graphql`;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const fetchRepository = options.fetchRepository ?? fetchCanonicalRepository;
+
+  return async (input) => {
+    if (input.read.kind === "repository-fetch") {
+      return { value: await fetchRepository(input), budget: null };
+    }
+
+    if (input.read.kind === "rest") {
+      const repository = input.project.projectLabel.split("/").map(encodeURIComponent).join("/");
+      const response = await fetchImpl(`${origin}/repos/${repository}/${input.read.path}`, {
+        method: "GET",
+        headers: githubHeaders(input.credential.secret),
+      });
+      if (!response.ok) throw upstreamRefusal("REST", response.status);
+      return {
+        value: await responseValue(response),
+        budget: budgetFromHeaders("rest", response.headers),
+      };
+    }
+
+    const [owner, repository] = input.project.projectLabel.split("/", 2) as [string, string];
+    const query =
+      `query RedskilledProjectRead { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repository)}) { ` +
+      `${input.read.selection} } rateLimit { limit remaining resetAt cost } }`;
+    const response = await fetchImpl(graphqlEndpoint, {
+      method: "POST",
+      headers: { ...githubHeaders(input.credential.secret), "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!response.ok) throw upstreamRefusal("GraphQL", response.status);
+    const body = await response.json() as {
+      readonly data?: { readonly repository?: unknown; readonly rateLimit?: unknown };
+      readonly errors?: readonly unknown[];
+    };
+    if (body.errors != null && body.errors.length > 0) {
+      throw new Error("redskilled GitHub GraphQL read was refused upstream");
+    }
+    return {
+      value: body.data?.repository,
+      budget: graphqlBudget(body.data?.rateLimit),
+    };
   };
 }
 
@@ -261,4 +324,72 @@ function cacheKey(project: RedskilledGithubProjectAuthority, read: RedskilledGit
 
 function refuse(message: string): never {
   throw new RedskilledGithubAuthorityError(message);
+}
+
+function githubHeaders(secret: string): Record<string, string> {
+  return {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${secret}`,
+    "x-github-api-version": "2022-11-28",
+  };
+}
+
+async function responseValue(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  return contentType.includes("json") ? response.json() : response.text();
+}
+
+function budgetFromHeaders(pool: string, headers: Headers): RedskilledGithubBudgetFacts | null {
+  const remaining = finiteNumber(headers.get("x-ratelimit-remaining"));
+  const limit = finiteNumber(headers.get("x-ratelimit-limit"));
+  const reset = finiteNumber(headers.get("x-ratelimit-reset"));
+  if (remaining == null && limit == null && reset == null) return null;
+  return {
+    pool,
+    remaining,
+    reset_at: reset == null ? null : new Date(reset * 1000).toISOString(),
+    limit,
+  };
+}
+
+function graphqlBudget(value: unknown): RedskilledGithubBudgetFacts | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return {
+    pool: "graphql",
+    remaining: finiteNumber(record.remaining),
+    reset_at: typeof record.resetAt === "string" ? record.resetAt : null,
+    limit: finiteNumber(record.limit),
+  };
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function upstreamRefusal(surface: string, status: number): Error {
+  return new Error(`redskilled GitHub ${surface} read failed with status ${status}`);
+}
+
+async function fetchCanonicalRepository(input: RedskilledGithubUpstreamInput): Promise<unknown> {
+  if (input.read.kind !== "repository-fetch") throw new Error("repository fetch received a non-fetch read");
+  const authorization = Buffer.from(`x-access-token:${input.credential.secret}`, "utf8").toString("base64");
+  const args = ["fetch", "--no-tags", "origin", ...(input.read.ref == null ? [] : [input.read.ref])];
+  await new Promise<void>((resolve, reject) => {
+    execFile("git", args, {
+      cwd: input.project.workspacePath,
+      env: {
+        ...process.env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.extraHeader",
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${authorization}`,
+        GIT_TERMINAL_PROMPT: "0",
+      },
+      windowsHide: true,
+      timeout: 60_000,
+    }, (error) => error == null ? resolve() : reject(new Error("redskilled repository fetch failed", { cause: error })));
+  });
+  return { fetched: true, ref: input.read.ref ?? null };
 }
