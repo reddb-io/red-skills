@@ -36,6 +36,7 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
     let releaseRecovery!: () => void;
     const recoveryHeld = new Promise<void>((resolve) => { releaseRecovery = resolve; });
     const upstream = createRedskilledGithubUpstream({
+      clock: () => "2026-08-15T21:00:00.000Z",
       fetchImpl: async (_url, init) => {
         const authorization = new Headers(init?.headers).get("authorization");
         if (authorization === "Bearer engineering-secret") {
@@ -104,8 +105,8 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
     }, () => ({
       projectId: PROJECT.projectId,
       projectLabel: PROJECT.projectLabel,
+      checkoutRoot: "/client-checkouts/widgets",
       workspacePath: PROJECT.workspacePath,
-      createdAt: "2026-08-15T21:00:00.000Z",
     }));
 
     const error = await read({ params: { read: { kind: "rest", path: "issues/17" } } })
