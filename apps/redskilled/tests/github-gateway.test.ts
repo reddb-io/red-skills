@@ -1,10 +1,23 @@
+import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { client, methods, type ClientConnection } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
 import {
+  REDSKILLED_GITHUB_READ_METHOD,
   RedskilledGithubAuthorityError,
   createRedskilledGithubGateway,
+  type RedskilledGithubReadAnswer,
   type RedskilledGithubProjectAuthority,
   type RedskilledGithubUpstream,
 } from "../src/github-gateway.js";
+import { startRedskillsAcpControlPlane } from "../src/acp-control-plane.js";
+import { socketStream } from "../src/acp-socket.js";
+import { resolveRedskilledPaths } from "../src/paths.js";
 
 const PROJECT: RedskilledGithubProjectAuthority = {
   projectId: "github:101",
@@ -113,5 +126,107 @@ describe("the Project-scoped redskilled GitHub gateway", () => {
       .rejects.toBeInstanceOf(RedskilledGithubAuthorityError);
     await expect(reader.read({ kind: "repository-fetch", ref: "--upload-pack=admin" }))
       .rejects.toBeInstanceOf(RedskilledGithubAuthorityError);
+    await expect(reader.read({ kind: "rest", path: "issues/1", project_id: "github:202" } as never))
+      .rejects.toBeInstanceOf(RedskilledGithubAuthorityError);
+  });
+
+  it("shares one gateway across Project ACP clients without widening their authority", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-github-gateway-"));
+    const checkout = join(root, "checkout");
+    execFileSync("git", ["init", checkout], { stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/widgets.git"], {
+      cwd: checkout,
+      stdio: "ignore",
+    });
+    const identityServer = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id: 101, full_name: "acme/widgets" }));
+    });
+    identityServer.listen(0, "127.0.0.1");
+    await once(identityServer, "listening");
+    const address = identityServer.address();
+    if (address == null || typeof address === "string") throw new Error("identity fixture did not bind TCP");
+
+    const previousApi = process.env.GITHUB_API_URL;
+    process.env.GITHUB_API_URL = `http://127.0.0.1:${address.port}`;
+    let upstreamCalls = 0;
+    let release!: () => void;
+    let markStarted!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gateway = createRedskilledGithubGateway({
+      upstream: async () => {
+        upstreamCalls += 1;
+        markStarted();
+        await held;
+        return { value: { state: "OPEN" }, budget: { pool: "rest", remaining: 4_700, reset_at: null } };
+      },
+    });
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: root,
+    });
+    let authorizedReads = 0;
+    let markBothAuthorized!: () => void;
+    const bothAuthorized = new Promise<void>((resolve) => { markBothAuthorized = resolve; });
+    const control = await startRedskillsAcpControlPlane({
+      paths,
+      startWorker: () => { throw new Error("the GitHub gateway must not birth a Worker"); },
+      hostState: () => ({ workers: [] }) as never,
+      githubGateway: {
+        gateway,
+        credentialForProject: () => {
+          authorizedReads += 1;
+          if (authorizedReads === 2) markBothAuthorized();
+          return { profile: "engineering", credential: { secret: "fixture credential" } };
+        },
+      },
+    });
+    const connections: ClientConnection[] = [];
+    try {
+      for (const name of ["editor", "worker"]) {
+        const socket = connect(control.socketPath);
+        await once(socket, "connect");
+        const connection = client({ name }).connect(socketStream(socket));
+        connections.push(connection);
+        await connection.agent.request(methods.agent.initialize, {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name, version: "1" },
+        });
+        await connection.agent.request(methods.agent.session.new, { cwd: checkout, mcpServers: [] });
+      }
+
+      const first = connections[0]!.agent.request<RedskilledGithubReadAnswer>(
+        REDSKILLED_GITHUB_READ_METHOD,
+        { read: { kind: "rest", path: "issues/17" } },
+      );
+      const second = connections[1]!.agent.request<RedskilledGithubReadAnswer>(
+        REDSKILLED_GITHUB_READ_METHOD,
+        { read: { kind: "rest", path: "/issues/17" } },
+      );
+      await Promise.all([started, bothAuthorized]);
+      expect(upstreamCalls).toBe(1);
+      release();
+      await expect(Promise.all([first, second])).resolves.toMatchObject([
+        { project_id: "github:101", credential_profile: "engineering", source: "upstream" },
+        { project_id: "github:101", credential_profile: "engineering", source: "upstream" },
+      ]);
+
+      await expect(connections[0]!.agent.request(REDSKILLED_GITHUB_READ_METHOD, {
+        read: { kind: "rest", path: "issues/17" },
+        project_id: "github:202",
+      })).rejects.toThrow();
+      await expect(connections[0]!.agent.request(REDSKILLED_GITHUB_READ_METHOD, {
+        read: { kind: "rest", path: "/user" },
+      })).rejects.toThrow();
+    } finally {
+      for (const connection of connections) connection.close();
+      await control.close();
+      await new Promise<void>((resolve) => identityServer.close(() => resolve()));
+      if (previousApi == null) delete process.env.GITHUB_API_URL;
+      else process.env.GITHUB_API_URL = previousApi;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
