@@ -56,7 +56,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **Host daemon status, provisioning, policy, or lifecycle** -> `/redskilled`.
   It reads the daemon's socket, version, registrations, Workers, ceilings, and
   setting origins; provisions the daemon-owned home; edits host policy; and
-  restarts through the survival-reporting stop path. `/dashboard` stays the
+  configures named personal or GitHub App credential backends. A Project may
+  select one public profile name in tracked config, while every token, App fact,
+  and PEM path stays on the `/redskilled` host-policy route. `/dashboard` stays the
   route for this repository's queue health, while `/red-statusline` owns the
   one-line host adapter.
 - **"What is the Worker on issue N doing, or why did it never start?"** ->

@@ -360,43 +360,46 @@ operator-owned.
 
 ## Which identity pays
 
-The host authenticates as a **person** by default: `REDSKILLED_HOST_TOKEN`,
-`GITHUB_TOKEN`, `GH_TOKEN`, or the tracker CLI's own credential, in that order.
-That personal token spends ONE bucket for the whole machine — the queue poll,
-every Worker's reads, and the operator's own commands draw from the same
-5,000/hour.
+Each Project binds to one named, daemon-owned credential profile. The implicit
+profile is `personal`, preserving the existing precedence:
+`REDSKILLED_HOST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`.
+The daemon re-runs that lookup when a Project asks for GitHub access; it never
+copies the credential into Project config, an ACP/MCP request, or a Worker.
 
-An operator may additionally declare a **GitHub App**, which carries its own
-bucket, states its permissions instead of inheriting everything its owner can
-do, and is revocable without touching a person's account:
+Named backends live only in the host's `~/.red/config.yaml`:
 
+```yaml
+plugins:
+  dev:
+    redskilled:
+      github_profiles:
+        personal:
+          kind: personal
+        engineering:
+          kind: github-app
+          app_id: "4575633"
+          installation_id: "153309957"
+          private_key: ~/.red/redskilled/credentials/engineering.pem
 ```
-RED_GITHUB_APP_ID=<app id>
-RED_GITHUB_APP_INSTALLATION=<installation id>
-RED_GITHUB_APP_KEY=<absolute path to the App's .pem>
+
+A tracked Project selects only the public name:
+
+```yaml
+plugins:
+  dev:
+    github:
+      credential_profile: engineering
 ```
 
-All three are required together. A partial declaration is refused rather than
-falling back quietly, because a silent fallback would restore the shared bucket
-the App was adopted to end.
+The App's PEM stays daemon-local. `redskilled` reads it and mints a fresh
+installation credential at use, so key and installation-token rotation do not
+expose material downstream. Several profiles may coexist; cache entries,
+in-flight reads, returned budget facts, and authorization decisions are keyed by
+profile as well as Project.
 
-**The App does not replace the person — it is routed to, per repository.** An
-installation covers an ACCOUNT while the daemon is host-global, so the operator
-is routinely working in a repository the App was never installed on: a personal
-repo, another organisation, a fork. Those requests go out on the personal token,
-which remains the floor. Coverage is asked once per repository and remembered
-under the host state root, so the question costs one request rather than one per
-client. When coverage cannot be established at all — offline, unreadable key,
-GitHub refusing — the personal token answers and the recorded reason says
-*unknown* rather than *not installed*, so an outage never masquerades as a
-verdict.
-
-**Two identities keep two balances, and the two are never summed.** Five
-thousand App requests cannot pay for a repository the App does not cover, so a
-combined figure would report headroom that the next request cannot spend. Each
-identity's balance is stored under its own name (`balance.toon` for the person,
-`balance-app-<installation>.toon` for the App), a per-project surface shows the
-bucket that pays for THAT repository, and the host view shows both side by side.
+Profiles are fail-closed. An unknown name, missing or invalid credential, or
+scope mismatch returns a typed, secret-free ACP refusal. An explicitly selected
+App never falls back to `personal`; fix its installation or permissions instead.
 
 ## Provisioning
 

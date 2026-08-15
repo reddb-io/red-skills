@@ -70,18 +70,23 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    Keep these keys in the home config only: a project's `.red/config.yaml` may
    ask for Workers, but it may not redefine the machine's limit.
 
-   **The App is a payer, never an author.** An operator who wants automation off
-   their personal rate limit declares a GitHub App in the SAME host file, because
-   one machine has one App and one private key — a repository never declares it:
+   **Credentials are named daemon-owned profiles.** The compatibility profile
+   is `personal`; it resolves `REDSKILLED_HOST_TOKEN`, `GITHUB_TOKEN`,
+   `GH_TOKEN`, then `gh auth token`. An operator may declare several personal or
+   bring-your-own App profiles in the SAME host file:
 
    ```yaml
    plugins:
      dev:
        redskilled:
-         github_app:
-           app_id: "4575633"
-           installation_id: "153309957"
-           private_key: ~/.red/redskilled/credentials/github-app.pem
+         github_profiles:
+           personal:
+             kind: personal
+           engineering:
+             kind: github-app
+             app_id: "4575633"
+             installation_id: "153309957"
+             private_key: ~/.red/redskilled/credentials/engineering.pem
    ```
 
    Walk the operator through it in this order, and stop at the first step that
@@ -99,22 +104,27 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    4. **Read the installation id back** rather than transcribing it: the App's
       own installations listing names it, and a wrong id fails as an
       authentication error far from its cause.
-   5. **Declare the block** above, all three keys together. A partial block is
-      REFUSED rather than ignored, because a silent fallback restores the shared
-      personal bucket the App was adopted to end.
+   5. **Declare the profile** above, all three App keys together. A partial
+      profile is refused when selected.
+   6. **Bind the tracked Project** by placing only the public name in its
+      `.red/config.yaml`:
 
-   Then say what changes and what does not. The App pays for READS — the queue
-   poll, issue listings, timelines, trust lookups — on its own bucket, per
-   repository it covers. Everything else is unchanged: **writes still go out as
-   the operator**, because comments, labels and pull requests are made through
-   the `gh` CLI with the operator's own credential, and commits are made by
-   local `git` with the operator's name and email. The App credential must never
-   be exported as `GH_TOKEN` or `GITHUB_TOKEN` — that would hand the CLI a bot
-   identity and sign the operator's work with it.
+      ```yaml
+      plugins:
+        dev:
+          github:
+            credential_profile: engineering
+      ```
 
-   A repository outside the installation keeps using the operator's token. That
-   is the ordinary case, not a fault: the daemon is host-scoped and the operator
-   works in personal repositories, other organisations and forks.
+   Never place a token, PEM, App id, installation id, or private-key path in
+   Project config. `redskilled` re-resolves personal credentials and reads the
+   daemon-local PEM when used, then mints the App installation credential
+   internally. ACP clients, MCP clients, and Workers receive none of it.
+
+   An explicit profile is fail-closed. Unknown profiles, missing or invalid
+   credentials, and scope mismatches return typed secret-free ACP refusals; an
+   App profile never falls back to `personal`. Several profiles may coexist,
+   with separate cache, budget, and authorization domains.
 
 4. **Restart and adopt — only once a verb is actually needed** (read *The daemon
    upgrades itself* below before this step; a daemon that merely trails the
@@ -328,11 +338,11 @@ and lifecycle. `/red-setup` is per-repository: it is the only authority allowed
 to create a checkout's `.red/` and enable plugins there. Route repository setup
 to `/red-setup`; route host daemon operation here.
 
-**The GitHub credential is machine-scoped, so it is configured here.** One host
-has one App, one private key and one installation; a repository has none of
-those and must never declare them. A `/red-setup` run that meets an operator
-wanting automation off their personal rate limit routes them to this skill
-rather than writing credentials into a checkout.
+**GitHub credential backends are machine-scoped, so they are configured here.**
+A Project may select one public profile name in tracked config, but it has none
+of the profile's token, PEM, App id, installation id, or private-key path. A
+`/red-setup` run that meets an operator wanting a new backend routes them to this
+skill rather than writing credential material into a checkout.
 
 The debug entry is scoped the same way — it explains one Worker's process life
 from the daemon's and the Worker's own records. Queue health across the backlog
