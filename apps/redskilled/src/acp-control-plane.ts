@@ -41,7 +41,13 @@ import {
   waitForAbort,
   withTimeout,
 } from "./acp-socket.js";
-import { bindAcpProjectGithubRead, githubReadParams } from "./acp-github.js";
+import {
+  REDSKILLED_GITHUB_UPDATE_METHOD,
+  bindAcpGithubReaderUpdates,
+  bindAcpProjectGithubRead,
+  githubReadParams,
+  type AcpGithubUpdateObserver,
+} from "./acp-github.js";
 import {
   bindAcpHostGithubBudget,
   bindAcpProjectGithubBudget,
@@ -170,6 +176,8 @@ async function servePublicConnection(
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorker>();
   let connectionProject: AcpProjectWorkspace | undefined;
+  let githubObserver: Promise<AcpGithubUpdateObserver> | undefined;
+  let githubNotify: ((method: string, params?: unknown) => Promise<void>) | undefined;
 
   const bindProject = async (cwd: string, incompatible: () => Error): Promise<AcpProjectWorkspace> => {
     const identity = await resolveAcpProjectIdentity(cwd);
@@ -194,7 +202,13 @@ async function servePublicConnection(
   const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
-  const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject);
+  const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject, (reader) => {
+    if (githubObserver != null || githubNotify == null) return;
+    githubObserver = Promise.resolve(bindAcpGithubReaderUpdates(
+      reader,
+      (method, update) => githubNotify!(method, update),
+    ));
+  });
   const readProjectBudget = bindAcpProjectGithubBudget(options.githubGateway, scopedProject);
   const readHostBudget = bindAcpHostGithubBudget(options.githubGateway, options.hostAdministration === true);
   const emptyParams = () => ({});
@@ -214,7 +228,11 @@ async function servePublicConnection(
             workerBacked: true,
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
             ...(options.githubGateway == null ? {} : {
-              githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+              githubGateway: {
+                version: 1,
+                methods: [REDSKILLED_GITHUB_READ_METHOD],
+                notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
+              },
               credentialBudgets: {
                 version: 1,
                 methods: [
@@ -227,11 +245,12 @@ async function servePublicConnection(
         },
       };
     })
-    .onRequest(methods.agent.session.new, async ({ params }) => {
+    .onRequest(methods.agent.session.new, async ({ params, client: upstream }) => {
       const project = await bindProject(params.cwd, () => RequestError.invalidParams(
         {},
         "this project-scoped ACP connection cannot address a different Project",
       ));
+      githubNotify ??= upstream.notify.bind(upstream);
       const sessionId = randomUUID();
       sessions.set(sessionId, { request: params, project });
       return {
@@ -328,7 +347,11 @@ async function servePublicConnection(
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
             projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
             ...(options.githubGateway == null ? {} : {
-              githubGateway: { version: 1, methods: [REDSKILLED_GITHUB_READ_METHOD] },
+              githubGateway: {
+                version: 1,
+                methods: [REDSKILLED_GITHUB_READ_METHOD],
+                notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
+              },
               credentialBudgets: {
                 version: 1,
                 methods: [
@@ -341,10 +364,11 @@ async function servePublicConnection(
         },
       };
     })
-    .onRequest(acpV2.methods.agent.session.new, async ({ params }) => {
+    .onRequest(acpV2.methods.agent.session.new, async ({ params, client: upstream }) => {
       const project = await bindProject(params.cwd, () => acpV2.RequestError.invalidParams(
         "this project-scoped ACP connection cannot address a different Project",
       ));
+      githubNotify ??= upstream.notify.bind(upstream);
       const sessionId = randomUUID();
       sessions.set(sessionId, {
         request: {
@@ -416,6 +440,11 @@ async function servePublicConnection(
     .withV2(v2App)
     .connect(socketStream(socket) as unknown as acpV2.Stream);
   await connection.closed;
+  if (githubObserver != null) {
+    const observer = await githubObserver;
+    observer.close();
+    await observer.settled();
+  }
   for (const [sessionId, worker] of active) cleanupWorker(sessionId, worker, active);
 }
 
