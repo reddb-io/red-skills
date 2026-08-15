@@ -246,7 +246,137 @@ describe("the public RedSkills ACP v1 control plane", () => {
     renamedAdapter.stdin?.end();
     daemon.kill("SIGTERM");
   }, 30_000);
+
+  it("keeps one governed Project drain alive across clients until an explicit stop", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-acp-project-drain-"));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_MACHINE_DIR: root,
+      REDSKILLED_PLACEMENT: "off",
+      REDSKILLED_SESSION: `test:${root}`,
+    };
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
+    const daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
+
+    const firstAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const orderedCoreUpdates: string[] = [];
+    const first = client({ name: "project-drain-core" })
+      .onNotification(methods.client.session.update, ({ params }) => {
+        orderedCoreUpdates.push(params.update.sessionUpdate);
+      })
+      .connect(childStream(firstAdapter));
+    const initialized = await first.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "project-drain-core", version: "1" },
+    });
+    expect(initialized._meta).toMatchObject({
+      redskills: {
+        projectControl: {
+          version: 1,
+          methods: ["_redskills/project_drain", "_redskills/project_stop", "_redskills/project_status"],
+        },
+      },
+    });
+    const firstSession = await first.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const coreDrain = await first.agent.request(methods.agent.session.prompt, {
+      sessionId: firstSession.sessionId,
+      prompt: [{ type: "text", text: "/drain" }],
+    });
+    expect(projectControlMeta(coreDrain._meta)).toMatchObject({
+      drain_intent: "draining",
+      revision: 1,
+      updates: [{ sequence: 1, operation: "drain", drain_intent: "draining" }],
+    });
+    expect(orderedCoreUpdates).toEqual(["plan", "agent_message_chunk"]);
+
+    first.close();
+    firstAdapter.stdin?.end();
+
+    const secondAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const second = client({ name: "project-drain-typed" }).connect(childStream(secondAdapter));
+    await second.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "project-drain-typed", version: "1" },
+    });
+    await second.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const observed = await second.agent.request<ProjectControlSnapshot>("_redskills/project_status", {});
+    expect(observed).toEqual(projectControlMeta(coreDrain._meta));
+
+    const stopped = await second.agent.request<ProjectControlSnapshot>("_redskills/project_stop", {});
+    expect(stopped).toMatchObject({
+      drain_intent: "stopped",
+      revision: 2,
+      updates: [
+        { sequence: 1, operation: "drain", drain_intent: "draining" },
+        { sequence: 2, operation: "stop", drain_intent: "stopped" },
+      ],
+    });
+    second.close();
+    secondAdapter.stdin?.end();
+
+    const thirdAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const third = client({ name: "project-drain-core-again" }).connect(childStream(thirdAdapter));
+    await third.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "project-drain-core-again", version: "1" },
+    });
+    const thirdSession = await third.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const coreDrainAgain = await third.agent.request(methods.agent.session.prompt, {
+      sessionId: thirdSession.sessionId,
+      prompt: [{ type: "text", text: "/drain" }],
+    });
+    expect(projectControlMeta(coreDrainAgain._meta)).toMatchObject({
+      drain_intent: "draining",
+      revision: 3,
+      updates: [
+        { sequence: 1, operation: "drain", drain_intent: "draining" },
+        { sequence: 2, operation: "stop", drain_intent: "stopped" },
+        { sequence: 3, operation: "drain", drain_intent: "draining" },
+      ],
+    });
+    expect(await third.agent.request<ProjectControlSnapshot>("_redskills/project_status", {}))
+      .toEqual(projectControlMeta(coreDrainAgain._meta));
+
+    third.close();
+    thirdAdapter.stdin?.end();
+    daemon.kill("SIGTERM");
+  }, 30_000);
 });
+
+interface ProjectControlSnapshot {
+  readonly version: 1;
+  readonly project_id: string;
+  readonly project_label: string;
+  readonly workspace_path: string;
+  readonly drain_intent: "inactive" | "draining" | "stopped";
+  readonly revision: number;
+  readonly updates: ReadonlyArray<{
+    readonly sequence: number;
+    readonly operation: "drain" | "stop";
+    readonly drain_intent: "draining" | "stopped";
+  }>;
+}
+
+function projectControlMeta(meta: unknown): ProjectControlSnapshot {
+  const control = (meta as { redskills?: { projectControl?: unknown } } | undefined)
+    ?.redskills?.projectControl;
+  expect(control).toMatchObject({ version: 1, project_id: expect.any(String) });
+  return control as ProjectControlSnapshot;
+}
 
 function projectMeta(meta: unknown): { projectId: string; projectLabel: string; workspacePath: string } {
   const project = (meta as { redskills?: unknown } | undefined)?.redskills as
