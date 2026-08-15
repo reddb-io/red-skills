@@ -6,11 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const bundle = join(here, "..", "dist", "redskilled-mcp.bundle.min.mjs");
-const resident = join(here, "..", "dist", "castle-resident.bundle.min.mjs");
-if (!existsSync(bundle) || !existsSync(resident)) {
-  process.stderr.write(
-    "red-skills-redskilled-mcp: packaged matching proxy/resident bundle pair is missing\n",
-  );
+if (!existsSync(bundle)) {
+  process.stderr.write("red-skills-redskilled-mcp: packaged bundle is missing\n");
   process.exit(1);
 }
 const result = spawnSync(process.execPath, [bundle, ...process.argv.slice(2)], {

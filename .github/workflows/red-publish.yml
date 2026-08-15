@@ -687,7 +687,6 @@ jobs:
           for expected in \
             package/dist/dev.bundle.min.mjs \
             package/dist/redskilled-mcp.bundle.min.mjs \
-            package/dist/castle-resident.bundle.min.mjs \
             package/dist/code-nav.bundle.min.mjs \
             package/dist/memory.bundle.min.mjs \
             package/dist/brain.bundle.min.mjs \
@@ -707,7 +706,6 @@ jobs:
           pkg="$smoke/node_modules/@reddb-io/red-skills"
           node "$pkg/bin/red-skills-dev.mjs" --version
           node "$pkg/bin/red-skills-redskilled-mcp.mjs" --help
-          test -f "$pkg/dist/castle-resident.bundle.min.mjs"
           # code-nav launches via an npm-shim bin (#1396) that resolves the packaged
           # code-nav bundle; smoke both the shim and the bundle it resolves.
           test -x "$smoke/node_modules/.bin/red-skills-code-nav"
@@ -890,7 +888,6 @@ jobs:
             dist/dev.bundle.min.mjs
             dist/dev.manifest.json
             dist/redskilled-mcp.bundle.min.mjs
-            dist/castle-resident.bundle.min.mjs
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
             dist/benchmark-memory.bundle.min.mjs

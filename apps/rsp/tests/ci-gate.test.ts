@@ -17,29 +17,16 @@ function jobBody(source: string, name: string): string {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
-describe("RSP required CI gates (#3625)", () => {
-  it("builds and exercises the distributable before required unit and integration checks", async () => {
+describe("RSP CI posture", () => {
+  it("does not make RSP build, unit, or integration checks merge requirements", async () => {
     const source = await workflow("red-workspace-ci.yml");
-    const rsp = jobBody(source, "rsp");
-
-    expect(rsp).toContain("needs: scope");
-    expect(rsp).toContain("contains(fromJSON(needs.scope.outputs.test_packages), 'apps/rsp')");
-    expect(rsp).not.toMatch(/^ {4}if:/m);
-
-    const build = rsp.indexOf("run: pnpm -C apps/rsp build");
-    const exercise = rsp.indexOf("run: node dist/rsp.bundle.min.mjs --help");
-    const unit = rsp.indexOf("run: pnpm -C apps/rsp test");
-    const integration = rsp.indexOf("run: pnpm -C apps/rsp test:integration");
-
-    expect(build, "missing distributable build").toBeGreaterThanOrEqual(0);
-    expect(exercise, "missing distributable smoke exercise").toBeGreaterThan(build);
-    expect(unit, "missing unit/fidelity gate").toBeGreaterThan(exercise);
-    expect(integration, "missing integration gate").toBeGreaterThan(unit);
-    expect(rsp).toContain("NODE_OPTIONS: --unhandled-rejections=strict");
+    expect(source).not.toMatch(/^  rsp:/m);
+    expect(source).not.toContain("run: pnpm -C apps/rsp test");
+    expect(source).not.toContain("run: pnpm -C apps/rsp test:integration");
 
     const aggregate = jobBody(source, "test");
-    expect(aggregate).toMatch(/needs:\s*\[[^\]]*rsp[^\]]*\]/);
-    expect(aggregate).toContain("rsp=${{ needs.rsp.result }}");
+    expect(aggregate).not.toMatch(/needs:\s*\[[^\]]*rsp[^\]]*\]/);
+    expect(aggregate).not.toContain("rsp=${{ needs.rsp.result }}");
   });
 
   it("keeps unhandled integration errors fatal at the Vitest boundary", async () => {
@@ -47,15 +34,13 @@ describe("RSP required CI gates (#3625)", () => {
     expect(config).toContain("dangerouslyIgnoreUnhandledErrors: false");
   });
 
-  it("runs the deterministic two-axis check only for the RSP surface", async () => {
+  it("keeps the deterministic two-axis check manual-only", async () => {
     const source = await workflow("red-rsp-benchmark-ci.yml");
     const trigger = source.slice(0, source.indexOf("\njobs:"));
 
-    expect(trigger).toContain("- apps/rsp/**");
-    expect(trigger).toContain("- .github/workflows/red-rsp-benchmark-ci.yml");
-    expect(trigger).not.toContain("- apps/**");
-    expect(trigger).not.toContain("- packages/**");
-    expect(trigger).not.toContain("- pnpm-lock.yaml");
+    expect(trigger).toContain("workflow_dispatch:");
+    expect(trigger).not.toContain("pull_request:");
+    expect(trigger).not.toContain("push:");
     expect(source).toContain("run: pnpm -C apps/rsp bench:two-axis:check");
     expect(source).toContain(
       "run: git diff --exit-code -- apps/rsp/bench/results/rsp-two-axis.toon apps/rsp/bench/results/rsp-two-axis.md",

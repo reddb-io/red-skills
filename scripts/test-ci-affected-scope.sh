@@ -185,6 +185,21 @@ need(/^ {4}if: always\(\)$/m.test(aggregate), 'test always runs, so it always re
 need(/contains\(needs\.\*\.result, 'failure'\)/.test(aggregate)
   && /contains\(needs\.\*\.result, 'cancelled'\)/.test(aggregate),
   'test fails when any dependency failed or was cancelled');
+
+// These suites are intentionally not merge gates. RSP is disabled in this
+// repository, and the redskilled/red-castle suites are too expensive for the
+// shared package lane.
+need(!/^\s{2}rsp:/m.test(text), 'red-workspace-ci does not define an rsp job');
+const packages = jobBody('test-packages');
+need(!/pnpm -C apps\/redskilled test/.test(packages), 'test-packages does not run apps/redskilled tests');
+need(!/pnpm -C packages\/red-castle test/.test(packages), 'test-packages does not run packages/red-castle tests');
 NODE
+
+benchmark_trigger="$(sed -n '1,/^jobs:/p' .github/workflows/red-rsp-benchmark-ci.yml)"
+grep -q 'workflow_dispatch:' <<<"$benchmark_trigger" || fail "RSP benchmark is manual-only"
+if grep -Eq '^  (pull_request|push):' <<<"$benchmark_trigger"; then
+  fail "RSP benchmark must not run automatically"
+fi
+printf 'PASS: RSP benchmark is manual-only\n'
 
 printf '\nAll CI affected-scope contract checks passed.\n'

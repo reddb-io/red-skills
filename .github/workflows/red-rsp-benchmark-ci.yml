@@ -1,15 +1,9 @@
 name: red-rsp-benchmark-ci
 
 on:
-  pull_request:
-    paths:
-      - apps/rsp/**
-      - .github/workflows/red-rsp-benchmark-ci.yml
-  push:
-    # The red-toon-watch rolling PR (GITHUB_TOKEN-authored, never triggers
-    # pull_request workflows) bumps TQ_VERSION here — run on its branch push
-    # so the benchmark check lands on the head SHA.
-    branches: [automation/toon-bump]
+  # RSP is disabled in this repository. Keep the benchmark available only for
+  # an explicit maintainer investigation; it is not a PR or automation gate.
+  workflow_dispatch:
 
 permissions:
   contents: read

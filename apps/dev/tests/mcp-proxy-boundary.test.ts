@@ -14,8 +14,21 @@ describe("redskilled MCP lightweight proxy boundary", () => {
     await Promise.all(close.splice(0).map((shutdown) => shutdown()));
   });
 
-  it("keeps engine, GitHub adapters and background belts out of the stdio entry", async () => {
+  // The resident is a ROLE of this bundle now, so the engine is physically in the
+  // same FILE — the boundary this suite protects was never the file, it is the
+  // stdio SERVE PATH. Two things keep it: nothing here is imported statically
+  // (so serving cannot construct it), and the role runs in a process the proxy
+  // spawns rather than in the stdio process itself. ADR 0143's "no client hosts
+  // an in-process fallback" is the rule at stake.
+  it("keeps engine, GitHub adapters and background belts off the stdio serve path", async () => {
     const source = await readFile(join(ROOT, "apps/dev/src/mcp-server.ts"), "utf8");
+
+    // The role reaches the engine, and reaches it lazily — a static import would
+    // put it on the path `connect` runs.
+    expect(source).toContain('await import("./castle-resident.js")');
+    expect(source, "the resident must be spawned, never served in-process").toContain(
+      'serverArgs: [fileURLToPath(import.meta.url), "__castle-resident"]',
+    );
 
     for (const forbidden of [
       "@reddb-io/red-castle/engine",
@@ -26,7 +39,8 @@ describe("redskilled MCP lightweight proxy boundary", () => {
       "./resident-webhook.js",
       "./runtime/gh.js",
     ]) {
-      expect(source, `stdio entry imported ${forbidden}`).not.toContain(`from \"${forbidden}\"`);
+      expect(source, `stdio serve path statically imported ${forbidden}`)
+        .not.toContain(`from \"${forbidden}\"`);
     }
   });
 
