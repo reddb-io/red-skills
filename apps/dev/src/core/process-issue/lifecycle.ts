@@ -182,9 +182,8 @@ import {
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { reportValidationEvidenceInconsistency } from "./validation-park.js";
 import { setupFailureExcerpt } from "./setup-failure.js";
-
-/** Recorded when the forge refused the merge and the PR state did not explain it
- * (#2807). It says the cause is unknown rather than inventing a probable one. */
+import { hookAbortDetail, hookAbortedLanding, type HookAbortDetail } from "./hook-landing-failure.js";
+/** A forge refusal with no observed cause (#2807), without inventing a probable one. */
 const MERGE_REJECTION_UNEXPLAINED =
   "the open PR merge was rejected by GitHub and the PR state did not explain the refusal";
 /** The `next:` step for a rejected merge. It points at the recorded reason
@@ -200,6 +199,7 @@ export async function processIssue(
   const hooksFired: HookName[] = [];
   const startedEpoch = deps.nowEpoch();
   const resolved: ResolvedHooks = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
+  let lastHookAbort: HookAbortDetail | undefined;
   let ownsCommentClaim = false;
   const releaseClaim = async () => {
     if (ownsCommentClaim) {
@@ -220,15 +220,15 @@ export async function processIssue(
       env: deps.hooks.env ?? {},
       log: (line) => deps.appendIterLog(line),
     });
+    lastHookAbort = hookAbortDetail(name, result);
     if (name === "pre_worktree" && !result.aborted) {
       const parsed = parseHookEnv(result.context);
       if (parsed) agentEnv = parsed;
     }
     return result;
   };
-  const fireHook = async (name: HookName, context: string): Promise<boolean> => {
-    return !(await fireHookCtx(name, context)).aborted;
-  };
+  const fireHook = async (name: HookName, context: string): Promise<boolean> =>
+    !(await fireHookCtx(name, context)).aborted;
   /** Withdraw from the issue, naming the cause. Every exit routes through here
    * so no withdrawal is anonymous: the sweep deletes this worker's workspace on
    * a claim-lost, so the account has to reach the durable lane (#3156). */
@@ -2166,6 +2166,7 @@ export async function processIssue(
     if (landing.reason === "land-lock-timeout") {
       return await landLockBackoff(common);
     }
+    if (landing.reason === "pre_merge-abort") return await hookAbortedLanding(common, lastHookAbort);
     if (landing.reason === "infra") {
       const reason = landing.infraReason ?? "landing infrastructure precondition failed";
       return await terminalFailure(
