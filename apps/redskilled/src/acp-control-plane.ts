@@ -16,7 +16,6 @@ import {
   methods,
   RequestError,
   type AgentConnection,
-  type ClientConnection,
   type McpServer,
   type NewSessionRequest,
   type PromptRequest,
@@ -83,25 +82,20 @@ import {
   type AcpProjectWorkspace,
 } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
+import {
+  cleanupWorkflowWorker,
+  notifyWorkerLifecycle,
+  reapWorkflowWorker,
+  scheduleIdleCleanup,
+  workflowOutcome,
+  type ActiveWorkflowWorker,
+} from "./acp-worker-lifecycle.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
 
 interface PublicSession {
   readonly request: NewSessionRequest;
   readonly project: AcpProjectWorkspace;
-}
-
-interface ActiveWorker {
-  readonly workerId: string;
-  readonly downstreamSessionId: string;
-  readonly connection: ClientConnection;
-  readonly socket: Socket;
-  readonly endpoint: string;
-  readonly publicSessionId: string;
-  readonly notify: AgentConnection["client"]["notify"];
-  idleTimer?: NodeJS.Timeout;
-  cancelled: boolean;
-  cleaned: boolean;
 }
 
 export interface RedskillsAcpControlPlane {
@@ -179,7 +173,7 @@ async function servePublicConnection(
   persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
 ): Promise<void> {
   const sessions = new Map<string, PublicSession>();
-  const active = new Map<string, ActiveWorker>();
+  const active = new Map<string, ActiveWorkflowWorker>();
   const busy = new Set<string>();
   let connectionProject: AcpProjectWorkspace | undefined;
   let githubObserver: Promise<AcpGithubUpdateObserver> | undefined;
@@ -297,7 +291,7 @@ async function servePublicConnection(
       if (worker == null) {
         worker = await admitNativeAcpWorker(options, session, params.sessionId, upstream.notify.bind(upstream));
         active.set(params.sessionId, worker);
-        await notifyLifecycle(worker, "admission");
+        await notifyWorkerLifecycle(worker, "admission");
       }
       if (worker.idleTimer != null) clearTimeout(worker.idleTimer);
       busy.add(params.sessionId);
@@ -314,8 +308,8 @@ async function servePublicConnection(
         });
         const outcome = workflowOutcome(response);
         if (outcome != null) {
-          await notifyLifecycle(worker, "terminal-outcome", outcome);
-          await reapWorker(params.sessionId, worker, active, outcome);
+          await notifyWorkerLifecycle(worker, "terminal-outcome", outcome);
+          await reapWorkflowWorker(params.sessionId, worker, active, outcome);
         } else {
           scheduleIdleCleanup(params.sessionId, worker, active);
         }
@@ -327,7 +321,7 @@ async function servePublicConnection(
           },
         } satisfies PromptResponse;
       } catch (error) {
-        cleanupWorker(params.sessionId, worker, active);
+        cleanupWorkflowWorker(params.sessionId, worker, active);
         throw error;
       } finally {
         busy.delete(params.sessionId);
@@ -468,13 +462,13 @@ async function servePublicConnection(
     observer.close();
     await observer.settled();
   }
-  for (const [sessionId, worker] of active) cleanupWorker(sessionId, worker, active);
+  for (const [sessionId, worker] of active) cleanupWorkflowWorker(sessionId, worker, active);
 }
 
 async function runV2PublicTurn(
   options: StartRedskillsAcpControlPlaneOptions,
   sessions: Map<string, PublicSession>,
-  active: Map<string, ActiveWorker>,
+  active: Map<string, ActiveWorkflowWorker>,
   params: acpV2.PromptRequest,
   upstream: acpV2.AgentContext,
 ): Promise<void> {
@@ -486,7 +480,7 @@ async function runV2PublicTurn(
     update: { sessionUpdate: "state_update", state: "running" },
   });
 
-  let worker: ActiveWorker | undefined;
+  let worker: ActiveWorkflowWorker | undefined;
   try {
     worker = active.get(params.sessionId);
     if (worker == null) {
@@ -503,7 +497,7 @@ async function runV2PublicTurn(
         });
       });
       active.set(params.sessionId, worker);
-      await notifyLifecycle(worker, "admission");
+      await notifyWorkerLifecycle(worker, "admission");
     }
     if (worker.idleTimer != null) clearTimeout(worker.idleTimer);
     const response = await worker.connection.agent.request(methods.agent.session.prompt, {
@@ -513,8 +507,8 @@ async function runV2PublicTurn(
     });
     const outcome = workflowOutcome(response);
     if (outcome != null) {
-      await notifyLifecycle(worker, "terminal-outcome", outcome);
-      await reapWorker(params.sessionId, worker, active, outcome);
+      await notifyWorkerLifecycle(worker, "terminal-outcome", outcome);
+      await reapWorkflowWorker(params.sessionId, worker, active, outcome);
     } else {
       scheduleIdleCleanup(params.sessionId, worker, active);
     }
@@ -524,7 +518,7 @@ async function runV2PublicTurn(
       _meta: { redskills: { authority: "redskilled", workerId: worker.workerId } },
     });
   } catch (error) {
-    if (worker != null) cleanupWorker(params.sessionId, worker, active);
+    if (worker != null) cleanupWorkflowWorker(params.sessionId, worker, active);
     await upstream.notify(acpV2.methods.client.session.update, {
       sessionId: params.sessionId,
       update: { sessionUpdate: "state_update", state: "idle", stopReason: "refusal" },
@@ -563,7 +557,7 @@ async function admitNativeAcpWorker(
   session: PublicSession,
   publicSessionId: string,
   forward: AgentConnection["client"]["notify"],
-): Promise<ActiveWorker> {
+): Promise<ActiveWorkflowWorker> {
   const endpointId = randomBytes(6).toString("hex");
   const endpoint = join(options.paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
   const rendezvous = await bindWorkerRendezvous(endpoint);
@@ -665,50 +659,6 @@ function projectState(host: RedskilledHostState, project: AcpProjectWorkspace) {
     workspace_path: project.workspacePath,
     workers: host.workers.filter((worker) => worker.project_label === project.projectId),
   };
-}
-
-function scheduleIdleCleanup(
-  sessionId: string,
-  worker: ActiveWorker,
-  active: Map<string, ActiveWorker>,
-): void {
-  const configured = Number.parseInt(process.env.REDSKILLED_ACP_WORKER_IDLE_MS ?? "30000", 10);
-  const timer = setTimeout(() => void reapWorker(sessionId, worker, active, "idle-policy"), configured);
-  timer.unref();
-  worker.idleTimer = timer;
-}
-
-async function reapWorker(
-  sessionId: string,
-  worker: ActiveWorker,
-  active: Map<string, ActiveWorker>,
-  reason: string,
-): Promise<void> {
-  await notifyLifecycle(worker, "reaping", reason).catch(() => undefined);
-  cleanupWorker(sessionId, worker, active);
-}
-
-async function notifyLifecycle(worker: ActiveWorker, event: string, reason?: string): Promise<void> {
-  await worker.notify(methods.client.session.update, {
-    sessionId: worker.publicSessionId,
-    update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } },
-    _meta: { redskills: { lifecycle: { event, workerId: worker.workerId, ...(reason == null ? {} : { reason }) } } },
-  });
-}
-
-function workflowOutcome(response: PromptResponse): string | undefined {
-  if (response.stopReason === "cancelled") return "cancellation";
-  return (response._meta as { redskills?: { workflowOutcome?: string } } | undefined)?.redskills?.workflowOutcome;
-}
-
-function cleanupWorker(sessionId: string, worker: ActiveWorker, active: Map<string, ActiveWorker>): void {
-  if (worker.cleaned) return;
-  worker.cleaned = true;
-  if (worker.idleTimer != null) clearTimeout(worker.idleTimer);
-  if (active.get(sessionId) === worker) active.delete(sessionId);
-  worker.connection.close();
-  worker.socket.destroy();
-  void rm(worker.endpoint, { force: true });
 }
 
 /** Stdio launch-edge adapter: transport only; no session state lives here. */
