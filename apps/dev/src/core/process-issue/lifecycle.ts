@@ -170,6 +170,7 @@ import {
   withoutReviewOutstanding,
 } from "./reseed-handoff.js";
 import { decideTierEscalation } from "./tier-escalation.js";
+import { reseedMeasurementFact } from "./reseed-measurement.js";
 import { failureSignature, parseValidationFailureSignature } from "../failure-signature.js";
 import type { BaseMovement } from "../stale-base-drift.js";
 import {
@@ -784,6 +785,7 @@ export async function processIssue(
     isGoLane ? goVerifyRetryCap : afkGateCap,
   );
   let reseedSpend: ReseedSpend = {};
+  deps.markState?.({ "current.reseed": reseedMeasurementFact(reseedSpend) });
   const gateSubCap = reseedBudget.subCaps.gate;
   // What is outstanding RIGHT NOW (ADR 0129 decision 7, #2728). It survives
   // across rounds so a gate round that follows a blocking review carries BOTH;
@@ -897,6 +899,7 @@ export async function processIssue(
     const draw = reseedDraw(reseedBudget, cause, reseedSpend);
     if (!draw.allowed) return "refused";
     reseedSpend = recordReseedDraw(reseedSpend, cause);
+    deps.markState?.({ "current.reseed": reseedMeasurementFact(reseedSpend) });
     roundOrdinal += 1;
     reseedRound += 1;
     const gate = req.gate ?? "feedback";
@@ -2009,6 +2012,7 @@ export async function processIssue(
       lastValidationScope,
       noSourceDiffWarning,
       appraisalScore,
+      reseedMeasurementFact(reseedSpend),
     );
     await recordOutcomeBestEffort(common, "done", { durationS });
     markLandingPhase("close", { step: "close-issue", status: "start" });
