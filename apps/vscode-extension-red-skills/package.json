@@ -2,7 +2,7 @@
   "name": "vscode-extension-red-skills",
   "displayName": "RedSkills — redskilled",
   "description": "Surfaces the redskilled host daemon inside VSCode: live Workers with vitals, per-Worker logs, the host event lane, open pull requests, and a notification whenever any of it changes.",
-  "version": "3.18.11",
+  "version": "3.18.12",
   "private": true,
   "publisher": "reddb-io",
   "license": "Apache-2.0",
