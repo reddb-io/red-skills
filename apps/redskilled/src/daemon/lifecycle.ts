@@ -4,6 +4,10 @@ import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
+import {
+  startRedskillsAcpControlPlane,
+  type RedskillsAcpControlPlane,
+} from "../acp-control-plane.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { createWorkerTeardownLedger } from "./worker-teardown.js";
 import { createBudgetGraceRuntime, DEFAULT_REDSKILLED_BUDGET_GRACE_MS, signalWorkerForBudgetGrace } from "./budget-grace.js";
@@ -322,6 +326,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   let server: Server;
+  let acpControlPlane: RedskillsAcpControlPlane | undefined;
   try {
     // The two records that already name this socket's holder. Consulted only to
     // REFUSE — an absent, stale or unreadable record decides nothing and falls
@@ -2202,6 +2207,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await eventLane.flush().catch(() => undefined);
     await registrationIntentStore.flush().catch(() => undefined);
     await resourceLeaseStore.flush().catch(() => undefined);
+    await acpControlPlane?.close().catch(() => undefined);
     // Ownership records go first while the socket still proves this daemon is
     // reachable. If either release stalls or fails, the old daemon stays bound
     // and no successor mistakes a live, socketless pid for the singleton.
@@ -2419,6 +2425,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     } catch (err) {
       return { id: (request as { id?: string }).id ?? randomUUID(), ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  try {
+    acpControlPlane = await startRedskillsAcpControlPlane({
+      paths,
+      startWorker,
+      hostState,
+    });
+  } catch (error) {
+    await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);
+    throw error;
   }
 
   armIdleTimer();
