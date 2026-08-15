@@ -38,6 +38,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "NODE_OPTIONS=--max-old-space-size=4096 vitest run",
+    "test:acp-conformance": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-conformance.test.ts",
     "test:acp-control-plane": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-control-plane.test.ts",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify",
     "build": "pnpm run typecheck && pnpm run bundle",
