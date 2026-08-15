@@ -33,25 +33,39 @@ import {
   createRedskilledGithubUpstream,
   type RedskilledGithubGatewayRegistration,
 } from "./github-gateway.js";
+import {
+  createRedskilledGithubCredentialProfileResolver,
+  type RedskilledGithubCredentialProfiles,
+} from "./github-credential-profiles.js";
 
-/** Bind the host's personal credential to the daemon gateway, never to a client. */
+export interface ResolveServeGithubGatewayOptions {
+  readonly profiles?: RedskilledGithubCredentialProfiles;
+  readonly resolvePersonal: () => { readonly token: string } | null;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+}
+
+/** Bind named daemon-owned credentials to the gateway, never to a client. */
 export function resolveServeGithubGateway(
-  host: { readonly token: string } | null,
-  env: NodeJS.ProcessEnv = process.env,
-): RedskilledGithubGatewayRegistration | undefined {
-  if (host == null) return undefined;
+  options: ResolveServeGithubGatewayOptions,
+): RedskilledGithubGatewayRegistration {
+  const env = options.env ?? process.env;
+  const fetchImpl = createTimedGithubFetch();
   const gateway = createRedskilledGithubGateway({
     upstream: createRedskilledGithubUpstream({
       ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
       ...(env.GITHUB_GRAPHQL_URL ? { graphqlEndpoint: env.GITHUB_GRAPHQL_URL } : {}),
-      fetchImpl: createTimedGithubFetch(),
+      fetchImpl,
     }),
   });
   return {
     gateway,
-    credentialForProject: () => ({
-      profile: "host-personal",
-      credential: { secret: host.token },
+    credentialForProject: createRedskilledGithubCredentialProfileResolver({
+      profiles: options.profiles ?? {},
+      resolvePersonal: options.resolvePersonal,
+      ...(options.homeDir == null ? {} : { homeDir: options.homeDir }),
+      ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
+      fetchImpl,
     }),
   };
 }
