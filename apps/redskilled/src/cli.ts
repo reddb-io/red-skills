@@ -77,6 +77,11 @@ import {
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
 import { stabilizeRedskilledEntry } from "./stable-bundle.js";
 import { runNativeAcpWorker, runRedskillsAcpAdapter } from "./acp-control-plane.js";
+import {
+  createRedskilledGithubGateway,
+  createRedskilledGithubUpstream,
+  type RedskilledGithubGatewayRegistration,
+} from "./github-gateway.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -375,6 +380,29 @@ export function resolveServeGithubBalance(
   };
 }
 
+/** Bind the host's personal credential to the daemon gateway, never to a client. */
+export function resolveServeGithubGateway(
+  env: NodeJS.ProcessEnv = process.env,
+  readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+): RedskilledGithubGatewayRegistration | undefined {
+  const host = resolveRedskilledHostToken(env, readTrackerToken);
+  if (host == null) return undefined;
+  const gateway = createRedskilledGithubGateway({
+    upstream: createRedskilledGithubUpstream({
+      ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
+      ...(env.GITHUB_GRAPHQL_URL ? { graphqlEndpoint: env.GITHUB_GRAPHQL_URL } : {}),
+      fetchImpl: createTimedGithubFetch(),
+    }),
+  });
+  return {
+    gateway,
+    credentialForProject: () => ({
+      profile: "host-personal",
+      credential: { secret: host.token },
+    }),
+  };
+}
+
 /**
  * One attempt at the credential, in the words of the thing that looked for it.
  *
@@ -499,6 +527,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       githubAttribution,
     );
     const resolvedGithubBalance = resolveServeGithubBalance(values);
+    const githubGateway = resolveServeGithubGateway(process.env, readTrackerCliToken);
     // The App is a PAYER to measure, never a credential this daemon acts as.
     // Declared → its ceiling is asked on its own installation token and written
     // to its own file, because two buckets summed into one document would make
@@ -554,6 +583,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
         // is `unknown`, never a full budget, because a full budget is the one
         // answer that admits every call.
         ...(githubBalance == null ? {} : { githubBalance }),
+        ...(githubGateway == null ? {} : { githubGateway }),
         ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
       });
     } catch (error) {
