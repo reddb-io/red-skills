@@ -2039,17 +2039,22 @@ describe("processIssue — daemon-granted fork point (ADR 0138)", () => {
   });
 });
 
-describe("processIssue — pre_merge hook abort (primary checkout untouched, #2628)", () => {
-  it("pre_merge abort: push happened but no integration ran, routes to merge-conflict", async () => {
-    // Pins AC1/AC2 from #2628: pre_merge fires after the attempt push but before
-    // any integration command. An abort must leave the primary checkout untouched —
-    // Landing runs entirely inside its isolated worktree; no primary snapshot commit
-    // is created. The lifecycle routes the abort to merge-conflict, not a hard error.
-    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, abortHook: "pre_merge" });
+describe("processIssue — pre_merge hook contract", () => {
+  it("zero-exit invalid stdout parks as bounded policy failure and names the violation", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    deps.hooks.config["afk.hooks.pre_merge"] = "scripts/afk-pre-merge.sh";
+    deps.hooks.exec = async () => ({ code: 0, stdout: "human-readable report" });
     const result = await processIssue(deps, input);
 
-    // pre_merge-abort feeds mergeFailed → merge-conflict outcome.
-    expect(result.outcome).toBe("merge-conflict");
+    expect(result.outcome).toBe("hook-aborted");
+    expect(trace.labelEdits.at(-1)).toMatchObject({
+      add: ["ready-for-human", "blocked:policy"],
+    });
+    expect(trace.labelEdits.at(-1)?.add).not.toContain("blocked:merge-conflict");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.envelopeBodies.at(-1)).toContain("pre_merge hook `scripts/afk-pre-merge.sh`");
+    expect(trace.envelopeBodies.at(-1)).toContain("invalid structured stdout");
+    expect(trace.envelopeBodies.at(-1)).not.toContain("merge-conflict");
     // The attempt was pushed (push precedes the hook) — the remote ref exists.
     expect(trace.pushedAttempt).toHaveLength(1);
     // No merge or integration command ran after the abort. The park does run
@@ -2063,6 +2068,22 @@ describe("processIssue — pre_merge hook abort (primary checkout untouched, #26
     // pre_merge fired; post_merge did not — no integration ran.
     expect(result.hooksFired).toContain("pre_merge");
     expect(result.hooksFired).not.toContain("post_merge");
+  });
+
+  it.each([
+    ["empty stdout", ""],
+    ["structured stdout", '{"landing":"allowed"}'],
+  ])("preserves success for %s", async (_case, stdout) => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    deps.hooks.config["afk.hooks.pre_merge"] = "scripts/afk-pre-merge.sh";
+    deps.hooks.exec = async () => ({ code: 0, stdout });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    expect(result.hooksFired).toContain("pre_merge");
+    expect(result.hooksFired).toContain("post_merge");
   });
 });
 
