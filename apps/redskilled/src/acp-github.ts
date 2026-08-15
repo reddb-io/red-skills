@@ -3,17 +3,77 @@ import { GithubBackpressureError } from "@reddb-io/github";
 import {
   RedskilledGithubAuthorityError,
   type RedskilledGithubGatewayRegistration,
+  type RedskilledGithubManagedProjectReader,
   type RedskilledGithubRead,
+  type RedskilledGithubUpdate,
 } from "./github-gateway.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 
 type GithubReadParams = { readonly read: RedskilledGithubRead };
 
+export const REDSKILLED_GITHUB_UPDATE_METHOD = "_redskills/github_update";
+
+export interface AcpGithubUpdateObserver {
+  close(): void;
+  settled(): Promise<void>;
+}
+
+/**
+ * Project-bind a gateway observer and serialize its custom ACP notification.
+ * The notification contains refreshed public state only; credential selection
+ * and webhook transport remain private daemon concerns.
+ */
+export async function bindAcpProjectGithubUpdates(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  project: AcpProjectWorkspace,
+  notify: (method: typeof REDSKILLED_GITHUB_UPDATE_METHOD, update: RedskilledGithubUpdate) => Promise<void>,
+): Promise<AcpGithubUpdateObserver> {
+  const selection = await gateway?.credentialForProject({
+    projectId: project.projectId,
+    projectLabel: project.projectLabel,
+    workspacePath: project.workspacePath,
+  });
+  if (gateway == null || selection == null) return emptyObserver();
+  const reader = gateway.gateway.forProject({
+    projectId: project.projectId,
+    projectLabel: project.projectLabel,
+    workspacePath: project.workspacePath,
+    credentialProfile: selection.profile,
+  }, selection.credential);
+  return bindAcpGithubReaderUpdates(reader, notify);
+}
+
+export function bindAcpGithubReaderUpdates(
+  reader: unknown,
+  notify: (method: typeof REDSKILLED_GITHUB_UPDATE_METHOD, update: RedskilledGithubUpdate) => Promise<void>,
+): AcpGithubUpdateObserver {
+  if (!isManagedReader(reader)) return emptyObserver();
+
+  let tail = Promise.resolve();
+  const unsubscribe = reader.subscribe((update) => {
+    tail = tail.then(() => notify(REDSKILLED_GITHUB_UPDATE_METHOD, update)).catch(() => undefined);
+  });
+  return {
+    close: unsubscribe,
+    settled: () => tail,
+  };
+}
+
+function isManagedReader(value: unknown): value is RedskilledGithubManagedProjectReader {
+  return value != null && typeof value === "object" &&
+    typeof (value as RedskilledGithubManagedProjectReader).subscribe === "function";
+}
+
+function emptyObserver(): AcpGithubUpdateObserver {
+  return { close: () => undefined, settled: async () => undefined };
+}
+
 /** Bind one ACP connection's Project authority to the daemon-owned gateway. */
 export function bindAcpProjectGithubRead(
   gateway: RedskilledGithubGatewayRegistration | undefined,
   projectForConnection: () => AcpProjectWorkspace,
+  onReader?: (reader: unknown) => void,
 ) {
   return async ({ params: { read } }: { readonly params: GithubReadParams }) => {
     const project = projectForConnection();
@@ -35,12 +95,14 @@ export function bindAcpProjectGithubRead(
         );
       }
       try {
-        return await gateway.gateway.forProject({
+        const reader = gateway.gateway.forProject({
           projectId: project.projectId,
           projectLabel: project.projectLabel,
           workspacePath: project.workspacePath,
           credentialProfile: selection.profile,
-        }, selection.credential).read(read);
+        }, selection.credential);
+        onReader?.(reader);
+        return await reader.read(read);
       } catch (error) {
         if (!(error instanceof GithubBackpressureError)) throw error;
         throw new RequestError(-32001, error.message, {
