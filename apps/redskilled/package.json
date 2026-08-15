@@ -38,6 +38,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "NODE_OPTIONS=--max-old-space-size=4096 vitest run",
+    "test:acp-control-plane": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-control-plane.test.ts",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify",
     "build": "pnpm run typecheck && pnpm run bundle",
     "build:native": "node-gyp rebuild --directory=native",
@@ -45,6 +46,7 @@
     "diagnose:resources": "tsx scripts/resource-incident-harness.ts"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
