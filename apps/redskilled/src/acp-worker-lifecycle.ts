@@ -4,6 +4,7 @@ import {
   methods,
   type AgentConnection,
   type ClientConnection,
+  type PromptRequest,
   type PromptResponse,
 } from "@agentclientprotocol/sdk";
 
@@ -71,4 +72,48 @@ export function cleanupWorkflowWorker(
   worker.connection.close();
   worker.socket.destroy();
   void rm(worker.endpoint, { force: true });
+}
+
+/** Run one public turn, replacing an unhealthy Worker at most once. */
+export async function requestWorkflowTurn(
+  publicSessionId: string,
+  active: Map<string, ActiveWorkflowWorker>,
+  params: PromptRequest,
+  admit: (replacement: boolean) => Promise<ActiveWorkflowWorker>,
+): Promise<{ readonly worker: ActiveWorkflowWorker; readonly response: PromptResponse }> {
+  let worker = active.get(publicSessionId);
+  if (worker == null) {
+    worker = await admit(false);
+    active.set(publicSessionId, worker);
+    await notifyWorkerLifecycle(worker, "admission");
+  }
+  if (worker.idleTimer != null) clearTimeout(worker.idleTimer);
+
+  const request = async (held: ActiveWorkflowWorker) => {
+    if (held.cancelled) {
+      await held.connection.agent.notify(methods.agent.session.cancel, {
+        sessionId: held.downstreamSessionId,
+      });
+    }
+    return held.connection.agent.request(methods.agent.session.prompt, {
+      sessionId: held.downstreamSessionId,
+      prompt: params.prompt,
+      ...(params._meta == null ? {} : { _meta: params._meta }),
+    });
+  };
+  try {
+    return { worker, response: await request(worker) };
+  } catch {
+    cleanupWorkflowWorker(publicSessionId, worker, active);
+  }
+
+  const replacement = await admit(true);
+  active.set(publicSessionId, replacement);
+  await notifyWorkerLifecycle(replacement, "replacement");
+  try {
+    return { worker: replacement, response: await request(replacement) };
+  } catch (error) {
+    cleanupWorkflowWorker(publicSessionId, replacement, active);
+    throw error;
+  }
 }
