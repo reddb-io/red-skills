@@ -40,9 +40,12 @@ import {
   resolveRepoContext,
 } from "../runtime/wire.js";
 import {
+  auditConfigLoad,
+  getConfig,
   loadConfig,
   readStandingDrain,
   readValidationMoments,
+  resolveTaskRoute,
 } from "../core/config.js";
 import { describeValidationMoments } from "../core/validation-moments.js";
 import {
@@ -51,8 +54,26 @@ import {
   registrationQueryUnexpressedFacets,
 } from "../core/registration-query.js";
 import { resolveRepoSlugForDir } from "@reddb-io/shared/project-identity-resolve.js";
+import { DEFAULT_FLEET_WIDTH, FLEET_WIDTH_CONFIG_KEY } from "@reddb-io/shared/default-fleet-width.js";
 
 import { resolveConfiguredBase } from "./operations.js";
+
+export function projectActivation(root: string) {
+  const config = afkPaths(root).configPath;
+  const audit = auditConfigLoad(config, { warn: () => undefined });
+  const standing = readStandingDrain(audit.values);
+  const configuredTarget = Number.parseInt(getConfig(audit.values, FLEET_WIDTH_CONFIG_KEY), 10);
+  return {
+    eligible: audit.pluginEnabled,
+    project: createRedskilledBirthPort({ root }).projectLabel,
+    runner: standing?.runner ?? resolveTaskRoute(audit.values).runner,
+    target:
+      standing?.target ??
+      (Number.isInteger(configuredTarget) && configuredTarget > 0 ? configuredTarget : DEFAULT_FLEET_WIDTH),
+    standing: standing !== null,
+    config,
+  };
+}
 
 export async function waitStatusImpl(root: string, input: WaitStatusInput): Promise<unknown> {
   const resultFile = join(waitsDir(root), `${input.id}.toon`);
@@ -426,6 +447,16 @@ export async function drain(
   input: ProjectDrainInput,
   options: { readonly standing?: boolean } = {},
 ) {
+  const activation = projectActivation(root);
+  if ((input.runner === undefined || input.target === undefined) && !activation.eligible) {
+    throw new Error(
+      `drain defaults are unavailable because ${activation.config} does not declare plugins.dev.enabled: true`,
+    );
+  }
+  const requested = {
+    runner: input.runner ?? activation.runner,
+    target: input.target ?? activation.target,
+  };
   const port = createRedskilledBirthPort({ root });
   try {
     await port.reach();
@@ -449,7 +480,7 @@ export async function drain(
       lapsed: held == null && state.lapse != null,
       workers: await port.liveWorkers(),
     },
-    input,
+    requested,
   );
 
   if (plan.outcome === "refuse") {
