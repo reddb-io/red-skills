@@ -5,16 +5,19 @@ import { createServer } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { client, methods, type ClientConnection } from "@agentclientprotocol/sdk";
+import { client, methods, RequestError, type ClientConnection } from "@agentclientprotocol/sdk";
+import { GithubBackpressureError } from "@reddb-io/github";
 import { describe, expect, it } from "vitest";
 import {
   REDSKILLED_GITHUB_READ_METHOD,
   RedskilledGithubAuthorityError,
   createRedskilledGithubGateway,
+  createRedskilledGithubUpstream,
   type RedskilledGithubReadAnswer,
   type RedskilledGithubProjectAuthority,
   type RedskilledGithubUpstream,
 } from "../src/github-gateway.js";
+import { bindAcpProjectGithubRead } from "../src/acp-github.js";
 import { startRedskillsAcpControlPlane } from "../src/acp-control-plane.js";
 import { socketStream } from "../src/acp-socket.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
@@ -27,6 +30,100 @@ const PROJECT: RedskilledGithubProjectAuthority = {
 };
 
 describe("the Project-scoped redskilled GitHub gateway", () => {
+  it("isolates secondary throttling by credential profile and coalesces one recovery refresh", async () => {
+    let engineeringThrottled = true;
+    let engineeringCalls = 0;
+    let releaseRecovery!: () => void;
+    const recoveryHeld = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+    const upstream = createRedskilledGithubUpstream({
+      fetchImpl: async (_url, init) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (authorization === "Bearer engineering-secret") {
+          engineeringCalls += 1;
+          if (engineeringThrottled) {
+            return new Response("secondary rate limit", {
+              status: 403,
+              headers: { "retry-after": "60", "x-ratelimit-remaining": "4999" },
+            });
+          }
+          await recoveryHeld;
+        }
+        return new Response(JSON.stringify({ state: "open" }), {
+          status: 200,
+          headers: { "content-type": "application/json", "x-ratelimit-remaining": "4900" },
+        });
+      },
+    });
+    const gateway = createRedskilledGithubGateway({
+      upstream,
+      clock: () => "2026-08-15T21:00:00.000Z",
+    });
+    const engineering = gateway.forProject(PROJECT, { secret: "engineering-secret" });
+    const release = gateway.forProject(
+      { ...PROJECT, credentialProfile: "release" },
+      { secret: "release-secret" },
+    );
+
+    const throttled = await engineering.read({ kind: "rest", path: "issues/17" })
+      .then(() => null, (error: unknown) => error);
+    expect(throttled).toBeInstanceOf(GithubBackpressureError);
+    expect(throttled).toMatchObject({
+      fact: { kind: "secondary-throttled", retry_at: "2026-08-15T21:01:00.000Z" },
+    });
+    await expect(release.read({ kind: "rest", path: "issues/17" })).resolves.toMatchObject({
+      credential_profile: "release",
+      source: "upstream",
+    });
+
+    engineeringThrottled = false;
+    const first = engineering.read({ kind: "rest", path: "issues/17" });
+    const second = engineering.read({ kind: "rest", path: "issues/17" });
+    await Promise.resolve();
+    expect(engineeringCalls).toBe(2);
+    releaseRecovery();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(engineeringCalls).toBe(2);
+  });
+
+  it("projects typed GitHub backpressure through ACP without birthing a Worker", async () => {
+    const retryAt = "2026-08-15T22:00:00.000Z";
+    const fact = {
+      kind: "primary-rest-exhausted" as const,
+      pool: "rest" as const,
+      retry_at: retryAt,
+      evidence: "balance" as const,
+      message: `REST primary quota is exhausted; retry after ${retryAt}`,
+    };
+    const read = bindAcpProjectGithubRead({
+      credentialForProject: () => ({ profile: "engineering", credential: { secret: "fixture" } }),
+      gateway: {
+        forProject: () => ({
+          read: async () => { throw new GithubBackpressureError(fact); },
+        }),
+      },
+    }, () => ({
+      projectId: PROJECT.projectId,
+      projectLabel: PROJECT.projectLabel,
+      workspacePath: PROJECT.workspacePath,
+      createdAt: "2026-08-15T21:00:00.000Z",
+    }));
+
+    const error = await read({ params: { read: { kind: "rest", path: "issues/17" } } })
+      .then(() => null, (thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error).toMatchObject({
+      code: -32001,
+      data: {
+        version: 1,
+        kind: "github-backpressure",
+        project_id: PROJECT.projectId,
+        credential_profile: "engineering",
+        retry_at: retryAt,
+        fact: { kind: "primary-rest-exhausted" },
+      },
+    });
+  });
+
   it.each([
     { kind: "rest" as const, path: "issues/17" },
     { kind: "graphql" as const, selection: "issue(number: 17) { id state }" },
