@@ -29,16 +29,22 @@ import {
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
+import {
+  ensureAcpProjectWorkspace,
+  resolveAcpProjectIdentity,
+  type AcpProjectIdentity,
+  type AcpProjectWorkspace,
+} from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 
 const ACP_PROTOCOL_VERSION = 1;
 export const ACP_V2_DRAFT_REVISION = "schema-v2.0.0-alpha.2";
 export const REDSKILLS_WIRE_MAJOR = 1;
-const ACP_PROJECT_LABEL = "redskills/acp";
 const TERMINAL_REAP_DELAY_MS = 150;
 
 interface PublicSession {
   readonly request: NewSessionRequest;
+  readonly project: AcpProjectWorkspace;
 }
 
 interface ActiveWorker {
@@ -68,13 +74,25 @@ export async function startRedskillsAcpControlPlane(
 ): Promise<RedskillsAcpControlPlane> {
   const { paths } = options;
   const sockets = new Set<Socket>();
+  const projects = new Map<string, Promise<AcpProjectWorkspace>>();
+  const workspaceFor = (identity: AcpProjectIdentity): Promise<AcpProjectWorkspace> => {
+    const held = projects.get(identity.projectId);
+    if (held != null) return held;
+    const pending = ensureAcpProjectWorkspace(identity, paths.projectWorkspaceRoot)
+      .catch((error) => {
+        projects.delete(identity.projectId);
+        throw error;
+      });
+    projects.set(identity.projectId, pending);
+    return pending;
+  };
   await mkdir(join(paths.runtimeDir, "acp-workers"), { recursive: true, mode: 0o700 });
   await rm(paths.acpSocketPath, { force: true });
 
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    void servePublicConnection(socket, options).catch(() => socket.destroy());
+    void servePublicConnection(socket, options, workspaceFor).catch(() => socket.destroy());
   });
   await listen(server, paths.acpSocketPath);
 
@@ -94,9 +112,25 @@ export async function startRedskillsAcpControlPlane(
 async function servePublicConnection(
   socket: Socket,
   options: StartRedskillsAcpControlPlaneOptions,
+  workspaceFor: (identity: AcpProjectIdentity) => Promise<AcpProjectWorkspace>,
 ): Promise<void> {
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorker>();
+  let connectionProject: AcpProjectWorkspace | undefined;
+
+  const bindProject = async (cwd: string, incompatible: () => Error): Promise<AcpProjectWorkspace> => {
+    const identity = await resolveAcpProjectIdentity(cwd);
+    if (connectionProject != null && connectionProject.projectId !== identity.projectId) throw incompatible();
+    connectionProject ??= await workspaceFor(identity);
+    return connectionProject;
+  };
+
+  const scopedState = () => {
+    if (connectionProject == null) {
+      throw RequestError.invalidRequest("a Project session must bind this ACP connection before state can be read");
+    }
+    return projectState(options.hostState(), connectionProject);
+  };
 
   const v1App = agent({ name: "RedSkills" })
     .onRequest(methods.agent.initialize, ({ params }) => {
@@ -110,12 +144,24 @@ async function servePublicConnection(
         _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR, workerBacked: true } },
       };
     })
-    .onRequest(methods.agent.session.new, ({ params }) => {
+    .onRequest(methods.agent.session.new, async ({ params }) => {
+      const project = await bindProject(params.cwd, () => RequestError.invalidParams(
+        {},
+        "this project-scoped ACP connection cannot address a different Project",
+      ));
       const sessionId = randomUUID();
-      sessions.set(sessionId, { request: params });
+      sessions.set(sessionId, { request: params, project });
       return {
         sessionId,
-        _meta: { redskills: { authority: "redskilled", protocolVersion: ACP_PROTOCOL_VERSION } },
+        _meta: {
+          redskills: {
+            authority: "redskilled",
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            projectId: project.projectId,
+            projectLabel: project.projectLabel,
+            workspacePath: project.workspacePath,
+          },
+        },
       };
     })
     .onRequest(methods.agent.session.prompt, async ({ params, client: upstream }) => {
@@ -158,7 +204,9 @@ async function servePublicConnection(
         ...(params._meta == null ? {} : { _meta: params._meta }),
       });
     })
-    .onRequest("_redskills/host_state", () => ({}), () => options.hostState());
+    // Compatibility spelling, but deliberately a Project projection. Ordinary
+    // ACP socket access is not an administrative capability.
+    .onRequest("_redskills/host_state", () => ({}), scopedState);
 
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
@@ -178,7 +226,10 @@ async function servePublicConnection(
         },
       };
     })
-    .onRequest(acpV2.methods.agent.session.new, ({ params }) => {
+    .onRequest(acpV2.methods.agent.session.new, async ({ params }) => {
+      const project = await bindProject(params.cwd, () => acpV2.RequestError.invalidParams(
+        "this project-scoped ACP connection cannot address a different Project",
+      ));
       const sessionId = randomUUID();
       sessions.set(sessionId, {
         request: {
@@ -188,6 +239,7 @@ async function servePublicConnection(
             ? {}
             : { additionalDirectories: params.additionalDirectories }),
         },
+        project,
       });
       return {
         sessionId,
@@ -196,6 +248,9 @@ async function servePublicConnection(
             authority: "redskilled",
             protocolVersion: acpV2.PROTOCOL_VERSION,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
+            projectId: project.projectId,
+            projectLabel: project.projectLabel,
+            workspacePath: project.workspacePath,
           },
         },
       };
@@ -223,7 +278,7 @@ async function servePublicConnection(
         ...(params._meta == null ? {} : { _meta: params._meta }),
       });
     })
-    .onRequest("_redskills/host_state", () => ({}), () => options.hostState());
+    .onRequest("_redskills/host_state", () => ({}), scopedState);
 
   const connection = acpV2.agentProtocolRouter()
     .withV1(v1App)
@@ -351,7 +406,7 @@ async function admitNativeAcpWorker(
   const rendezvous = await bindWorkerRendezvous(endpoint);
   let launched: LaunchedWorker;
   try {
-    launched = options.startWorker(nativeWorkerSpec(session.request.cwd, endpoint, options.paths.runtimeDir));
+    launched = options.startWorker(nativeWorkerSpec(session.project, endpoint, options.paths.runtimeDir));
   } catch (error) {
     rendezvous.server.close();
     await rm(endpoint, { force: true });
@@ -391,7 +446,7 @@ async function admitNativeAcpWorker(
     });
     requireCompatibleWireMajor(initialized._meta, true);
     const downstreamSession = await connection.agent.request(methods.agent.session.new, {
-      cwd: session.request.cwd,
+      cwd: session.project.workspacePath,
       mcpServers: session.request.mcpServers as McpServer[],
       ...(session.request.additionalDirectories == null
         ? {}
@@ -416,15 +471,28 @@ async function admitNativeAcpWorker(
   };
 }
 
-function nativeWorkerSpec(cwd: string, endpoint: string, runtimeDir: string): RedskilledWorkerSpec {
+function nativeWorkerSpec(
+  project: AcpProjectWorkspace,
+  endpoint: string,
+  runtimeDir: string,
+): RedskilledWorkerSpec {
   const entry = process.argv[1];
   if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
   return {
-    project_label: ACP_PROJECT_LABEL,
-    workspace_path: cwd,
+    project_label: project.projectLabel,
+    workspace_path: project.workspacePath,
     command: process.execPath,
     args: [...process.execArgv, entry, "acp-worker", "--socket", endpoint],
     log_path: join(runtimeDir, "acp-workers", `${randomBytes(6).toString("hex")}.toonl`),
+  };
+}
+
+function projectState(host: RedskilledHostState, project: AcpProjectWorkspace) {
+  return {
+    project_id: project.projectId,
+    project_label: project.projectLabel,
+    workspace_path: project.workspacePath,
+    workers: host.workers.filter((worker) => worker.project_label === project.projectLabel),
   };
 }
 
