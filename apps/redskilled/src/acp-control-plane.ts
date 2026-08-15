@@ -6,16 +6,14 @@
  * cleanup all live here, in the host authority. The native Worker speaks ACP on
  * its assigned socket and exits when redskilled closes that connection.
  */
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import {
   agent,
-  client,
   methods,
   RequestError,
-  type AgentConnection,
   type McpServer,
   type NewSessionRequest,
   type PromptRequest,
@@ -34,7 +32,6 @@ import {
   translateV1SessionUpdateToV2,
 } from "./acp-compat.js";
 import {
-  bindWorkerRendezvous,
   closeServer,
   connectWithDeadline,
   listen,
@@ -58,8 +55,7 @@ import {
   REDSKILLED_PROJECT_BUDGET_METHOD,
 } from "./acp-budget.js";
 import {
-  acpSessionJournalPath, createAcpSessionJournal, providerSessionEvidenceFromMeta,
-  replacementRecoveryMeta, type AcpSessionJournal,
+  acpSessionJournalPath, createAcpSessionJournal, type AcpSessionJournal,
 } from "./acp-session-journal.js";
 import {
   isAcpRetakePrompt,
@@ -101,9 +97,11 @@ import {
   workflowOutcome,
   type ActiveWorkflowWorker,
 } from "./acp-worker-lifecycle.js";
+import { admitNativeAcpWorker } from "./acp-native-worker.js";
+
+export { runNativeAcpWorker } from "./acp-native-worker.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
-export { runNativeAcpWorker } from "./acp-native-worker.js";
 
 interface PublicSession {
   readonly request: NewSessionRequest;
@@ -611,121 +609,6 @@ async function runV2PublicTurn(
       },
     });
   }
-}
-
-async function admitNativeAcpWorker(
-  options: StartRedskillsAcpControlPlaneOptions,
-  sessionJournal: AcpSessionJournal,
-  session: PublicSession,
-  publicSessionId: string,
-  forward: AgentConnection["client"]["notify"],
-  permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>,
-  replacement: boolean,
-): Promise<ActiveWorkflowWorker> {
-  const endpointId = randomBytes(6).toString("hex");
-  const endpoint = join(options.paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
-  const rendezvous = await bindWorkerRendezvous(endpoint);
-  let launched: LaunchedWorker;
-  try {
-    launched = options.startWorker(nativeWorkerSpec(session.project, endpoint, options.paths.runtimeDir));
-  } catch (error) {
-    rendezvous.server.close();
-    await rm(endpoint, { force: true });
-    throw error;
-  }
-
-  let workerSocket: Socket;
-  try {
-    workerSocket = await withTimeout(rendezvous.connected, 10_000, "native ACP Worker rendezvous");
-  } catch (error) {
-    rendezvous.server.close();
-    await rm(endpoint, { force: true });
-    throw error;
-  }
-  rendezvous.server.close();
-
-  let downstreamSessionId = "";
-  const downstreamApp = client({ name: "redskilled" })
-    .onNotification(methods.client.session.update, async ({ params }) => {
-      const notice: SessionNotification = {
-        ...params,
-        sessionId: publicSessionId,
-        _meta: {
-          ...(params._meta ?? {}),
-          redskills: {
-            ...((params._meta as { redskills?: object } | undefined)?.redskills ?? {}),
-            authority: "redskilled",
-            workerId: launched.worker.worker_id,
-          },
-        },
-      };
-      await sessionJournal.update(publicSessionId, params.update);
-      await forward(methods.client.session.update, notice);
-    })
-    .onRequest(methods.client.session.requestPermission, ({ params }) => permission({
-      ...params,
-      sessionId: publicSessionId,
-    }));
-  const connection = downstreamApp.connect(socketStream(workerSocket));
-  try {
-    const initialized = await connection.agent.request(methods.agent.initialize, {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: {},
-      clientInfo: { name: "redskilled", version: "1" },
-      _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
-    });
-    requireCompatibleWireMajor(initialized._meta, true);
-    const recovery = replacement ? sessionJournal.recovery(publicSessionId) : undefined;
-    const downstreamSession = await connection.agent.request(methods.agent.session.new, {
-      cwd: session.project.workspacePath,
-      mcpServers: session.request.mcpServers as McpServer[],
-      ...(session.request.additionalDirectories == null
-        ? {}
-        : { additionalDirectories: session.request.additionalDirectories }),
-      ...(recovery == null ? {} : { _meta: replacementRecoveryMeta(session.request._meta, recovery) }),
-    });
-    downstreamSessionId = downstreamSession.sessionId;
-    await sessionJournal.worker(publicSessionId, launched.worker.worker_id, downstreamSessionId, replacement);
-    const evidence = providerSessionEvidenceFromMeta(downstreamSession._meta);
-    if (evidence != null) {
-      await sessionJournal.evidence(publicSessionId, launched.worker.worker_id, evidence);
-    }
-  } catch (error) {
-    connection.close();
-    workerSocket.destroy();
-    await rm(endpoint, { force: true });
-    throw error;
-  }
-
-  return {
-    workerId: launched.worker.worker_id,
-    downstreamSessionId,
-    connection,
-    socket: workerSocket,
-    endpoint,
-    publicSessionId,
-    notify: forward,
-    cancelled: false,
-    cleaned: false,
-  };
-}
-
-function nativeWorkerSpec(
-  project: AcpProjectWorkspace,
-  endpoint: string,
-  runtimeDir: string,
-): RedskilledWorkerSpec {
-  const entry = process.argv[1];
-  if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
-  return {
-    // The host's authority key must survive a repository rename. The current
-    // GitHub full name remains display metadata on the public session.
-    project_label: project.projectId,
-    workspace_path: project.workspacePath,
-    command: process.execPath,
-    args: [...process.execArgv, entry, "acp-worker", "--socket", endpoint],
-    log_path: join(runtimeDir, "acp-workers", `${randomBytes(6).toString("hex")}.toonl`),
-  };
 }
 
 function projectState(host: RedskilledHostState, project: AcpProjectWorkspace) {
