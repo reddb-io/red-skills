@@ -73,6 +73,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
     expect(initialized.agentInfo?.name).toBe("RedSkills");
 
     const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const project = projectMeta(session._meta);
     const completed = await connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
       prompt: [{ type: "text", text: "complete the native tracer" }],
@@ -86,7 +87,8 @@ describe("the public RedSkills ACP v1 control plane", () => {
     )).toBe(true);
 
     const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
-    expect(firstBirth.project_label).toBe("redskills/acp");
+    expect(firstBirth.project_label).toBe(project.projectLabel);
+    expect(firstBirth.workspace_path).toBe(project.workspacePath);
     expect(firstBirth.pid).toBeGreaterThan(0);
     const liveAfterTerminal = await connection.agent.request<{ workers: Array<{ worker_id: string }> }>(
       "_redskills/host_state",
