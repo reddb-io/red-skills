@@ -3,6 +3,7 @@ import type { AttemptStatus } from "../envelope.js";
 import { formatValidationScope, type ValidationScope } from "../validation-scope.js";
 import type { ProcessIssueDeps, ProcessIssueInput, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution } from "./types.js";
+import { renderReseedMeasurement, type ReseedMeasurementFact } from "./reseed-measurement.js";
 
 /** The terminal-stage state needed to assemble an Envelope. */
 export interface EnvelopeStage {
@@ -50,6 +51,7 @@ export async function emitDone(
   validationScope?: ValidationScope,
   validationNotice?: string,
   appraisalScore?: number,
+  reseed?: ReseedMeasurementFact,
 ): Promise<boolean> {
   const { deps, input } = c;
   const scopeHeader = validationScope ? `${formatValidationScope(validationScope)}\n` : "";
@@ -68,6 +70,7 @@ export async function emitDone(
     sections: {
       ...(appraisalScore === undefined ? {} : { appraisal: `Score: ${appraisalScore}` }),
       validation: validationBody,
+      ...(reseed === undefined ? {} : { reseed: renderReseedMeasurement(reseed) }),
       ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}),
     },
     historyPath: deps.historyPath,
