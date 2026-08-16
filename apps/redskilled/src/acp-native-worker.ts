@@ -1,7 +1,6 @@
 /** Daemon admission and the native ACP Workflow Worker implementation. */
 import { randomBytes, randomUUID } from "node:crypto";
 import { constants, accessSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { delimiter, isAbsolute, join } from "node:path";
 import {
@@ -28,6 +27,7 @@ import {
   abortableDelay,
   bindWorkerRendezvous,
   connectWithDeadline,
+  removeAcpEndpoint,
   socketStream,
   waitForAbort,
   withTimeout,
@@ -41,7 +41,7 @@ import {
   type AcpSessionRecoveryCheckpoint,
 } from "./acp-session-journal.js";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
-import type { RedskilledPaths } from "./paths.js";
+import { resolveAcpWorkerEndpoint, type RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 import type { ActiveWorkflowWorker } from "./acp-worker-lifecycle.js";
@@ -67,14 +67,14 @@ export async function admitNativeAcpWorker(
   dispatch?: AcpTargetedDispatchIntent,
 ): Promise<ActiveWorkflowWorker> {
   const endpointId = randomBytes(6).toString("hex");
-  const endpoint = join(options.paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
+  const endpoint = resolveAcpWorkerEndpoint(options.paths, endpointId);
   const rendezvous = await bindWorkerRendezvous(endpoint);
   let launched: LaunchedWorker;
   try {
     launched = options.startWorker(nativeWorkerSpec(session.project, endpoint, options.paths.runtimeDir));
   } catch (error) {
     rendezvous.server.close();
-    await rm(endpoint, { force: true });
+    await removeAcpEndpoint(endpoint);
     throw error;
   }
 
@@ -83,7 +83,7 @@ export async function admitNativeAcpWorker(
     workerSocket = await withTimeout(rendezvous.connected, 10_000, "native ACP Worker rendezvous");
   } catch (error) {
     rendezvous.server.close();
-    await rm(endpoint, { force: true });
+    await removeAcpEndpoint(endpoint);
     throw error;
   }
   rendezvous.server.close();
@@ -160,7 +160,7 @@ export async function admitNativeAcpWorker(
   } catch (error) {
     connection.close();
     workerSocket.destroy();
-    await rm(endpoint, { force: true });
+    await removeAcpEndpoint(endpoint);
     throw error;
   }
 

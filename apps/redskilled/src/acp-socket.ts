@@ -14,12 +14,18 @@ export async function bindWorkerRendezvous(socketPath: string): Promise<{
   server: Server;
   connected: Promise<Socket>;
 }> {
-  await rm(socketPath, { force: true });
+  await removeAcpEndpoint(socketPath);
   let accept!: (socket: Socket) => void;
   const connected = new Promise<Socket>((resolve) => { accept = resolve; });
   const server = createServer((socket) => accept(socket));
   await listen(server, socketPath);
   return { server, connected };
+}
+
+/** Unix sockets leave filesystem nodes; Windows Named Pipes die with the server handle. */
+export async function removeAcpEndpoint(endpoint: string): Promise<void> {
+  if (endpoint.startsWith("\\\\.\\pipe\\")) return;
+  await rm(endpoint, { force: true });
 }
 
 export async function listen(server: Server, socketPath: string): Promise<void> {

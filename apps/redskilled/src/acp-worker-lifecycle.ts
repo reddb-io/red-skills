@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import {
   methods,
@@ -8,6 +7,7 @@ import {
   type PromptResponse,
 } from "@agentclientprotocol/sdk";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
+import { removeAcpEndpoint } from "./acp-socket.js";
 
 export interface ActiveWorkflowWorker {
   readonly workerId: string;
@@ -91,7 +91,7 @@ export function cleanupWorkflowWorker(
   if (active.get(sessionId) === worker) active.delete(sessionId);
   worker.connection.close();
   worker.socket.destroy();
-  void rm(worker.endpoint, { force: true });
+  void removeAcpEndpoint(worker.endpoint);
 }
 
 export function workerTransportIsClosed(worker: ActiveWorkflowWorker): boolean {

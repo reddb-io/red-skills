@@ -43,6 +43,7 @@
     "test:acp-agent-catalog": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-agent-catalog.test.ts",
     "test:acp-conformance": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-conformance.test.ts",
     "test:acp-control-plane": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/acp-control-plane.test.ts",
+    "test:acp-local-transport": "vitest run tests/acp-local-transport.test.ts",
     "test:placement-contract": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/placement-contract.test.ts",
     "test:github-gateway": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/github-gateway.test.ts",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify",
