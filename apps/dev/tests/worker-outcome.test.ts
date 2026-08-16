@@ -47,6 +47,7 @@ const TABLE: Row[] = [
   // outcome, so no rival outer recovery budget is available here.
   { outcome: "feedback-failed-infra", label: "blocked:validation-infra", recovery: null },
   { outcome: "stalled", label: "blocked:stalled", recovery: null },
+  { outcome: "spin:monologue", label: "blocked:spin", recovery: null },
   // #908: a budget abort carries the typed `blocked:budget` label and is NOT
   // auto-recoverable (escalate — a runaway is not a transient flake).
   { outcome: "budget-exceeded", label: "blocked:budget", recovery: null },
@@ -84,6 +85,7 @@ describe("worker-outcome — exhaustive outcome → (label, recovery) table", ()
       "runner-transient",
       "host-config",
       "stalled",
+      "spin:monologue",
       "budget-exceeded",
       "base-stale",
       "infra",
@@ -143,6 +145,7 @@ describe("worker-outcome — exhaustive outcome → envelope status table", () =
     { outcome: "host-config", status: "blocked" },
     { outcome: "claim-lost", status: "blocked" },
     { outcome: "stalled", status: "blocked" },
+    { outcome: "spin:monologue", status: "blocked" },
     { outcome: "budget-exceeded", status: "blocked" },
     { outcome: "base-stale", status: "blocked" },
     { outcome: "infra", status: "blocked" },
@@ -171,6 +174,7 @@ describe("worker-outcome — exhaustive outcome → envelope status table", () =
       "runner-transient",
       "host-config",
       "stalled",
+      "spin:monologue",
       "budget-exceeded",
       "base-stale",
       "infra",

@@ -10,6 +10,7 @@
     "./mcp-server": "./src/mcp-server.ts",
     "./resident": "./src/resident.ts",
     "./engine": "./src/engine/index.ts",
+    "./engine/spin-evaluator": "./src/engine/spin-evaluator.ts",
     "./engine/contracts": "./src/engine/contracts/index.ts",
     "./engine/terminal-events": "./src/engine/terminal-events.ts",
     "./engine/lifecycle-hooks": "./src/engine/lifecycle-hooks.ts",

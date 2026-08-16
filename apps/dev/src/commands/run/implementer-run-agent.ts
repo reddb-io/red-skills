@@ -8,6 +8,7 @@ import type { ConfigValues } from "../../core/config.js";
 import { getConfig } from "../../core/config.js";
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { updateState, workerStatePath } from "../../core/state.js";
+import { spinOutcome } from "../../core/worker-outcome.js";
 import {
   prepareImplementerEnvironment,
   type ImplementerPluginRoots,
@@ -81,7 +82,7 @@ export function makeImplementerRunAgent(
     const launchStarted = performance.now();
     let startupRecorded = false;
     const originalOnAgentEvent = input.onAgentEvent;
-    return inner({
+    const running = inner({
       ...input,
       // Every raw `gh` the inner agent spawns belongs to this Worker. The
       // execution boundary uses this explicit opt-in to install the private
@@ -119,6 +120,12 @@ export function makeImplementerRunAgent(
         }
         originalOnAgentEvent?.(event);
       },
+    });
+    return running.then((result) => {
+      const pattern = spinStream.persistentPattern();
+      return pattern === undefined
+        ? result
+        : { ...result, outcome: spinOutcome(pattern) };
     });
   };
 }

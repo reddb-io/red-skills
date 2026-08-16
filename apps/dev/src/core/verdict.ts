@@ -11,6 +11,7 @@ import type { GeneratedSurfaceDeclaration } from "./config.js";
 import { onlyGeneratedPaths } from "./generated-surfaces.js";
 import { VALIDATION_TARGET_MISSING_MARKER } from "./validation-command.js";
 import { baseMoved, type BaseMovement } from "./stale-base-drift.js";
+import type { SpinPattern } from "@reddb-io/red-castle/engine";
 
 export const DEFAULT_ENVIRONMENT_ROUNDS = 2;
 export const ENVIRONMENT_ROUNDS_ENV = "RED_GATE_ENVIRONMENT_ROUNDS";
@@ -53,6 +54,7 @@ export function emptyEnvironmentLedger(cap: number): EnvironmentLedger {
 
 export type VerdictFault =
   | { readonly kind: "branch" }
+  | { readonly kind: `spin:${SpinPattern}` }
   | { readonly kind: "environment"; readonly cause: Exclude<EnvironmentCause, "stale-base-drift"> }
   | { readonly kind: "base"; readonly cause: "stale-base-drift" };
 
@@ -87,6 +89,8 @@ export interface Verdict {
 export interface VerdictInput {
   readonly checks: readonly ClassifiableCheck[];
   readonly signature: string;
+  /** A runner-stream Spin that persisted after the episode's free steer. */
+  readonly spinPattern?: SpinPattern;
   readonly history: {
     readonly environment: EnvironmentLedger;
     /** Whether the existing Re-seed economy can heal one branch-owned round. */
@@ -152,6 +156,7 @@ function checkEnvironmentCause(
 }
 
 function faultFor(input: VerdictInput): VerdictFault {
+  if (input.spinPattern !== undefined) return { kind: `spin:${input.spinPattern}` };
   if (baseMoved(input.environment.movement)) return { kind: "base", cause: "stale-base-drift" };
   const environmentCause = checkEnvironmentCause(
     input.checks,
@@ -162,7 +167,7 @@ function faultFor(input: VerdictInput): VerdictFault {
 }
 
 function environmentCauseOf(fault: VerdictFault): EnvironmentCause | undefined {
-  return fault.kind === "branch" ? undefined : fault.cause;
+  return fault.kind === "environment" || fault.kind === "base" ? fault.cause : undefined;
 }
 
 function remediationFor(input: VerdictInput, fault: VerdictFault): VerdictRemediation | undefined {
@@ -187,7 +192,7 @@ function remediationFor(input: VerdictInput, fault: VerdictFault): VerdictRemedi
  * only park that environment fault, never transmute it into branch blame.
  */
 export function decideVerdict(input: VerdictInput): Verdict {
-  if (blockingValidationChecks(input.checks).length === 0) {
+  if (input.spinPattern === undefined && blockingValidationChecks(input.checks).length === 0) {
     return {
       fault: { kind: "branch" },
       budgetEffect: { kind: "none" },

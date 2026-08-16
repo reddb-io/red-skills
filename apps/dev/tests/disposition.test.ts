@@ -31,6 +31,7 @@ const ROWS: Row[] = [
   // the TOTAL-map addition: stalled is recoverable through the composer (#402),
   // even though the per-issue recoveryReasonFor view returns null for it.
   { outcome: "stalled", typedLabel: "blocked:stalled", envelopeStatus: "blocked", policyKey: "stalled", cap: 3 },
+  { outcome: "spin:monologue", typedLabel: "blocked:spin", envelopeStatus: "blocked", policyKey: null, cap: null },
   // non-recoverable: always escalate, no retry budget
   { outcome: "blocked", typedLabel: "blocked:spec", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "feedback-failed", typedLabel: "blocked:validation", envelopeStatus: "blocked", policyKey: null, cap: null },

@@ -46,6 +46,20 @@ function ledger(rounds: EnvironmentLedger["rounds"], cap = 2): EnvironmentLedger
 }
 
 describe("decideVerdict — one fault, budget effect, and park decision", () => {
+  it("names persistent Spin and charges the existing branch repair economy", () => {
+    expect(decideVerdict({
+      checks: [],
+      signature: "spin:monologue",
+      spinPattern: "monologue",
+      history: { environment: emptyEnvironmentLedger(2), branchBudgetAvailable: true },
+      environment: {},
+    })).toMatchObject({
+      fault: { kind: "spin:monologue" },
+      budgetEffect: { kind: "charge-branch" },
+      parkNow: false,
+    });
+  });
+
   it("resolves the one environment-ledger cap", () => {
     expect(resolveEnvironmentRounds(undefined)).toBe(2);
     expect(resolveEnvironmentRounds("3")).toBe(3);
