@@ -158,6 +158,15 @@ export interface DependentIssue {
  * the `ready-for-human` park a HUMAN-ONLY type demands (#2966). */
 export type PromotionLane = "agent" | "human";
 
+/** One authority's answer to whether a structured dependency gate can open. */
+export type DependencyPromotionDecision =
+  | { readonly outcome: "promotable"; readonly plan: PromotionPlan }
+  | {
+      readonly outcome: "held";
+      readonly reason: "missing-dependency-role" | "no-dependencies" | "blockers-open";
+      readonly pending: readonly number[];
+    };
+
 /**
  * The lane sentence appended to a promotion's audit comment, so a human reading
  * the Ticket can tell a sweep promotion from a hand-set label AND see why it
@@ -182,6 +191,42 @@ export function promotionLaneNote(
 }
 
 /**
+ * Decide one structured `req:*` dependency promotion. Both the event-driven
+ * close cascade (and therefore `cascade_status`) and the Unblock Sweep call
+ * this function, so the dependency role and all-closed rule cannot drift.
+ */
+export function decideDependencyPromotion(
+  dependent: DependentIssue,
+  hitlTypes: readonly string[] = [],
+): DependencyPromotionDecision {
+  if (!(dependent.labels ?? []).includes(LABEL_DEPENDENCY)) {
+    return { outcome: "held", reason: "missing-dependency-role", pending: [] };
+  }
+  if (dependent.reqs.length === 0) {
+    return { outcome: "held", reason: "no-dependencies", pending: [] };
+  }
+  const pending = dependent.reqs.filter((req) => !req.closed).map((req) => req.n);
+  if (!shouldPromote(dependent.reqs.map((req) => (req.closed ? "CLOSED" : "open-or-unknown")))) {
+    return { outcome: "held", reason: "blockers-open", pending };
+  }
+
+  const reqs = dependent.reqs.map((req) => req.n).sort((a, b) => a - b);
+  const carried = hostHitlTypesIn(dependent.labels ?? [], hitlTypes);
+  const lane: PromotionLane = carried.length > 0 ? "human" : "agent";
+  return {
+    outcome: "promotable",
+    plan: {
+      number: dependent.number,
+      refs: reqs.map((n) => `#${n}`),
+      reqLabels: reqs.map((n) => `req:${n}`),
+      comment: cascadeAuditComment(reqs) + promotionLaneNote(lane, carried, hitlTypes),
+      lane,
+      hitlTypes: carried,
+    },
+  };
+}
+
+/**
  * Plan the event-driven close cascade triggered when `closedIssue` closes. For
  * each dependent issue carrying `req:closedIssue` (and possibly other `req:*`
  * deps), promote it IFF EVERY one of its `req:*` deps is now CLOSED (and it has
@@ -193,25 +238,14 @@ export function promotionLaneNote(
  * closed-states are resolved by the caller.
  */
 export function planCloseCascade(
-  closedIssue: number,
+  _closedIssue: number,
   dependents: readonly DependentIssue[],
   hitlTypes: readonly string[] = [],
 ): PromotionPlan[] {
   const plans: PromotionPlan[] = [];
   for (const dep of dependents) {
-    const states: DependencyClosureState[] = dep.reqs.map((r) => (r.closed ? "CLOSED" : "open-or-unknown"));
-    if (!shouldPromote(states)) continue;
-    const reqs = dep.reqs.map((r) => r.n).sort((a, b) => a - b);
-    const carried = hostHitlTypesIn(dep.labels ?? [], hitlTypes);
-    const lane: PromotionLane = carried.length > 0 ? "human" : "agent";
-    plans.push({
-      number: dep.number,
-      refs: reqs.map((n) => `#${n}`),
-      reqLabels: reqs.map((n) => `req:${n}`),
-      comment: cascadeAuditComment(reqs) + promotionLaneNote(lane, carried, hitlTypes),
-      lane,
-      hitlTypes: carried,
-    });
+    const decision = decideDependencyPromotion(dep, hitlTypes);
+    if (decision.outcome === "promotable") plans.push(decision.plan);
   }
   return plans;
 }
@@ -243,12 +277,21 @@ export type DependencyClosureLookup = (issue: number) => Promise<string | undefi
  * stuck dependency gate meant re-running the core by hand to find out which of
  * the three had happened (#3801). Every path that declines to promote now says
  * so here. */
-export interface UnblockOutcome {
+export interface UnblockCandidateOutcome {
   readonly issue: number;
   readonly outcome: "promoted" | "held" | "refused";
   /** Plain-words account an operator can act on, never an enum to look up. */
   readonly reason: string;
 }
+
+/** A sweep-wide read failure, distinct from a successful empty candidate set. */
+export interface UnblockReadFailureOutcome {
+  readonly outcome: "failed";
+  readonly surface: "candidate-list";
+  readonly reason: string;
+}
+
+export type UnblockOutcome = UnblockCandidateOutcome | UnblockReadFailureOutcome;
 
 /** Everything one sweep did: the promoted numbers callers already consumed, and
  * the per-candidate account that explains the ones missing from it. */
@@ -298,15 +341,6 @@ export async function planUnblockSweep(
   const plans: PromotionPlan[] = [];
   for (const candidate of candidates) {
     const labels = candidate.labels ?? [];
-    if (!labels.includes(LABEL_DEPENDENCY)) {
-      held.push({
-        issue: candidate.number,
-        outcome: "held",
-        reason: `listed as a candidate but carries no ${LABEL_DEPENDENCY} label`,
-      });
-      continue;
-    }
-
     const reqIds = parseReqLabels(labels);
     // The LANE is the candidate's own type, not the sweep's default (#2966):
     // blockers closing frees a HUMAN-ONLY Ticket for its human, never for an agent.
@@ -315,32 +349,43 @@ export async function planUnblockSweep(
 
     // Prefer the structured req:* dependency labels when present.
     if (reqIds.length > 0) {
-      const states: DependencyClosureState[] = [];
+      const reqs: DependentIssue["reqs"] = [];
       for (const id of reqIds) {
         const raw = await fetchBlockerState(id);
-        states.push(raw === "CLOSED" ? "CLOSED" : "open-or-unknown");
+        reqs.push({ n: id, closed: raw === "CLOSED" });
       }
-      if (shouldPromote(states)) {
-        plans.push({
-          number: candidate.number,
-          refs: reqIds.map((n) => `#${n}`),
-          reqLabels: reqIds.map((n) => `req:${n}`),
-          comment: cascadeAuditComment(reqIds) + promotionLaneNote(lane, carried, hitlTypes),
-          lane,
-          hitlTypes: carried,
+      const decision = decideDependencyPromotion(
+        { number: candidate.number, labels, reqs },
+        hitlTypes,
+      );
+      if (decision.outcome === "promotable") {
+        plans.push(decision.plan);
+      } else if (decision.reason === "missing-dependency-role") {
+        held.push({
+          issue: candidate.number,
+          outcome: "held",
+          reason: `listed as a candidate but carries no ${LABEL_DEPENDENCY} label`,
         });
       } else {
         // A blocker that did not answer is reported the same as one still open:
         // the lookup answers `open-or-unknown` for both, and the sweep holds in
         // either case. Naming the numbers is what turns "still blocked" into a
         // line an operator can check against the tracker.
-        const pending = reqIds.filter((_, index) => states[index] !== "CLOSED");
         held.push({
           issue: candidate.number,
           outcome: "held",
-          reason: `blocker(s) not confirmed closed: ${pending.map((n) => `#${n}`).join(", ")}`,
+          reason: `blocker(s) not confirmed closed: ${decision.pending.map((n) => `#${n}`).join(", ")}`,
         });
       }
+      continue;
+    }
+
+    if (!labels.includes(LABEL_DEPENDENCY)) {
+      held.push({
+        issue: candidate.number,
+        outcome: "held",
+        reason: `listed as a candidate but carries no ${LABEL_DEPENDENCY} label`,
+      });
       continue;
     }
 

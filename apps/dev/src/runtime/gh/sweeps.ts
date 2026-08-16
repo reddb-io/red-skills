@@ -1,4 +1,7 @@
 import {
+  isGithubRateLimitError,
+} from "@reddb-io/github";
+import {
   LABEL_CRASHED,
   LABEL_DEPENDENCY,
   LABEL_HUMAN,
@@ -9,6 +12,7 @@ import {
 import type { IssueOpenState } from "../../core/reclaim.js";
 import type { ReconcileSweepCandidate, UnblockCandidate } from "../../core/boot-sweep.js";
 import { githubReadClient, githubRepo, type GhContext } from "./common.js";
+import type { GhReadFailure, GhReadResult } from "./read.js";
 import { readSingleObject } from "./single-object.js";
 
 /**
@@ -57,6 +61,20 @@ function labelNames(labels: GithubIssueListItem["labels"]): string[] {
 function reportSweepReadFailure(surface: string, error: unknown): void {
   const detail = error instanceof Error ? error.message : String(error);
   process.stderr.write(`🤖 /afk sweep read failed (${surface}); treating as empty: ${detail}\n`);
+}
+
+/** Preserve the shared typed read distinction at the paginated client seam. */
+function sweepReadFailure(error: unknown): GhReadFailure {
+  const quota = isGithubRateLimitError(error);
+  return {
+    surface: "rest",
+    classification: quota ? "quota" : "transport",
+    transient: quota,
+    code: -1,
+    stdout: "",
+    stderr: "",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 async function listIssuesViaClient(
@@ -136,19 +154,24 @@ export async function blockerState(ctx: GhContext, issue: number): Promise<strin
   return String((read.row as { state?: string }).state ?? "") || undefined;
 }
 
-export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
+export async function listUnblockCandidates(
+  ctx: GhContext,
+): Promise<GhReadResult<UnblockCandidate>> {
   try {
     const rows = await listIssuesViaClient(ctx, `unblock:${LABEL_DEPENDENCY}`, {
       labels: LABEL_DEPENDENCY,
     });
-    return rows.map((row): UnblockCandidate => ({
-      number: Number(row.number ?? 0),
-      body: String(row.body ?? ""),
-      labels: labelNames(row.labels),
-    }));
+    return {
+      outcome: "rows",
+      rows: rows.map((row): UnblockCandidate => ({
+        number: Number(row.number ?? 0),
+        body: String(row.body ?? ""),
+        labels: labelNames(row.labels),
+      })),
+    };
   } catch (error) {
     reportSweepReadFailure("unblock candidates", error);
-    return [];
+    return { outcome: "failed", failure: sweepReadFailure(error) };
   }
 }
 

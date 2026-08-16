@@ -77,7 +77,7 @@ export async function collectBootOptions(
     localAll,
     checkedOut,
     landedLocalBranches,
-    unblockCandidates,
+    unblockCandidateRead,
     staleClaimDirs,
     legacyWorkDirs,
     reconcileSweepCandidates,
@@ -115,7 +115,8 @@ export async function collectBootOptions(
       landedLocalBranches,
       trunk: facts.configuredTrunk ?? DEFAULT_BRANCH,
     },
-    unblockCandidates,
+    unblockCandidates:
+      unblockCandidateRead.outcome === "rows" ? unblockCandidateRead.rows : [],
     staleClaimDirs,
     legacyWorkDirs,
     reconcileSweepCandidates,

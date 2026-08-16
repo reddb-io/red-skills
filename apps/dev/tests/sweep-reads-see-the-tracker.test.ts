@@ -58,7 +58,10 @@ describe("a sweep read reaches the tracker", () => {
       { number: 3795, body: "", labels: [], pull_request: { url: "…" } },
     ]);
 
-    const candidates = await listUnblockCandidates(ctx);
+    const read = await listUnblockCandidates(ctx);
+    expect(read.outcome).toBe("rows");
+    if (read.outcome !== "rows") throw new Error("candidate read unexpectedly failed");
+    const candidates = read.rows;
 
     expect(candidates.map((c) => c.number)).toEqual([3629, 3507]);
     expect(candidates[0]?.labels).toContain("req:3628");
@@ -115,12 +118,31 @@ describe("a sweep read reaches the tracker", () => {
 
 describe("a failed sweep read is named, never disguised as an empty tracker", () => {
   const cases: Array<[string, (ctx: GhContext) => Promise<unknown>]> = [
-    ["unblock candidates", (ctx) => listUnblockCandidates(ctx)],
     ["dependent lookup", (ctx) => listByLabel(ctx, "req:1")],
     ["parked candidates", (ctx) => listParkedMechanicalCandidates(ctx)],
     ["open pull requests", (ctx) => listOpenPullRequests(ctx)],
     ["issue comments", (ctx) => issueComments(ctx, 1)],
   ];
+
+  it("returns the typed failure behind the unblock candidate listing", async () => {
+    const written: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      written.push(String(chunk));
+      return true;
+    });
+    const ctx = contextWith(() => new Error("HttpError: 503 Service Unavailable"));
+
+    try {
+      const read = await listUnblockCandidates(ctx);
+      expect(read).toMatchObject({
+        outcome: "failed",
+        failure: { surface: "rest", classification: "transport" },
+      });
+      expect(written.join("")).toContain("503 Service Unavailable");
+    } finally {
+      stderr.mockRestore();
+    }
+  });
 
   for (const [name, read] of cases) {
     it(`reports the failure behind ${name} while still answering conservatively`, async () => {

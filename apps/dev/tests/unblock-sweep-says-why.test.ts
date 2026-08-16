@@ -5,7 +5,12 @@
 //
 // Each case below is one of those silences, now spoken.
 import { describe, expect, it } from "vitest";
-import { executeUnblockSweep, type UnblockSweepGh } from "../src/core/boot-sweep.js";
+import {
+  executeUnblockSweep,
+  planCloseCascade,
+  planUnblockSweep,
+  type UnblockSweepGh,
+} from "../src/core/boot-sweep.js";
 
 function recordingGh(): UnblockSweepGh & { edits: number[] } {
   const edits: number[] = [];
@@ -19,6 +24,20 @@ function recordingGh(): UnblockSweepGh & { edits: number[] } {
 }
 
 describe("the unblock sweep says why it did not promote", () => {
+  it("shares the dependency state-role gate with the close-cascade projection", async () => {
+    const labels = ["req:138"];
+    const cascade = planCloseCascade(138, [
+      { number: 140, labels, reqs: [{ n: 138, closed: true }] },
+    ]);
+    const sweep = await planUnblockSweep(
+      [{ number: 140, body: "", labels }],
+      async () => "CLOSED",
+    );
+
+    expect(cascade).toEqual([]);
+    expect(sweep).toEqual([]);
+  });
+
   it("names the blockers that are not confirmed closed", async () => {
     const report = await executeUnblockSweep(
       [{ number: 3801, body: "", labels: ["blocked:dependency", "req:3800", "req:3799"] }],

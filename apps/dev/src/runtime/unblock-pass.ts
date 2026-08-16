@@ -34,6 +34,7 @@ import {
 } from "../core/boot-sweep.js";
 import { loadConfig, readHitlTypeLabels } from "../core/config.js";
 import * as ghx from "./gh.js";
+import type { GhReadResult } from "./gh/read.js";
 import { afkPaths, resolveRepoContext } from "./wire.js";
 
 /** The whole tracker surface one Unblock pass touches: read the blocked set,
@@ -42,7 +43,7 @@ import { afkPaths, resolveRepoContext } from "./wire.js";
  * glance that it needs no git, no worktree, and no boot probe. */
 export interface UnblockPassIo {
   /** Every open issue carrying `blocked:dependency`, with body and labels. */
-  listCandidates(): Promise<UnblockCandidate[]>;
+  listCandidates(): Promise<GhReadResult<UnblockCandidate>>;
   /** Whether blocker `issue` is CLOSED. A transient miss answers false, which
    * leaves the dependent blocked — the conservative direction. */
   issueClosed(issue: number): Promise<boolean>;
@@ -69,7 +70,20 @@ export interface UnblockPassIo {
  * promote identically.
  */
 export async function runUnblockPass(io: UnblockPassIo): Promise<UnblockSweepReport> {
-  const candidates = await io.listCandidates();
+  const read = await io.listCandidates();
+  if (read.outcome === "failed") {
+    return {
+      promoted: [],
+      outcomes: [
+        {
+          outcome: "failed",
+          surface: "candidate-list",
+          reason: read.failure.message,
+        },
+      ],
+    };
+  }
+  const candidates = read.rows;
   if (candidates.length === 0) return { promoted: [], outcomes: [] };
   return executeUnblockSweep(
     candidates,
