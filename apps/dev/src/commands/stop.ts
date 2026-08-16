@@ -8,6 +8,7 @@ import * as ghx from "../runtime/gh.js";
 import { createRedskilledBirthPort } from "../runtime/redskilled-birth.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 import { blockedLabelsIn } from "../core/state-transition.js";
+import { projectStopStatus } from "../core/project-stop.js";
 
 async function readWorkerPid(pidFile: string): Promise<number | null> {
   try {
@@ -177,6 +178,10 @@ async function stopProjectWithReconcile(
   stdout.write(
     encodeToon({
       op: "stop",
+      status: projectStopStatus({
+        deregistered: released.deregistered,
+        unreachable: released.refusal !== undefined,
+      }),
       deregistered: released.deregistered,
       workers_stopped: released.workersStopped.length,
       claims_released: claimsReleased,

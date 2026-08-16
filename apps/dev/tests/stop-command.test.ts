@@ -168,6 +168,7 @@ describe("stopCommand — project stop", () => {
     expect(code).toBe(0);
     const out = text();
     expect(out).toContain("op: stop");
+    expect(out).toContain("status: already-stopped");
     expect(out).toContain("deregistered: false");
     expect(out).toContain("claims_released: 0");
   });
@@ -180,6 +181,7 @@ describe("stopCommand — project stop", () => {
     expect(code).toBe(0);
     const out = text();
     expect(out).toContain("deregistered: true");
+    expect(out).toContain("status: stopped");
     expect(out).toContain("workers_stopped: 2");
   });
 
@@ -215,6 +217,7 @@ describe("stopCommand — project stop", () => {
     const code = await stopCommand([], "/repo", stream, io);
 
     expect(code).toBe(1);
+    expect(text()).toContain("status: unreachable");
     expect(text()).toContain("redskilled daemon unreachable");
   });
 

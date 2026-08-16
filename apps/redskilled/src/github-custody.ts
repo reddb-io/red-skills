@@ -43,6 +43,10 @@ export interface RedskilledGithubCustodyFault {
   readonly kind: "inert-custodian";
   readonly threshold_ms: number;
   readonly age_ms: number;
+  readonly repair: {
+    readonly method: "_redskills/github_custody_handoff";
+    readonly params: RedskilledGithubCustodyHandoff;
+  };
 }
 
 export interface RedskilledGithubCustodyRecord extends RedskilledGithubCustodyHandoff {
@@ -261,7 +265,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
       const key = custodyKey(project.projectId, valid.pull_request);
       executions.set(key, { project, credential });
       if (record.state !== "terminal") schedule(key, 0);
-      return publicRecord(record, options.clock(), options.inertMs);
+      return publicRecord(record, options.clock(), options.tickMs, options.inertMs);
     },
     async status(project, credential) {
       await register(project, credential);
@@ -274,7 +278,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
         records: current.records
           .filter((record) => record.project_id === project.projectId)
           .sort((left, right) => left.pull_request - right.pull_request)
-          .map((record) => publicRecord(record, now, options.inertMs)),
+          .map((record) => publicRecord(record, now, options.tickMs, options.inertMs)),
       };
     },
     close() {
@@ -289,16 +293,31 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
 function publicRecord(
   record: RedskilledGithubCustodyRecord,
   now: string,
+  tickMs: number,
   inertMs: number,
 ): RedskilledGithubCustodyRecord {
   if (record.state === "terminal") return withoutFault(record);
   const lastActivity = record.last_tick_at ?? record.handed_off_at;
   const age = Date.parse(now) - Date.parse(lastActivity);
-  if (!Number.isFinite(age) || age <= inertMs) return withoutFault(record);
+  const threshold = record.last_tick_at == null ? Math.min(tickMs, inertMs) : inertMs;
+  if (!Number.isFinite(age) || age < threshold) return withoutFault(record);
   return {
     ...record,
     next_action: "repair-custodian",
-    fault: { kind: "inert-custodian", threshold_ms: inertMs, age_ms: Math.max(0, age) },
+    fault: {
+      kind: "inert-custodian",
+      threshold_ms: threshold,
+      age_ms: Math.max(0, age),
+      repair: {
+        method: "_redskills/github_custody_handoff",
+        params: {
+          pull_request: record.pull_request,
+          owner_ticket: record.owner_ticket,
+          branch: record.branch,
+          base: record.base,
+        },
+      },
+    },
   };
 }
 

@@ -58,6 +58,7 @@ import {
   releaseProjectRegistration,
   waitStatusImpl,
 } from "./project.js";
+import { projectStopStatus } from "../core/project-stop.js";
 import { laneLogs, projectFields, workerVitals } from "./vitals.js";
 import {
   buildQueueStatus,
@@ -162,7 +163,16 @@ export function createCastleMcpDependencies(
     // project's Workers. There is no process of the project's own left to kill
     // (ADR 0130 Amendment 4), so `force` no longer selects a harder teardown —
     // the kill is the daemon's either way.
-    projectStop: async () => ({ status: "stopped", ...(await releaseProjectRegistration(root)) }),
+    projectStop: async () => {
+      const observed = await releaseProjectRegistration(root);
+      return {
+        status: projectStopStatus({
+          deregistered: observed.deregistered,
+          unreachable: observed.warnings != null,
+        }),
+        ...observed,
+      };
+    },
     hostState: () => createRedskilledBirthPort({ root }).hostState(),
     hostDashboard: () => createRedskilledBirthPort({ root }).hostDashboard(),
     hostProvisionCheck: () => createRedskilledBirthPort({ root }).provisionCheck(),

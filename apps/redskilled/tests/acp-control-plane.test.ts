@@ -820,6 +820,16 @@ describe("the public RedSkills ACP v1 control plane", () => {
       },
     });
     const firstSession = await first.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+    const unregisteredStop = await first.agent.request<ProjectControlOperationResult>(
+      "_redskills/project_stop",
+      {},
+    );
+    expect(unregisteredStop).toMatchObject({
+      status: "already-stopped",
+      drain_intent: "inactive",
+      revision: 0,
+      updates: [],
+    });
     const coreDrain = await first.agent.request(methods.agent.session.prompt, {
       sessionId: firstSession.sessionId,
       prompt: [{ type: "text", text: "/drain" }],
@@ -858,8 +868,9 @@ describe("the public RedSkills ACP v1 control plane", () => {
     const observed = await second.agent.request<ProjectControlSnapshot>("_redskills/project_status", {});
     expect(observed).toEqual(projectControlMeta(coreDrain._meta));
 
-    const stopped = await second.agent.request<ProjectControlSnapshot>("_redskills/project_stop", {});
+    const stopped = await second.agent.request<ProjectControlOperationResult>("_redskills/project_stop", {});
     expect(stopped).toMatchObject({
+      status: "stopped",
       drain_intent: "stopped",
       revision: 2,
       updates: [
@@ -867,6 +878,12 @@ describe("the public RedSkills ACP v1 control plane", () => {
         { sequence: 2, operation: "stop", drain_intent: "stopped" },
       ],
     });
+    await expect(second.agent.request<ProjectControlOperationResult>("_redskills/project_stop", {}))
+      .resolves.toMatchObject({
+        status: "already-stopped",
+        drain_intent: "stopped",
+        revision: 2,
+      });
     second.close();
     secondAdapter.stdin?.end();
 
@@ -914,11 +931,16 @@ interface ProjectControlSnapshot {
   }>;
 }
 
+interface ProjectControlOperationResult extends ProjectControlSnapshot {
+  readonly status: "draining" | "already-draining" | "stopped" | "already-stopped";
+}
+
 function projectControlMeta(meta: unknown): ProjectControlSnapshot {
   const control = (meta as { redskills?: { projectControl?: unknown } } | undefined)
     ?.redskills?.projectControl;
   expect(control).toMatchObject({ version: 1, project_id: expect.any(String) });
-  return control as ProjectControlSnapshot;
+  const { status: _status, ...snapshot } = control as ProjectControlOperationResult;
+  return snapshot;
 }
 
 function projectMeta(meta: unknown): { projectId: string; projectLabel: string; workspacePath: string } {

@@ -482,6 +482,7 @@ describe("stopping work deregisters the project", () => {
     expect(daemon.registrations()).toHaveLength(1);
 
     const stopped = await deps.projectStop({}) as Record<string, unknown>;
+    expect(stopped.status).toBe("stopped");
     expect(stopped.deregistered).toBe(true);
     expect(daemon.registrations()).toEqual([]);
 
@@ -491,5 +492,20 @@ describe("stopping work deregisters the project", () => {
       status: "registered",
       target: 2,
     });
+  });
+
+  it("distinguishes an already-stopped Project from a completed stop", async () => {
+    await liveHost();
+    const root = await project();
+    const stopped = await createCastleMcpDependencies(root).projectStop({}) as Record<string, unknown>;
+
+    expect(stopped).toMatchObject({ status: "already-stopped", deregistered: false });
+  });
+
+  it("reports an unreachable authority without rewriting the request as stopped", async () => {
+    const root = await project();
+    const stopped = await createCastleMcpDependencies(root).projectStop({}) as Record<string, unknown>;
+
+    expect(stopped).toMatchObject({ status: "unreachable", deregistered: false });
   });
 });
