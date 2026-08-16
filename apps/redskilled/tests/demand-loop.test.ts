@@ -326,6 +326,44 @@ describe("the daemon drives the demand loop itself", () => {
     expect(fetches).toBe(3);
   });
 
+  it("keeps a failing trunk refresh handled while an earlier synchronous hook holds the birth lane", async () => {
+    const launched: LaunchWorkerOptions[] = [];
+    const workspace = await scratch("redskilled-workspace-");
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch(launched),
+      refreshTrunk: async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        throw new Error("fatal: Needed a single revision");
+      },
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([1]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject({
+      ...registration("acme/widgets", 3, workspace),
+      trunk: { remote: "origin", branch: "main" },
+      hooks: {
+        "worker-birth": { argv: ["notify"], mode: "sync", deadline_ms: 30 },
+      },
+    });
+    daemon.startWorker({
+      worker_id: "source",
+      project_label: "acme/widgets",
+      workspace_path: workspace,
+      command: "work",
+    });
+    await daemon.pollQueueDiscovery();
+
+    const refused = await daemon.driveDemand();
+
+    expect(refused.refusal).toMatch(/refused-unreachable-trunk-remote/);
+    expect(daemon.hostState().registrations?.map((entry) => entry.project_label)).toEqual(["acme/widgets"]);
+  });
+
   it("births Workers up to a registered project's target, with no process of the project's own", async () => {
     const launched: LaunchWorkerOptions[] = [];
     const workspace = await scratch("redskilled-workspace-");

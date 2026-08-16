@@ -1007,10 +1007,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             if (!admission.admitted) throw new RedskilledAdmissionError(admission.reason, admission);
             const key = redskilledTrunkRefreshKey(trunk);
             let fork = burstForks.get(key);
-            if (fork == null) {
-              fork = refreshFork(trunk);
-              burstForks.set(key, fork);
-            }
+            if (fork == null) { fork = refreshFork(trunk); burstForks.set(key, fork); }
+            // The serialized birth lane may not await this until a synchronous hook settles.
+            void fork.catch(() => undefined);
             launched = await startAfterProjectHooks(() => admitAndStartWorker(spec, trunk, fork, admission));
           }
         } catch (err) {
