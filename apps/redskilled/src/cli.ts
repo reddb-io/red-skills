@@ -76,7 +76,8 @@ import {
 } from "./supervision.js";
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
 import { stabilizeRedskilledEntry } from "./stable-bundle.js";
-import { runNativeAcpWorker, runRedskillsAcpAdapter } from "./acp-control-plane.js";
+import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
+import { runAcpWorkerCommand } from "./acp-worker-command.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -245,8 +246,6 @@ const SERVE_FLAGS = {
   "queue-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
   "demand-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
 } as const;
-
-const ACP_WORKER_FLAGS = { socket: { kind: "value", coerce: (raw: string) => raw } } as const;
 
 /**
  * The env var naming the credential this host polls the tracker with.
@@ -604,9 +603,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   }
 
   if (command === "acp-worker") {
-    const { values } = parseFlags(args, ACP_WORKER_FLAGS);
-    if (values.socket == null || values.socket === "") throw new Error("acp-worker requires --socket");
-    return await runNativeAcpWorker(values.socket);
+    return await runAcpWorkerCommand(args);
   }
 
   if (command === "stop") return await runStop(args);

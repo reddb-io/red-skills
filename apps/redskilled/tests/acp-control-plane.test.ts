@@ -82,6 +82,101 @@ describe("ACP Workflow Worker replacement authority", () => {
 });
 
 describe("the public RedSkills ACP v1 control plane", () => {
+  it("governs a nested child Agent through the public workflow session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-acp-child-agent-"));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      HOME: root,
+      XDG_RUNTIME_DIR: root,
+      REDSKILLED_MACHINE_DIR: root,
+      REDSKILLED_PLACEMENT: "off",
+      REDSKILLED_SESSION: `test:${root}`,
+      REDSKILLED_ACP_PERMISSION_TIMEOUT_MS: "500",
+      PATH: `${resolve(__dirname, "fixtures", "bin")}:${process.env.PATH ?? ""}`,
+    };
+    const paths = resolveRedskilledPaths({ env, homeDir: root });
+    const daemon = launchCli([
+      "serve",
+      "--socket", paths.socketPath,
+      "--lease", paths.leasePath,
+      "--events", paths.eventLanePath,
+      "--machine-claim", paths.machineClaimPath,
+      "--idle-ms", "60000",
+    ], env, ["ignore", "ignore", "pipe"]);
+    await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
+
+    const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
+    const updates: SessionNotification[] = [];
+    const permissionRequests: RequestPermissionRequest[] = [];
+    const connection = client({ name: "redskilled-nested-agent-test" })
+      .onNotification(methods.client.session.update, ({ params }) => {
+        updates.push(params);
+      })
+      .onRequest(methods.client.session.requestPermission, ({ params }) => {
+        permissionRequests.push(params);
+        return { outcome: { outcome: "selected", optionId: "once" } };
+      })
+      .connect(childStream(adapter));
+    await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "nested-agent-client", version: "1" },
+    });
+    const session = await connection.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
+
+    const delegated = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "delegate child permission workflow" }],
+    });
+    expect(delegated).toMatchObject({
+      stopReason: "end_turn",
+      _meta: {
+        redskills: {
+          childAgent: "redcode",
+          childAttempts: 1,
+          delegation: {
+            authority: "parent-worker",
+            budget: "parent-remaining",
+            cancellation: "parent-mediated",
+            permissions: "parent-mediated",
+          },
+        },
+      },
+    });
+    expect(permissionRequests).toHaveLength(1);
+    expect(permissionRequests[0]?.sessionId).toBe(session.sessionId);
+    expect(new Set(updates.map((update) => update.sessionId))).toEqual(new Set([session.sessionId]));
+    expect(updates.map(lifecycleEvent).filter(Boolean)).toContain("child-admission");
+
+    updates.length = 0;
+    const cancelled = connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "delegate child wait for cancellation" }],
+    });
+    await waitFor(() => updates.some((update) => lifecycleEvent(update) === "child-tool-activity"), "child activity");
+    await connection.agent.notify(methods.agent.session.cancel, { sessionId: session.sessionId });
+    await expect(cancelled).resolves.toMatchObject({ stopReason: "cancelled" });
+
+    updates.length = 0;
+    await expect(connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "delegate child transport failure" }],
+    })).rejects.toThrow();
+    expect(updates.map(lifecycleEvent).filter(Boolean)).toEqual([
+      "admission",
+      "child-admission",
+      "child-tool-activity",
+      "child-replacement",
+      "child-tool-activity",
+      "child-failure",
+    ]);
+
+    connection.close();
+    adapter.stdin?.end();
+    daemon.kill("SIGTERM");
+  }, 30_000);
+
   it("replaces a dead Worker and resumes the same public session from its observable journal", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-acp-replacement-"));
     roots.push(root);
