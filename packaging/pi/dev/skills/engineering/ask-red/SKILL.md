@@ -79,11 +79,13 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **Operating project execution** -> the `redskilled` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
   from live host state; it is the sole runtime source of execution choreography
-  (ADR 0134). The stdio MCP is a client of the project's one versioned **Castle
-  resident** (ADR 0143), which owns engine state, GitHub adapters, registration,
-  and background belts; use the MCP response for project workflow truth and
-  `/redskilled` for host process/budget truth. `/afk` and `/go` are clients of
-  that canonical interface. The
+  (ADR 0134). The stdio MCP and the `project` CLI namespace exposed by
+  `red-skills-dev` are
+  stateless ACP clients of **redskilled**; the daemon owns Project control state,
+  GitHub access, and Worker supervision, while generic ACP core retains the same
+  workflow without typed RedSkills extensions. Use the ACP-projected response
+  for project workflow truth and `/redskilled` for host process/budget truth.
+  `/afk` and `/go` are clients of that canonical interface. The
   tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
@@ -169,11 +171,10 @@ request to `_redskills/github_custody_handoff` and ends, while the gateway keeps
 the single durable owner and `_redskills/project_status` exposes its last tick,
 forge state, next action, terminal outcome, or bounded inert-custodian fault) ->
 `apps/redskilled/src/github-gateway.ts` and `apps/redskilled/src/acp-github.ts`;
-Castle resident lifecycle (one project identity across Worktrees, versioned
-wire, spawn/handover/idle rules, matching proxy/resident artifacts, bounded
-project-status health, the local 1/4/8-session diagnostic, and the `redskilled`
-host-authority boundary) ->
-`.red/adr/0143-castle-resident-is-project-workflow-truth.md` and
+ACP Project adapter lifecycle (generic core and typed `_redskills/*` parity,
+ordered updates, permissions and cancellation, with MCP/CLI adapters owning no
+durable Project state, GitHub client, Worker birth, or private daemon protocol) ->
+`apps/redskilled/src/acp-client.ts`, `apps/dev/src/project-acp-adapter.ts`, and
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
