@@ -16,7 +16,7 @@ import {
   registerLaneEventSubscription,
   type LaneSubscriptionServer,
 } from "./lane-subscription.js";
-import { createResidentLaneFollower } from "./resident-lane-follower.js";
+import { createAcpLaneFollower } from "./acp-lane-follower.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
 
@@ -82,37 +82,23 @@ export function createRedskilledMcpServer(
   }
   registerLaneEventSubscription(
     server.server as unknown as LaneSubscriptionServer,
-    createResidentLaneFollower(invoke),
+    createAcpLaneFollower(invoke),
   );
   return server;
 }
 
-export interface ResidentMcpConnection {
+export interface ProjectMcpConnection {
   readonly server: { onclose?: () => void };
   connect(transport: StdioServerTransport): Promise<void>;
 }
 
-export interface ConnectResidentMcpOptions {
-  readonly server: ResidentMcpConnection;
+export interface ConnectProjectMcpOptions {
+  readonly server: ProjectMcpConnection;
   readonly transport: StdioServerTransport;
-  /** Ignored compatibility keys: adapters do not start workflow authorities. */
-  readonly resident?: ResidentLeaseComponent;
-  readonly janitor?: ResidentLeaseComponent;
-}
-
-export interface ResidentLeaseComponent {
-  start(): Promise<unknown>;
-  stop(): Promise<void>;
-}
-
-export async function connectResidentMcp(
-  options: ConnectResidentMcpOptions,
-): Promise<void> {
-  return await connectProjectMcp(options);
 }
 
 export async function connectProjectMcp(
-  options: Pick<ConnectResidentMcpOptions, "server" | "transport">,
+  options: ConnectProjectMcpOptions,
 ): Promise<void> {
   let notifyClosed!: () => void;
   const closed = new Promise<void>((resolveClosed) => {
@@ -148,8 +134,6 @@ async function run(): Promise<void> {
     process.removeListener("SIGTERM", close);
   }
 }
-
-/** Resolve the resident shipped beside this MCP bundle, preserving cache keys. */
 
 export interface McpEntrypointDependencies {
   connect(): Promise<void>;
@@ -210,10 +194,8 @@ export async function main(
   }
   // Any OTHER leading token is a role this bundle does not own — `run`,
   // `--once`, `monitor`, … all belong to the dev entry. Falling through would
-  // open a SECOND resident/stdio host that contends on the singleton leases and
-  // dies with an opaque lease error, which is exactly how MCP-launched slots
-  // burned as `deaths == respawns` forever (#2677). Fail with a named error
-  // instead, so the misrouted spawn is legible in the slot log.
+  // open an unintended Project surface. Fail with a named error instead, so a
+  // misrouted launch is legible in the adapter log.
   const leading = argv[0];
   if (leading !== undefined) {
     process.stderr.write(
