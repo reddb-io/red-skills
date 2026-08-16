@@ -12,7 +12,7 @@ import {
 function projectSession() {
   let revision = 0;
   let drainIntent: RedskillsProjectControlSnapshot["drain_intent"] = "inactive";
-  const updates: RedskillsProjectControlSnapshot["updates"] = [];
+  const updates: Array<RedskillsProjectControlSnapshot["updates"][number]> = [];
   const emitted: string[] = [];
   const permission = vi.fn(async () => "approved" as const);
   const cancel = vi.fn(async () => undefined);
