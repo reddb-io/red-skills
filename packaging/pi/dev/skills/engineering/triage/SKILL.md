@@ -171,7 +171,7 @@ ADR 0094 makes this deliberate redundancy. Native sub-issue relationship and nat
 
 | Final state | Action |
 |---|---|
-| `ready-for-agent` | Write or refresh the `## Agent brief` section in the issue body per [AGENT-BRIEF.md](AGENT-BRIEF.md). Do **not** post the brief as a comment. **Also add `landing:manual` (#1049)** when the slice is fully agent-codable but its *merge* must stay human — e.g. it touches AFK's own landing/claim machinery, where an auto-merge by the fleet is the exact failure the slice guards against. `/afk` then runs the full pipeline and opens the PR, but parks `ready-for-human` for a human's merge click instead of auto-merging. |
+| `ready-for-agent` | Write or refresh the `## Agent brief` section in the issue body per [AGENT-BRIEF.md](AGENT-BRIEF.md). Do **not** post the brief as a comment. |
 | `ready-for-human` | Same structure as an agent brief, but note **why** it can't be delegated (judgment call, external access, design decision, manual testing). Lives in the issue body under `## Agent brief` just like the AFK variant. |
 | `needs-info` | Post triage notes (template below). |
 | `wontfix` (bug) | Polite explanation, then close. |

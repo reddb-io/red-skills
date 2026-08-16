@@ -59,7 +59,6 @@ import {
 import { runPostWorkerFormat, type PostWorkerFormatExec } from "../post-worker-format.js";
 import {
   openReviewPr,
-  openManualLandingPr,
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
@@ -122,7 +121,6 @@ import {
   LABEL_HUMAN,
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
-  LABEL_LANDING_MANUAL,
   LABEL_SPEC,
   LABEL_ORIGIN_EXTERNAL,
 } from "../triage-labels.js";
@@ -179,7 +177,7 @@ import {
   type EnvironmentLedger,
   type Verdict,
 } from "../verdict.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { reportValidationEvidenceInconsistency } from "./validation-park.js";
 import { setupFailureExcerpt } from "./setup-failure.js";
 import { hookAbortDetail, hookAbortedLanding, type HookAbortDetail } from "./hook-landing-failure.js";
@@ -1806,9 +1804,6 @@ export async function processIssue(
   }
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
-  if (labels.includes(LABEL_LANDING_MANUAL)) {
-    return await handoffForManualLanding(common, base, completeValidationSidecar());
-  }
   if (openPr && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
     return await handoffForReview(common, activeTaskClass, completeValidationSidecar());
   }

@@ -92,12 +92,6 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: oneLine(sections.log, "Landing infrastructure precondition failed."),
         next: "Fix the landing infrastructure failure, then requeue.",
       });
-    case "manual-landing":
-      return makeBlocker({
-        kind: "manual-landing",
-        summary: oneLine(sections.log, "Manual-landing hold: the full pipeline ran and the PR is open, awaiting a human merge."),
-        next: "Merge the open PR to land the work (it auto-closes this issue); no full agent re-run is needed.",
-      });
     default:
       return null;
   }

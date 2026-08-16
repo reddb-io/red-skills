@@ -82,13 +82,6 @@ export function spinPatternFromOutcome(value: SpinOutcome): SpinPattern {
 export type WorkerOutcome =
   | "done"
   | "review-requested"
-  // Per-issue MANUAL-LANDING mode (issue #1049): a `landing:manual` issue ran the
-  // full pipeline through PR creation, then intentionally HELD the merge for a
-  // human's final click. Like `review-requested` it is a HANDOFF, not a failure —
-  // the work is complete and committed on the open PR, the agent is NEVER re-run,
-  // and it carries no typed `blocked:*` label. The issue closes on PR merge via
-  // the `Closes #N` back-reference.
-  | "manual-landing"
   | "blocked"
   | "no-sentinel"
   // External-signal kill (#1308): the inner process was terminated by an OS
@@ -243,10 +236,6 @@ export function blockedLabelFor(o: WorkerOutcome): string | null {
     case "done":
     case "claim-lost":
     case "review-requested":
-    // manual-landing is a HANDOFF (issue #1049), not a blocked failure: the PR is
-    // open and the human owns the merge click, so it carries no typed `blocked:*`
-    // label — like review-requested above.
-    case "manual-landing":
       return null;
   }
 }
@@ -320,11 +309,6 @@ export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
     // PR), so it folds into the generic `blocked` bucket only to keep the
     // mapping total — like claim-lost / exhausted above.
     case "review-requested":
-    // manual-landing (issue #1049) DOES emit a terminal envelope (it carries the
-    // PR URL + park reason), but it describes an intact, committed PR held for a
-    // human merge — never a git conflict — so it folds into the generic `blocked`
-    // status bucket, exactly like the ci-* holds above.
-    case "manual-landing":
       return "blocked";
   }
 }
@@ -395,11 +379,6 @@ export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
     case "done":
     case "claim-lost":
     case "review-requested":
-    // manual-landing is NON-recoverable on purpose (issue #1049): the work is
-    // complete and committed on the open PR, so an auto-retry would re-run the
-    // whole inner agent for nothing. A human drives the merge; the agent never
-    // re-runs — exactly like review-requested / the ci-* holds above.
-    case "manual-landing":
       return null;
   }
 }

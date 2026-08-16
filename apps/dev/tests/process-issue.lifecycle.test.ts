@@ -525,7 +525,7 @@ describe("processIssue — baseline comparison is comparison-only (#2380)", () =
 });
 
 
-describe("processIssue — per-issue manual-landing mode (landing:manual, #1049)", () => {
+describe("processIssue — the ordinary landing path", () => {
   function recordingMerge(deps: ProcessIssueDeps): string[][] {
     const calls: string[][] = [];
     const inner = deps.mergeExec;
@@ -536,81 +536,7 @@ describe("processIssue — per-issue manual-landing mode (landing:manual, #1049)
     return calls;
   }
 
-  it("landing:manual → full pipeline through PR creation, ZERO merge calls, parked ready-for-human", async () => {
-    const { deps, input, trace } = harness({
-      outcome: "done",
-      feedbackOk: true,
-      locked: false,
-      labels: ["ready-for-agent", "landing:manual"],
-    });
-    const calls = recordingMerge(deps);
-    const result = await processIssue(deps, input);
-    const joined = calls.map((c) => c.join(" "));
-
-    // The whole pipeline ran (agent + feedback) and the PR was opened/reused...
-    expect(result.outcome).toBe("manual-landing");
-    expect(trace.runAgentCalls.length).toBe(1);
-    expect(trace.pushedAttempt.length).toBeGreaterThan(0);
-    // ...but NO merge call was ever made (the seam assertion).
-    expect(joined.some((c) => (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
-    // No review label either — this is a human-merge hold, not a fresh-agent review.
-    expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
-
-    // Parked to ready-for-human (running dropped), issue NOT closed, agent not re-run.
-    expect(
-      trace.labelEdits.some((e) => e.remove.includes("running") && e.add.includes("ready-for-human")),
-    ).toBe(true);
-    expect(trace.closed).not.toContain(9);
-    // manual-landing is a handoff, NOT a failure: no blocked:* label rides along.
-    expect(trace.labelEdits.some((e) => e.add.some((l: string) => l.startsWith("blocked:")))).toBe(false);
-    // Open PR + worker branch preserved for the human to merge.
-    expect(trace.deletedRemote).toHaveLength(0);
-    expect(result.preserved).toBe(true);
-    expect(result.swept).toBe(false);
-    expect(trace.released).toContain(9);
-  });
-
-  it("terminal envelope carries the PR URL and names manual landing as the park reason", async () => {
-    const { deps, input, trace } = harness({
-      outcome: "done",
-      feedbackOk: true,
-      locked: false,
-      labels: ["ready-for-agent", "landing:manual"],
-    });
-    await processIssue(deps, input);
-
-    // A terminal envelope was posted (folds into the generic `blocked` bucket).
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    const body = trace.envelopeBodies.join("\n");
-    // The PR URL (o/r + reused PR 42) and the manual-landing reason are both present.
-    expect(body).toContain("https://github.com/o/r/pull/42");
-    expect(body.toLowerCase()).toContain("manual landing");
-    // The auto-close back-reference is named for the human.
-    expect(body).toContain("Closes #9");
-    // The park comment also carries the PR URL + reason.
-    expect(trace.comments.some((c) => c.body.includes("https://github.com/o/r/pull/42"))).toBe(true);
-  });
-
-  it("landing:manual holds the merge even when the direct-merge flag is set", async () => {
-    const { deps, input, trace } = harness({
-      outcome: "done",
-      feedbackOk: true,
-      locked: false,
-      worktreeLaunchesPr: false, // direct-merge mode — manual landing still opens a PR + holds
-      labels: ["ready-for-agent", "landing:manual"],
-    });
-    const calls = recordingMerge(deps);
-    const result = await processIssue(deps, input);
-    const joined = calls.map((c) => c.join(" "));
-
-    expect(result.outcome).toBe("manual-landing");
-    expect(joined.some((c) => (c.includes("pr merge") || c.includes("pulls/42/merge")))).toBe(false);
-    // No direct `git merge --no-ff` into the base either — nothing lands.
-    expect(joined.some((c) => c.includes("merge --no-ff"))).toBe(false);
-    expect(trace.closed).not.toContain(9);
-  });
-
-  it("an ordinary issue (no landing:manual) still fast-merges + closes", async () => {
+  it("an issue that reaches DONE fast-merges and closes", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,

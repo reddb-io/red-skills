@@ -46,7 +46,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 /** The noun an extinct source belonged to. */
-export type ExtinctNoun = "fleet" | "attempt" | "supervisor" | "alias";
+export type ExtinctNoun = "fleet" | "attempt" | "supervisor" | "alias" | "manual-landing";
 
 /** One artifact ADR 0130 removed, with the route that replaced it. */
 export interface ExtinctSource {
@@ -231,6 +231,15 @@ export interface ExtinctName {
  * contract, and renaming a key is a breaking change of its own, not a rename.
  */
 export const EXTINCT_NAMES: readonly ExtinctName[] = [
+  {
+    id: "manual-landing-mode",
+    noun: "manual-landing",
+    what:
+      "the per-issue mode that ran the whole pipeline, opened the PR and then held the merge behind a `landing:manual` label",
+    replacement:
+      "nothing inside the engine — a merge that must wait is held by the Ticket sitting `ready-for-human` (no Worker claims it) and by whoever owns the pull request. The mode decided a Ticket's fate from `is there an open PR` rather than from whether it still owed work, so a held Ticket could not be sent back for more",
+    pattern: /landing[^A-Za-z]?manual|manual[^A-Za-z]?landing/i,
+  },
   {
     id: "attempt-keyed-accounting",
     noun: "attempt",

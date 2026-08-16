@@ -45,7 +45,7 @@ import {
 import { runPostWorkerFormat, type PostWorkerFormatExec } from "../post-worker-format.js";
 import {
   openReviewPr,
-  openManualLandingPr,
+  openPrWithoutMerging,
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
@@ -122,7 +122,6 @@ import {
   LABEL_HUMAN,
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
-  LABEL_LANDING_MANUAL,
   LABEL_SPEC,
 } from "../triage-labels.js";
 export type ContainerSandboxMode = Exclude<SandboxMode, "none">;
