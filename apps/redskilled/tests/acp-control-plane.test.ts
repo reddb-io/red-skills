@@ -19,6 +19,7 @@ import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { socketAnswers } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
+import { createRedskilledMajorHandover } from "../src/major-handover.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
 import { requestWorkflowTurn, type ActiveWorkflowWorker } from "../src/acp-worker-lifecycle.js";
 
@@ -78,6 +79,104 @@ describe("ACP Workflow Worker replacement authority", () => {
     expect(replacementAdmissions).toBe(0);
     expect(active.get(publicSessionId)).toBe(worker);
     expect(worker.cleaned).toBe(false);
+  });
+});
+
+describe("quiescent RedSkills major handover", () => {
+  it("drains the old authority and resumes an interrupted migration before the new major accepts work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-major-handover-"));
+    roots.push(root);
+    const checkpointPath = join(root, "major-handover.toon");
+    const order: string[] = [];
+    const observations: Array<{ old: string[]; next: string[] }> = [];
+    const old = new Set(["projects", "workers", "endpoint", "github-budget"]);
+    const next = new Set<string>();
+    let accepting = true;
+    let migrationAttempts = 0;
+    const observe = () => {
+      observations.push({ old: [...old].sort(), next: [...next].sort() });
+      expect([...old].filter((authority) => next.has(authority))).toEqual([]);
+    };
+    const handover = createRedskilledMajorHandover(checkpointPath, {
+      clock: () => `2026-08-16T01:0${order.length}:00.000Z`,
+    });
+
+    const checkpoint = await handover.quiesce({
+      fromMajor: 1,
+      toMajor: 2,
+      async stopAdmission() {
+        order.push("stop-admission");
+        accepting = false;
+        observe();
+      },
+      async drainWorkers() {
+        order.push("drain-workers");
+        expect(accepting).toBe(false);
+        old.delete("workers");
+        observe();
+        return [{ worker_id: "worker-one", outcome: "terminally-accounted" }];
+      },
+      async flushGithubWrites() {
+        order.push("flush-github-writes");
+        expect(old.has("workers")).toBe(false);
+        observe();
+      },
+      async releaseAuthority() {
+        order.push("release-old-authority");
+        expect((await handover.read())?.phase).toBe("quiesced");
+        old.clear();
+        observe();
+      },
+    });
+
+    expect(order).toEqual([
+      "stop-admission",
+      "drain-workers",
+      "flush-github-writes",
+      "release-old-authority",
+    ]);
+    expect(checkpoint).toMatchObject({
+      version: 1,
+      from_major: 1,
+      to_major: 2,
+      phase: "released",
+      workers: [{ worker_id: "worker-one", outcome: "terminally-accounted" }],
+    });
+    expect(checkpoint).not.toHaveProperty("workflow_state");
+
+    await expect(handover.activate({
+      toMajor: 2,
+      async migrate() {
+        migrationAttempts += 1;
+        order.push("migration-interrupted");
+        observe();
+        throw new Error("fixture interruption");
+      },
+      async assumeAuthority() {
+        throw new Error("an interrupted migration must not activate the new major");
+      },
+    })).rejects.toThrow("fixture interruption");
+    expect((await handover.read())?.phase).toBe("released");
+    expect(next.size).toBe(0);
+
+    const activated = await handover.activate({
+      toMajor: 2,
+      async migrate() {
+        migrationAttempts += 1;
+        order.push("migrate-state");
+        observe();
+      },
+      async assumeAuthority() {
+        order.push("assume-new-authority");
+        for (const authority of ["projects", "workers", "endpoint", "github-budget"]) next.add(authority);
+        observe();
+      },
+    });
+
+    expect(migrationAttempts).toBe(2);
+    expect(activated.phase).toBe("active");
+    expect(order.slice(-2)).toEqual(["migrate-state", "assume-new-authority"]);
+    expect(observations.every(({ old, next }) => old.every((authority) => !next.includes(authority)))).toBe(true);
   });
 });
 
