@@ -17,6 +17,7 @@
     "./github-gateway": "./src/github-gateway.ts",
     "./launch-template": "./src/launch-template.ts",
     "./live-metrics": "./src/live-metrics.ts",
+    "./major-handover": "./src/major-handover.ts",
     "./orphan-reaper": "./src/orphan-reaper.ts",
     "./paths": "./src/paths.ts",
     "./project-breaker": "./src/project-breaker.ts",
