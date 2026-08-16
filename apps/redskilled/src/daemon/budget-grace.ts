@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import type { RedskilledWorkerView } from "../host-state.js";
+import { parseContainerPlacementHandle } from "../reattach.js";
 
 export const DEFAULT_REDSKILLED_BUDGET_GRACE_MS = 30_000;
 export const REDSKILLED_BUDGET_GRACE_SIGNAL: NodeJS.Signals = "SIGUSR2";
@@ -67,6 +68,15 @@ export function createBudgetGraceRuntime(options: BudgetGraceRuntimeOptions): Re
 
 /** Signal the unit when there is one; otherwise signal the detached Worker tree. */
 export function signalWorkerForBudgetGrace(worker: RedskilledWorkerView): boolean {
+  const container = parseContainerPlacementHandle(worker.unit);
+  if (container != null) {
+    const sent = spawnSync(
+      container.engine,
+      ["kill", `--signal=${REDSKILLED_BUDGET_GRACE_SIGNAL}`, container.name],
+      { stdio: "ignore" },
+    );
+    return sent.error == null && sent.status === 0;
+  }
   if (worker.unit != null && worker.unit !== "") {
     const sent = spawnSync(
       "systemctl",

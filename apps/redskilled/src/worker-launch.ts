@@ -33,8 +33,10 @@ import {
   detectWorkerPlacementProbes,
   placementEnabled,
   planWorkerPlacement,
+  workerPlacementDriverPolicy,
   type RedskilledPlacementTarget,
   type RedskilledWorkerBudget,
+  type WorkerPlacementDriverPolicy,
   type WorkerPlacementPlan,
   type WorkerPlacementProbes,
 } from "./worker-placement.js";
@@ -124,6 +126,8 @@ export interface LaunchWorkerOptions {
   readonly admission: RedskilledAdmissionVerdict;
   readonly forkSha?: string;
   readonly probes?: WorkerPlacementProbes;
+  /** Host-owned placement limits resolved by redskilled, never by the Project. */
+  readonly driverPolicy?: WorkerPlacementDriverPolicy;
   /**
    * The ceiling the host derived for this Worker (`deriveWorkerScopeCeiling`).
    *
@@ -329,6 +333,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     env: workerEnv,
     enabled: options.enabled ?? placementEnabled(env),
     probes,
+    driverPolicy: options.driverPolicy ?? workerPlacementDriverPolicy(env),
     pipeOutput: logReady || spec.input != null,
   });
 
