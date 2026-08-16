@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * prepare.mjs — stage the built plugin bundles into this npm package's `dist/`
- * before `pnpm pack` / publish (ADR 0091). Copies the platform-independent JS
- * bundles from the repo-root `dist/` (produced by `pnpm bundle`) into
- * `packaging/npm/dist/` so they ship inside the tarball.
+ * prepare.mjs — stage the built non-plugin bundles into this npm package's
+ * `dist/` before `pnpm pack` / publish (ADR 0146). Per-plugin runtime bundles
+ * ship from `@reddb-io/red-skills-<plugin>` instead; this core package keeps
+ * only the supporting runtimes its retained bin/host surfaces need.
  *
  * Missing bundles are reported and skipped rather than failing hard, so a
- * partial build (e.g. only the dev bundle) still packs — the pre-publish
- * contract check is the gate that a required bundle actually resolves.
+ * partial supporting-runtime build can still pack — the pre-publish contract
+ * check is the gate that every required core surface actually resolves.
  */
-import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,21 +34,14 @@ const HOST_WIRING_FILES = [
   "scripts/lib/manifest-core.mjs",
 ];
 
-// Each entry stages one bundle into this package's dist/. `dest` is the packaged
-// filename the bin shims / launchers resolve; the first existing `sources` entry
-// is copied to it. Most bundles are named identically by `pnpm bundle`, but
-// code-nav's turbo outfile is `code-nav-mcp.bundle.min.mjs` while the packaged /
-// release-asset name is `code-nav.bundle.min.mjs` — so it lists both: CI's
-// dedicated code-nav step pre-copies the asset name, and the plain `pnpm bundle`
-// path falls back to the turbo outfile. No bundle silently skips as "not built".
+// Each entry stages one non-plugin bundle into this package's dist/. `dest` is
+// the packaged filename a retained bin/host surface resolves; the first existing
+// `sources` entry is copied to it. The plugin tree is staged independently by
+// scripts/build-pi-packages.mjs and must never be duplicated here.
 const BUNDLES = [
   { dest: "opencode-host.bundle.min.mjs", sources: ["opencode-host.bundle.min.mjs"] },
-  { dest: "dev.bundle.min.mjs", sources: ["dev.bundle.min.mjs"] },
   { dest: "redskilled-mcp.bundle.min.mjs", sources: ["redskilled-mcp.bundle.min.mjs"] },
   { dest: "code-nav.bundle.min.mjs", sources: ["code-nav.bundle.min.mjs", "code-nav-mcp.bundle.min.mjs"] },
-  { dest: "memory.bundle.min.mjs", sources: ["memory.bundle.min.mjs"] },
-  { dest: "memory-tokenizer.asset.cjs", sources: ["memory-tokenizer.asset.cjs"] },
-  { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },
   { dest: "release.bundle.min.mjs", sources: ["release.bundle.min.mjs"] },
   { dest: "rsp.bundle.min.mjs", sources: ["rsp.bundle.min.mjs"] },
   { dest: "rsp-core.bundle.min.mjs", sources: ["rsp-core.bundle.min.mjs"] },
@@ -64,6 +57,9 @@ for (const relativePath of HOST_WIRING_FILES) {
   process.stdout.write(`prepare: staged ${relativePath}\n`);
 }
 
+// `prepare` is a producer, not an overlay. A bundle staged by an older checkout
+// must not leak back into a later core tarball after the package boundary moves.
+rmSync(destDist, { recursive: true, force: true });
 mkdirSync(destDist, { recursive: true });
 let staged = 0;
 for (const { dest, sources } of BUNDLES) {
