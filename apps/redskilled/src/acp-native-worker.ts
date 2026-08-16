@@ -1,8 +1,9 @@
 /** Daemon admission and the native ACP Workflow Worker implementation. */
 import { randomBytes, randomUUID } from "node:crypto";
+import { constants, accessSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import {
   agent,
   client,
@@ -16,6 +17,8 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
+import { ACP_AGENT_CATALOG, type AcpEndpoint } from "./acp-agent-catalog.js";
+import { WorkflowChildAgent } from "./acp-child-agent.js";
 import {
   ACP_PROTOCOL_VERSION,
   REDSKILLS_WIRE_MAJOR,
@@ -182,21 +185,68 @@ function nativeWorkerSpec(
 ): RedskilledWorkerSpec {
   const entry = process.argv[1];
   if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
+  const childAgent = pinChildAgentExecutable(defaultChildAgentEndpoint());
   return {
     // The host's authority key must survive a repository rename. The current
     // GitHub full name remains display metadata on the public session.
     project_label: project.projectId,
     workspace_path: project.workspacePath,
     command: process.execPath,
-    args: [...process.execArgv, entry, "acp-worker", "--socket", endpoint],
+    args: [
+      ...process.execArgv,
+      entry,
+      "acp-worker",
+      "--socket", endpoint,
+      "--child-agent", childAgent.agent,
+      "--child-command", childAgent.command,
+      ...childAgent.args.flatMap((arg) => ["--child-arg", arg]),
+    ],
     log_path: join(runtimeDir, "acp-workers", `${randomBytes(6).toString("hex")}.toonl`),
   };
 }
 
+function pinChildAgentExecutable(endpoint: AcpEndpoint): AcpEndpoint {
+  if (isAbsolute(endpoint.command) || endpoint.command.includes("/") || endpoint.command.includes("\\")) {
+    return endpoint;
+  }
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    if (directory === "") continue;
+    for (const extension of extensions) {
+      const candidate = join(directory, `${endpoint.command}${extension}`);
+      try {
+        accessSync(candidate, constants.X_OK);
+        return { ...endpoint, command: candidate };
+      } catch {
+        // Try the next host PATH entry; child launch still accounts for total absence.
+      }
+    }
+  }
+  return endpoint;
+}
+
+function defaultChildAgentEndpoint(): AcpEndpoint {
+  const descriptor = ACP_AGENT_CATALOG.find(({ id }) => id === "redcode");
+  if (descriptor == null || descriptor.kind !== "native") {
+    throw new Error("the governed Redcode child ACP endpoint is not configured");
+  }
+  return {
+    agent: descriptor.id,
+    transport: "stdio",
+    command: descriptor.command[0],
+    args: descriptor.command.slice(1),
+  };
+}
+
 /** The daemon-admitted native Workflow Worker. */
-export async function runNativeAcpWorker(socketPath: string): Promise<number> {
+export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpEndpoint): Promise<number> {
   const controllers = new Map<string, AbortController>();
-  const sessions = new Set<string>();
+  const sessions = new Map<string, {
+    readonly request: NewSessionRequest;
+    child?: WorkflowChildAgent;
+  }>();
   const recoveries = new Map<string, AcpSessionRecoveryCheckpoint>();
   const app = agent({ name: "RedSkills native Worker" })
     .onRequest(methods.agent.initialize, ({ params }) => {
@@ -210,7 +260,7 @@ export async function runNativeAcpWorker(socketPath: string): Promise<number> {
     })
     .onRequest(methods.agent.session.new, ({ params }) => {
       const sessionId = randomUUID();
-      sessions.add(sessionId);
+      sessions.set(sessionId, { request: params });
       const recovery = sessionRecoveryFromMeta(params._meta);
       if (recovery != null) recoveries.set(sessionId, recovery);
       return {
@@ -226,7 +276,8 @@ export async function runNativeAcpWorker(socketPath: string): Promise<number> {
       };
     })
     .onRequest(methods.agent.session.prompt, async ({ params, client: parent }) => {
-      if (!sessions.has(params.sessionId)) throw new Error("unknown native Worker ACP session");
+      const held = sessions.get(params.sessionId);
+      if (held == null) throw new Error("unknown native Worker ACP session");
       const controller = new AbortController();
       controllers.set(params.sessionId, controller);
       try {
@@ -234,6 +285,20 @@ export async function runNativeAcpWorker(socketPath: string): Promise<number> {
         if (recovery != null) {
           recoveries.delete(params.sessionId);
           await notifySessionRecovery(parent, params.sessionId, recovery);
+        }
+        const prompt = promptText(params);
+        if (prompt.includes("delegate child")) {
+          held.child ??= new WorkflowChildAgent({
+            endpoint: childEndpoint,
+            cwd: held.request.cwd,
+            mcpServers: held.request.mcpServers,
+            ...(held.request.additionalDirectories == null
+              ? {}
+              : { additionalDirectories: held.request.additionalDirectories }),
+            publicSessionId: params.sessionId,
+            parent,
+          });
+          return await held.child.prompt(params);
         }
         await parent.notify(methods.client.session.update, {
           sessionId: params.sessionId,
@@ -250,8 +315,6 @@ export async function runNativeAcpWorker(socketPath: string): Promise<number> {
           },
           _meta: { redskills: { lifecycle: { event: "tool-activity" } } },
         });
-
-        const prompt = promptText(params);
         let permissionResolution: string | undefined;
         if (prompt.includes("permission")) {
           // The delay gives the public launch-edge transport time to disappear;
@@ -342,13 +405,15 @@ export async function runNativeAcpWorker(socketPath: string): Promise<number> {
         controllers.delete(params.sessionId);
       }
     })
-    .onNotification(methods.agent.session.cancel, ({ params }) => {
+    .onNotification(methods.agent.session.cancel, async ({ params }) => {
       controllers.get(params.sessionId)?.abort();
+      await sessions.get(params.sessionId)?.child?.cancel(params._meta);
     });
 
   const socket = await connectWithDeadline(socketPath, 10_000);
   const connection = app.connect(socketStream(socket));
   await connection.closed;
+  for (const session of sessions.values()) session.child?.close();
   return 0;
 }
 

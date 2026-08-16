@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+import { randomUUID } from "node:crypto";
+import { Readable, Writable } from "node:stream";
+import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
+
+if (process.argv[2] !== "acp") throw new Error("fixture redcode expects the acp subcommand");
+
+const sessions = new Map();
+const controllers = new Map();
+const app = agent({ name: "Redcode governed child fixture" })
+  .onRequest(methods.agent.initialize, () => ({
+    protocolVersion: 1,
+    agentCapabilities: { promptCapabilities: {} },
+    agentInfo: { name: "Redcode governed child fixture", version: "1" },
+  }))
+  .onRequest(methods.agent.session.new, ({ params }) => {
+    const sessionId = randomUUID();
+    sessions.set(sessionId, params._meta?.redskills?.delegation);
+    return { sessionId };
+  })
+  .onRequest(methods.agent.session.prompt, async ({ params, client: parent }) => {
+    if (!sessions.has(params.sessionId)) throw new Error("unknown child fixture session");
+    const controller = new AbortController();
+    controllers.set(params.sessionId, controller);
+    const text = params.prompt.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    const delegation = params._meta?.redskills?.delegation ?? sessions.get(params.sessionId);
+    try {
+      await parent.notify(methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "child Agent is executing the delegated prompt\n" },
+        },
+        _meta: { redskills: { lifecycle: { event: "child-tool-activity" } } },
+      });
+      if (text.includes("transport failure")) {
+        setTimeout(() => process.exit(86), 0);
+        await new Promise(() => {});
+      }
+
+      let permissionResolution;
+      if (text.includes("permission")) {
+        const permission = await parent.request(methods.client.session.requestPermission, {
+          sessionId: params.sessionId,
+          toolCall: { toolCallId: randomUUID(), title: "child governed write", kind: "edit", status: "pending" },
+          options: [
+            { optionId: "once", name: "Allow once", kind: "allow_once" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        });
+        permissionResolution = permission._meta?.redskills?.permissionResolution;
+      }
+
+      if (text.includes("wait for cancellation")) {
+        await new Promise((resolve) => controller.signal.addEventListener("abort", resolve, { once: true }));
+        return { stopReason: "cancelled" };
+      }
+      return {
+        stopReason: "end_turn",
+        _meta: {
+          redskills: {
+            childAgent: "redcode",
+            delegation,
+            ...(permissionResolution == null ? {} : { permissionResolution }),
+          },
+        },
+      };
+    } finally {
+      controllers.delete(params.sessionId);
+    }
+  })
+  .onNotification(methods.agent.session.cancel, ({ params }) => {
+    controllers.get(params.sessionId)?.abort();
+  });
+
+const stream = ndJsonStream(
+  Writable.toWeb(process.stdout),
+  Readable.toWeb(process.stdin),
+);
+const connection = app.connect(stream);
+await connection.closed;
