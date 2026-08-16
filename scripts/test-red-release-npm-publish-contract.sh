@@ -90,24 +90,25 @@ else
   pass "missing NPM_TOKEN does not skip publish"
 fi
 
-if grep -qF 'npx -y -p "@reddb-io/red-skills@${version}" red-skills-dev --version' "$WORKFLOW"; then
-  pass "registry smoke uses npx against the published package version"
+if grep -qF 'npm view "@reddb-io/red-skills@${version}" version' "$WORKFLOW" &&
+   grep -qF '[ "$resolved" = "${version}" ]' "$WORKFLOW"; then
+  pass "registry smoke resolves the exact published core package version"
 else
-  fail "registry smoke must run the real client via npx from the npm registry"
+  fail "registry smoke must resolve the exact core package version from npm"
 fi
 
-if grep -qF 'package/dist/code-nav.bundle.min.mjs' "$WORKFLOW" &&
-   grep -qF 'npm tarball missing $expected' "$WORKFLOW"; then
-  pass "pack contract checks the code-nav bundle is in the npm tarball"
+if grep -qF 'package/dist/$plugin.bundle.min.mjs' "$WORKFLOW" &&
+   grep -qF 'npm tarball unexpectedly contains $unexpected' "$WORKFLOW"; then
+  pass "pack contract rejects every derived plugin bundle in the core tarball"
 else
-  fail "pack contract must fail when code-nav is missing from the npm tarball"
+  fail "pack contract must reject core plugin bundles derived from the plugin tree"
 fi
 
 if grep -qF 'test -x "$smoke/node_modules/.bin/red-skills-code-nav"' "$WORKFLOW" &&
    grep -qF 'test -f "$smoke/node_modules/@reddb-io/red-skills/dist/code-nav.bundle.min.mjs"' "$WORKFLOW"; then
-  pass "pack contract checks the code-nav npm bin and packaged bundle"
+  pass "pack contract checks the retained code-nav npm bin and supporting bundle"
 else
-  fail "pack contract must verify the code-nav npm bin and packaged bundle"
+  fail "pack contract must verify the retained code-nav npm bin and supporting bundle"
 fi
 
 if grep -qF 'node scripts/check-npm-tarball-boundaries.mjs' "$WORKFLOW" &&
@@ -154,8 +155,7 @@ for expected in \
   scripts/generate-codex-manifests.mjs \
   scripts/generate-gemini-manifests.mjs \
   scripts/generate-pi-manifests.mjs \
-  dist/opencode-host.bundle.min.mjs \
-  dist/memory-tokenizer.asset.cjs; do
+  dist/opencode-host.bundle.min.mjs; do
   mkdir -p "$core_tree/$(dirname "$expected")"
   : > "$core_tree/$expected"
 done
@@ -213,24 +213,30 @@ else
   pass "per-plugin tarball without its runtime bundle fails the publish contract"
 fi
 
+# Restore the valid per-plugin tarball so this mutation can fail only because
+# the core crossed the package boundary, never because of the prior mutation.
+plugin_tree="$contract_fixture/plugin-$first_plugin/package"
+tar -czf "$plugin_tarballs/reddb-io-red-skills-$first_plugin-9.9.9.tgz" \
+  -C "$contract_fixture/plugin-$first_plugin" package
+
 bad_core_tree="$contract_fixture/bad-core/package"
 mkdir -p "$contract_fixture/bad-core"
 cp -R "$core_tree" "$bad_core_tree"
-mkdir -p "$bad_core_tree/apps/dev"
-: > "$bad_core_tree/apps/dev/runtime.ts"
+mkdir -p "$bad_core_tree/dist"
+: > "$bad_core_tree/dist/$first_plugin.bundle.min.mjs"
 tar -czf "$contract_fixture/bad-core.tgz" -C "$contract_fixture/bad-core" package
 if node scripts/check-npm-tarball-boundaries.mjs \
   --root "$ROOT" \
   --core "$contract_fixture/bad-core.tgz" \
   --plugins "$plugin_tarballs" >/dev/null 2>&1; then
-  fail "core tarball carrying the runtime app tree must fail the publish contract"
+  fail "core tarball carrying a per-plugin runtime bundle must fail the publish contract"
 else
-  pass "core tarball carrying the runtime app tree fails the publish contract"
+  pass "core tarball carrying a per-plugin runtime bundle fails the publish contract"
 fi
 rm -rf "$contract_fixture"
 
 if grep -qF 'registry smoke returned' "$WORKFLOW" &&
-   grep -qF 'dev ${version} ' "$WORKFLOW"; then
+   grep -qF '[ "$resolved" = "${version}" ]' "$WORKFLOW"; then
   pass "registry smoke verifies the reported release version"
 else
   fail "registry smoke must fail when --version does not report the release version"

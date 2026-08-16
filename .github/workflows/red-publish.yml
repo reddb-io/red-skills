@@ -694,20 +694,14 @@ jobs:
           # as missing. Matching each expected entry against the captured listing with
           # a here-string (no pipe) lets tar always read to completion.
           listing="$(tar -tzf "$tarball")"
-          for expected in \
-            package/dist/dev.bundle.min.mjs \
-            package/dist/redskilled-mcp.bundle.min.mjs \
-            package/dist/code-nav.bundle.min.mjs \
-            package/dist/memory.bundle.min.mjs \
-            package/dist/brain.bundle.min.mjs \
-            package/dist/rsp.bundle.min.mjs \
-            package/dist/rsp-core.bundle.min.mjs \
-            package/dist/redskilled.bundle.min.mjs; do
-            if ! grep -qxF "$expected" <<<"$listing"; then
-              echo "::error::npm tarball missing $expected"
+          while IFS= read -r plugin_json; do
+            plugin="$(node -p "require('../../${plugin_json}').name")"
+            unexpected="package/dist/$plugin.bundle.min.mjs"
+            if grep -qxF "$unexpected" <<<"$listing"; then
+              echo "::error::npm tarball unexpectedly contains $unexpected"
               exit 1
             fi
-          done
+          done < <(find ../../plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json' -print | sort | sed 's#^../../##')
           core_tarball="$PWD/$tarball"
           cd ../..
           node scripts/check-npm-tarball-boundaries.mjs \
@@ -721,7 +715,6 @@ jobs:
           smoke="$(mktemp -d)"
           npm install "./$tarball" --prefix "$smoke" --no-audit --no-fund --ignore-scripts --loglevel=error
           pkg="$smoke/node_modules/@reddb-io/red-skills"
-          node "$pkg/bin/red-skills-dev.mjs" --version
           node "$pkg/bin/red-skills-redskilled-mcp.mjs" --help
           # code-nav launches via an npm-shim bin (#1396) that resolves the packaged
           # code-nav bundle; smoke both the shim and the bundle it resolves.
@@ -842,16 +835,10 @@ jobs:
           # (v2.0.1 took >2min to become resolvable, exhausting the previous
           # ~105s budget). 10 attempts at attempt*15s ≈ 11min total budget.
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if output="$(npx -y -p "@reddb-io/red-skills@${version}" red-skills-dev --version 2>&1)"; then
-              printf '%s\n' "$output"
-              if grep -qF "dev ${version} " <<<"$output"; then
-                echo "registry smoke returned @reddb-io/red-skills@${version}"
-                exit 0
-              fi
-              echo "::error::registry smoke returned unexpected version output for @reddb-io/red-skills@${version}"
-              exit 1
+            if resolved="$(npm view "@reddb-io/red-skills@${version}" version 2>/dev/null)" && [ "$resolved" = "${version}" ]; then
+              echo "registry smoke returned @reddb-io/red-skills@${version}"
+              exit 0
             fi
-            printf '%s\n' "$output" >&2
             if [ "$attempt" -eq 10 ]; then
               echo "::error::registry did not serve @reddb-io/red-skills@${version} after publish"
               exit 1

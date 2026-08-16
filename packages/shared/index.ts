@@ -65,6 +65,8 @@ export {
   fetchPublishedVersionHorizon,
   newestPublished,
   newestSameMajor,
+  npmBundlePackage,
+  npmBundlePackageSpec,
   npmPackageSpec,
   packagedBundleName,
   packagedBundleRelPath,

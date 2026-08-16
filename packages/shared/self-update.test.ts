@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   NPM_PACKAGE,
   companionBundlePlugins,
+  npmBundlePackageSpec,
   packagedBundleRelPath,
   registryPackageUrl,
   resolveBundle,
@@ -383,7 +384,7 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
     expect(fetches).toEqual([registryPackageUrl()]);
     expect(fetches.every((u) => !u.includes("releases/download"))).toBe(true);
     // The pinned target package was materialised.
-    expect(materializes).toEqual([npmSpec(updated)]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, updated), npmSpec(updated)]);
     // Bundle cached under the target version.
     const bundlePath = resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE });
     expect(files[bundlePath]).toEqual(bundleBytesFor(updated));
