@@ -19,7 +19,7 @@
 //
 // Exit codes: 0 success; 1 drift detected; 2 usage error.
 
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,7 +34,6 @@ import {
 
 const PUBLISHED_BUCKETS = ["engineering", "knowledge", "productivity", "misc", "core", "maintainer"];
 const SKIP_BUCKETS = new Set(["in-progress", "deprecated"]);
-const NPM_SCOPE = "@reddb-io";
 const PACKAGING_ROOT = "packaging/pi";
 
 function isPublishedBucket(name) {
@@ -72,13 +71,13 @@ function buildNpmPackageJson(claudePlugin) {
     ...publishable,
     ...(releaseVersion ? { version: releaseVersion } : {}),
     publishConfig: { access: "public" },
-    files: ["skills/**/*", "package.json", "README.md"],
+    files: ["skills/**/*", "dist/**/*", "package.json", "README.md"],
   };
 }
 
-async function stagePackage({ root, plugin, claudePlugin, packagingDir, mismatches, check }) {
+async function stagePackage({ root, pluginDir, claudePlugin, packagingDir, mismatches, check }) {
   const pluginName = claudePlugin.name;
-  const pluginRoot = join(root, plugin.source);
+  const pluginRoot = join(root, "plugins", pluginDir);
   // packagingDir is already root-joined by buildPiPackages (e.g.
   // <root>/packaging/pi). Appending the plugin name here avoids the
   // double-join that would otherwise turn absolute paths into
@@ -133,7 +132,29 @@ async function stagePackage({ root, plugin, claudePlugin, packagingDir, mismatch
     }
   }
 
-  // 3. Stage a small README so `npm view` shows project context, not just an
+  // 3. Stage the plugin's built runtime when the release build has produced it.
+  // Local manifest checks run from source-only trees where dist/ is absent;
+  // the publish-time tarball contract remains the authority that every release
+  // actually built and packed this declared file.
+  const bundleName = `${pluginName}.bundle.min.mjs`;
+  const sourceBundle = join(root, "dist", bundleName);
+  const targetBundle = join(targetDir, "dist", bundleName);
+  try {
+    const bundleBytes = await readFile(sourceBundle);
+    if (check) {
+      const stagedBytes = await readFile(targetBundle).catch(() => null);
+      if (stagedBytes === null || !bundleBytes.equals(stagedBytes)) {
+        mismatches.push({ path: targetBundle, bytes: "", note: [`${bundleName}: bytes differ`] });
+      }
+    } else {
+      await mkdir(join(targetDir, "dist"), { recursive: true });
+      await cp(sourceBundle, targetBundle);
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+
+  // 4. Stage a small README so `npm view` shows project context, not just an
   // auto-generated "no description" stub.
   await writeGenerated(
     join(targetDir, "README.md"),
@@ -215,14 +236,16 @@ async function diffDirs(leftDir, rightDir) {
 
 export async function buildPiPackages({ root, check = false }) {
   const mismatches = [];
-  const claudeMarketplacePath = join(root, ".claude-plugin/marketplace.json");
-  const claudeMarketplace = await readJson(claudeMarketplacePath);
   const packagingDir = join(root, PACKAGING_ROOT);
+  const pluginDirs = (await readdir(join(root, "plugins"), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
 
-  for (const plugin of claudeMarketplace.plugins) {
-    const pluginRoot = join(root, plugin.source);
+  for (const pluginDir of pluginDirs) {
+    const pluginRoot = join(root, "plugins", pluginDir);
     const claudePlugin = await readJson(join(pluginRoot, ".claude-plugin/plugin.json"));
-    await stagePackage({ root, plugin, claudePlugin, packagingDir, mismatches, check });
+    await stagePackage({ root, pluginDir, claudePlugin, packagingDir, mismatches, check });
   }
 
   if (check && mismatches.length > 0) {
