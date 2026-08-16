@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -10,6 +10,46 @@ const ROOT = join(import.meta.dirname, "..", "..", "..");
 const publisher = join(ROOT, "scripts/publish-pi-packages.mjs");
 
 describe("Pi package publisher (dry-run)", () => {
+  it("covers every package generated from the plugin tree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-skills-pi-publish-generated-"));
+    const generated = (await readdir(join(ROOT, "packaging/pi"), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    const expected: string[] = [];
+
+    for (const plugin of generated) {
+      const source = JSON.parse(
+        await readFile(join(ROOT, "packaging/pi", plugin, "package.json"), "utf8"),
+      ) as { name: string };
+      const pkg = { name: source.name, version: "99.99.99-afk-contract" };
+      expected.push(`${pkg.name}@${pkg.version}`);
+      await mkdir(join(root, "packaging/pi", plugin), { recursive: true });
+      await writeFile(
+        join(root, "packaging/pi", plugin, "package.json"),
+        `${JSON.stringify(pkg, null, 2)}\n`,
+        "utf8",
+      );
+    }
+
+    // Keep the publisher's registry probe deterministic and offline.
+    const fakeBin = join(root, "bin");
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, "npm"), "#!/usr/bin/env bash\nexit 1\n", "utf8");
+    await chmod(join(fakeBin, "npm"), 0o755);
+
+    const { stdout } = await execFileAsync(
+      "node",
+      [publisher, "--root", root, "--dry-run"],
+      { env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ""}` } },
+    );
+
+    for (const spec of expected) {
+      expect(stdout).toContain(`publish-pi: publishing ${spec}`);
+    }
+    expect(stdout.match(/publish-pi: publishing/g)?.length).toBe(expected.length);
+  });
+
   it("prints the would-be pnpm publish invocation per staged package and exits 0", async () => {
     const root = await mkdtemp(join(tmpdir(), "red-skills-pi-publish-"));
 
