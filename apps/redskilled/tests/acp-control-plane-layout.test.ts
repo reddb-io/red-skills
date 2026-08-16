@@ -23,4 +23,16 @@ describe("the ACP control-plane module boundary", () => {
     expect(compatibility).toContain("requireCompatibleWireMajor");
     expect(socket).toContain("connectWithDeadline");
   });
+
+  it("keeps child-stream semantics in the Workflow Worker", async () => {
+    const [controlPlane, workflowTurn, childAgent] = await Promise.all([
+      readFile(join(sourceRoot, "acp-control-plane.ts"), "utf8"),
+      readFile(join(sourceRoot, "acp-workflow-turn.ts"), "utf8"),
+      readFile(join(sourceRoot, "acp-child-agent.ts"), "utf8"),
+    ]);
+
+    expect(controlPlane).not.toMatch(/evaluateSpin|createChildAcpSpinEpisode|SpinPattern/);
+    expect(workflowTurn).not.toMatch(/evaluateSpin|createChildAcpSpinEpisode|SpinPattern/);
+    expect(childAgent).toContain("createChildAcpSpinEpisode");
+  });
 });

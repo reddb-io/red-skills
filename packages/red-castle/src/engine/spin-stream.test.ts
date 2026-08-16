@@ -16,6 +16,34 @@ afterEach(async () => {
 });
 
 describe("Spin runner-stream processing", () => {
+  it("reports the detected pattern when Spin persists for a full window after the steer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "spin-stream-"));
+    roots.push(root);
+    const workerLog = createCastleLaneWriters(
+      createEnginePaths(join(root, ".red")),
+      { clock: () => "2026-08-13T00:00:00.000Z" },
+    ).worker("wPERSIST");
+    const steers: string[] = [];
+    const stream = createSpinStreamProcessor({
+      workerLog,
+      steer: (message) => {
+        steers.push(message);
+      },
+    });
+
+    for (let index = 1; index <= 12; index += 1) {
+      await stream.observe({
+        type: "text",
+        message: `unproductive thought ${index}`,
+        iteration: 1,
+        timestamp: new Date(0),
+      });
+    }
+
+    expect(steers).toHaveLength(1);
+    expect(stream.persistentPattern()).toBe("monologue");
+  });
+
   it("logs and steers a continuing Spin exactly once per episode", async () => {
     const root = await mkdtemp(join(tmpdir(), "spin-stream-"));
     roots.push(root);

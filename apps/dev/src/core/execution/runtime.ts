@@ -23,6 +23,7 @@ import {
 import { isRunnerExhausted } from "../runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "../lane-idle-reaper.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "../runner-spec.js";
+import type { SpinOutcome } from "../worker-outcome.js";
 import {
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
@@ -91,15 +92,13 @@ export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // example Codex websocket 502 / thread-start failures). Both ride the same
 // outcome union so process-issue can branch on them without treating the worker
 // as crashed.
-// There is deliberately NO stall/timeout outcome here (ADR 0103): the attempt
-// wall-clock progress guard is gone and stall detection is the fleet
-// supervisor's exclusive job, driven by the castle liveness lane + evaluator
-// (`reapStalledSlot` owns the `blocked:stalled` disposition). The in-run
-// lane-idle reaper stays as the solo-path idle cut and reports `no-sentinel`.
-// `goal-moot` (ADR 0057): the goal-predicate poll observed the claimed issue
-// already CLOSED, so the run's goal is already reflected in the world. The
-// inner agent is aborted and process-issue maps it to a deterministic terminal
-// outcome (own-merge → done, foreign close → claim-lost) without envelope spam.
+// There is deliberately NO stall/timeout outcome here (ADR 0103): stall detection
+// is the fleet supervisor's exclusive job, driven by the castle liveness lane and
+// evaluator (`reapStalledSlot` owns `blocked:stalled`). The in-run lane-idle
+// reaper stays as the solo-path idle cut and reports `no-sentinel`.
+// `goal-moot` (ADR 0057): the goal poll saw the claimed issue already CLOSED, so
+// the run's goal already holds. The agent is aborted and process-issue maps it
+// deterministically (own-merge → done, foreign close → claim-lost), no envelope.
 export type AgentOutcome =
   | "done"
   | "blocked"
@@ -112,7 +111,8 @@ export type AgentOutcome =
   | "exhausted"
   | "runner-transient"
   | "host-config"
-  | "goal-moot";
+  | "goal-moot"
+  | SpinOutcome;
 
 /** Unix signal exit-code convention: exit code = 128 + signal number. */
 const SIGNAL_EXIT_NAMES: Record<number, string> = {

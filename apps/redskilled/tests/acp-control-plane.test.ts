@@ -149,6 +149,35 @@ describe("the public RedSkills ACP v1 control plane", () => {
     expect(new Set(updates.map((update) => update.sessionId))).toEqual(new Set([session.sessionId]));
     expect(updates.map(lifecycleEvent).filter(Boolean)).toContain("child-admission");
 
+    for (const pattern of [
+      "repeated-action-observation",
+      "error-streak",
+      "monologue",
+      "alternating-ping-pong",
+    ]) {
+      updates.length = 0;
+      const spun = await connection.agent.request(methods.agent.session.prompt, {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: `delegate child spin ${pattern}` }],
+      });
+      expect(workflowOutcome(spun._meta)).toBe(`spin:${pattern}`);
+      const spinLifecycle = updates.map(lifecycleMeta).filter((entry) => entry?.event.startsWith("child-spin"));
+      expect(spinLifecycle).toEqual([
+        expect.objectContaining({ event: "child-spin-detected", pattern }),
+        expect.objectContaining({ event: "child-spin-steer", pattern }),
+        expect.objectContaining({ event: "child-spin-persistent", pattern }),
+      ]);
+      expect(spinLifecycle.every((entry) => entry != null && !("reasoning" in entry))).toBe(true);
+    }
+
+    updates.length = 0;
+    const advancing = await connection.agent.request(methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "delegate child spin near-miss" }],
+    });
+    expect(workflowOutcome(advancing._meta)).toBeUndefined();
+    expect(updates.map(lifecycleEvent).filter((event) => event?.startsWith("child-spin"))).toEqual([]);
+
     updates.length = 0;
     const cancelled = connection.agent.request(methods.agent.session.prompt, {
       sessionId: session.sessionId,
@@ -921,6 +950,7 @@ function lifecycleEvent(update: SessionNotification): string | undefined {
 function lifecycleMeta(update: SessionNotification): {
   readonly event: string;
   readonly workerId: string;
+  readonly pattern?: string;
   readonly dispatch?: {
     readonly workerKind: string;
     readonly ticket: number;
@@ -929,6 +959,11 @@ function lifecycleMeta(update: SessionNotification): {
 } | undefined {
   return (update._meta as { redskills?: { lifecycle?: unknown } } | undefined)
     ?.redskills?.lifecycle as ReturnType<typeof lifecycleMeta>;
+}
+
+function workflowOutcome(meta: unknown): string | undefined {
+  return (meta as { redskills?: { workflowOutcome?: string } } | undefined)
+    ?.redskills?.workflowOutcome;
 }
 
 function permissionResolution(meta: unknown): string | undefined {

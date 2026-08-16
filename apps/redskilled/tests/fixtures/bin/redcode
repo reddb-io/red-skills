@@ -7,11 +7,18 @@ if (process.argv[2] !== "acp") throw new Error("fixture redcode expects the acp 
 
 const sessions = new Map();
 const controllers = new Map();
+const SPIN_PATTERNS = [
+  "repeated-action-observation",
+  "error-streak",
+  "monologue",
+  "alternating-ping-pong",
+];
 const app = agent({ name: "Redcode governed child fixture" })
   .onRequest(methods.agent.initialize, () => ({
     protocolVersion: 1,
     agentCapabilities: { promptCapabilities: {} },
     agentInfo: { name: "Redcode governed child fixture", version: "1" },
+    _meta: { redskills: { steering: true } },
   }))
   .onRequest(methods.agent.session.new, ({ params }) => {
     const sessionId = randomUUID();
@@ -33,6 +40,8 @@ const app = agent({ name: "Redcode governed child fixture" })
         },
         _meta: { redskills: { lifecycle: { event: "child-tool-activity" } } },
       });
+      const spinPattern = requestedSpinPattern(text);
+      if (spinPattern != null) await emitSpinFixture(parent, params.sessionId, spinPattern);
       if (text.includes("transport failure")) {
         setTimeout(() => process.exit(86), 0);
         await new Promise(() => {});
@@ -79,3 +88,51 @@ const stream = ndJsonStream(
 );
 const connection = app.connect(stream);
 await connection.closed;
+
+function requestedSpinPattern(text) {
+  if (text.includes("spin near-miss")) return "near-miss";
+  return SPIN_PATTERNS.find((pattern) => text.includes(pattern));
+}
+
+async function emitSpinFixture(parent, sessionId, pattern) {
+  if (pattern === "monologue") {
+    for (let index = 0; index < 6; index += 1) {
+      await parent.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: `spin-message-${index}`,
+          content: { type: "text", text: `unproductive message ${index}` },
+        },
+      });
+    }
+    return;
+  }
+
+  const pairs = pattern === "alternating-ping-pong" ? 6 : 3;
+  for (let index = 0; index < pairs; index += 1) {
+    const side = pattern === "alternating-ping-pong" ? (index % 2 === 0 ? "A" : "B") : "A";
+    const advancing = pattern === "near-miss" ? `-${index}` : "";
+    const toolCallId = `spin-tool-${index}`;
+    await parent.notify(methods.client.session.update, {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: `action-${side}${advancing}`,
+        kind: "execute",
+        status: "in_progress",
+        rawInput: { command: `command-${side}${advancing}` },
+      },
+    });
+    await parent.notify(methods.client.session.update, {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: pattern === "error-streak" ? "failed" : "completed",
+        rawOutput: pattern === "error-streak" ? `error-${index}` : `observation-${side}`,
+      },
+    });
+  }
+}
