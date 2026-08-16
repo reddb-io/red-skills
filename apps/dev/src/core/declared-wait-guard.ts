@@ -633,16 +633,6 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     },
   },
   {
-    path: "apps/dev/src/runtime/etag-transport.ts",
-    fn: "loop",
-    subject: "the next GitHub poll window for the watched repo's events and checks",
-    deadline:
-      "unbounded — the forwarder lane runs until `stop()` sets `dead`; each pass sleeps the server's X-Poll-Interval floored at `floorS`, or the quota reset capped at `ETAG_QUOTA_WAIT_CAP_MS`",
-    escalation:
-      "none by design: this is a daemon lane, and the cap is what keeps an exhausted quota from sleeping out the whole window",
-    heartbeat: { sink: "onQuotaWait" },
-  },
-  {
     path: "apps/dev/src/runtime/gh/candidates.ts",
     fn: "readTargetIssue",
     subject: "a just-created, explicitly targeted GitHub issue becoming readable",
