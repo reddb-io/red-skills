@@ -1,11 +1,6 @@
 /**
- * Project-scoped GitHub reads owned by the redskilled daemon.
- *
- * A caller receives a reader already bound to one Project and one named
- * daemon-owned credential profile. It can describe a read, but it cannot name a
- * credential, a second Project, a repository remote, or a host operation. The
- * gateway therefore has one place to coalesce demand and one place to enforce
- * the authority boundary before any authenticated transport is reached.
+ * Project-scoped GitHub reads, coalescing, and authority enforcement owned by
+ * redskilled. Callers receive readers bound to one Project and credential.
  */
 import {
   DEFAULT_GITHUB_CACHE_CAPACITY,
@@ -15,7 +10,6 @@ import {
   type GithubCacheOutcome,
   type GithubLimitFact,
 } from "@reddb-io/github";
-import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import {
   githubCredentialScopeRefusal,
@@ -53,10 +47,23 @@ import {
   validateWriteRequest,
 } from "./github-outbox.js";
 import {
+  createGithubCustodian,
+  type GithubCustodian,
+  type RedskilledGithubCustodyHandoff,
+  type RedskilledGithubCustodyRecord,
+  type RedskilledGithubCustodyStatus,
+  type RedskilledGithubCustodyUpstream,
+} from "./github-custody.js";
+export {
+  createRedskilledGithubCustodyUpstream,
+  type CreateRedskilledGithubCustodyUpstreamOptions,
+} from "./github-custody-upstream.js";
+import {
   githubHeaders,
   githubUpstreamRefusal,
   responseValue,
 } from "./github-transport.js";
+import { fetchCanonicalRepository } from "./github-repository-fetch.js";
 import {
   type RedskilledGithubWriteAnswer,
   type RedskilledGithubWriteRequest,
@@ -75,6 +82,17 @@ export {
 
 export const REDSKILLED_GITHUB_READ_METHOD = "_redskills/github_read";
 export const REDSKILLED_GITHUB_WRITE_METHOD = "_redskills/github_write";
+export const REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD = "_redskills/github_custody_handoff";
+
+export type {
+  RedskilledGithubCustodyFault,
+  RedskilledGithubCustodyForgeView,
+  RedskilledGithubCustodyHandoff,
+  RedskilledGithubCustodyRecord,
+  RedskilledGithubCustodyStatus,
+  RedskilledGithubCustodyUpstream,
+  RedskilledGithubCustodyUpstreamInput,
+} from "./github-custody.js";
 
 export interface RedskilledGithubProjectAuthority {
   readonly projectId: string;
@@ -153,6 +171,10 @@ export interface RedskilledGithubManagedProjectReader extends RedskilledGithubPr
   wake(signal: RedskilledGithubWake): Promise<number>;
   /** Observe ordered updates derived only from completed authoritative refreshes. */
   subscribe(observer: (update: RedskilledGithubUpdate) => void): () => void;
+  /** Transfer one published PR to the daemon; caller lifetime ends here. */
+  handoffMergeCustody(request: RedskilledGithubCustodyHandoff): Promise<RedskilledGithubCustodyRecord>;
+  /** Project-scoped liveness and terminal facts for every accepted handoff. */
+  mergeCustodyStatus(): Promise<RedskilledGithubCustodyStatus>;
 }
 
 export interface RedskilledGithubGateway {
@@ -203,6 +225,11 @@ export interface CreateRedskilledGithubGatewayOptions {
   /** Durable host-state snapshot. Required before this gateway accepts writes. */
   readonly outboxPath?: string;
   readonly writeUpstream?: RedskilledGithubWriteUpstream;
+  /** Durable host-state snapshot for merge obligations accepted by this gateway. */
+  readonly custodyPath?: string;
+  readonly custodyUpstream?: RedskilledGithubCustodyUpstream;
+  readonly custodyTickMs?: number;
+  readonly custodyInertMs?: number;
   readonly clock?: () => string;
   readonly freshMs?: number;
   readonly capacity?: number;
@@ -393,6 +420,15 @@ export function createRedskilledGithubGateway(
   const outbox = options.outboxPath == null || options.writeUpstream == null
     ? null
     : createGithubOutbox(options.outboxPath, options.writeUpstream, clock);
+  const custodian = options.custodyPath == null || options.custodyUpstream == null
+    ? null
+    : createGithubCustodian({
+        path: options.custodyPath,
+        upstream: options.custodyUpstream,
+        clock,
+        tickMs: Math.max(1, options.custodyTickMs ?? refreshMs),
+        inertMs: Math.max(1, options.custodyInertMs ?? Math.max(refreshMs * 3, 60_000)),
+      });
 
   return {
     forProject(authority, credential) {
@@ -412,6 +448,12 @@ export function createRedskilledGithubGateway(
           throw new RedskilledGithubAuthorityError("this GitHub gateway has no durable write outbox");
         }
         return outbox;
+      };
+      const requireCustodian = (): GithubCustodian => {
+        if (custodian == null) {
+          throw new RedskilledGithubAuthorityError("this GitHub gateway has no durable merge custodian");
+        }
+        return custodian;
       };
       return {
         async read(request) {
@@ -481,6 +523,12 @@ export function createRedskilledGithubGateway(
         resumeWrites() {
           return requireOutbox().resume(project, credential);
         },
+        handoffMergeCustody(request) {
+          return requireCustodian().handoff(project, credential, request);
+        },
+        mergeCustodyStatus() {
+          return requireCustodian().status(project, credential);
+        },
       };
     },
     projectBudget(authority) {
@@ -516,6 +564,7 @@ export function createRedskilledGithubGateway(
       states.clear();
       observers.clear();
       seenWakes.clear();
+      custodian?.close();
     },
   };
 }
@@ -747,25 +796,4 @@ function isGithubScopeError(value: unknown): boolean {
   return record.type === "FORBIDDEN" || record.extensions != null &&
     typeof record.extensions === "object" &&
     (record.extensions as Record<string, unknown>).type === "FORBIDDEN";
-}
-
-async function fetchCanonicalRepository(input: RedskilledGithubUpstreamInput): Promise<unknown> {
-  if (input.read.kind !== "repository-fetch") throw new Error("repository fetch received a non-fetch read");
-  const authorization = Buffer.from(`x-access-token:${input.credential.secret}`, "utf8").toString("base64");
-  const args = ["fetch", "--no-tags", "origin", ...(input.read.ref == null ? [] : [input.read.ref])];
-  await new Promise<void>((resolve, reject) => {
-    execFile("git", args, {
-      cwd: input.project.workspacePath,
-      env: {
-        ...process.env,
-        GIT_CONFIG_COUNT: "1",
-        GIT_CONFIG_KEY_0: "http.extraHeader",
-        GIT_CONFIG_VALUE_0: `Authorization: Basic ${authorization}`,
-        GIT_TERMINAL_PROMPT: "0",
-      },
-      windowsHide: true,
-      timeout: 60_000,
-    }, (error) => error == null ? resolve() : reject(new Error("redskilled repository fetch failed", { cause: error })));
-  });
-  return { fetched: true, ref: input.read.ref ?? null };
 }

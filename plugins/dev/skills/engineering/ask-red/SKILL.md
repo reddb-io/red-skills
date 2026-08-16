@@ -164,7 +164,10 @@ structured `project_reset` repair) ->
 Worker GitHub publication (credential-free Workers request authenticated fetch,
 push, pull-request, and Issue operations through project-scoped ACP; redskilled
 serializes mutations through its durable outbox, so there is no direct `gh` or
-authenticated Git fallback route) ->
+authenticated Git fallback route; after publication, the Worker hands a pull
+request to `_redskills/github_custody_handoff` and ends, while the gateway keeps
+the single durable owner and `_redskills/project_status` exposes its last tick,
+forge state, next action, terminal outcome, or bounded inert-custodian fault) ->
 `apps/redskilled/src/github-gateway.ts` and `apps/redskilled/src/acp-github.ts`;
 Castle resident lifecycle (one project identity across Worktrees, versioned
 wire, spawn/handover/idle rules, matching proxy/resident artifacts, bounded
@@ -201,8 +204,8 @@ required contexts, and harmless strict-base lag) ->
 `plugins/dev/skills/engineering/red-setup/INTERVIEW.md`,
 `plugins/dev/skills/engineering/red-setup/config-template.yaml`, and
 `plugins/dev/skills/engineering/red-setup/WORKFLOWS.md`;
-`/afk` ADR 0136 ownership (Landing hands native intent to the Queue Custodian
-and ends, Verdict has no classification hook, and the Park exposes one
+`/afk` ADR 0136 ownership (Landing hands native intent to redskilled's
+gateway-owned Queue Custodian and ends, Verdict has no classification hook, and the Park exposes one
 authority-parameterized requeue door whose HITL repair projects labels from the
 authoritative blocker body) ->
 `plugins/dev/skills/engineering/afk/SKILL.md` and

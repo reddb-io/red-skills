@@ -31,6 +31,7 @@ import type {
 } from "./daemon/types.js";
 import {
   createRedskilledGithubGateway,
+  createRedskilledGithubCustodyUpstream,
   createRedskilledGithubUpstream,
   createRedskilledGithubWriteUpstream,
   type RedskilledGithubGatewayRegistration,
@@ -63,6 +64,14 @@ export function resolveServeGithubGateway(
     }),
     ...(homeDir == null ? {} : {
       outboxPath: join(redskilledHomeDir(homeDir), "state", "github", "outbox.toon"),
+      custodyPath: join(redskilledHomeDir(homeDir), "state", "github", "custody.toon"),
+      custodyTickMs: 30_000,
+      custodyInertMs: 120_000,
+      custodyUpstream: createRedskilledGithubCustodyUpstream({
+        ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
+        ...(env.GITHUB_GRAPHQL_URL ? { graphqlEndpoint: env.GITHUB_GRAPHQL_URL } : {}),
+        fetchImpl,
+      }),
       writeUpstream: createRedskilledGithubWriteUpstream({
         ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),
         fetchImpl,

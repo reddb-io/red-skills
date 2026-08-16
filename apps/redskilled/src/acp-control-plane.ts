@@ -41,8 +41,11 @@ import {
 import {
   REDSKILLED_GITHUB_UPDATE_METHOD,
   bindAcpGithubReaderUpdates,
+  bindAcpProjectGithubCustodyHandoff,
+  bindAcpProjectGithubCustodyStatus,
   bindAcpProjectGithubRead,
   bindAcpProjectGithubWrite,
+  githubCustodyHandoffParams,
   githubReadParams,
   githubWriteParams,
   type AcpGithubUpdateObserver,
@@ -66,6 +69,7 @@ import {
 } from "./acp-retake-evidence.js";
 import type { RedskilledHostState } from "./host-state.js";
 import {
+  REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD,
   REDSKILLED_GITHUB_READ_METHOD,
   REDSKILLED_GITHUB_WRITE_METHOD,
   type RedskilledGithubGatewayRegistration,
@@ -223,7 +227,6 @@ async function servePublicConnection(
     }
     return connectionProject;
   };
-  const readProjectControl = () => projectControlSnapshot(scopedProject(), projectControls);
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
   const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject, (reader) => {
@@ -234,6 +237,13 @@ async function servePublicConnection(
     ));
   });
   const writeGithub = bindAcpProjectGithubWrite(options.githubGateway, scopedProject);
+  const handoffGithubCustody = bindAcpProjectGithubCustodyHandoff(options.githubGateway, scopedProject);
+  const readGithubCustody = bindAcpProjectGithubCustodyStatus(options.githubGateway, scopedProject);
+  const readProjectControl = async () => {
+    const control = projectControlSnapshot(scopedProject(), projectControls);
+    const mergeCustody = await readGithubCustody();
+    return mergeCustody == null ? control : { ...control, merge_custody: mergeCustody };
+  };
   const readProjectBudget = bindAcpProjectGithubBudget(options.githubGateway, scopedProject);
   const readHostBudget = bindAcpHostGithubBudget(options.githubGateway, options.hostAdministration === true);
   const emptyParams = () => ({});
@@ -255,7 +265,11 @@ async function servePublicConnection(
             ...(options.githubGateway == null ? {} : {
               githubGateway: {
                 version: 1,
-                methods: [REDSKILLED_GITHUB_READ_METHOD, REDSKILLED_GITHUB_WRITE_METHOD],
+                methods: [
+                  REDSKILLED_GITHUB_READ_METHOD,
+                  REDSKILLED_GITHUB_WRITE_METHOD,
+                  REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD,
+                ],
                 notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
               },
               credentialBudgets: {
@@ -385,6 +399,7 @@ async function servePublicConnection(
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
     .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
     .onRequest(REDSKILLED_GITHUB_WRITE_METHOD, githubWriteParams, writeGithub)
+    .onRequest(REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD, githubCustodyHandoffParams, handoffGithubCustody)
     .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
     .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
 
@@ -406,7 +421,11 @@ async function servePublicConnection(
             ...(options.githubGateway == null ? {} : {
               githubGateway: {
                 version: 1,
-                methods: [REDSKILLED_GITHUB_READ_METHOD, REDSKILLED_GITHUB_WRITE_METHOD],
+                methods: [
+                  REDSKILLED_GITHUB_READ_METHOD,
+                  REDSKILLED_GITHUB_WRITE_METHOD,
+                  REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD,
+                ],
                 notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
               },
               credentialBudgets: {
@@ -507,6 +526,7 @@ async function servePublicConnection(
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
     .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
     .onRequest(REDSKILLED_GITHUB_WRITE_METHOD, githubWriteParams, writeGithub)
+    .onRequest(REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD, githubCustodyHandoffParams, handoffGithubCustody)
     .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
     .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
 
