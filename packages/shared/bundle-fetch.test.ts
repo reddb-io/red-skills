@@ -14,6 +14,7 @@ import {
   isCacheableVersion,
   newestPublished,
   newestSameMajor,
+  npmBundlePackageSpec,
   npmPackageSpec,
   packagedBundleName,
   packagedBundleRelPath,
@@ -64,12 +65,18 @@ function makeIO(opts: {
   const io: BundleIO = {
     async materialize(spec, stagingDir) {
       materializes.push(spec);
-      if ((opts.offlineSpecs ?? []).includes(spec)) {
+      const coreSpec = coreEquivalentSpec(spec);
+      if ((opts.offlineSpecs ?? []).includes(spec) || (opts.offlineSpecs ?? []).includes(coreSpec)) {
         throw new Error("getaddrinfo ENOTFOUND registry.npmjs.org");
       }
-      const bundles = packages[spec] ?? packages[resolveDistTagSpec(spec, opts.distTags ?? {})];
+      const resolved = resolveDistTagSpec(spec, opts.distTags ?? {});
+      const bundles = packages[spec] ?? packages[resolved] ?? packages[coreEquivalentSpec(resolved)];
       if (!bundles) throw new Error(`npm ERR! 404 '${spec}' is not in this registry`);
-      const root = `${stagingDir}/node_modules/${NPM_PACKAGE}`;
+      const packageName = spec.slice(0, spec.lastIndexOf("@"));
+      const root = `${stagingDir}/node_modules/${packageName}`;
+      files[`${root}/package.json`] = enc(JSON.stringify({
+        version: resolved.slice(resolved.lastIndexOf("@") + 1),
+      }));
       for (const [plugin, bytes] of Object.entries(bundles)) {
         files[`${root}/${packagedBundleRelPath(plugin)}`] = bytes;
       }
@@ -123,11 +130,15 @@ function cachedCompanions(version = VERSION): Record<string, Uint8Array> {
 }
 
 function resolveDistTagSpec(spec: string, tags: Record<string, string>): string {
-  const prefix = `${NPM_PACKAGE}@`;
-  if (!spec.startsWith(prefix)) return spec;
-  const ref = spec.slice(prefix.length);
+  const separator = spec.lastIndexOf("@");
+  const packageName = spec.slice(0, separator);
+  const ref = spec.slice(separator + 1);
   const version = tags[ref];
-  return version ? `${NPM_PACKAGE}@${version}` : spec;
+  return version ? `${packageName}@${version}` : spec;
+}
+
+function coreEquivalentSpec(spec: string): string {
+  return `${NPM_PACKAGE}@${spec.slice(spec.lastIndexOf("@") + 1)}`;
 }
 
 describe("npm spec + registry URL builders", () => {
@@ -135,6 +146,8 @@ describe("npm spec + registry URL builders", () => {
     expect(npmPackageSpec(VERSION, "stable")).toBe(`${NPM_PACKAGE}@1.140.0`);
     expect(npmPackageSpec(VERSION)).toBe(`${NPM_PACKAGE}@1.140.0`);
     expect(npmPackageSpec(VERSION, "canary")).toBe(`${NPM_PACKAGE}@${CANARY_DIST_TAG}`);
+    expect(npmBundlePackageSpec("dev", VERSION)).toBe("@reddb-io/red-skills-dev@1.140.0");
+    expect(npmBundlePackageSpec("code-nav", VERSION)).toBe(`${NPM_PACKAGE}@1.140.0`);
   });
 
   it("builds a %2F-escaped registry URL and no releases/download path", () => {
@@ -224,7 +237,7 @@ describe("ensureBundle never writes an unversioned cache entry (#3153)", () => {
 
     const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
 
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
     expect(path).toBe(resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE }));
     // Moved aside, not inherited: a host already in this state must recover on
     // its next boot without hand-editing the cache.
@@ -312,7 +325,10 @@ describe("ensureBundle (npm transport)", () => {
     });
 
     expect(path).toBe(`${CACHE}/${PLUGIN}-canary.bundle.min.mjs`);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([
+      spec,
+      npmBundlePackageSpec(PLUGIN, published),
+    ]);
     expect(files[path]).toEqual(bytes);
   });
 
@@ -334,15 +350,18 @@ describe("ensureBundle (npm transport)", () => {
 
     const cached = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(cached);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
     expect(files[cached]).toEqual(bytes);
   });
 
   it("preserves npm resolution when the installed version is absent", async () => {
-    const spec = npmPackageSpec(VERSION);
+    const spec = npmBundlePackageSpec(PLUGIN, VERSION);
     const bytes = bundleBytesFor(VERSION);
     const { io, files, materializes } = makeIO({
-      packageBundles: { [spec]: { [PLUGIN]: bytes, ...packagedCompanions() } },
+      packageBundles: {
+        [spec]: { [PLUGIN]: bytes },
+        [npmPackageSpec(VERSION)]: packagedCompanions(),
+      },
     });
 
     const path = await ensureBundle(io, {
@@ -354,7 +373,7 @@ describe("ensureBundle (npm transport)", () => {
 
     const cached = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(cached);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([spec, npmPackageSpec(VERSION)]);
     expect(files[cached]).toEqual(bytes);
   });
 
@@ -377,7 +396,7 @@ describe("ensureBundle (npm transport)", () => {
     const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(dest);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
     expect(files[dest]).toEqual(bytes);
     for (const companion of companionBundlePlugins(PLUGIN)) {
       const companionDest = resolveBundle({ plugin: companion, version: VERSION, cacheDir: CACHE });
@@ -395,7 +414,7 @@ describe("ensureBundle (npm transport)", () => {
     });
     const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(dest);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
     expect(files[dest]).toEqual(devBytes);
     for (const companion of companionBundlePlugins(PLUGIN)) {
       const companionDest = resolveBundle({ plugin: companion, version: VERSION, cacheDir: CACHE });
@@ -434,7 +453,10 @@ describe("ensureBundle (npm transport)", () => {
       channel: "canary",
     });
     expect(path).toBe(`${CACHE}/dev-canary.bundle.min.mjs`);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([
+      spec,
+      npmBundlePackageSpec(PLUGIN, published),
+    ]);
     expect(files[dest]).toEqual(bytes);
     for (const companion of companionBundlePlugins(PLUGIN)) {
       expect(files[`${CACHE}/${companion}-canary.bundle.min.mjs`], companion).toEqual(
@@ -461,7 +483,10 @@ describe("ensureBundle (npm transport)", () => {
       channel: "canary",
     });
     expect(path).toBe(dest);
-    expect(materializes).toEqual([spec]);
+    expect(materializes).toEqual([
+      spec,
+      npmBundlePackageSpec(PLUGIN, published),
+    ]);
     expect(files[dest]).toEqual(bytes);
     for (const companion of companionBundlePlugins(PLUGIN)) {
       expect(files[`${CACHE}/${companion}-canary.bundle.min.mjs`], companion).toEqual(
