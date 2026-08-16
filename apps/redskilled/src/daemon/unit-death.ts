@@ -4,6 +4,7 @@ import type {
   RedskilledUnitExitFacts,
   RedskilledUnitExitFactsProbe,
 } from "../reattach.js";
+import { parseContainerPlacementHandle } from "../reattach.js";
 
 type UnitDeathFacts = Pick<
   RecordWorkerEventInput,
@@ -26,7 +27,7 @@ export async function resolveUnitDeath(
   probe: RedskilledUnitExitFactsProbe,
   fallback: ResolvedUnitDeath,
 ): Promise<ResolvedUnitDeath> {
-  if (worker.unit == null || worker.unit === "") return fallback;
+  if (worker.unit == null || worker.unit === "" || parseContainerPlacementHandle(worker.unit) != null) return fallback;
   const receipt = await Promise.resolve(probe(worker.unit)).catch(() => null);
   if (receipt == null) return fallback;
   return {

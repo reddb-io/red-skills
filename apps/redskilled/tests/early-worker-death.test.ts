@@ -54,6 +54,7 @@ function earlyExitLaunch(state: { exit?: (code: number) => void }) {
       admission: options.admission,
       warnings: [],
       plan: {
+        driver: "native",
         isolated: false,
         backend: "none",
         command: options.spec.command,

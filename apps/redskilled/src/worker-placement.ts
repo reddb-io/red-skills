@@ -40,6 +40,12 @@ import {
 /** Env kill-switch: `REDSKILLED_PLACEMENT=off` launches unisolated — loudly. */
 export const REDSKILLED_PLACEMENT_ENV = "REDSKILLED_PLACEMENT";
 
+/** Comma-separated host allow-list for Worker placement drivers. */
+export const REDSKILLED_PLACEMENT_DRIVERS_ENV = "REDSKILLED_PLACEMENT_DRIVERS";
+
+/** Host default image used when a Project permits container placement. */
+export const REDSKILLED_CONTAINER_IMAGE_ENV = "REDSKILLED_CONTAINER_IMAGE";
+
 /** The unit-name prefix when a client states none. */
 export const DEFAULT_WORKER_UNIT_PREFIX = "red-worker";
 
@@ -77,6 +83,8 @@ export interface WorkerPlacementProbes {
    * with a sentence rather than a flag.
    */
   readonly posix: RedskilledPosixReach;
+  /** Container CLIs reachable to the daemon, or null when absent. */
+  readonly containerEngines?: Readonly<Record<"docker" | "podman", string | null>>;
 }
 
 /** The POSIX shell a launch wraps itself in when the host actually has it. */
@@ -99,6 +107,31 @@ export interface RedskilledPlacementTarget {
    */
   readonly isolation: "transient-unit" | "job-object" | "posix-limits" | "inherit";
   readonly unit_prefix?: string;
+  /** Hard Project compatibility constraint. The host still makes the choice. */
+  readonly allowed_drivers?: readonly WorkerPlacementDriver[];
+  /** Project ordering inside the compatible set; it grants no host capability. */
+  readonly preferred_drivers?: readonly WorkerPlacementDriver[];
+  /** Immutable image reference or host-approved tag used by Docker/Podman. */
+  readonly container_image?: string;
+}
+
+export type WorkerPlacementDriver = "native" | "docker" | "podman";
+
+export interface WorkerPlacementDriverPolicy {
+  /** Hard host allow-list. An empty intersection refuses admission. */
+  readonly allowed_drivers: readonly WorkerPlacementDriver[];
+  /** Host ordering after Project preference. */
+  readonly preferred_drivers?: readonly WorkerPlacementDriver[];
+  /** Host default used only when the Project did not state an image. */
+  readonly container_image?: string;
+}
+
+/** A placement refusal is an admission refusal: no process has been born. */
+export class WorkerPlacementAdmissionRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkerPlacementAdmissionRefusal";
+  }
 }
 
 /** The resource budget for one Worker. Every field is optional and opaque. */
@@ -122,7 +155,7 @@ export interface RedskilledWorkerBudget {
  * `none` is a first-class answer, not an absent one: an unisolated launch is a
  * decision the host made, and it is read alongside its warning.
  */
-export type WorkerPlacementBackend = "transient-unit" | "job-object" | "posix-limits" | "none";
+export type WorkerPlacementBackend = "transient-unit" | "job-object" | "posix-limits" | "docker" | "podman" | "none";
 
 /** The Job Object a Windows plan asks for. The handle itself is minted at launch. */
 export interface WorkerJobObjectPlan {
@@ -131,6 +164,8 @@ export interface WorkerJobObjectPlan {
 }
 
 export interface WorkerPlacementPlan {
+  /** Placement changes mechanism only; every value materializes the same Worker. */
+  readonly driver: WorkerPlacementDriver;
   /**
    * True when the Worker runs inside a resource group of its own.
    *
@@ -203,6 +238,10 @@ export function detectWorkerPlacementProbes(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): WorkerPlacementProbes {
+  const containerEngines = {
+    docker: which("docker", env),
+    podman: which("podman", env),
+  } as const;
   const noPosix = posixLimitsUnavailable(`POSIX shell placement is unavailable on platform=${platform}`);
   if (platform === "win32") {
     return {
@@ -211,16 +250,17 @@ export function detectWorkerPlacementProbes(
       userSession: false,
       jobObjects: loadJobObjectBinding({ platform }),
       posix: noPosix,
+      containerEngines,
     };
   }
   const noJobObjects = jobObjectsUnavailable(
     `Job Object placement is the Windows backend (platform=${platform}), so there is no native reach to load here`,
   );
   if (platform === "darwin") {
-    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects, posix: detectPosixReach(env) };
+    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects, posix: detectPosixReach(env), containerEngines };
   }
   if (platform !== "linux") {
-    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects, posix: noPosix };
+    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects, posix: noPosix, containerEngines };
   }
   const runtimeDir = (env.XDG_RUNTIME_DIR ?? "").trim();
   const userSession = runtimeDir !== "" && existsSync(join(runtimeDir, "systemd", "private"));
@@ -230,6 +270,7 @@ export function detectWorkerPlacementProbes(
     userSession,
     jobObjects: noJobObjects,
     posix: detectPosixReach(env),
+    containerEngines,
   };
 }
 
@@ -306,6 +347,8 @@ export interface PlanWorkerPlacementOptions {
   readonly memoryCeiling?: { readonly memory_max: string | null; readonly reason: string };
   readonly target?: RedskilledPlacementTarget;
   readonly probes: WorkerPlacementProbes;
+  /** Host-owned hard policy. Defaults to the daemon environment. */
+  readonly driverPolicy?: WorkerPlacementDriverPolicy;
   /** False when the env kill-switch declined isolation host-wide. */
   readonly enabled?: boolean;
   /** Extra `KEY=VALUE` environment for the Worker. */
@@ -350,6 +393,16 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   const declaredBudget = budget.memory_high != null || budget.memory_max != null || budget.cpu_weight != null;
   const target = opts.target ?? { isolation: "transient-unit" as const };
 
+  const driverPolicy = opts.driverPolicy ?? workerPlacementDriverPolicy(process.env);
+  const driver = selectWorkerPlacementDriver({
+    policy: opts.enabled === false ? { ...driverPolicy, allowed_drivers: ["native"] } : driverPolicy,
+    target,
+    probes: opts.probes,
+  });
+  if (driver !== "native") {
+    return planContainerPlacement(opts, args, budget, ceilingValue, driver, driverPolicy);
+  }
+
   const unisolated = (isolationWarning: string): WorkerPlacementPlan => {
     const reach = opts.probes.posix;
     const coreLimited = opts.probes.platform === "linux" && reach.available;
@@ -357,6 +410,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
       ? `${isolationWarning}; core dumps are not capped because ${reach.reason}`
       : isolationWarning;
     return {
+      driver: "native",
       isolated: false,
       backend: "none",
       command: coreLimited ? reach.shell : opts.command,
@@ -445,6 +499,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     opts.budget == null ? undefined : { ...opts.budget, max_processes: undefined },
   );
   return {
+    driver: "native",
     isolated: true,
     backend: "transient-unit",
     unit,
@@ -457,6 +512,116 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     environment,
     ...(unenforced != null ? { budgetWarning: unenforced } : {}),
   };
+}
+
+/** Resolve host policy without consulting any Project checkout. */
+export function workerPlacementDriverPolicy(
+  env: NodeJS.ProcessEnv = process.env,
+): WorkerPlacementDriverPolicy {
+  const declared = (env[REDSKILLED_PLACEMENT_DRIVERS_ENV] ?? "").trim();
+  const allowed = declared === ""
+    ? (["native", "docker", "podman"] as const)
+    : declared.split(",").map((value) => value.trim()).filter(isWorkerPlacementDriver);
+  return {
+    allowed_drivers: unique(allowed),
+    preferred_drivers: ["native", "docker", "podman"],
+    ...((env[REDSKILLED_CONTAINER_IMAGE_ENV] ?? "").trim() === ""
+      ? {}
+      : { container_image: env[REDSKILLED_CONTAINER_IMAGE_ENV]!.trim() }),
+  };
+}
+
+/** Choose one compatible available mechanism. PURE over injected probes. */
+export function selectWorkerPlacementDriver(input: {
+  readonly policy: WorkerPlacementDriverPolicy;
+  readonly target: RedskilledPlacementTarget;
+  readonly probes: WorkerPlacementProbes;
+}): WorkerPlacementDriver {
+  const projectAllowed = input.target.allowed_drivers ?? (["native", "docker", "podman"] as const);
+  const allowed = new Set(input.policy.allowed_drivers.filter((driver) => projectAllowed.includes(driver)));
+  // `inherit` is explicitly a native-process request; putting it in a container
+  // would contradict the Project instead of merely changing isolation.
+  if (input.target.isolation === "inherit") {
+    allowed.delete("docker");
+    allowed.delete("podman");
+  }
+  const image = input.target.container_image?.trim() || input.policy.container_image?.trim();
+  const available = (driver: WorkerPlacementDriver): boolean => driver === "native" ||
+    (image != null && image !== "" && input.probes.containerEngines?.[driver] != null);
+  const order = unique<WorkerPlacementDriver>([
+    ...(input.target.preferred_drivers ?? []),
+    ...(input.policy.preferred_drivers ?? []),
+    "native",
+    "docker",
+    "podman",
+  ]);
+  const selected = order.find((driver) => allowed.has(driver) && available(driver));
+  if (selected != null) return selected;
+  const host = input.policy.allowed_drivers.join(", ") || "none";
+  const project = projectAllowed.join(", ") || "none";
+  throw new WorkerPlacementAdmissionRefusal(
+    `redskilled refused this Worker before birth: no compatible placement driver is available ` +
+      `(host allows: ${host}; Project allows: ${project}; Docker=${input.probes.containerEngines?.docker ?? "unavailable"}; ` +
+      `Podman=${input.probes.containerEngines?.podman ?? "unavailable"}; container image=${image ?? "unstated"})`,
+  );
+}
+
+function planContainerPlacement(
+  opts: PlanWorkerPlacementOptions,
+  args: readonly string[],
+  budget: RedskilledWorkerBudget,
+  ceilingValue: string | null,
+  driver: "docker" | "podman",
+  policy: WorkerPlacementDriverPolicy,
+): WorkerPlacementPlan {
+  const engine = opts.probes.containerEngines?.[driver];
+  const image = opts.target?.container_image?.trim() || policy.container_image?.trim();
+  if (engine == null || image == null || image === "") {
+    throw new WorkerPlacementAdmissionRefusal(`redskilled refused this Worker before birth: ${driver} lost compatibility during placement planning`);
+  }
+  const handle = `${driver}://${workerJobObjectName(opts.projectLabel, opts.workerId, opts.target?.unit_prefix)}`;
+  const containerName = handle.slice(handle.indexOf("://") + 3);
+  const containerArgs = [
+    "run", "--rm", `--name=${containerName}`,
+    `--label=io.reddb.redskilled.worker=${opts.workerId}`,
+    `--volume=${opts.workspacePath}:${opts.workspacePath}`,
+    `--workdir=${opts.workspacePath}`,
+  ];
+  if (budget.memory_high != null) containerArgs.push(`--memory-reservation=${budget.memory_high}`);
+  if (budget.memory_max != null) containerArgs.push(`--memory=${budget.memory_max}`);
+  if (budget.cpu_weight != null) containerArgs.push(`--cpu-shares=${budget.cpu_weight}`);
+  if (budget.max_processes != null) containerArgs.push(`--pids-limit=${budget.max_processes}`);
+  const environment = workerPlacementEnvironment(opts, {
+    scope: handle,
+    memory_ceiling: ceilingValue,
+    scope_degradation: null,
+  });
+  for (const [key, value] of Object.entries({ ...(opts.env ?? {}), ...environment })) {
+    containerArgs.push(`--env=${key}=${value}`);
+  }
+  containerArgs.push(image, opts.command, ...args);
+  return {
+    driver,
+    isolated: true,
+    backend: driver,
+    command: engine,
+    args: containerArgs,
+    unit: handle,
+    budget,
+    environment,
+    ...(ceilingValue == null ? {} : { memoryCeiling: ceilingValue }),
+    ...(budget.cpu_seconds == null
+      ? {}
+      : { budgetWarning: `${driver} placement cannot enforce cpu_seconds; redskilled's sampling floor remains authoritative` }),
+  };
+}
+
+function isWorkerPlacementDriver(value: string): value is WorkerPlacementDriver {
+  return value === "native" || value === "docker" || value === "podman";
+}
+
+function unique<T>(values: readonly T[]): T[] {
+  return [...new Set(values)];
 }
 
 /**
@@ -490,6 +655,7 @@ function planPosixLimitsPlacement(
   const declaredMemory = effectiveBudget.memory_high != null || effectiveBudget.memory_max != null;
   const warning = describePosixPlacement(limits);
   return {
+    driver: "native",
     isolated: false,
     backend: "posix-limits",
     command: reach.shell,
@@ -550,6 +716,7 @@ function planJobObjectPlacement(
   const limits = planJobLimits(effectiveBudget);
   const name = workerJobObjectName(opts.projectLabel, opts.workerId, opts.target?.unit_prefix);
   return {
+    driver: "native",
     isolated: true,
     backend: "job-object",
     command: opts.command,

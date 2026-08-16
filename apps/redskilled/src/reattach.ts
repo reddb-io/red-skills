@@ -34,6 +34,17 @@ import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import { DEFAULT_WORKER_UNIT_PREFIX } from "./worker-placement.js";
 
+export interface RedskilledContainerPlacementHandle {
+  readonly engine: "docker" | "podman";
+  readonly name: string;
+}
+
+/** Decode the durable lifecycle handle shared by Docker and Podman. */
+export function parseContainerPlacementHandle(value: string | null | undefined): RedskilledContainerPlacementHandle | null {
+  const match = value?.match(/^(docker|podman):\/\/([a-z0-9][a-z0-9_.-]*)$/);
+  return match == null ? null : { engine: match[1] as "docker" | "podman", name: match[2]! };
+}
+
 /** Answers "is this Worker still running?" for one Worker. */
 export type RedskilledLivenessProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
 
@@ -137,8 +148,16 @@ export const REDSKILLED_LIVENESS_GRACE_MS = 30_000;
 
 /** The default probe: the unit when there is one, the pid when there is not. */
 export function detectWorkerLiveness(worker: RedskilledWorkerView): boolean {
+  const container = parseContainerPlacementHandle(worker.unit);
+  if (container != null) return isContainerActive(container);
   if (worker.unit != null && worker.unit !== "") return isUnitActive(worker.unit);
   return isPidAlive(worker.pid);
+}
+
+/** Ask the selected engine whether the named container is still running. */
+export function isContainerActive(handle: RedskilledContainerPlacementHandle): boolean {
+  const probe = spawnSync(handle.engine, ["inspect", "--format={{.State.Running}}", handle.name], { encoding: "utf8" });
+  return probe.error == null && probe.status === 0 && (probe.stdout ?? "").trim() === "true";
 }
 
 /** True when systemd reports `unit` in a running state for this user session. */
@@ -272,6 +291,15 @@ export const REDSKILLED_UNOWNED_PROJECT_LABEL = "(unowned)";
  * whose memory the host promises to watch and never measures.
  */
 export function detectUnitMainPid(unit: string): number | null {
+  const container = parseContainerPlacementHandle(unit);
+  if (container != null) {
+    const probe = spawnSync(container.engine, ["inspect", "--format={{.State.Pid}}", container.name], {
+      encoding: "utf8",
+    });
+    if (probe.error != null || probe.status !== 0) return null;
+    const pid = Number.parseInt((probe.stdout ?? "").trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  }
   const probe = spawnSync("systemctl", ["--user", "show", "--property=MainPID", "--value", unit], {
     encoding: "utf8",
   });
@@ -429,6 +457,16 @@ export async function stopWorker(
   worker: RedskilledWorkerView,
   io: RedskilledStopWorkerIO = DEFAULT_STOP_WORKER_IO,
 ): Promise<boolean> {
+  const container = parseContainerPlacementHandle(worker.unit);
+  if (container != null) {
+    try {
+      await stopContainer(container);
+    } catch {
+      // The process-group fallback below remains the last line of authority.
+    }
+    if (!isContainerActive(container)) return true;
+    return await io.killTree(worker.pgid ?? worker.pid);
+  }
   if (worker.unit != null && worker.unit !== "") {
     try {
       await io.stopUnit(worker.unit);
@@ -438,6 +476,15 @@ export async function stopWorker(
     if (!io.unitActive(worker.unit) && !io.leaderAlive(worker.pid)) return true;
   }
   return await io.killTree(worker.pgid ?? worker.pid);
+}
+
+/** Place one bounded engine stop request without transferring lifecycle ownership. */
+export async function stopContainer(handle: RedskilledContainerPlacementHandle): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const request = spawn(handle.engine, ["stop", "--time=10", handle.name], { stdio: "ignore" });
+    request.once("error", () => resolve());
+    request.once("close", () => resolve());
+  });
 }
 
 /**

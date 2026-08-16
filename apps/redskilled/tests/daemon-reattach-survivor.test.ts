@@ -123,6 +123,7 @@ function unitBackedLaunch(state: TestUnitLauncher) {
       admission: options.admission,
       warnings: [],
       plan: {
+        driver: "native",
         isolated: true,
         backend: "transient-unit",
         command: "systemd-run",
