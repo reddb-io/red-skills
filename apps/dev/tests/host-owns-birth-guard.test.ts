@@ -22,6 +22,13 @@ const SITE: HostOwnedBirthSite = {
   replacement: "the birth port",
 };
 
+const RETIRED_MCP_SITE: HostOwnedBirthSite = {
+  path: "apps/dev/src/mcp-adapter.ts",
+  what: "the retired MCP dispatch spawn",
+  replacement: "the public redskilled ACP Project endpoint",
+  removed: true,
+};
+
 describe("the per-project runtime holds no way to birth a Worker", () => {
   it("finds no process-creation reach in any declared site", () => {
     const findings = collectHostOwnedBirthFindings(REPO_ROOT);
@@ -34,12 +41,10 @@ describe("the per-project runtime holds no way to birth a Worker", () => {
     expect(HOST_OWNED_BIRTH_SITES.map((site) => site.path)).toContain(
       "apps/dev/src/commands/supervise.ts",
     );
-    // The MCP dispatch surface (#2976). It birthed Workers with the ratchet in
-    // force, because it was never declared — an undeclared site is not a site
-    // the guard judged safe, it is a site the guard never looked at.
-    expect(HOST_OWNED_BIRTH_SITES.map((site) => site.path)).toContain(
-      "apps/dev/src/mcp-adapter.ts",
-    );
+    // The MCP adapter is contracted away rather than retained as a private
+    // birth port. Its extinction is owned by retired-authority-guard.
+    expect(HOST_OWNED_BIRTH_SITES.map((site) => site.path))
+      .not.toContain("apps/dev/src/mcp-adapter.ts");
     for (const site of HOST_OWNED_BIRTH_SITES) {
       expect(site.what.trim()).not.toBe("");
       expect(site.replacement.trim()).not.toBe("");
@@ -61,23 +66,16 @@ describe("the ratchet can go red", () => {
     expect(formatHostOwnedBirthFailure(findings)).toContain("the birth port");
   });
 
-  it("catches the dispatch spawn #2976 shipped, on the MCP site now that it is declared", () => {
-    // The exact code that was live on 3.1.1, against the site that now covers
-    // it: the fixture proves the ratchet would have gone red on the real defect
-    // rather than only on a synthetic one.
-    const mcpSite = HOST_OWNED_BIRTH_SITES.find(
-      (site) => site.path === "apps/dev/src/mcp-adapter.ts",
-    );
-    expect(mcpSite).toBeDefined();
+  it("catches the retired MCP dispatch site if it is resurrected", () => {
     const findings = collectHostOwnedBirthFindings(
       "/repo",
-      [mcpSite!],
+      [RETIRED_MCP_SITE],
       () => 'const child = spawn(process.execPath, [bundle, "run", ...args], { detached: true });\n',
     );
 
     expect(findings).toHaveLength(1);
-    expect(findings[0]!.match).toBe("spawn(");
-    expect(formatHostOwnedBirthFailure(findings)).toContain("requestWorkerBirth");
+    expect(findings[0]!.match).toBe("<resurrected>");
+    expect(formatHostOwnedBirthFailure(findings)).toContain("public redskilled ACP Project endpoint");
   });
 
   it("catches an import of child_process, even with no call beside it", () => {
