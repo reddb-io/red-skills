@@ -47,9 +47,36 @@ export interface ValidationMomentDescription {
   readonly commands: string[];
 }
 
+/**
+ * Why the schedule is empty, when the reason is NOT the declaration (#3939).
+ *
+ * The activation gate discards the WHOLE `plugins.dev` block in a directory
+ * that never opted in (ADR 0067/0116, `auditConfigLoad`), so a repository that
+ * declared all three moments reads back as having declared none. The narration
+ * then reported the declaration's absence — the one thing the operator could
+ * see was false, because the block was sitting right there in the file they
+ * had just written.
+ *
+ * The two states take DIFFERENT repairs: an undeclared moment wants a block,
+ * an inert directory wants `plugins.dev.enabled: true`. Telling them apart is
+ * the whole job of this context.
+ *
+ * The field names are `ConfigLoadAudit`'s own, so an audit satisfies this
+ * structurally and a caller hands over the thing it already loaded rather than
+ * transcribing two fields out of it.
+ */
+export interface ValidationGateContext {
+  /** `ConfigLoadAudit.gateClosed` — the directory never opted into the plugin. */
+  readonly gateClosed?: boolean;
+  /** The config file the verdict came from, so the repair names a path. */
+  readonly path?: string;
+}
+
 export interface ValidationMomentSchedule {
   readonly narration: string;
   readonly moments: ValidationMomentDescription[];
+  /** True when every skip above is the gate's doing rather than the config's. */
+  readonly gateClosed: boolean;
 }
 
 /**
@@ -60,7 +87,11 @@ export interface ValidationMomentSchedule {
  * operator is deciding whether the engine ignored config or config said to do
  * nothing.
  */
-export function describeValidationMoments(schedule: ValidationMoments): ValidationMomentSchedule {
+export function describeValidationMoments(
+  schedule: ValidationMoments,
+  context: ValidationGateContext = {},
+): ValidationMomentSchedule {
+  const gateClosed = context.gateClosed === true;
   const moments = VALIDATION_MOMENTS.map((moment): ValidationMomentDescription => {
     const commands = schedule[moment];
     return {
@@ -70,21 +101,39 @@ export function describeValidationMoments(schedule: ValidationMoments): Validati
       commands: commands ?? [],
     };
   });
-  const narration = `Validation moments — ${moments.map((entry) => {
+  const reason = (entry: ValidationMomentDescription): string => {
+    // The gate wins the explanation: with the block discarded, `declared` is
+    // false for every moment regardless of what the file says, so reporting it
+    // would be reporting an artefact of the discard.
+    if (gateClosed) return "plugin inert here";
+    return entry.declared ? "empty declaration" : "undeclared";
+  };
+  const listing = moments.map((entry) => {
     if (entry.state === "declared") {
       return `${entry.moment}: declared [${entry.commands.join("; ")}]`;
     }
-    return `${entry.moment}: skip (${entry.declared ? "empty declaration" : "undeclared"})`;
-  }).join("; ")}`;
-  return { narration, moments };
+    return `${entry.moment}: skip (${reason(entry)})`;
+  }).join("; ");
+  // One repair sentence for the whole schedule rather than three copies: the
+  // moments are scanned, the repair is read once.
+  const repair = gateClosed
+    ? ` — \`plugins.dev.enabled\` is not \`true\`${
+      context.path === undefined ? "" : ` in ${context.path}`
+    }, so the entire \`plugins.dev\` block is discarded before any moment is read (ADR 0067)`
+    : "";
+  return { narration: `Validation moments — ${listing}${repair}`, moments, gateClosed };
 }
 
 export function validationMomentLogPayload(
   schedule: ValidationMoments,
+  context: ValidationGateContext = {},
 ): Record<string, unknown> {
-  const described = describeValidationMoments(schedule);
+  const described = describeValidationMoments(schedule, context);
   return {
     narration: described.narration,
     ...Object.fromEntries(described.moments.map(({ moment, state }) => [moment, state])),
+    // A structured reader must be able to tell the two silences apart without
+    // parsing prose.
+    gate: described.gateClosed ? "closed" : "open",
   };
 }

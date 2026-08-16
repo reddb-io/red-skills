@@ -42,7 +42,6 @@ import {
 import {
   auditConfigLoad,
   getConfig,
-  loadConfig,
   readStandingDrain,
   readValidationMoments,
   resolveTaskRoute,
@@ -158,8 +157,9 @@ export async function projectStatus(root: string): Promise<ProjectStatusOutput> 
     pluginCacheVersion: newestInstalledPluginVersion(),
   });
   const target = held?.target ?? 0;
-  const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
-  const validationSchedule = describeValidationMoments(readValidationMoments(config));
+  const configAudit = auditConfigLoad(afkPaths(root).configPath, { warn: () => undefined });
+  const config = configAudit.values;
+  const validationSchedule = describeValidationMoments(readValidationMoments(config), configAudit);
   const standingStopped = held == null &&
       readStandingDrain(config) !== null &&
       lapse?.standing === true &&

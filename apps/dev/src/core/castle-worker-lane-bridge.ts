@@ -17,7 +17,7 @@ import { createPhaseDurationTracker, phaseDurationsPath, type PhaseDurationTrack
 import { workerDisplayFromState } from "./worker-display-record.js";
 import type { AfkState } from "../types/state.js";
 import type { ValidationMoments } from "./config.js";
-import { validationMomentLogPayload } from "./validation-moments.js";
+import { type ValidationGateContext, validationMomentLogPayload } from "./validation-moments.js";
 
 export type WorkerLifecycleKind =
   | "worker.claimed"
@@ -269,8 +269,9 @@ export function createCastleWorkerLaneBridge(
 export async function createBootCastleWorkerLaneBridge(
   options: CastleWorkerLaneBridgeOptions,
   schedule: ValidationMoments,
+  gate: ValidationGateContext = {},
 ): Promise<CastleWorkerLaneBridge> {
   const bridge = createCastleWorkerLaneBridge(options);
-  await bridge.record("worker.validation_schedule", validationMomentLogPayload(schedule));
+  await bridge.record("worker.validation_schedule", validationMomentLogPayload(schedule, gate));
   return bridge;
 }
