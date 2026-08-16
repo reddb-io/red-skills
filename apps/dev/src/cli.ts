@@ -31,13 +31,17 @@ import { triageCommand } from "./commands/triage.js";
 import { toonBumpCommand } from "./commands/toon-bump.js";
 import { toonMigrateCommand } from "./commands/toon-migrate.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+import { connectRedskillsProjectAcp } from "@reddb-io/redskilled/acp-client";
+import { encode as encodeToon, type JsonValue } from "@reddb-io/toon";
 import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/shared/args.js";
 import { adoptEngineNodeOnPath } from "@reddb-io/shared/engine-node.js";
 import { reconcileEngineDelivery } from "./runtime/reconcile-engine.js";
 import { runWorkerGhBoundary } from "./runtime/worker-gh-boundary.js";
+import { invokeProjectCli } from "./project-acp-adapter.js";
 
 export type CliCommand =
   | "run"
+  | "project"
   | "monitor"
   | "stop"
   | "go"
@@ -90,6 +94,7 @@ export interface ParsedCli {
 const CLI_ROUTER: RouterSchema<CliCommand> = {
   commands: {
     run: {},
+    project: {},
     monitor: {},
     stop: {},
     go: {},
@@ -151,7 +156,7 @@ const RUN_SURFACE_LEADING_FLAGS = new Set([
 
 export const CLI_USAGE = `Usage: red-skills-dev <command> [options]
 
-Commands: run (default), monitor, stop, go, manager, dashboard,
+Commands: run (default), project, monitor, stop, go, manager, dashboard,
   daily-review, weekly-review, reap, orphan-branches, requeue, retake, review,
   respond, triage,
   red-doctor, worktree, reconcile-engine, statusline, version, …
@@ -243,6 +248,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (result.stdout !== "") process.stdout.write(result.stdout);
     if (result.stderr !== "") process.stderr.write(result.stderr);
     return result.code;
+  }
+  if (parsed.command === "project") {
+    const session = await connectRedskillsProjectAcp({
+      cwd: process.cwd(),
+      name: "RedSkills CLI adapter",
+      version: readBuildInfo("dev").version,
+    });
+    try {
+      const result = await invokeProjectCli(session, ["project", ...parsed.args]);
+      process.stdout.write(`${encodeToon(result as JsonValue)}\n`);
+      return 0;
+    } finally {
+      session.close();
+    }
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
   if (parsed.command === "stop") return stopCommand(parsed.args);
