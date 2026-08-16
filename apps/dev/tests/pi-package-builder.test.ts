@@ -87,12 +87,12 @@ describe("Pi package builder", () => {
     await mkdir(join(root, "plugins/dev/skills/in-progress/scratch"), { recursive: true });
     await mkdir(join(root, "plugins/memory/.claude-plugin"), { recursive: true });
     await mkdir(join(root, "plugins/memory/skills/core/init"), { recursive: true });
+    await mkdir(join(root, "dist"), { recursive: true });
 
     await writeJson(join(root, ".claude-plugin/marketplace.json"), {
       name: "red-skills",
       plugins: [
         { name: "dev", source: "./plugins/dev", description: "Dev plugin." },
-        { name: "memory", source: "./plugins/memory", description: "Memory plugin." },
       ],
     });
 
@@ -148,6 +148,8 @@ description: Test init skill.
 `,
       "utf8",
     );
+    await writeFile(join(root, "dist/dev.bundle.min.mjs"), "// dev runtime\n", "utf8");
+    await writeFile(join(root, "dist/memory.bundle.min.mjs"), "// memory runtime\n", "utf8");
 
     await buildPiPackages({ root });
 
@@ -159,7 +161,7 @@ description: Test init skill.
       name: "@reddb-io/red-skills-dev",
       version: "9.9.9",
       publishConfig: { access: "public" },
-      files: expect.arrayContaining(["skills/**/*", "package.json", "README.md"]),
+      files: expect.arrayContaining(["skills/**/*", "dist/**/*", "package.json", "README.md"]),
     });
     // The build drops the local-only "private": true flag — the staged
     // package must be publishable. Verifying via negation: there is no
@@ -181,12 +183,17 @@ description: Test init skill.
       () => false,
     );
     expect(scratchExists).toBe(false);
+    expect(await readFile(join(root, "packaging/pi/dev/dist/dev.bundle.min.mjs"), "utf8"))
+      .toBe("// dev runtime\n");
 
-    // Memory mirrors the same shape with its core bucket
+    // Memory is discovered from plugins/* even though it is absent from the
+    // marketplace fixture, and mirrors the same shape with its own bundle.
     const memoryPkg = JSON.parse(
       await readFile(join(root, "packaging/pi/memory/package.json"), "utf8"),
     );
     expect(memoryPkg.pi.skills).toEqual(["./skills/core/"]);
+    expect(await readFile(join(root, "packaging/pi/memory/dist/memory.bundle.min.mjs"), "utf8"))
+      .toBe("// memory runtime\n");
   });
 
   it("fails --check when a staged Pi package drifts from the source (module API)", async () => {
