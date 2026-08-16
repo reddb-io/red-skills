@@ -361,7 +361,7 @@ describe("the daemon drives the demand loop itself", () => {
     const refused = await daemon.driveDemand();
 
     expect(refused.refusal).toMatch(/refused-unreachable-trunk-remote/);
-    expect(daemon.hostState().registrations.map((entry) => entry.project_label)).toEqual(["acme/widgets"]);
+    expect(daemon.hostState().registrations?.map((entry) => entry.project_label)).toEqual(["acme/widgets"]);
   });
 
   it("births Workers up to a registered project's target, with no process of the project's own", async () => {
