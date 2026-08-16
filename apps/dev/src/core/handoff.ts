@@ -545,9 +545,35 @@ function withRspInstructions(protocol: string, runner: string | undefined): stri
   return `${protocol}\n\n${renderAmbientSkill(undefined, { runner: instructionRunner })}`;
 }
 
-export function exitProtocolFor(opts: { runMode?: string; structuredOutput?: boolean; runner?: string }): string {
+/** Render the experimental feedback-stage checklist without widening its command set. */
+export function buildPreflight(commands: readonly string[] | undefined): string {
+  const discovered = (commands ?? []).map((command) => command.trim()).filter(Boolean);
+  if (discovered.length === 0) return "";
+  return [
+    "<preflight>",
+    "Run this exact feedback-stage checklist before declaring DONE:",
+    ...discovered.map((command) => `- ${command}`),
+    "Do not add stricter commands; the post-DONE gate remains the enforcement point.",
+    "</preflight>",
+  ].join("\n");
+}
+
+function withPreflight(protocol: string, commands: readonly string[] | undefined): string {
+  const preflight = buildPreflight(commands);
+  if (preflight === "") return protocol;
+  return protocol.replace("</exit-protocol>", `${preflight}\n</exit-protocol>`);
+}
+
+export function exitProtocolFor(opts: {
+  runMode?: string;
+  structuredOutput?: boolean;
+  runner?: string;
+  preflightCommands?: readonly string[];
+}): string {
   if (opts.runMode === "scout") return SCOUT_EXIT_PROTOCOL;
-  if (!opts.structuredOutput) return withRspInstructions(EXIT_PROTOCOL, opts.runner);
   const closing = "</exit-protocol>";
-  return withRspInstructions(EXIT_PROTOCOL.replace(closing, `${AGENT_OUTPUT_INSTRUCTION}\n${closing}`), opts.runner);
+  const protocol = opts.structuredOutput
+    ? EXIT_PROTOCOL.replace(closing, `${AGENT_OUTPUT_INSTRUCTION}\n${closing}`)
+    : EXIT_PROTOCOL;
+  return withRspInstructions(withPreflight(protocol, opts.preflightCommands), opts.runner);
 }

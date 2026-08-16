@@ -1136,21 +1136,20 @@ export function defaultTier(runner: string, taskClass: AfkModelTier = "think"): 
 export const VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] as const;
 export type ValidationMoment = (typeof VALIDATION_MOMENTS)[number];
 export const SUBSECOND_BRANCH_FAULT_KEY = "subsecond_failures_are_branch_fault" as const;
-
+export const PREFLIGHT_KEY = "preflight" as const;
 export interface GeneratedSurfaceDeclaration {
   readonly paths: readonly string[];
   readonly command: string;
 }
-
 export const GeneratedSurfaceDeclarationSchema = z.object({
   paths: z.array(z.string().min(1)).min(1),
   command: z.string().min(1),
 });
-
 export const ValidationMomentsSchema = z.object({
   iteration: z.array(z.string()).optional(),
   post_done: z.array(z.string()).optional(),
   landing: z.array(z.string()).optional(),
+  preflight: z.boolean().optional(),
   subsecondFailuresAreBranchFault: z.boolean().optional(),
   generated: GeneratedSurfaceDeclarationSchema.optional(),
 });
@@ -1158,10 +1157,10 @@ export interface ValidationMoments {
   iteration?: string[];
   post_done?: string[];
   landing?: string[];
+  preflight?: boolean;
   subsecondFailuresAreBranchFault?: boolean;
   generated?: GeneratedSurfaceDeclaration;
 }
-
 function validateValidationMomentShapes(values: ConfigValues, mappingContainers: ReadonlySet<string>): void {
   for (const root of ["afk.validation", "plugins.dev.afk.validation"]) {
     for (const moment of VALIDATION_MOMENTS) {
@@ -1174,17 +1173,18 @@ function validateValidationMomentShapes(values: ConfigValues, mappingContainers:
         throw new MalformedConfigError(`invalid config shape: \`${key}\` must be an ordered list of commands`);
       }
     }
-    const declarationKey = `${root}.${SUBSECOND_BRANCH_FAULT_KEY}`;
-    const declaration = values[declarationKey];
-    const descendants = Object.keys(values).filter((candidate) => candidate.startsWith(`${declarationKey}.`));
-    if (
-      descendants.length > 0 ||
-      (declaration !== undefined && declaration !== "true" && declaration !== "false") ||
-      (mappingContainers.has(declarationKey) && declaration === undefined)
-    ) {
-      throw new MalformedConfigError(`invalid config shape: \`${declarationKey}\` must be a boolean`);
+    for (const booleanKey of [PREFLIGHT_KEY, SUBSECOND_BRANCH_FAULT_KEY]) {
+      const declarationKey = `${root}.${booleanKey}`;
+      const declaration = values[declarationKey];
+      const descendants = Object.keys(values).filter((candidate) => candidate.startsWith(`${declarationKey}.`));
+      if (
+        descendants.length > 0 ||
+        (declaration !== undefined && declaration !== "true" && declaration !== "false") ||
+        (mappingContainers.has(declarationKey) && declaration === undefined)
+      ) {
+        throw new MalformedConfigError(`invalid config shape: \`${declarationKey}\` must be a boolean`);
+      }
     }
-
     const generatedRoot = `${root}.generated`;
     const generatedKeys = Object.keys(values).filter((candidate) => candidate.startsWith(`${generatedRoot}.`));
     const generatedDeclared = mappingContainers.has(generatedRoot) || generatedKeys.length > 0;
@@ -1256,6 +1256,8 @@ export function readValidationMoments(values: ConfigValues): ValidationMoments {
     }),
   ) as ValidationMoments;
 
+  const preflightDeclaration = values[`afk.validation.${PREFLIGHT_KEY}`];
+  if (preflightDeclaration !== undefined) schedule.preflight = preflightDeclaration === "true";
   const subsecondDeclaration = values[`afk.validation.${SUBSECOND_BRANCH_FAULT_KEY}`];
   if (subsecondDeclaration !== undefined) {
     schedule.subsecondFailuresAreBranchFault = subsecondDeclaration === "true";

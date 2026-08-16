@@ -1153,6 +1153,28 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(handoff).toContain("- pnpm typecheck");
   });
 
+  it("surfaces only the feedback stage in the Worker instruction when Preflight is enabled (#3844)", async () => {
+    const commands = ["pnpm typecheck", "pnpm test:invariants"];
+    const { deps, input, trace } = harness({ outcome: "done", locked: false });
+    deps.validationMoments = {
+      preflight: true,
+      iteration: ["pnpm test:unit"],
+      post_done: commands,
+      landing: ["pnpm test:landing"],
+    };
+
+    await processIssue(deps, input);
+
+    const instruction = trace.runAgentCalls[0]?.systemPrompt ?? "";
+    const lines = instruction.split("\n");
+    expect(instruction).toContain("<preflight>");
+    for (const command of commands) {
+      expect(lines.filter((line) => line === `- ${command}`)).toHaveLength(1);
+    }
+    expect(instruction).not.toContain("pnpm test:unit");
+    expect(instruction).not.toContain("pnpm test:landing");
+  });
+
   it("runs declared post_done at the branch fork point even when the live base moves", async () => {
     const command = "pnpm test:fork-point";
     const { deps, input, trace } = harness({

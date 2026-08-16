@@ -1144,6 +1144,12 @@ export async function processIssue(
     deps.appendIterLog(`🤖 ${reseedLane}: ${validation} Parked to ready-for-human.`);
     return { outcome: { stage: "review", ok: false }, next: "park", validation };
   };
+  const systemPromptFor = (runner: Runner): string => exitProtocolFor({
+    runMode: input.runMode,
+    structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(runner)),
+    runner,
+    preflightCommands: deps.validationMoments?.preflight ? deps.validationMoments.post_done : undefined,
+  });
   // Gate-green fast path (issue #2397): when a prior branch already cleared the
   // feedback gate, skip the agent entirely on re-claim and re-validate directly.
   let gateGreenSkip = resumeIsGateGreen;
@@ -1189,11 +1195,7 @@ export async function processIssue(
         effort: initialTier.effort,
         handoffPath,
         handoffContent: currentHandoff,
-        systemPrompt: exitProtocolFor({
-          runMode: input.runMode,
-          structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(activeRunner)),
-          runner: activeRunner,
-        }),
+        systemPrompt: systemPromptFor(activeRunner),
         branch,
         base: baseRef,
         cwd: input.attemptDir,
@@ -1283,11 +1285,7 @@ export async function processIssue(
           effort: fallbackTier.effort,
           handoffPath,
           handoffContent: currentHandoff,
-          systemPrompt: exitProtocolFor({
-            runMode: input.runMode,
-            structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(other)),
-            runner: other,
-          }),
+          systemPrompt: systemPromptFor(other),
           branch,
           base,
           cwd: input.attemptDir,

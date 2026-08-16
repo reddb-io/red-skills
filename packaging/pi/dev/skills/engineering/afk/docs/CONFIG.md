@@ -132,6 +132,7 @@ plugins:
         skills: dev:tdd, dev:diagnose # optional exact worker allowlist; activation gates still apply
         runner_startup_baseline_ms: 840 # optional measured pre-projection historical baseline
       validation:
+        preflight: false
         subsecond_failures_are_branch_fault: false
         iteration:
           - pnpm --filter @reddb-io/dev exec vitest run tests/config.test.ts
@@ -187,6 +188,12 @@ list and also skips loudly.
 | `plugins.dev.afk.validation.post_done` | The engine runs these commands after DONE against the branch's fork point. The Worker's `<merge-gate>` repeats the exact list. | A correction re-runs only the failed subset, then folds back to the full declaration after that subset passes. |
 | `plugins.dev.afk.validation.landing` | The engine runs these commands immediately before push, PR creation, and queue entry. | Last local verdict; it does not try to predict a moving base. |
 | Merge queue | The repository's required CI checks run on the merge group. This is configured at the forge, not in RedSkills. | The merge queue is the CI-side final Validation moment and owns freshness against the merged result. |
+
+`plugins.dev.afk.validation.preflight` is an experimental boolean and defaults
+to `false`. When enabled, the Worker system instruction previews the exact
+`post_done` command list as a pre-DONE checklist. It never adds `iteration`,
+`landing`, review, or other commands, and the post-DONE gate still executes and
+enforces the declaration.
 
 `plugins.dev.afk.validation.subsecond_failures_are_branch_fault` is an optional
 boolean declaration beside that schedule. Verdict first trusts structured branch

@@ -25,6 +25,7 @@ export const ENGINE_VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] a
  * the reader exists, so an entry cannot outlive what it describes.
  */
 export const VALIDATION_SETTING_KEYS: Readonly<Record<string, string>> = {
+  preflight: "apps/dev/src/core/config.ts",
   generated: "apps/dev/src/core/generated-surfaces.ts",
   node_max_old_space_mb: "apps/dev/src/core/config.ts",
   heavy_available_memory_mb: "apps/dev/src/core/config.ts",

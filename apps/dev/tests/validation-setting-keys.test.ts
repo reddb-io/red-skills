@@ -42,9 +42,9 @@ describe("validation setting keys (#3466)", () => {
   });
 
   it("classifies this repo's own declared keys the way the config means them", () => {
-    // A regeneration declaration and four resource
-    // knobs, none of which schedules anything.
-    for (const setting of ["generated", "node_max_old_space_mb", "heavy_available_memory_mb", "vitest_max_workers", "turbo_concurrency"]) {
+    // Preflight, a regeneration declaration, and four resource knobs; none of
+    // these schedules a Validation moment.
+    for (const setting of ["preflight", "generated", "node_max_old_space_mb", "heavy_available_memory_mb", "vitest_max_workers", "turbo_concurrency"]) {
       expect(isValidationSettingKey(setting), `${setting} is a setting, not a moment`).toBe(true);
     }
     expect(isValidationSettingKey("post_done")).toBe(false);
