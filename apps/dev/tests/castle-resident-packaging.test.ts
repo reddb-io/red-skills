@@ -1,8 +1,6 @@
-// The Castle resident used to ship as a SECOND bundle beside the MCP proxy,
-// resolved as a sibling file, and this suite existed to make the pair travel
-// together: every assertion said "both". It is a ROLE of the one bundle now
-// (`__castle-resident`), so there is no half to lose — one artifact carries the
-// proxy and the resident, and the version can never skew against itself.
+// The Castle resident used to ship beside the MCP proxy and later as a role of
+// the same bundle. The stdio surface is now only an ACP adapter: redskilled owns
+// Project state, so no resident artifact or hidden resident role remains.
 //
 // What still needs pinning is that the ONE artifact reaches every layout, which
 // is what these three surfaces answer for.
@@ -14,7 +12,7 @@ const ROOT = join(import.meta.dirname, "..", "..", "..");
 const read = (path: string) => readFile(join(ROOT, path), "utf8");
 const ARTIFACT = "redskilled-mcp.bundle.min.mjs";
 
-describe("Castle proxy and resident packaging", () => {
+describe("MCP-to-ACP adapter packaging", () => {
   it("stages the one npm artifact", async () => {
     const prepare = await read("packaging/npm/scripts/prepare.mjs");
     expect(prepare).toContain(`dest: "${ARTIFACT}"`);
@@ -36,11 +34,12 @@ describe("Castle proxy and resident packaging", () => {
     );
   });
 
-  it("spawns the resident from the running bundle, never from a sibling path", async () => {
+  it("connects to redskilled through ACP and owns no Castle resident role", async () => {
     const source = await read("apps/dev/src/mcp-server.ts");
-    // The spawn names THIS file plus the role; a sibling resolver would be the
-    // pairing invariant coming back by another door.
-    expect(source).toContain('serverArgs: [fileURLToPath(import.meta.url), "__castle-resident"]');
+    expect(source).toContain("connectRedskillsProjectAcp");
+    expect(source).toContain("invokeProjectMcp(project, method, input)");
+    expect(source).not.toContain("__castle-resident");
+    expect(source).not.toContain("CastleResidentClient");
     expect(source).not.toContain("resolveCastleResidentBundle");
   });
 });

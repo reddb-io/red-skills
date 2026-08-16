@@ -85,6 +85,7 @@ describe("ADR 0136 transition vocabulary", () => {
   it("partitions every Park label into machine-supported or explicitly human-only requeue authority", () => {
     expect([...HUMAN_ONLY_BLOCKER_KINDS]).toEqual([
       "stalled",
+      "spin",
       "wall-clock-capped",
       "crashed",
       "runner",
