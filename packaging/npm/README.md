@@ -1,34 +1,34 @@
 # @reddb-io/red-skills
 
-The RedSkills plugin runtime bundles (`dev`, `code-nav`, `memory`, `brain`), distributed over
-**npm** — the v2 client transport (ADR 0091), replacing the broken GitHub-release
-+ hand-rolled sigstore channel.
+The RedSkills core package distributed over **npm**. It carries compatibility
+bin shims, marketplace manifests, host generators, and the non-plugin runtimes
+those surfaces consume.
 
-The tarball carries the platform-independent JS bundles under `dist/` plus bin
-shims (`red-skills-dev`, `red-skills-code-nav`, `red-skills-memory`,
-`red-skills-brain`) that exec the corresponding packaged bundle. **No
-postinstall download** — the bundles ship in the tarball, so integrity is npm's
-own shasum/provenance and delivery is atomic.
+Each plugin runtime now ships beside its skills in
+`@reddb-io/red-skills-<plugin>` (ADR 0146), so the core tarball does not duplicate
+`dev`, `internal`, `memory`, or `brain`. The standalone installer materialises
+the core and exact-version plugin packages into one installed tree; the retained
+bin shims execute the bundles from that composed tree.
 
 ## Client resolution
 
-The RedSkills launchers resolve the exact pinned version via npm
-(`npm install @reddb-io/red-skills@<version>` / `npx -y @reddb-io/red-skills@<pin>`
-semantics), cache-first. See `packages/shared/bundle-fetch.ts`. The `canary`
-channel is the npm `canary` dist-tag.
+The RedSkills launchers first resolve an exact-version bundle from the installed
+tree. When that version is absent, they materialise its per-plugin package via
+npm. See `packages/shared/bundle-fetch.ts`. The `canary` channel remains the npm
+`canary` dist-tag and deliberately bypasses the stable installed tree.
 
 ## Divergence from reddb's postinstall-fetch pattern
 
 reddb's sibling package fetches per-platform **Rust** binaries in a postinstall
-step. RedSkills bundles are **platform-independent JS** (~2MB each) that fit
-inside the tarball, so we ship them directly — atomic delivery, registry
-shasum/provenance integrity, no postinstall network hop. (The Memory/Brain
+step. RedSkills bundles are **platform-independent JS**, so each plugin package
+ships its bundle directly — atomic delivery, registry shasum/provenance integrity,
+no postinstall network hop. (The Memory/Brain
 runtimes' native `red` engine binary is the one per-platform artifact that
 cannot live in the tarball; those plugins resolve it separately at runtime.)
 
 ## Publishing
 
 The Release standard owns the package's product version and `vX.Y.Z` tag (ADR
-0139). Built bundles are staged into `dist/` by `scripts/prepare.mjs` before a
-registry pack or publish operation; the removed legacy publish workflow is no
-longer a second release owner.
+0139). Non-plugin supporting bundles are staged into core `dist/` by
+`scripts/prepare.mjs`; plugin bundles are staged into their derived packages by
+`scripts/build-pi-packages.mjs` before the registry pack/publish operation.
