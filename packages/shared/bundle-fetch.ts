@@ -1,6 +1,7 @@
 /**
- * bundle-fetch.ts — pure-with-injected-IO resolver for per-plugin built bundles,
- * distributed over **npm** (ADR 0091, v2 transport cutover).
+ * bundle-fetch.ts — pure-with-injected-IO resolver for per-plugin built bundles.
+ * The installer's exact-version runtime tree answers first; misses fall through
+ * to **npm** (ADR 0091, v2 transport cutover; ADR 0146).
  *
  * ADR 0034 originally shipped every plugin bundle as a GitHub Release asset,
  * fetched into a version-keyed cache and verified with a hand-rolled Sigstore
@@ -244,8 +245,9 @@ export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
 }
 
 /**
- * Ensure the bundle for `plugin@version` exists in `cacheDir`; return its local
- * path. Cache-first: a cache hit returns immediately with no npm invocation.
+ * Ensure the bundle for `plugin@version` is locally available; return its path.
+ * An exact-version hit in the installer's stable runtime tree returns directly,
+ * followed by the version-keyed bundle cache. Neither path invokes npm.
  *
  * Cache miss: materialise `@reddb-io/red-skills@<pin>` via npm (npm verifies the
  * tarball shasum itself), copy the packaged `dist/<plugin>.bundle.min.mjs` into
