@@ -290,6 +290,32 @@ describe("ensureBundle (npm transport)", () => {
     expect(writes).toEqual([]);
   });
 
+  it("keeps canary on npm even when the stable installed version exists", async () => {
+    const installed = `${INSTALL_ROOT}/versions/v${VERSION}/dist/${PLUGIN}.bundle.min.mjs`;
+    const spec = npmPackageSpec(VERSION, "canary");
+    const published = "1.141.0";
+    const bytes = bundleBytesFor(published);
+    const { io, files, materializes } = makeIO({
+      files: { [installed]: bundleBytesFor(VERSION) },
+      distTags: { canary: published },
+      packageBundles: {
+        [npmPackageSpec(published)]: { [PLUGIN]: bytes, ...packagedCompanions("-canary") },
+      },
+    });
+
+    const path = await ensureBundle(io, {
+      plugin: PLUGIN,
+      version: VERSION,
+      cacheDir: CACHE,
+      installRoot: INSTALL_ROOT,
+      channel: "canary",
+    });
+
+    expect(path).toBe(`${CACHE}/${PLUGIN}-canary.bundle.min.mjs`);
+    expect(materializes).toEqual([spec]);
+    expect(files[path]).toEqual(bytes);
+  });
+
   it("ignores a skewed installed-tree version and falls back to npm", async () => {
     const skewed = `${INSTALL_ROOT}/versions/v1.139.9/dist/${PLUGIN}.bundle.min.mjs`;
     const spec = npmPackageSpec(VERSION);
