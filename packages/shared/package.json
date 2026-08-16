@@ -46,5 +46,8 @@
   "dependencies": {
     "@reddb-io/toon": "catalog:",
     "cli-args-parser": "^1.0.6"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
   }
 }
