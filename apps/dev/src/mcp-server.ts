@@ -22,7 +22,7 @@ const buildInfo = readBuildInfo("redskilled-mcp");
 
 export function createRedskilledMcpServer(
   root = process.cwd(),
-  residentInvoke?: (method: string, input: Record<string, unknown>) => Promise<unknown>,
+  acpInvoke?: (method: string, input: Record<string, unknown>) => Promise<unknown>,
 ): McpServer {
   const server = new McpServer({ name: "redskilled", version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
@@ -36,11 +36,11 @@ export function createRedskilledMcpServer(
       content: Array<{ type: "text"; text: string }>;
     }>,
   ) => void;
-  // Tool schemas stay local so MCP discovery needs no resident round-trip. When
-  // a resident invoker is present the dependency object is deliberately empty:
+  // Tool schemas stay local so MCP discovery needs no ACP round-trip. When
+  // an ACP invoker is present the dependency object is deliberately empty:
   // every invocation is replaced below, so this process owns no engine port.
-  const invoke = residentInvoke ?? (async () => {
-    throw new Error("CASTLE_RESIDENT_UNAVAILABLE: the stdio proxy has no resident client");
+  const invoke = acpInvoke ?? (async () => {
+    throw new Error("REDSKILLED_ACP_UNAVAILABLE: the stdio adapter has no ACP client");
   });
   const dependencies = {} as CastleMcpDependencies;
   for (const tool of createCastleMcpTools(dependencies)) {
@@ -95,8 +95,9 @@ export interface ResidentMcpConnection {
 export interface ConnectResidentMcpOptions {
   readonly server: ResidentMcpConnection;
   readonly transport: StdioServerTransport;
-  readonly resident: ResidentLeaseComponent;
-  readonly janitor: ResidentLeaseComponent;
+  /** Ignored compatibility keys: adapters do not start workflow authorities. */
+  readonly resident?: ResidentLeaseComponent;
+  readonly janitor?: ResidentLeaseComponent;
 }
 
 export interface ResidentLeaseComponent {
@@ -107,19 +108,19 @@ export interface ResidentLeaseComponent {
 export async function connectResidentMcp(
   options: ConnectResidentMcpOptions,
 ): Promise<void> {
-  await options.resident.start();
-  await options.janitor.start();
+  return await connectProjectMcp(options);
+}
+
+export async function connectProjectMcp(
+  options: Pick<ConnectResidentMcpOptions, "server" | "transport">,
+): Promise<void> {
   let notifyClosed!: () => void;
   const closed = new Promise<void>((resolveClosed) => {
     notifyClosed = resolveClosed;
   });
   options.server.server.onclose = notifyClosed;
-  try {
-    await options.server.connect(options.transport);
-    await closed;
-  } finally {
-    await Promise.all([options.janitor.stop(), options.resident.stop()]);
-  }
+  await options.server.connect(options.transport);
+  await closed;
 }
 
 async function run(): Promise<void> {
@@ -137,20 +138,9 @@ async function run(): Promise<void> {
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
   try {
-    const inertLease = {
-      acquired: false as const,
-      lease: {
-        pid: process.pid,
-        start_time: "client",
-        acquired_at: "client",
-        renewed_at: "client",
-      },
-    };
-    await connectResidentMcp({
+    await connectProjectMcp({
       server,
       transport: new StdioServerTransport(),
-      resident: { start: async () => inertLease, stop: async () => undefined },
-      janitor: { start: async () => inertLease, stop: async () => undefined },
     });
   } finally {
     project.close();
