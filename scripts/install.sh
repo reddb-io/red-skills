@@ -4,14 +4,14 @@
 # Intended curl entrypoint:
 #   curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
 #
-# The script resolves the latest GitHub Release by default, installs that source
-# tree under ~/.red-skills, detects supported local CLIs, then wires each host:
+# The script resolves the published npm packages by default, materialises their
+# runtime tree under ~/.red-skills, detects supported local CLIs, then wires each host:
 #   - Claude Code: marketplace + plugins
 #   - Codex CLI: marketplace + plugins
 #   - OpenCode/RedCode: generated plugin/skill/MCP/statusline surface
 #
 # The Claude and Codex marketplaces are registered from the GitHub source
-# (reddb-io/red-skills), not from the downloaded snapshot: `plugin marketplace
+# (reddb-io/red-skills), not from the materialised tree: `plugin marketplace
 # update` re-reads whatever source was registered, so a directory registration
 # freezes the machine at its install-day version. `--local-marketplace` opts
 # into the directory form for offline and dev installs; re-running the installer
@@ -59,21 +59,21 @@ Installs RedSkills into every detected supported CLI:
 
 Options:
   --version <tag>       Install a specific release tag (default: latest release).
-                        Pins the downloaded source cache, not the marketplace;
+                        Pins the materialised npm packages, not the marketplace;
                         combine with --local-marketplace to pin Claude/Codex too.
-  --install-root <dir>  Install source cache here (default: ~/.red-skills)
+  --install-root <dir>  Install versioned runtime trees here (default: ~/.red-skills)
   --only <list>         Comma list: claude,codex,opencode,redcode,pi (default: auto-detect)
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
-  --source-dir <dir>    Use an existing red-skills checkout instead of downloading
+  --source-dir <dir>    Use an existing red-skills checkout instead of npm packages
   --local-marketplace   Register the Claude/Codex marketplace from the local
                         source directory instead of the GitHub source. Offline
                         and dev installs only: a directory-sourced marketplace
                         can never see a release published after install day.
   --uninstall           Remove RedSkills from detected/specified CLIs
   --force               Reinstall plugins where the host supports removal
-  --purge               With --uninstall, also remove the RedSkills source cache
-  --refresh             Re-download the selected release source
+  --purge               With --uninstall, also remove the RedSkills install tree
+  --refresh             Re-materialise the selected npm packages
   --opencode-copy       Copy OpenCode-compatible SKILL.md files instead of symlinking
   --dry-run             Print actions without writing
   -h, --help            Show this help
@@ -83,7 +83,7 @@ Environment:
   RED_SKILLS_CLAUDE_SCOPE, RED_SKILLS_PI_SCOPE, RED_SKILLS_SOURCE_DIR,
   RED_SKILLS_ACTION, RED_SKILLS_FORCE, RED_SKILLS_PURGE, RED_SKILLS_REFRESH,
   RED_SKILLS_OPENCODE_COPY, RED_SKILLS_MARKETPLACE_SOURCE (github|local),
-  RED_SKILLS_REPO, GITHUB_TOKEN.
+  RED_SKILLS_REPO.
 EOF
 }
 
@@ -159,93 +159,12 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required"
 }
 
-curl_json() {
-  local url="$1"
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url"
-  else
-    curl -fsSL "$url"
-  fi
-}
-
-curl_file() {
-  local url="$1"
-  local out="$2"
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" -o "$out"
-  else
-    curl -fsSL "$url" -o "$out"
-  fi
-}
-
-latest_release_tag() {
-  local api="https://api.github.com/repos/$REPO/releases/latest"
-  local tag
-  tag="$(curl_json "$api" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-  [[ -n "$tag" ]] || die "could not resolve latest release from $api"
-  printf '%s\n' "$tag"
-}
-
 safe_release_tag() {
   local tag="$1"
   case "$tag" in
     v[0-9]*.[0-9]*.[0-9]* | [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$tag" ;;
     *) die "release tag must look like vX.Y.Z, got '$tag'" ;;
   esac
-}
-
-download_release_asset_if_available() {
-  local tag="$1"
-  local source="$2"
-  local asset="opencode-host.bundle.min.mjs"
-  local out="$source/dist/$asset"
-  local url="https://github.com/$REPO/releases/download/$tag/$asset"
-
-  if [[ "$DRY_RUN" == "true" ]]; then
-    log "would download optional release asset $url"
-    return 0
-  fi
-
-  mkdir -p "$source/dist"
-  if [[ "$REFRESH" == "true" || ! -f "$out" ]]; then
-    if curl_file "$url" "$out.tmp"; then
-      mv "$out.tmp" "$out"
-      log "downloaded optional release asset $asset"
-    else
-      rm -f "$out.tmp"
-      warn "optional release asset $asset is unavailable for $tag; OpenCode install may build from source"
-    fi
-  fi
-
-  local generated_asset="opencode-host.generated.tgz"
-  local generated_out="$source/dist/$generated_asset"
-  local generated_url="https://github.com/$REPO/releases/download/$tag/$generated_asset"
-  if [[ "$REFRESH" == "true" || ! -f "$source/dist/opencode/.release-generated" ]]; then
-    if curl_file "$generated_url" "$generated_out.tmp"; then
-      mv "$generated_out.tmp" "$generated_out"
-      tar -xzf "$generated_out" -C "$source"
-      log "downloaded optional release asset $generated_asset"
-    else
-      rm -f "$generated_out.tmp"
-      warn "optional release asset $generated_asset is unavailable for $tag; OpenCode install may generate from source"
-    fi
-  fi
-
-  local rsp_asset rsp_out rsp_url
-  mkdir -p "$source/packaging/npm/dist"
-  for rsp_asset in rsp.bundle.min.mjs rsp-core.bundle.min.mjs; do
-    rsp_out="$source/packaging/npm/dist/$rsp_asset"
-    rsp_url="https://github.com/$REPO/releases/download/$tag/$rsp_asset"
-    if [[ "$REFRESH" == "true" || ! -f "$rsp_out" ]]; then
-      if curl_file "$rsp_url" "$rsp_out.tmp"; then
-        mv "$rsp_out.tmp" "$rsp_out"
-        log "downloaded optional release asset $rsp_asset"
-      else
-        rm -f "$rsp_out.tmp"
-        warn "optional release asset $rsp_asset is unavailable for $tag; RSP may build from source"
-      fi
-    fi
-  done
 }
 
 prepare_source() {
@@ -258,65 +177,84 @@ prepare_source() {
     return 0
   fi
 
-  require_cmd curl
-  require_cmd tar
   require_cmd mktemp
 
   local tag="$VERSION"
-  if [[ "$tag" == "latest" ]]; then
-    tag="$(latest_release_tag)"
-  fi
-  tag="$(safe_release_tag "$tag")"
-  VERSION="$tag"
-
   local versions_dir="$INSTALL_ROOT/versions"
-  local cache_dir="$INSTALL_ROOT/cache"
-  local dest="$versions_dir/$tag"
   local current="$INSTALL_ROOT/current"
-  local archive="$cache_dir/$tag.tar.gz"
+  local npm_version="$tag"
+  if [[ "$tag" != "latest" ]]; then
+    tag="$(safe_release_tag "$tag")"
+    npm_version="${tag#v}"
+  fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "would install $REPO@$tag under $dest"
+    log "would materialise @reddb-io/red-skills@$npm_version and plugin packages under $versions_dir/$tag"
     SOURCE_DIR="$current"
     return 0
   fi
 
-  mkdir -p "$versions_dir" "$cache_dir"
+  mkdir -p "$versions_dir"
+
+  local tmp core package_dir package_version plugin bundle resolved_version dest
+  local -a plugins=(dev memory brain internal)
+  local -a specs=("@reddb-io/red-skills@$npm_version")
+  for plugin in "${plugins[@]}"; do
+    specs+=("@reddb-io/red-skills-$plugin@$npm_version")
+  done
+
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  log "materialising ${specs[*]}"
+  npm install "${specs[@]}" --prefix "$tmp" \
+    --no-save --no-audit --no-fund --ignore-scripts --loglevel=error
+
+  core="$tmp/node_modules/@reddb-io/red-skills"
+  [[ -f "$core/package.json" ]] || die "npm did not materialise @reddb-io/red-skills"
+  resolved_version="$(node -e 'process.stdout.write(require(process.argv[1]).version || "")' "$core/package.json")"
+  [[ -n "$resolved_version" ]] || die "@reddb-io/red-skills package has no version"
+  if [[ "$VERSION" == "latest" ]]; then
+    tag="v$resolved_version"
+  elif [[ "$resolved_version" != "$npm_version" ]]; then
+    die "npm resolved @reddb-io/red-skills@$resolved_version, expected $npm_version"
+  fi
+  VERSION="$tag"
+  dest="$versions_dir/$tag"
+
+  for plugin in "${plugins[@]}"; do
+    package_dir="$tmp/node_modules/@reddb-io/red-skills-$plugin"
+    bundle="$package_dir/dist/$plugin.bundle.min.mjs"
+    [[ -f "$package_dir/package.json" ]] || die "npm did not materialise @reddb-io/red-skills-$plugin"
+    [[ -f "$bundle" ]] || die "@reddb-io/red-skills-$plugin package is missing dist/$plugin.bundle.min.mjs"
+    package_version="$(node -e 'process.stdout.write(require(process.argv[1]).version || "")' "$package_dir/package.json")"
+    [[ "$package_version" == "$resolved_version" ]] \
+      || die "npm resolved @reddb-io/red-skills-$plugin@$package_version, expected $resolved_version"
+  done
+
   if [[ "$REFRESH" == "true" ]]; then
-    rm -rf "$dest" "$archive"
+    rm -rf "$dest"
   fi
-
   if [[ ! -d "$dest" ]]; then
-    local url="https://github.com/$REPO/archive/refs/tags/$tag.tar.gz"
-    local tmp extracted
-    tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' RETURN
-    log "downloading $url"
-    curl -fsSL "$url" -o "$archive"
-    # Extracted twice on purpose, and only the second failure counts.
-    # The archive carries an AGENTS.md -> CLAUDE.md symlink, and Git
-    # Bash's tar emulates symlink() as a copy of the target — which
-    # fails on the first pass when the link precedes its target in
-    # archive order, and succeeds on the second because by then the
-    # target exists on disk. Unix extracts clean on the first pass and
-    # never reaches the retry.
-    tar -xzf "$archive" -C "$tmp" 2>/dev/null || tar -xzf "$archive" -C "$tmp"
-    extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-    [[ -n "$extracted" ]] || die "archive did not contain a source directory"
     rm -rf "$dest.tmp"
-    mv "$extracted" "$dest.tmp"
+    mkdir -p "$dest.tmp/plugins" "$dest.tmp/dist"
+    cp -R "$core/." "$dest.tmp/"
+    for plugin in "${plugins[@]}"; do
+      package_dir="$tmp/node_modules/@reddb-io/red-skills-$plugin"
+      bundle="$package_dir/dist/$plugin.bundle.min.mjs"
+      cp -R "$package_dir" "$dest.tmp/plugins/$plugin"
+      cp "$bundle" "$dest.tmp/dist/$plugin.bundle.min.mjs"
+    done
     mv "$dest.tmp" "$dest"
-    rm -rf "$tmp"
-    trap - RETURN
   else
-    log "using cached source $dest"
+    log "using cached npm materialisation $dest"
   fi
 
-  download_release_asset_if_available "$tag" "$dest"
+  rm -rf "$tmp"
+  trap - RETURN
   rm -f "$current"
   ln -s "$dest" "$current"
   SOURCE_DIR="$current"
-  log "current source -> $dest"
+  log "current install -> $dest"
 }
 
 # The reference a host CLI registers the marketplace from. The GitHub source is
@@ -494,11 +432,9 @@ install_pi() {
   fi
 
   local args=("$SOURCE_DIR/scripts/install-pi.sh")
-  # The universal installer always installs from the local release checkout
-  # (SOURCE_DIR is the cached tarball under ~/.red-skills/versions/<tag>),
-  # which keeps paths stable across re-runs of the same release. End users
-  # who want the npm surface run `pi install npm:@reddb-io/red-skills-<plugin>`
-  # directly; this script gives them the version-pinned cache instead.
+  # The universal installer points Pi at the composed, versioned runtime tree
+  # so all hosts share one stable materialisation across re-runs. Direct Pi
+  # installs may still use `npm:@reddb-io/red-skills-<plugin>`.
   args+=("--source-dir" "$SOURCE_DIR")
   if [[ "$PI_SCOPE" == "project" ]]; then
     args+=("--project" "${PI_PROJECT_DIR:-$PWD}")
@@ -871,6 +807,8 @@ if [[ "$ACTION" == "uninstall" ]]; then
   exit 0
 fi
 
+require_cmd node
+require_cmd npm
 prepare_source
 
 installed_any="false"
