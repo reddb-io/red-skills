@@ -79,7 +79,8 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **Operating project execution** -> the `redskilled` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
   from live host state; it is the sole runtime source of execution choreography
-  (ADR 0134). The stdio MCP and `red-skills-dev project` CLI namespace are
+  (ADR 0134). The stdio MCP and the `project` CLI namespace exposed by
+  `red-skills-dev` are
   stateless ACP clients of **redskilled**; the daemon owns Project control state,
   GitHub access, and Worker supervision, while generic ACP core retains the same
   workflow without typed RedSkills extensions. Use the ACP-projected response
