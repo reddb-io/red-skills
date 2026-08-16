@@ -26,6 +26,7 @@
   },
   "files": [
     "skills/**/*",
+    "dist/**/*",
     "package.json",
     "README.md"
   ]
