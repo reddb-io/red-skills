@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./acp-client": "./src/acp-client.ts",
     "./acp-agent-catalog": "./src/acp-agent-catalog.ts",
     "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
