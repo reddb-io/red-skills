@@ -57,9 +57,15 @@ function checkCore(root, tarball) {
     "package/scripts/generate-gemini-manifests.mjs",
     "package/scripts/generate-pi-manifests.mjs",
     "package/dist/opencode-host.bundle.min.mjs",
-    `package/dist/${MEMORY_TOKENIZER_ASSET}`,
   ];
   for (const expected of required) requireEntry(listing, expected, "core npm");
+
+  for (const plugin of pluginManifests(root)) {
+    const unexpected = `package/dist/${plugin.name}.bundle.min.mjs`;
+    if (listing.includes(unexpected)) {
+      throw new Error(`core npm tarball unexpectedly contains ${unexpected}`);
+    }
+  }
 
   const forbidden = listing.find(
     (entry) => entry.startsWith("package/apps/") || entry.startsWith("package/packages/"),
