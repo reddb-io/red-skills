@@ -1006,18 +1006,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             const admission = admit(spec);
             if (!admission.admitted) throw new RedskilledAdmissionError(admission.reason, admission);
             const key = redskilledTrunkRefreshKey(trunk);
-            launched = await startAfterProjectHooks(() => {
-              // Birth serialization may be held by a synchronous project hook.
-              // Do not start a fallible git promise until this turn can attach
-              // its await; otherwise a routine fetch/rev-parse failure rejects
-              // unhandled while the earlier hook still owns the lane.
-              let fork = burstForks.get(key);
-              if (fork == null) {
-                fork = refreshFork(trunk);
-                burstForks.set(key, fork);
-              }
-              return admitAndStartWorker(spec, trunk, fork, admission);
-            });
+            let fork = burstForks.get(key);
+            if (fork == null) { fork = refreshFork(trunk); burstForks.set(key, fork); }
+            // The serialized birth lane may not await this until a synchronous hook settles.
+            void fork.catch(() => undefined);
+            launched = await startAfterProjectHooks(() => admitAndStartWorker(spec, trunk, fork, admission));
           }
         } catch (err) {
           refusal = err instanceof Error ? err.message : String(err);
