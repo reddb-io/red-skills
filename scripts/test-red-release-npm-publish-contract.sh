@@ -110,6 +110,108 @@ else
   fail "pack contract must verify the code-nav npm bin and packaged bundle"
 fi
 
+if grep -qF 'node scripts/check-npm-tarball-boundaries.mjs' "$WORKFLOW" &&
+   grep -qF 'pnpm pi:packages:build' "$WORKFLOW"; then
+  pass "publish materialises and checks core plus derived per-plugin tarballs"
+else
+  fail "publish must check core and every derived per-plugin tarball before publishing"
+fi
+
+plugin_publish_line="$(grep -nF 'pnpm pi:packages:publish' "$WORKFLOW" | head -n1 | cut -d: -f1 || true)"
+core_publish_line="$(grep -nF 'pnpm publish --access public --no-git-checks' "$WORKFLOW" | head -n1 | cut -d: -f1 || true)"
+if [ -n "$plugin_publish_line" ] && [ -n "$core_publish_line" ] &&
+   [ "$plugin_publish_line" -lt "$core_publish_line" ]; then
+  pass "per-plugin versions publish before the matching core becomes resolvable"
+else
+  fail "per-plugin packages must publish before core to prevent a mixed release pair"
+fi
+
+if grep -qF "find plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json'" "$WORKFLOW" &&
+   ! grep -qF 'for plugin in dev memory brain' "$WORKFLOW"; then
+  pass "per-plugin pack and smoke expectations derive from the plugin tree"
+else
+  fail "workflow must derive every per-plugin expectation from the plugin tree"
+fi
+
+# Exercise the archive boundary checker with real tarballs. The valid fixture
+# is assembled from the canonical core package manifest and plugin tree; the
+# two mutations specify the failures that must stop a release before npm sees
+# any package.
+contract_fixture="$(mktemp -d)"
+core_tree="$contract_fixture/core-tree/package"
+plugin_tarballs="$contract_fixture/plugin-tarballs"
+mkdir -p "$core_tree" "$plugin_tarballs"
+
+while IFS= read -r bin_path; do
+  mkdir -p "$core_tree/$(dirname "$bin_path")"
+  : > "$core_tree/$bin_path"
+done < <(node -e "const p=require('./packaging/npm/package.json'); console.log(Object.values(p.bin).join('\\n'))")
+
+for expected in \
+  .agents/plugins/marketplace.json \
+  .claude-plugin/marketplace.json \
+  .gemini-plugin/marketplace.json \
+  scripts/generate-codex-manifests.mjs \
+  scripts/generate-gemini-manifests.mjs \
+  scripts/generate-pi-manifests.mjs \
+  dist/opencode-host.bundle.min.mjs; do
+  mkdir -p "$core_tree/$(dirname "$expected")"
+  : > "$core_tree/$expected"
+done
+cp packaging/npm/package.json "$core_tree/package.json"
+tar -czf "$contract_fixture/core.tgz" -C "$contract_fixture/core-tree" package
+
+first_plugin=""
+while IFS= read -r plugin_json; do
+  plugin="$(node -p "require('./${plugin_json}').name")"
+  [ -n "$first_plugin" ] || first_plugin="$plugin"
+  plugin_tree="$contract_fixture/plugin-$plugin/package"
+  mkdir -p "$plugin_tree/skills/core/example" "$plugin_tree/dist"
+  : > "$plugin_tree/skills/core/example/SKILL.md"
+  : > "$plugin_tree/dist/$plugin.bundle.min.mjs"
+  tar -czf "$plugin_tarballs/reddb-io-red-skills-$plugin-9.9.9.tgz" \
+    -C "$contract_fixture/plugin-$plugin" package
+done < <(find plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json' -print | sort)
+
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/core.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null; then
+  pass "materialised tarball listings satisfy both package boundaries"
+else
+  fail "valid core and per-plugin tarballs must satisfy the publish boundary checker"
+fi
+
+missing_bundle_tree="$contract_fixture/missing-bundle/package"
+mkdir -p "$missing_bundle_tree/skills/core/example"
+: > "$missing_bundle_tree/skills/core/example/SKILL.md"
+tar -czf "$plugin_tarballs/reddb-io-red-skills-$first_plugin-9.9.9.tgz" \
+  -C "$contract_fixture/missing-bundle" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/core.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "per-plugin tarball without its runtime bundle must fail the publish contract"
+else
+  pass "per-plugin tarball without its runtime bundle fails the publish contract"
+fi
+
+bad_core_tree="$contract_fixture/bad-core/package"
+mkdir -p "$contract_fixture/bad-core"
+cp -R "$core_tree" "$bad_core_tree"
+mkdir -p "$bad_core_tree/apps/dev"
+: > "$bad_core_tree/apps/dev/runtime.ts"
+tar -czf "$contract_fixture/bad-core.tgz" -C "$contract_fixture/bad-core" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/bad-core.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "core tarball carrying the runtime app tree must fail the publish contract"
+else
+  pass "core tarball carrying the runtime app tree fails the publish contract"
+fi
+rm -rf "$contract_fixture"
+
 if grep -qF 'registry smoke returned' "$WORKFLOW" &&
    grep -qF 'dev ${version} ' "$WORKFLOW"; then
   pass "registry smoke verifies the reported release version"

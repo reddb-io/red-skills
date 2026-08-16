@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+
+import { spawnSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+function parseArgs(argv) {
+  const args = { root: process.cwd(), core: "", plugins: "" };
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (flag !== "--root" && flag !== "--core" && flag !== "--plugins") {
+      throw new Error(`unknown argument: ${flag}`);
+    }
+    const value = argv[index + 1];
+    if (!value) throw new Error(`${flag} requires a value`);
+    args[flag.slice(2)] = value;
+    index += 1;
+  }
+  if (!args.core || !args.plugins) {
+    throw new Error("usage: check-npm-tarball-boundaries.mjs --core <tarball> --plugins <directory> [--root <repo>]");
+  }
+  return args;
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function materializeListing(tarball) {
+  const result = spawnSync("tar", ["-tzf", tarball], {
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(`cannot list ${tarball}: ${result.stderr.trim() || `tar exited ${result.status}`}`);
+  }
+  return result.stdout.split("\n").filter(Boolean);
+}
+
+function requireEntry(listing, expected, label) {
+  if (!listing.includes(expected)) {
+    throw new Error(`${label} tarball missing ${expected}`);
+  }
+}
+
+function checkCore(root, tarball) {
+  const listing = materializeListing(tarball);
+  const packageJson = readJson(join(root, "packaging/npm/package.json"));
+  const required = [
+    ...Object.values(packageJson.bin).map((path) => `package/${path}`),
+    "package/.agents/plugins/marketplace.json",
+    "package/.claude-plugin/marketplace.json",
+    "package/.gemini-plugin/marketplace.json",
+    "package/scripts/generate-codex-manifests.mjs",
+    "package/scripts/generate-gemini-manifests.mjs",
+    "package/scripts/generate-pi-manifests.mjs",
+    "package/dist/opencode-host.bundle.min.mjs",
+  ];
+  for (const expected of required) requireEntry(listing, expected, "core npm");
+
+  const forbidden = listing.find(
+    (entry) => entry.startsWith("package/apps/") || entry.startsWith("package/packages/"),
+  );
+  if (forbidden) {
+    throw new Error(`core npm tarball crosses into the monorepo runtime/shared tree: ${forbidden}`);
+  }
+}
+
+function npmTarballPrefix(packageName) {
+  return `${packageName.replace(/^@/, "").replaceAll("/", "-")}-`;
+}
+
+function pluginManifests(root) {
+  const pluginsRoot = join(root, "plugins");
+  return readdirSync(pluginsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readJson(join(pluginsRoot, entry.name, ".claude-plugin/plugin.json")))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function checkPlugins(root, tarballsDir) {
+  const tarballs = readdirSync(tarballsDir).filter((entry) => entry.endsWith(".tgz"));
+  for (const plugin of pluginManifests(root)) {
+    const packageName = `@reddb-io/red-skills-${plugin.name}`;
+    const prefix = npmTarballPrefix(packageName);
+    const matches = tarballs.filter((entry) => entry.startsWith(prefix));
+    if (matches.length !== 1) {
+      throw new Error(`${packageName}: expected one packed tarball, found ${matches.length}`);
+    }
+
+    const listing = materializeListing(join(tarballsDir, matches[0]));
+    const skill = listing.find(
+      (entry) => entry.startsWith("package/skills/") && entry.endsWith("/SKILL.md"),
+    );
+    if (!skill) throw new Error(`${packageName} tarball carries no published skills`);
+    requireEntry(listing, `package/dist/${plugin.name}.bundle.min.mjs`, packageName);
+  }
+}
+
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  checkCore(args.root, args.core);
+  checkPlugins(args.root, args.plugins);
+  process.stdout.write("npm tarball boundaries ok\n");
+}
+
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+}

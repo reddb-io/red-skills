@@ -663,9 +663,19 @@ jobs:
         if: steps.target.outputs.publish == 'true'
         env:
           NEXT: ${{ steps.target.outputs.tag }}
+          RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
           version="${NEXT#v}"
+          # Materialise every generated plugin package before the first npm
+          # mutation. The plugin tree is the package set; adding a plugin must
+          # make this contract fan out without editing the workflow.
+          pnpm pi:packages:build
+          plugin_pack_dir="$(mktemp -d)"
+          while IFS= read -r plugin_json; do
+            plugin="$(node -p "require('./${plugin_json}').name")"
+            pnpm --dir "packaging/pi/$plugin" pack --pack-destination "$plugin_pack_dir"
+          done < <(find plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json' -print | sort)
           # Pin the package version to the tag being published. packaging/npm is
           # outside the pnpm workspace, so changesets never versions it; the tag
           # is its only source of truth and `Verify the tag matches the tree`
@@ -698,6 +708,13 @@ jobs:
               exit 1
             fi
           done
+          core_tarball="$PWD/$tarball"
+          cd ../..
+          node scripts/check-npm-tarball-boundaries.mjs \
+            --root "$PWD" \
+            --core "$core_tarball" \
+            --plugins "$plugin_pack_dir"
+          cd packaging/npm
           # Contract check: install the packed tarball into a throwaway prefix and
           # run the REAL packaged clients (the bins the launcher execs) — proves the
           # tarball resolves and runs before we publish it.
@@ -762,8 +779,12 @@ jobs:
             echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills@${version}"
             exit 1
           fi
-          cd packaging/npm
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
+          # Publish the derived plugin set first. Until core@version is visible,
+          # no consumer can select the new release; once core is visible, every
+          # matching plugin package already resolves.
+          pnpm pi:packages:publish
+          cd packaging/npm
           # Publish must be idempotent so a re-run after a transient
           # post-publish failure (for example registry-propagation lag in the
           # smoke step) can resume the publish tail instead of dying on a
@@ -778,28 +799,6 @@ jobs:
           # which points npm dist-tag `canary` at an already-published version.
           pnpm publish --access public --no-git-checks
 
-      - name: Build + publish Pi packages to npm
-        if: steps.target.outputs.publish == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NEXT: ${{ steps.target.outputs.tag }}
-          RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
-        run: |
-          set -euo pipefail
-          version="${NEXT#v}"
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills-<plugin>@${version}"
-            exit 1
-          fi
-          # Stage the npm-ready Pi packages from plugins/<name>/skills/<bucket>/
-          # into packaging/pi/<name>/. The build runs before publish so the
-          # tarball carries the current source, not a stale staging.
-          pnpm pi:packages:build
-          # Idempotent on already-published (same shape as @reddb-io/red-skills):
-          # a re-run after transient post-publish failure resumes the publish
-          # tail instead of dying on publish-over-published conflict.
-          pnpm pi:packages:publish
-
       - name: Smoke published Pi packages from registry
         if: steps.target.outputs.publish == 'true'
         env:
@@ -809,7 +808,8 @@ jobs:
           version="${NEXT#v}"
           # Registry read replicas can lag the publish by several minutes
           # (same budget as the @reddb-io/red-skills smoke above).
-          for plugin in dev memory brain; do
+          while IFS= read -r plugin_json; do
+            plugin="$(node -p "require('./${plugin_json}').name")"
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
               # `npm view <pkg>@<version> version` prints just the resolved
               # version string (e.g. `2.76.0`); compare it exactly. The prior
@@ -825,7 +825,7 @@ jobs:
             done
             echo "::error::registry smoke failed for @reddb-io/red-skills-${plugin}@${version} after 10 attempts"
             exit 1
-          done
+          done < <(find plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json' -print | sort)
 
       - name: Smoke published npm package from registry
         if: steps.target.outputs.publish == 'true'
