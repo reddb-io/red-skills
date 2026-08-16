@@ -94,7 +94,7 @@ export function cleanupWorkflowWorker(
   void rm(worker.endpoint, { force: true });
 }
 
-function workerTransportIsClosed(worker: ActiveWorkflowWorker): boolean {
+export function workerTransportIsClosed(worker: ActiveWorkflowWorker): boolean {
   return worker.socket.destroyed || worker.socket.readableEnded || worker.socket.writableEnded ||
     !worker.socket.readable || !worker.socket.writable;
 }

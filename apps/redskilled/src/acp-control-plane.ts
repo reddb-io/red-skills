@@ -55,7 +55,9 @@ import {
   REDSKILLED_PROJECT_BUDGET_METHOD,
 } from "./acp-budget.js";
 import {
-  acpSessionJournalPath, createAcpSessionJournal, type AcpSessionJournal,
+  acpSessionJournalPath,
+  createAcpSessionJournal as createDurableAcpSessionJournal,
+  type AcpSessionJournal as DurableAcpSessionJournal,
 } from "./acp-session-journal.js";
 import {
   isAcpRetakePrompt,
@@ -633,12 +635,12 @@ export async function runRedskillsAcpAdapter(paths: RedskilledPaths): Promise<nu
   return 0;
 }
 type PermissionDecision = Extract<
-  ReturnType<AcpSessionJournal["recovery"]>["entries"][number],
+  ReturnType<DurableAcpSessionJournal["recovery"]>["entries"][number],
   { kind: "permission" }
 >;
 
 async function resolvePermission(
-  journal: AcpSessionJournal,
+  journal: DurableAcpSessionJournal,
   publicSessionId: string,
   request: RequestPermissionRequest,
   attached: () => boolean,

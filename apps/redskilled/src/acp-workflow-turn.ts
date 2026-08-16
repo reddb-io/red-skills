@@ -11,6 +11,7 @@ import {
   notifyWorkerLifecycle,
   reapWorkflowWorker,
   scheduleIdleCleanup,
+  workerTransportIsClosed,
   workflowOutcome,
   type ActiveWorkflowWorker,
 } from "./acp-worker-lifecycle.js";
@@ -81,6 +82,14 @@ export async function runAcpWorkflowTurn(input: RunAcpWorkflowTurnInput): Promis
       };
     } catch (error) {
       const dead = worker;
+      if (!workerTransportIsClosed(dead)) {
+        if (!input.attached()) {
+          await reapWorkflowWorker(input.sessionId, dead, input.active, "client-detached");
+        } else {
+          scheduleIdleCleanup(input.sessionId, dead, input.active);
+        }
+        throw error;
+      }
       cleanupWorkflowWorker(input.sessionId, dead, input.active);
       if (input.dispatch != null) {
         await waitForWorkerDeparture(input.hostState, dead.workerId);
