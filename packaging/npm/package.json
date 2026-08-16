@@ -23,8 +23,17 @@
     "rsp": "bin/rsp.mjs"
   },
   "files": [
+    ".agents/plugins/marketplace.json",
+    ".claude-plugin/marketplace.json",
+    ".gemini-plugin/marketplace.json",
     "bin/",
     "dist/",
-    "README.md"
+    "README.md",
+    "scripts/generate-codex-manifests.mjs",
+    "scripts/generate-gemini-manifests.mjs",
+    "scripts/generate-pi-manifests.mjs",
+    "scripts/install-opencode.sh",
+    "scripts/install-pi.sh",
+    "scripts/lib/manifest-core.mjs"
   ]
 }
