@@ -187,11 +187,20 @@ export function bindAcpProjectGithubCustodyStatus(
   return async (): Promise<RedskilledGithubCustodyStatus | undefined> => {
     if (gateway == null) return undefined;
     const project = projectForConnection();
-    const selection = await gateway.credentialForProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-    });
+    let selection;
+    try {
+      selection = await gateway.credentialForProject({
+        projectId: project.projectId,
+        projectLabel: project.projectLabel,
+        workspacePath: project.workspacePath,
+      });
+    } catch (error) {
+      // Project control remains observable when optional GitHub custody has no
+      // usable credential profile. Credential-bound custody mutations still
+      // return their typed authorization refusal through their own methods.
+      if (error instanceof RedskilledGithubCredentialProfileError) return undefined;
+      throw error;
+    }
     if (selection == null) return undefined;
     const reader = gateway.gateway.forProject({
       projectId: project.projectId,

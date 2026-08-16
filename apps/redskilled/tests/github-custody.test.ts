@@ -174,6 +174,58 @@ describe("redskilled GitHub merge custody", () => {
     expect(releases).toBeLessThanOrEqual(1);
     gateway.close();
   });
+
+  it("finds a never-ticked obligation within one declared tick and gives ACP a repair call", async () => {
+    const root = await fixtureRoot("redskilled-github-custody-never-ticked-");
+    let now = "2026-08-15T20:00:00.000Z";
+    const gateway = createRedskilledGithubGateway({
+      upstream: async () => ({ value: {}, budget: null }),
+      outboxPath: join(root, "github-outbox.toon"),
+      custodyPath: join(root, "github-custody.toon"),
+      custodyTickMs: 1_000,
+      custodyInertMs: 60_000,
+      clock: () => now,
+      writeUpstream: async () => ({ number: 73 }),
+      custodyUpstream: {
+        async observe() {
+          throw new Error("the closed fixture must never tick");
+        },
+        async arm() {
+          throw new Error("the closed fixture must never tick");
+        },
+      },
+    });
+    const project = gateway.forProject({
+      projectId: "github:101",
+      projectLabel: "acme/widgets",
+      workspacePath: join(root, "workspace"),
+      credentialProfile: "engineering",
+    }, { secret: "fixture" });
+    const handoff = {
+      pull_request: 73,
+      owner_ticket: 3659,
+      branch: "worker/3659",
+      base: "main",
+    } as const;
+
+    await project.handoffMergeCustody(handoff);
+    gateway.close();
+    now = "2026-08-15T20:00:01.001Z";
+
+    expect((await project.mergeCustodyStatus()).records[0]).toMatchObject({
+      pull_request: 73,
+      last_tick_at: null,
+      next_action: "repair-custodian",
+      fault: {
+        kind: "inert-custodian",
+        threshold_ms: 1_000,
+        repair: {
+          method: "_redskills/github_custody_handoff",
+          params: handoff,
+        },
+      },
+    });
+  });
 });
 
 async function fixtureRoot(prefix: string): Promise<string> {

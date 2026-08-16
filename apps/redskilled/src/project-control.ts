@@ -17,6 +17,7 @@ export const PROJECT_CONTROL_METHODS = [
 
 export type ProjectControlOperation = "drain" | "stop";
 type ProjectDrainIntent = "inactive" | "draining" | "stopped";
+export type ProjectControlOperationStatus = "draining" | "already-draining" | "stopped" | "already-stopped";
 
 interface ProjectControlUpdate {
   readonly sequence: number;
@@ -73,23 +74,30 @@ export async function applyProjectControl(
   projectControls: Map<string, ProjectControlState>,
   persist: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
 ) {
-  const held = projectControls.get(project.projectId) ?? {
+  const held = projectControls.get(project.projectId);
+  if (held == null && operation === "stop") {
+    return { ...projectControlSnapshot(project, projectControls), status: "already-stopped" as const };
+  }
+  const observed = held ?? {
     drainIntent: "inactive" as const,
     revision: 0,
     updates: [],
   };
   const requestedIntent = operation === "drain" ? "draining" as const : "stopped" as const;
-  if (held.drainIntent === requestedIntent) return projectControlSnapshot(project, projectControls);
-  const revision = held.revision + 1;
+  if (observed.drainIntent === requestedIntent) {
+    const status = operation === "drain" ? "already-draining" as const : "already-stopped" as const;
+    return { ...projectControlSnapshot(project, projectControls), status };
+  }
+  const revision = observed.revision + 1;
   const next = new Map(projectControls);
   next.set(project.projectId, {
     drainIntent: requestedIntent,
     revision,
-    updates: [...held.updates, { sequence: revision, operation, drain_intent: requestedIntent }],
+    updates: [...observed.updates, { sequence: revision, operation, drain_intent: requestedIntent }],
   });
   await persist(next);
   projectControls.set(project.projectId, next.get(project.projectId)!);
-  return projectControlSnapshot(project, projectControls);
+  return { ...projectControlSnapshot(project, projectControls), status: requestedIntent };
 }
 
 export function projectControlStorePath(registrationIntentPath: string): string {
@@ -152,7 +160,7 @@ export async function notifyV1ProjectControl(
   upstream: AgentConnection["client"],
   sessionId: string,
   operation: ProjectControlOperation,
-  control: ReturnType<typeof projectControlSnapshot>,
+  control: Awaited<ReturnType<typeof applyProjectControl>>,
 ): Promise<void> {
   await upstream.notify(methods.client.session.update, {
     sessionId,
