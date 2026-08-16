@@ -135,6 +135,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly githubGateway?: RedskilledGithubGatewayRegistration;
   /** Explicit endpoint authority; ordinary public/project ACP stays false. */
   readonly hostAdministration?: boolean;
+  /** Test/embedding seam for a connection that fails outside JSON-RPC. */
+  readonly onConnectionError?: (error: unknown) => void;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -175,7 +177,10 @@ export async function startRedskillsAcpControlPlane(
       projectControls,
       persistProjectControls,
       sessionJournal,
-    ).catch(() => socket.destroy());
+    ).catch((error) => {
+      options.onConnectionError?.(error);
+      socket.destroy();
+    });
   });
   await listen(server, paths.acpSocketPath);
 
