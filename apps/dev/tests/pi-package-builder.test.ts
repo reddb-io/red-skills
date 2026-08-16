@@ -150,6 +150,7 @@ description: Test init skill.
     );
     await writeFile(join(root, "dist/dev.bundle.min.mjs"), "// dev runtime\n", "utf8");
     await writeFile(join(root, "dist/memory.bundle.min.mjs"), "// memory runtime\n", "utf8");
+    await writeFile(join(root, "dist/memory-tokenizer.asset.cjs"), "// tokenizer ranks\n", "utf8");
 
     await buildPiPackages({ root });
 
@@ -194,6 +195,8 @@ description: Test init skill.
     expect(memoryPkg.pi.skills).toEqual(["./skills/core/"]);
     expect(await readFile(join(root, "packaging/pi/memory/dist/memory.bundle.min.mjs"), "utf8"))
       .toBe("// memory runtime\n");
+    expect(await readFile(join(root, "packaging/pi/memory/dist/memory-tokenizer.asset.cjs"), "utf8"))
+      .toBe("// tokenizer ranks\n");
   });
 
   it("fails --check when a staged Pi package drifts from the source (module API)", async () => {

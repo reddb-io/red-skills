@@ -47,6 +47,7 @@ const BUNDLES = [
   { dest: "redskilled-mcp.bundle.min.mjs", sources: ["redskilled-mcp.bundle.min.mjs"] },
   { dest: "code-nav.bundle.min.mjs", sources: ["code-nav.bundle.min.mjs", "code-nav-mcp.bundle.min.mjs"] },
   { dest: "memory.bundle.min.mjs", sources: ["memory.bundle.min.mjs"] },
+  { dest: "memory-tokenizer.asset.cjs", sources: ["memory-tokenizer.asset.cjs"] },
   { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },
   { dest: "release.bundle.min.mjs", sources: ["release.bundle.min.mjs"] },
   { dest: "rsp.bundle.min.mjs", sources: ["rsp.bundle.min.mjs"] },
