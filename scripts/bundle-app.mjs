@@ -54,6 +54,16 @@ const defines = {
   __REDDB_BINARY_TAG__: "",
 };
 
+if (args.lazyAssetEntry || args.lazyAsset) {
+  if (!args.lazyAssetEntry || !args.lazyAsset) {
+    process.stderr.write(
+      "bundle-app: --lazy-asset-entry and --lazy-asset must be provided together\n",
+    );
+    process.exit(1);
+  }
+  defines.__RED_LAZY_ASSET__ = args.lazyAsset;
+}
+
 if (args.reddbFromPackage) {
   const sdk = pkg.dependencies?.["@reddb-io/sdk"];
   if (!sdk) {
@@ -81,7 +91,27 @@ const result = spawnSync("esbuild", esbuildArgs, {
   stdio: "inherit",
   shell: process.platform === "win32",
 });
-process.exit(result.status ?? 1);
+if (result.status !== 0) process.exit(result.status ?? 1);
+
+if (args.lazyAssetEntry) {
+  const lazyAssetArgs = [
+    args.lazyAssetEntry,
+    "--bundle",
+    "--platform=node",
+    "--format=cjs",
+    "--target=node22",
+    `--outfile=${resolve(dirname(args.outfile), args.lazyAsset)}`,
+  ];
+  if (args.minify) lazyAssetArgs.splice(2, 0, "--minify");
+
+  const lazyAssetResult = spawnSync("esbuild", lazyAssetArgs, {
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
+  if (lazyAssetResult.status !== 0) process.exit(lazyAssetResult.status ?? 1);
+}
+
+process.exit(0);
 
 function parseArgs(argv) {
   const out = {
@@ -93,6 +123,8 @@ function parseArgs(argv) {
     if (arg === "--entry") out.entry = argv[++i];
     else if (arg === "--outfile") out.outfile = argv[++i];
     else if (arg === "--asset") out.asset = argv[++i];
+    else if (arg === "--lazy-asset-entry") out.lazyAssetEntry = argv[++i];
+    else if (arg === "--lazy-asset") out.lazyAsset = argv[++i];
     else if (arg === "--minify") out.minify = true;
     else if (arg === "--reddb-from-package") out.reddbFromPackage = true;
     else {

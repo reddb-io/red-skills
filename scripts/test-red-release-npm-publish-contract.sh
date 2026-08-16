@@ -154,7 +154,8 @@ for expected in \
   scripts/generate-codex-manifests.mjs \
   scripts/generate-gemini-manifests.mjs \
   scripts/generate-pi-manifests.mjs \
-  dist/opencode-host.bundle.min.mjs; do
+  dist/opencode-host.bundle.min.mjs \
+  dist/memory-tokenizer.asset.cjs; do
   mkdir -p "$core_tree/$(dirname "$expected")"
   : > "$core_tree/$expected"
 done
@@ -169,6 +170,9 @@ while IFS= read -r plugin_json; do
   mkdir -p "$plugin_tree/skills/core/example" "$plugin_tree/dist"
   : > "$plugin_tree/skills/core/example/SKILL.md"
   : > "$plugin_tree/dist/$plugin.bundle.min.mjs"
+  if [ "$plugin" = "memory" ]; then
+    : > "$plugin_tree/dist/memory-tokenizer.asset.cjs"
+  fi
   tar -czf "$plugin_tarballs/reddb-io-red-skills-$plugin-9.9.9.tgz" \
     -C "$contract_fixture/plugin-$plugin" package
 done < <(find plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json' -print | sort)
@@ -181,6 +185,19 @@ if node scripts/check-npm-tarball-boundaries.mjs \
 else
   fail "valid core and per-plugin tarballs must satisfy the publish boundary checker"
 fi
+
+memory_tarball="$plugin_tarballs/reddb-io-red-skills-memory-9.9.9.tgz"
+tar --exclude='package/dist/memory-tokenizer.asset.cjs' \
+  -czf "$memory_tarball" -C "$contract_fixture/plugin-memory" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/core.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "memory plugin tarball without its tokenizer asset must fail the publish contract"
+else
+  pass "memory plugin tarball without its tokenizer asset fails the publish contract"
+fi
+tar -czf "$memory_tarball" -C "$contract_fixture/plugin-memory" package
 
 missing_bundle_tree="$contract_fixture/missing-bundle/package"
 mkdir -p "$missing_bundle_tree/skills/core/example"

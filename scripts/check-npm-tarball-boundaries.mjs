@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+const MEMORY_TOKENIZER_ASSET = "memory-tokenizer.asset.cjs";
+
 function parseArgs(argv) {
   const args = { root: process.cwd(), core: "", plugins: "" };
   for (let index = 0; index < argv.length; index += 1) {
@@ -55,6 +57,7 @@ function checkCore(root, tarball) {
     "package/scripts/generate-gemini-manifests.mjs",
     "package/scripts/generate-pi-manifests.mjs",
     "package/dist/opencode-host.bundle.min.mjs",
+    `package/dist/${MEMORY_TOKENIZER_ASSET}`,
   ];
   for (const expected of required) requireEntry(listing, expected, "core npm");
 
@@ -94,6 +97,9 @@ function checkPlugins(root, tarballsDir) {
     );
     if (!skill) throw new Error(`${packageName} tarball carries no published skills`);
     requireEntry(listing, `package/dist/${plugin.name}.bundle.min.mjs`, packageName);
+    if (plugin.name === "memory") {
+      requireEntry(listing, `package/dist/${MEMORY_TOKENIZER_ASSET}`, packageName);
+    }
   }
 }
 

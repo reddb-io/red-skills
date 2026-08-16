@@ -771,6 +771,15 @@ describe("memory bench eval — runner", () => {
     expect(countBenchTokens("hello world")).toBeLessThan("hello world".length);
   });
 
+  test("public token counting boundary preserves the pre-asset cl100k values", () => {
+    expect([
+      countBenchTokens(""),
+      countBenchTokens("hello world"),
+      countBenchTokens("RedSkills memory keeps token counts stable."),
+      countBenchTokens("emoji: 🧠\nTOON rows: 3"),
+    ]).toEqual([0, 2, 8, 12]);
+  });
+
   test("explicit neo4j substrate runs only the Neo4j adapter", async () => {
     const report = await runBenchEval({
       corpusDir: CORPUS_DIR,
