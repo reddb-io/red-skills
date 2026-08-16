@@ -23,7 +23,7 @@ import {
 import type { LaunchedWorker, RedskilledWorkerSpec } from "../src/worker-launch.js";
 
 const require_ = createRequire(import.meta.url);
-const tsxLoader = require_.resolve("tsx");
+const tsxLoader = pathToFileURL(require_.resolve("tsx")).href;
 const childAgentFixture = resolve(__dirname, "fixtures", "bin", "redcode");
 const stdioAdapterProgram = `
   import { runRedskillsAcpAdapter } from ${JSON.stringify(pathToFileURL(resolve(__dirname, "..", "src", "acp-control-plane.ts")).href)};
@@ -70,7 +70,6 @@ describe("the host-native local ACP authority transport", () => {
       paths,
       hostState: () => ({ workers: [] }) as never,
       startWorker: (spec) => launchTestWorker(spec, env, assignedWorkerEndpoints, ++workerSequence),
-      onConnectionError: (error) => console.error("ACP control-plane connection failed", error),
     });
 
     try {
@@ -132,7 +131,7 @@ function launchTestWorker(
   ], {
     cwd: spec.workspace_path,
     env: { ...env, REDSKILLED_TEST_WORKER_ENDPOINT: endpoint },
-    stdio: ["ignore", "ignore", "inherit"],
+    stdio: "ignore",
   });
   children.push(child);
   if (child.pid == null) throw new Error("test Worker did not start");
@@ -160,7 +159,7 @@ async function openStdioProjection(env: NodeJS.ProcessEnv, label: string): Promi
     "--eval", stdioAdapterProgram,
   ], {
     env,
-    stdio: ["pipe", "pipe", "inherit"],
+    stdio: ["pipe", "pipe", "ignore"],
   });
   children.push(child);
   const connection = client({ name: `${label}-stdio-projection` }).connect(childStream(child));
