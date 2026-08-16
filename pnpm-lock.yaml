@@ -651,6 +651,10 @@ importers:
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
+    devDependencies:
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@25.9.5)
 
 packages:
 

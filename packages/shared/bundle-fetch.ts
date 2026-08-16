@@ -1,6 +1,7 @@
 /**
- * bundle-fetch.ts — pure-with-injected-IO resolver for per-plugin built bundles,
- * distributed over **npm** (ADR 0091, v2 transport cutover).
+ * bundle-fetch.ts — pure-with-injected-IO resolver for per-plugin built bundles.
+ * The installer's exact-version runtime tree answers first; misses fall through
+ * to **npm** (ADR 0091, v2 transport cutover; ADR 0146).
  *
  * ADR 0034 originally shipped every plugin bundle as a GitHub Release asset,
  * fetched into a version-keyed cache and verified with a hand-rolled Sigstore
@@ -47,6 +48,8 @@ export interface EnsureBundleInput {
   /** `owner/name` GitHub repo — retained for call-site compatibility; unused. */
   repo?: string;
   cacheDir: string;
+  /** Root populated by the installer (`<root>/versions/v<version>/dist/`). */
+  installRoot?: string;
   /** Release channel; absent = `stable` (version-pinned). */
   channel?: ReleaseChannel;
 }
@@ -206,6 +209,22 @@ export function packagedBundleRelPath(plugin: string): string {
   return joinPath("dist", packagedBundleName(plugin));
 }
 
+/** Exact-version bundle path in the installer's versioned runtime tree. */
+function installedBundlePath(
+  plugin: string,
+  version: string,
+  installRoot: string,
+): string {
+  if (!isCacheableVersion(version)) {
+    throw new BundleFetchError(
+      "invalid-version",
+      `refusing to resolve the installed ${plugin} bundle for ${JSON.stringify(version ?? "")}`,
+    );
+  }
+  const versionDir = joinPath(joinPath(installRoot, "versions"), `v${version.trim()}`);
+  return joinPath(versionDir, packagedBundleRelPath(plugin));
+}
+
 /**
  * The npm package spec the client resolves for a channel + version. `stable`
  * pins the exact version (`@reddb-io/red-skills@2.0.0`); `canary` follows the
@@ -226,8 +245,9 @@ export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
 }
 
 /**
- * Ensure the bundle for `plugin@version` exists in `cacheDir`; return its local
- * path. Cache-first: a cache hit returns immediately with no npm invocation.
+ * Ensure the bundle for `plugin@version` is locally available; return its path.
+ * An exact-version hit in the installer's stable runtime tree returns directly,
+ * followed by the version-keyed bundle cache. Neither path invokes npm.
  *
  * Cache miss: materialise `@reddb-io/red-skills@<pin>` via npm (npm verifies the
  * tarball shasum itself), copy the packaged `dist/<plugin>.bundle.min.mjs` into
@@ -249,12 +269,22 @@ export async function ensureBundle(
   io: BundleIO,
   input: EnsureBundleInput,
 ): Promise<string> {
-  const { plugin, version, cacheDir, channel = "stable" } = input;
+  const { plugin, version, cacheDir, installRoot, channel = "stable" } = input;
   const dest = resolveBundle({ plugin, version, cacheDir, channel });
   const companionPlugins = companionBundlePlugins(plugin);
   const companionDests = companionPlugins.map((companion) =>
     resolveBundle({ plugin: companion, version, cacheDir, channel }),
   );
+
+  // The standalone installer already materialises every stable release under a
+  // versioned tree. Use only the exact manifest version: accepting another
+  // directory here would run one release's hook under another release's
+  // manifest. Canary remains an npm dist-tag and deliberately bypasses this
+  // stable-only tree.
+  if (channel !== "canary" && installRoot) {
+    const installed = installedBundlePath(plugin, version, installRoot);
+    if (await io.exists(installed)) return installed;
+  }
 
   // Stable is cache-first; canary is a floating npm dist-tag and must refresh.
   if (

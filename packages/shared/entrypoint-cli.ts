@@ -71,6 +71,11 @@ function cacheRoot(override?: string): string {
   return join(homedir(), ".cache", "red-skills", "bundles");
 }
 
+/** Versioned runtime tree populated by the standalone installer. */
+function installRoot(): string {
+  return process.env.RED_SKILLS_INSTALL_ROOT || join(homedir(), ".red-skills");
+}
+
 const realIO: BundleIO = {
   async materialize(spec, stagingDir) {
     await mkdir(stagingDir, { recursive: true });
@@ -341,7 +346,14 @@ async function runMode(plan: RunPlan): Promise<never> {
   let bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
   if (!bundle && (version || channel === "canary")) {
     try {
-      bundle = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
+      bundle = await ensureBundle(realIO, {
+        plugin,
+        version,
+        repo: plan.repo,
+        cacheDir,
+        installRoot: installRoot(),
+        channel,
+      });
     } catch (err) {
       const kind = err instanceof BundleFetchError ? err.kind : "unknown";
       const msg = err instanceof Error ? err.message : String(err);
@@ -418,7 +430,14 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
       ? resolveBundle({ plugin, version, cacheDir, channel })
       : `${cacheDir}/${plugin}-<version>.bundle.min.mjs`;
   try {
-    const path = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
+    const path = await ensureBundle(realIO, {
+      plugin,
+      version,
+      repo: plan.repo,
+      cacheDir,
+      installRoot: installRoot(),
+      channel,
+    });
     process.stdout.write(`entrypoint: bundle ready at ${path} (${channel})\n`);
   } catch (err) {
     const kind = err instanceof BundleFetchError ? err.kind : "unknown";

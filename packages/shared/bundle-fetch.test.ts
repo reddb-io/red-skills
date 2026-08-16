@@ -27,6 +27,7 @@ import {
 
 const PLUGIN = "dev";
 const CACHE = "/cache/bundles";
+const INSTALL_ROOT = "/installed/red-skills";
 const VERSION = "1.140.0";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -269,6 +270,94 @@ describe("ensureBundle never writes an unversioned cache entry (#3153)", () => {
 });
 
 describe("ensureBundle (npm transport)", () => {
+  it("resolves an exact-version bundle from the installed tree without materialising npm", async () => {
+    const installed = `${INSTALL_ROOT}/versions/v${VERSION}/dist/${PLUGIN}.bundle.min.mjs`;
+    const spec = npmPackageSpec(VERSION);
+    const { io, materializes, writes } = makeIO({
+      files: { [installed]: bundleBytesFor(VERSION) },
+      offlineSpecs: [spec],
+    });
+
+    await expect(
+      ensureBundle(io, {
+        plugin: PLUGIN,
+        version: VERSION,
+        cacheDir: CACHE,
+        installRoot: INSTALL_ROOT,
+      }),
+    ).resolves.toBe(installed);
+    expect(materializes).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+
+  it("keeps canary on npm even when the stable installed version exists", async () => {
+    const installed = `${INSTALL_ROOT}/versions/v${VERSION}/dist/${PLUGIN}.bundle.min.mjs`;
+    const spec = npmPackageSpec(VERSION, "canary");
+    const published = "1.141.0";
+    const bytes = bundleBytesFor(published);
+    const { io, files, materializes } = makeIO({
+      files: { [installed]: bundleBytesFor(VERSION) },
+      distTags: { canary: published },
+      packageBundles: {
+        [npmPackageSpec(published)]: { [PLUGIN]: bytes, ...packagedCompanions("-canary") },
+      },
+    });
+
+    const path = await ensureBundle(io, {
+      plugin: PLUGIN,
+      version: VERSION,
+      cacheDir: CACHE,
+      installRoot: INSTALL_ROOT,
+      channel: "canary",
+    });
+
+    expect(path).toBe(`${CACHE}/${PLUGIN}-canary.bundle.min.mjs`);
+    expect(materializes).toEqual([spec]);
+    expect(files[path]).toEqual(bytes);
+  });
+
+  it("ignores a skewed installed-tree version and falls back to npm", async () => {
+    const skewed = `${INSTALL_ROOT}/versions/v1.139.9/dist/${PLUGIN}.bundle.min.mjs`;
+    const spec = npmPackageSpec(VERSION);
+    const bytes = bundleBytesFor(VERSION);
+    const { io, files, materializes } = makeIO({
+      files: { [skewed]: bundleBytesFor("1.139.9") },
+      packageBundles: { [spec]: { [PLUGIN]: bytes, ...packagedCompanions() } },
+    });
+
+    const path = await ensureBundle(io, {
+      plugin: PLUGIN,
+      version: VERSION,
+      cacheDir: CACHE,
+      installRoot: INSTALL_ROOT,
+    });
+
+    const cached = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    expect(path).toBe(cached);
+    expect(materializes).toEqual([spec]);
+    expect(files[cached]).toEqual(bytes);
+  });
+
+  it("preserves npm resolution when the installed version is absent", async () => {
+    const spec = npmPackageSpec(VERSION);
+    const bytes = bundleBytesFor(VERSION);
+    const { io, files, materializes } = makeIO({
+      packageBundles: { [spec]: { [PLUGIN]: bytes, ...packagedCompanions() } },
+    });
+
+    const path = await ensureBundle(io, {
+      plugin: PLUGIN,
+      version: VERSION,
+      cacheDir: CACHE,
+      installRoot: INSTALL_ROOT,
+    });
+
+    const cached = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    expect(path).toBe(cached);
+    expect(materializes).toEqual([spec]);
+    expect(files[cached]).toEqual(bytes);
+  });
+
   it("is cache-first: a present cached bundle never invokes npm", async () => {
     const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     const { io, materializes } = makeIO({
