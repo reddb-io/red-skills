@@ -11,6 +11,8 @@ import {
   startResidentUnblockSweep,
   type ResidentUnblockTimers,
 } from "../src/resident-unblock.js";
+import { listUnblockCandidates } from "../src/runtime/gh/sweeps.js";
+import type { GhContext } from "../src/runtime/gh/common.js";
 import { runUnblockPass, type UnblockPassIo } from "../src/runtime/unblock-pass.js";
 
 const LEASE: SingletonLease = {
@@ -65,9 +67,12 @@ describe("Unblock pass (#3014)", () => {
     const edits: Array<{ issue: number; remove: string[]; add: string[] }> = [];
     const comments: Array<{ issue: number; body: string }> = [];
     const io: UnblockPassIo = {
-      listCandidates: async () => [
-        { number: 17, body: "", labels: ["blocked:dependency", "req:5", "type:ticket"] },
-      ],
+      listCandidates: async () => ({
+        outcome: "rows",
+        rows: [
+          { number: 17, body: "", labels: ["blocked:dependency", "req:5", "type:ticket"] },
+        ],
+      }),
       issueClosed: async (issue) => issue === 5,
       editLabels: async (issue, remove, add) => {
         edits.push({ issue, remove, add });
@@ -92,9 +97,12 @@ describe("Unblock pass (#3014)", () => {
   it("leaves a dependent blocked while any blocker is still open", async () => {
     const edits: number[] = [];
     const io: UnblockPassIo = {
-      listCandidates: async () => [
-        { number: 19, body: "", labels: ["blocked:dependency", "req:5", "req:6"] },
-      ],
+      listCandidates: async () => ({
+        outcome: "rows",
+        rows: [
+          { number: 19, body: "", labels: ["blocked:dependency", "req:5", "req:6"] },
+        ],
+      }),
       issueClosed: async (issue) => issue === 5,
       editLabels: async (issue) => {
         edits.push(issue);
@@ -112,7 +120,7 @@ describe("Unblock pass (#3014)", () => {
   it("costs one listing and no blocker lookup when nothing is blocked", async () => {
     const issueClosed = vi.fn(async () => true);
     const io: UnblockPassIo = {
-      listCandidates: async () => [],
+      listCandidates: async () => ({ outcome: "rows", rows: [] }),
       issueClosed,
       editLabels: async () => undefined,
       comment: async () => undefined,
@@ -120,6 +128,44 @@ describe("Unblock pass (#3014)", () => {
     };
 
     await expect(runUnblockPass(io)).resolves.toMatchObject({ promoted: [] });
+    expect(issueClosed).not.toHaveBeenCalled();
+  });
+
+  // A human-authority close has no Worker terminal event to drive the close
+  // cascade, so this pass is the safety net. If its live candidate listing
+  // fails, that must remain observably different from a successful empty read.
+  it("surfaces a failed live candidate listing instead of claiming nothing is blocked", async () => {
+    const issueClosed = vi.fn(async () => true);
+    const gh = {
+      repo: "reddb-io/red-skills",
+      cwd: "/nowhere",
+      github: {
+        conditionalPaginate: async () => {
+          throw new Error("HttpError: 503 Service Unavailable");
+        },
+        conditionalRest: async () => {
+          throw new Error("the candidate listing must paginate");
+        },
+      },
+    } as unknown as GhContext;
+    const io: UnblockPassIo = {
+      listCandidates: () => listUnblockCandidates(gh),
+      issueClosed,
+      editLabels: async () => undefined,
+      comment: async () => undefined,
+      hitlTypes: () => [],
+    };
+
+    await expect(runUnblockPass(io)).resolves.toEqual({
+      promoted: [],
+      outcomes: [
+        {
+          outcome: "failed",
+          surface: "candidate-list",
+          reason: "HttpError: 503 Service Unavailable",
+        },
+      ],
+    });
     expect(issueClosed).not.toHaveBeenCalled();
   });
 });
