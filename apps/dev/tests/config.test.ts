@@ -23,6 +23,10 @@ import {
   rootDevConfigCollisionsFromText,
   SANCTIONED_ROOT_CONFIG_KEYS,
 } from "../src/core/config.js";
+import {
+  describeValidationMoments,
+  validationMomentLogPayload,
+} from "../src/core/validation-moments.js";
 import { PROJECT_NAME_CONFIG_KEY } from "@reddb-io/shared/project-identity.js";
 import {
   DEFAULT_FLEET_WIDTH_CONFIG,
@@ -869,6 +873,56 @@ describe("config — block sequences (#430)", () => {
 });
 
 describe("config — validation moments (ADR 0135, #3284)", () => {
+  it("names the closed gate rather than calling a declared moment undeclared (#3939)", () => {
+    // The exact shape reported: every moment declared as the docs specify, and
+    // no `plugins.dev.enabled: true` anywhere. The gate discards the whole
+    // block, so the schedule is empty for a reason the file cannot show.
+    const text = [
+      "plugins:",
+      "  dev:",
+      "    afk:",
+      "      validation:",
+      "        iteration:",
+      "          - bun test",
+      "        post_done:",
+      "          - bun run typecheck",
+      "        landing:",
+      "          - bun run typecheck",
+      "",
+    ].join("\n");
+    const audit = auditConfigLoad("/x/.red/config.yaml", { read: () => text });
+
+    expect(audit.gateClosed).toBe(true);
+    expect(readValidationMoments(audit.values)).toEqual({});
+
+    const described = describeValidationMoments(readValidationMoments(audit.values), audit);
+
+    expect(described.gateClosed).toBe(true);
+    // The repair an operator needs is the flag, not a block they already wrote.
+    expect(described.narration).toContain("plugin inert here");
+    expect(described.narration).toContain("plugins.dev.enabled");
+    expect(described.narration).toContain("/x/.red/config.yaml");
+    expect(described.narration).not.toContain("undeclared");
+    expect(validationMomentLogPayload(readValidationMoments(audit.values), {
+      gateClosed: audit.gateClosed,
+    })).toMatchObject({ gate: "closed", iteration: "skip", post_done: "skip", landing: "skip" });
+  });
+
+  it("still says undeclared when the gate is open and the moment is absent (#3939)", () => {
+    // The other half of the distinction: an opted-in directory that declared
+    // nothing must keep reading as undeclared, or the fix would have traded
+    // one wrong answer for another.
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    enabled: true\n",
+    });
+    const described = describeValidationMoments(readValidationMoments(audit.values), audit);
+
+    expect(audit.gateClosed).toBe(false);
+    expect(described.gateClosed).toBe(false);
+    expect(described.narration).toContain("iteration: skip (undeclared)");
+    expect(described.narration).not.toContain("plugin inert");
+  });
+
   it("accepts the experimental Preflight flag and defaults it off (#3844)", () => {
     const absent = loadConfig("/x/.red/config.yaml", {
       ignoreActivationGate: true,

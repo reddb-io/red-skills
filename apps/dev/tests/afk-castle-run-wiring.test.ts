@@ -16,10 +16,15 @@ describe("afk run castle engine flip", () => {
     expect(source).not.toContain("summary = await runSession(deps, sessionCtx)");
   });
 
-  it("boots the Worker lane with the resolved Validation moment schedule", () => {
+  it("boots the Worker lane with the resolved Validation moment schedule and its gate verdict", () => {
     const source = readFileSync(runCommandTs, "utf8");
 
     expect(source).toContain("await createBootCastleWorkerLaneBridge({");
-    expect(source).toContain("}, readValidationMoments(config));");
+    // The audit rides along, not just the schedule: an empty schedule means
+    // one thing when the directory opted in and another when the gate
+    // discarded the whole block, and only the audit can tell them apart
+    // (#3939). Loading it plainly here would silently re-lose that.
+    expect(source).toContain("}, readValidationMoments(configAudit.values), configAudit);");
+    expect(source).toContain("auditConfigLoad(paths.configPath");
   });
 });

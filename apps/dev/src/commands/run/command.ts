@@ -37,8 +37,8 @@ import * as fsx from "../../runtime/fs.js";
 import { migrateLegacyDevPaths } from "../../runtime/red-path-migration.js";
 import type { GhContext } from "../../runtime/gh.js";
 import {
+  auditConfigLoad,
   getConfig,
-  loadConfig,
   readSetupCommands,
   readValidationMoments,
   readValidationResourceBudget,
@@ -323,9 +323,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
     return 1;
   }
 
-  // Load the declaration schedule before constructing the feedback worktree
-  // that will materialise the Worker's fixed branch tip.
-  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  // Load the declaration schedule before the feedback worktree that materialises
+  // the Worker's branch tip. Audited so an empty schedule can name the gate (#3939).
+  const configAudit = auditConfigLoad(paths.configPath, { warn: () => undefined });
 
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
   // over; buildProcessInput resets it before each processIssue call. Built
@@ -342,7 +342,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     attemptDir: () => current.attemptDir,
     supervisorLane: process.env[SUPERVISOR_LANE_ENV] || undefined,
     ...(publishHostLogLine == null ? {} : { publishHostLogLine }),
-  }, readValidationMoments(config));
+  }, readValidationMoments(configAudit.values), configAudit);
   let gateWaitPublication: Promise<void> = Promise.resolve();
 
   // Feedback worktree manager — checks out the worker branch at its own tip.
@@ -350,8 +350,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // post_done validates against the Worker's fork point, while freshness is
   // owned by the merge queue.
   const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
-    resourceBudget: readValidationResourceBudget(config),
-    setupCommands: readSetupCommands(config),
+    resourceBudget: readValidationResourceBudget(configAudit.values),
+    setupCommands: readSetupCommands(configAudit.values),
     // A host-wide lock wait is the gate's only silent stall: no child, no
     // socket, no write, and `live=true` on every surface for as long as an hour
     // (#2985). Say it out loud on all three lanes the operator reads.
@@ -426,7 +426,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   // --request/-r special block, threaded into the handoff the agent reads.
   const requestBlock = specialUserRequestBlock(flags.request);
-  const sessionHooksConfig = loadConfig(afkPaths(ctx.root).configPath);
+  const sessionHooksConfig = auditConfigLoad(afkPaths(ctx.root).configPath).values;
 
   // Validate hook names once before the session loop. An unknown hook name
   // (including a misspelled name where the user intended a list entry) must not
@@ -495,7 +495,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     gh: { listCandidates: () => ghx.resolveDispatchCandidates(ghCtx, flags.filter, consultedQueue) },
     classifyEligibility: async (candidate) => {
       queueTrustPolicy ??= parseTrustPolicy(
-        config,
+        configAudit.values,
         await processDeps.gh.repoVisibility?.(),
       );
       const canFailClosed =
@@ -745,7 +745,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // branch with no open pull request have no route to `main`, and a run that
   // exits 0 over them is recorded as successful — so nothing re-dispatches and
   // the branch sits on origin until a human reads `git branch -r` by hand.
-  const trunk = getConfig(config, "dev.trunk") || "main";
+  const trunk = getConfig(configAudit.values, "dev.trunk") || "main";
   const orphans = await censusOrphanedWork({
     lookups: processDeps.lookups,
     issues: summary.processed.map((p) => p.issue),
