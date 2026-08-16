@@ -11,7 +11,6 @@
     "./daemon": "./src/daemon.ts",
     "./daemon-stop": "./src/daemon-stop.ts",
     "./demand-loop": "./src/demand-loop.ts",
-    "./demand-producer": "./src/demand-producer.ts",
     "./event-lane": "./src/event-lane.ts",
     "./host-state": "./src/host-state.ts",
     "./host-config": "./src/host-config.ts",
@@ -21,7 +20,6 @@
     "./major-handover": "./src/major-handover.ts",
     "./orphan-reaper": "./src/orphan-reaper.ts",
     "./paths": "./src/paths.ts",
-    "./project-breaker": "./src/project-breaker.ts",
     "./project-registration": "./src/project-registration.ts",
     "./resource-incidents": "./src/resource-incidents.ts",
     "./resource-lease": "./src/resource-lease.ts",
@@ -37,7 +35,7 @@
     "./worker-launch": "./src/worker-launch.ts",
     "./statusline-command": "./src/statusline-command.ts"
   },
-  "description": "redskilled — the host-scoped execution daemon (ADR 0130): exactly one singleton per machine behind a unix socket, owning Worker processes across every project on that machine while each project's bundle keeps owning the work.",
+  "description": "redskilled — the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
   "license": "Apache-2.0",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
