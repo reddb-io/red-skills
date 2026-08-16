@@ -37,6 +37,7 @@ import {
   type AcpSessionJournal,
   type AcpSessionRecoveryCheckpoint,
 } from "./acp-session-journal.js";
+import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
@@ -60,6 +61,7 @@ export async function admitNativeAcpWorker(
   forward: AgentConnection["client"]["notify"],
   permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>,
   replacement: boolean,
+  dispatch?: AcpTargetedDispatchIntent,
 ): Promise<ActiveWorkflowWorker> {
   const endpointId = randomBytes(6).toString("hex");
   const endpoint = join(options.paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
@@ -86,15 +88,26 @@ export async function admitNativeAcpWorker(
   let downstreamSessionId = "";
   const downstreamApp = client({ name: "redskilled" })
     .onNotification(methods.client.session.update, async ({ params }) => {
+      const downstreamRedskills = (params._meta as {
+        redskills?: { lifecycle?: object };
+      } | undefined)?.redskills;
       const notice: SessionNotification = {
         ...params,
         sessionId: publicSessionId,
         _meta: {
           ...(params._meta ?? {}),
           redskills: {
-            ...((params._meta as { redskills?: object } | undefined)?.redskills ?? {}),
+            ...(downstreamRedskills ?? {}),
             authority: "redskilled",
             workerId: launched.worker.worker_id,
+            ...(dispatch == null ? {} : { dispatch }),
+            ...(downstreamRedskills?.lifecycle == null ? {} : {
+              lifecycle: {
+                ...downstreamRedskills.lifecycle,
+                workerId: launched.worker.worker_id,
+                ...(dispatch == null ? {} : { dispatch }),
+              },
+            }),
           },
         },
       };
@@ -115,13 +128,25 @@ export async function admitNativeAcpWorker(
     });
     requireCompatibleWireMajor(initialized._meta, true);
     const recovery = replacement ? sessionJournal.recovery(publicSessionId) : undefined;
+    const recoveryMeta = recovery == null
+      ? undefined
+      : replacementRecoveryMeta(session.request._meta, recovery);
+    const downstreamMeta = dispatch == null
+      ? recoveryMeta
+      : {
+        ...(recoveryMeta ?? {}),
+        redskills: {
+          ...((recoveryMeta as { redskills?: object } | undefined)?.redskills ?? {}),
+          dispatch,
+        },
+      };
     const downstreamSession = await connection.agent.request(methods.agent.session.new, {
       cwd: session.project.workspacePath,
       mcpServers: session.request.mcpServers as McpServer[],
       ...(session.request.additionalDirectories == null
         ? {}
         : { additionalDirectories: session.request.additionalDirectories }),
-      ...(recovery == null ? {} : { _meta: replacementRecoveryMeta(session.request._meta, recovery) }),
+      ...(downstreamMeta == null ? {} : { _meta: downstreamMeta }),
     });
     downstreamSessionId = downstreamSession.sessionId;
     await sessionJournal.worker(publicSessionId, launched.worker.worker_id, downstreamSessionId, replacement);
@@ -144,6 +169,7 @@ export async function admitNativeAcpWorker(
     endpoint,
     publicSessionId,
     notify: forward,
+    ...(dispatch == null ? {} : { dispatch }),
     cancelled: false,
     cleaned: false,
   };

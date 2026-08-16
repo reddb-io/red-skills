@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { selectCastleIssues } from "@reddb-io/red-castle/engine";
-import { resolveDispatchCandidates } from "../src/runtime/gh/candidates.js";
+import {
+  resolveDispatchCandidatePool,
+  resolveDispatchCandidates,
+} from "../src/runtime/gh/candidates.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 import type { GhContext } from "../src/runtime/gh.js";
 
@@ -85,6 +88,39 @@ describe("targeted dispatch candidate resolution", () => {
 
     await expect(candidatesPromise).resolves.toMatchObject([{ number: 3667 }]);
     expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("carries a /go target's lane into a retry Worker that received only its issue number", async () => {
+    const exec = vi.fn<ExecFn>(async (): Promise<ExecOutput> => ({
+      code: 0,
+      stdout: issue(3765),
+      stderr: "",
+    }));
+    const ctx: GhContext = { cwd: "/repo", repo: "acme/widgets", exec };
+    const filter = { kind: "issues" as const, numbers: [3765] };
+
+    const original = await resolveDispatchCandidatePool(ctx, filter, "lane:go");
+    const retry = await resolveDispatchCandidatePool(ctx, filter);
+
+    expect(original).toMatchObject({
+      declaredLane: "lane:go",
+      poolLabel: "lane:go",
+      candidates: [{ number: 3765 }],
+    });
+    expect(retry).toMatchObject({
+      declaredLane: "lane:go",
+      poolLabel: "lane:go",
+      candidates: [{ number: 3765 }],
+    });
+    expect(
+      selectCastleIssues(
+        retry.candidates,
+        filter,
+        undefined,
+        retry.poolLabel,
+        retry.declaredLane,
+      ).map((candidate) => candidate.number),
+    ).toEqual([3765]);
   });
 
   it("does not admit a direct target that is closed or outside the declared lane", async () => {

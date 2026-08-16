@@ -1,7 +1,9 @@
 import type { ExecOutput } from "../exec.js";
 import {
+  LABEL_GO_LANE,
   LABEL_HUMAN,
   LABEL_READY,
+  LABEL_SCOUT_LANE,
 } from "../../core/triage-labels.js";
 import type { IssueCandidate, SelectionFilter } from "../../core/session.js";
 import type { HitlCandidate } from "../../core/hitl-selection.js";
@@ -127,6 +129,12 @@ export interface CandidateListDiagnostics {
   onTransportFailure?(failure: QueueVisibilityTransportFailure): void;
 }
 
+export interface DispatchCandidatePool {
+  readonly candidates: IssueCandidate[];
+  readonly declaredLane: string;
+  readonly poolLabel: string;
+}
+
 function emitTransportFailure(
   diagnostics: CandidateListDiagnostics | undefined,
   surface: QueueVisibilityTransportSurface,
@@ -184,12 +192,20 @@ export async function listCandidates(
  * a targeted fleet Worker cannot reach into `lane:go`, and a stale/absent
  * target remains missing for the existing selection refusal to explain.
  */
-export async function resolveDispatchCandidates(
+export async function resolveDispatchCandidatePool(
   ctx: GhContext,
   filter: SelectionFilter,
-  consultedQueue: string = LABEL_READY,
-): Promise<IssueCandidate[]> {
-  if (filter.kind !== "issues") return listCandidates(ctx, consultedQueue);
+  declaredLane?: string,
+): Promise<DispatchCandidatePool> {
+  const requestedLane = declaredLane?.trim() || undefined;
+  if (filter.kind !== "issues") {
+    const lane = requestedLane ?? LABEL_READY;
+    return {
+      candidates: await listCandidates(ctx, lane),
+      declaredLane: lane,
+      poolLabel: lane,
+    };
+  }
 
   const rows = await Promise.all(
     filter.numbers.map(async (issue): Promise<IssueCandidate | null> => {
@@ -202,7 +218,7 @@ export async function resolveDispatchCandidates(
             .map((label) => (isRecord(label) ? String(label.name ?? "") : ""))
             .filter(Boolean)
         : [];
-      if (number !== issue || state !== "OPEN" || !labels.includes(consultedQueue)) {
+      if (number !== issue || state !== "OPEN") {
         return null;
       }
       return {
@@ -213,7 +229,32 @@ export async function resolveDispatchCandidates(
       };
     }),
   );
-  return rows.filter((row): row is IssueCandidate => row !== null);
+  const candidates = rows.filter((row): row is IssueCandidate => row !== null);
+  const isolatedLanes = new Set(
+    candidates.flatMap((candidate) =>
+      candidate.labels.filter((label) => label === LABEL_GO_LANE || label === LABEL_SCOUT_LANE),
+    ),
+  );
+  const recoveredLane =
+    requestedLane === undefined &&
+    candidates.length === filter.numbers.length &&
+    isolatedLanes.size === 1
+      ? [...isolatedLanes][0]
+      : undefined;
+  const lane = requestedLane ?? recoveredLane ?? LABEL_READY;
+  return {
+    candidates: candidates.filter((candidate) => candidate.labels.includes(lane)),
+    declaredLane: lane,
+    poolLabel: lane,
+  };
+}
+
+export async function resolveDispatchCandidates(
+  ctx: GhContext,
+  filter: SelectionFilter,
+  consultedQueue: string = LABEL_READY,
+): Promise<IssueCandidate[]> {
+  return (await resolveDispatchCandidatePool(ctx, filter, consultedQueue)).candidates;
 }
 
 /** List the ready-for-human candidate pool projected to HitlCandidate[].

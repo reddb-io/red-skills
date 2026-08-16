@@ -1,5 +1,6 @@
 import type { SelectionFilter } from "../../core/session.js";
 import { LABEL_GO_LANE, LABEL_SCOUT_LANE } from "../../core/triage-labels.js";
+import { scrubOutbound } from "../../runtime/outbound-redaction.js";
 
 export interface DisposableDispatchCleanupDeps {
   comment(issue: number, body: string): Promise<void>;
@@ -11,6 +12,7 @@ export interface DisposableDispatchBootFailure {
   consultedQueue: string;
   filter: SelectionFilter;
   failureType: "boot-error" | "session-error";
+  failureReason?: string;
   retainedDiagnostic?: {
     /** Repo-relative path safe to publish in the Ticket comment. */
     path: string;
@@ -34,12 +36,14 @@ export function createDisposableBootFailureCleanup(
 ): (
   failureType: DisposableDispatchBootFailure["failureType"],
   retainedDiagnostic?: DisposableDispatchBootFailure["retainedDiagnostic"],
+  failureReason?: string,
 ) => Promise<void> {
-  return async (failureType, retainedDiagnostic) => {
+  return async (failureType, retainedDiagnostic, failureReason) => {
     try {
       await cleanupDisposableDispatchOnBootFailure(deps, {
         ...context,
         failureType,
+        ...(failureReason === undefined ? {} : { failureReason }),
         ...(retainedDiagnostic === undefined ? {} : { retainedDiagnostic }),
       });
     } catch (error) {
@@ -83,15 +87,23 @@ export async function cleanupDisposableDispatchOnBootFailure(
   const diagnosticLine = diagnostic === undefined
     ? "No local diagnostics were retained for this pre-lane failure."
     : `Detailed diagnostics: \`${diagnostic.path}\` (retained for ${diagnostic.retentionDays} days).`;
+  const failureReason = input.failureReason === undefined
+    ? undefined
+    : scrubOutbound(input.failureReason)
+        .replace(/[\r\n]+/g, " ")
+        .replace(/`/g, "'")
+        .trim()
+        .slice(0, 500);
   try {
     await deps.comment(
       issue,
       [
-        "🤖 This disposable dispatch was closed automatically because it failed during Worker boot before processing began.",
+        "🤖 This disposable dispatch was marked failed and closed automatically because it failed during Worker boot before processing began.",
         "",
         `- declared lane: \`${input.declaredLane}\``,
         `- consulted queue: \`${input.consultedQueue}\``,
         `- failure class: \`${input.failureType}\``,
+        ...(failureReason ? [`- refusal reason: \`${failureReason}\``] : []),
         "",
         diagnosticLine,
       ].join("\n"),

@@ -692,6 +692,22 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a seconds-long drain whose boolean return is the report" },
   },
   {
+    path: "apps/redskilled/src/acp-workflow-turn.ts",
+    fn: "runAcpWorkflowTurn",
+    subject: "the targeted Worker's admission becoming observable before its first prompt is forwarded",
+    deadline: "one fixed 25ms event-loop turn after targeted admission or replacement",
+    escalation: "forwards the exact journaled prompt to the admitted Worker",
+    heartbeat: { silent: "a single 25ms pre-work window; the surrounding ACP lifecycle events are the report" },
+  },
+  {
+    path: "apps/redskilled/src/acp-workflow-turn.ts",
+    fn: "waitForWorkerDeparture",
+    subject: "the dead targeted Worker leaving the daemon's live admission set before its replacement is born",
+    deadline: "2 seconds at 10ms local host-state probes",
+    escalation: "returns to replacement admission; a still-held Worker gets one terminal ACP refusal without another retry",
+    heartbeat: { silent: "a two-second host drain followed immediately by replacement or bounded refusal" },
+  },
+  {
     path: "apps/redskilled/src/acp-socket.ts",
     fn: "connectWithDeadline",
     subject: "the daemon ACP socket or assigned native Worker ACP socket accepting a local connection",
