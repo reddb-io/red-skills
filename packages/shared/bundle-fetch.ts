@@ -10,9 +10,10 @@
  * longer accepts ("invalid bundle"), and the self-update lane polled a
  * `releases/download/v1/` release that never existed (eternal 404). There was no
  * working installed base to preserve, so ADR 0091 **deletes** that channel: the
- * bundles now ship inside a single npm package `@reddb-io/red-skills`, resolved
- * at the exact pinned version via npm's own cache and shasum/provenance
- * integrity. No GitHub-release download, no client-side signature verification.
+ * bundles now ship inside `@reddb-io/red-skills-<plugin>`, resolved at the exact
+ * pinned version via npm's own cache and shasum/provenance integrity. Core keeps
+ * the non-plugin companions. No GitHub-release download, no client-side
+ * signature verification.
  *
  * This module holds ZERO real IO: every side effect (npm materialisation, file
  * read/write, existence check, registry query) is injected via {@link BundleIO}.
@@ -23,7 +24,7 @@
 
 import { type ReleaseChannel } from "./channel.js";
 
-/** The single npm package that carries every plugin's built bundle. */
+/** The core npm package that carries host tooling and non-plugin bundles. */
 export const NPM_PACKAGE = "@reddb-io/red-skills";
 
 /** Public npm registry base (self-update version discovery reads from here). */
@@ -62,8 +63,8 @@ export interface EnsureBundleInput {
  */
 export interface BundleIO {
   /**
-   * Materialise the npm package `spec` (`@reddb-io/red-skills@<pin>`) into
-   * `stagingDir` using npm's own cache, and return the installed package root
+   * Materialise the npm package `spec` into `stagingDir` using npm's own cache,
+   * and return the installed package root
    * directory (the folder that contains `dist/<plugin>.bundle.min.mjs`). Honours
    * npm's local cache-first behaviour, so a warm cache does no network IO.
    */
@@ -239,6 +240,24 @@ export function npmPackageSpec(
   return `${NPM_PACKAGE}@${ref}`;
 }
 
+/** Non-plugin runtimes that remain in the core package after ADR 0146. */
+const CORE_PACKAGE_BUNDLES = new Set(["code-nav", ...companionBundlePlugins("dev")]);
+
+/** The package that owns one bundle after the per-plugin package split. */
+export function npmBundlePackage(plugin: string): string {
+  return CORE_PACKAGE_BUNDLES.has(plugin) ? NPM_PACKAGE : `${NPM_PACKAGE}-${plugin}`;
+}
+
+/** Exact package spec used to materialise one bundle from npm. */
+export function npmBundlePackageSpec(
+  plugin: string,
+  version: string,
+  channel: ReleaseChannel = "stable",
+): string {
+  const ref = channel === "canary" ? CANARY_DIST_TAG : version;
+  return `${npmBundlePackage(plugin)}@${ref}`;
+}
+
 /** Registry metadata URL for the package (scoped name is `%2F`-escaped). */
 export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
   return `${NPM_REGISTRY_BASE}/${pkg.replace("/", "%2F")}`;
@@ -249,12 +268,12 @@ export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
  * An exact-version hit in the installer's stable runtime tree returns directly,
  * followed by the version-keyed bundle cache. Neither path invokes npm.
  *
- * Cache miss: materialise `@reddb-io/red-skills@<pin>` via npm (npm verifies the
- * tarball shasum itself), copy the packaged `dist/<plugin>.bundle.min.mjs` into
- * the cache, return it. The canary channel deliberately skips the cache hit and
- * refreshes from `@reddb-io/red-skills@canary` every time because its npm
- * dist-tag is the moving pointer. Integrity comes from npm; there is no
- * client-side signature step.
+ * Cache miss: materialise `@reddb-io/red-skills-<plugin>@<pin>` via npm (npm
+ * verifies the tarball shasum itself), copy its bundle into the cache, and
+ * return it. Non-plugin companions still materialise from core. The canary
+ * channel deliberately skips the cache hit, resolves core's moving dist-tag,
+ * and materialises the plugin at that exact version every time. Integrity comes
+ * from npm; there is no client-side signature step.
  *
  * Failure modes raise a typed {@link BundleFetchError} and never write a partial
  * bundle to the cache:
@@ -295,11 +314,36 @@ export async function ensureBundle(
     return dest;
   }
 
-  const spec = npmPackageSpec(version, channel);
+  const packageName = npmBundlePackage(plugin);
+  let spec = npmBundlePackageSpec(plugin, version, channel);
   const stagingDir = joinPath(
     cacheDir,
     `.staging-${plugin}-${channel === "canary" ? "canary" : version}`,
   );
+
+  let companionRoot: string | undefined;
+  let companionSpec: string | undefined;
+
+  // Only core owns the moving `canary` tag. Resolve that tag's immutable
+  // version from core, then ask the plugin package for the exact same version.
+  // This preserves the one channel pointer without requiring N coordinated npm
+  // dist-tag writes for every promotion.
+  if (channel === "canary" && packageName !== NPM_PACKAGE) {
+    companionSpec = npmPackageSpec(version, channel);
+    try {
+      companionRoot = await io.materialize(companionSpec, `${stagingDir}-core`);
+      const manifest = JSON.parse(
+        new TextDecoder().decode(await io.readFile(joinPath(companionRoot, "package.json"))),
+      ) as { version?: unknown };
+      if (typeof manifest.version !== "string" || !isCacheableVersion(manifest.version)) {
+        throw new Error("package.json has no cacheable version");
+      }
+      spec = npmBundlePackageSpec(plugin, manifest.version);
+    } catch (err) {
+      if (err instanceof BundleFetchError) throw err;
+      throw classifyMaterializeError(err, companionSpec);
+    }
+  }
 
   let pkgRoot: string;
   try {
@@ -308,11 +352,29 @@ export async function ensureBundle(
     throw classifyMaterializeError(err, spec);
   }
 
+  const bundleRoots = new Map<string, { root: string; spec: string }>([
+    [plugin, { root: pkgRoot, spec }],
+  ]);
+  if (companionPlugins.length > 0 && packageName !== NPM_PACKAGE && !companionRoot) {
+    companionSpec = npmPackageSpec(version, channel);
+    try {
+      companionRoot = await io.materialize(companionSpec, `${stagingDir}-core`);
+    } catch (err) {
+      throw classifyMaterializeError(err, companionSpec);
+    }
+  }
+  if (companionRoot && companionSpec) {
+    for (const companion of companionPlugins) {
+      bundleRoots.set(companion, { root: companionRoot, spec: companionSpec });
+    }
+  }
+
   for (const bundlePlugin of [plugin, ...companionPlugins]) {
+    const owner = bundleRoots.get(bundlePlugin) ?? { root: pkgRoot, spec };
     const srcRel = packagedBundleRelPath(bundlePlugin);
-    const src = joinPath(pkgRoot, srcRel);
+    const src = joinPath(owner.root, srcRel);
     if (!(await io.exists(src))) {
-      throw new BundleFetchError("bundle-missing", `npm package ${spec} has no ${srcRel}`);
+      throw new BundleFetchError("bundle-missing", `npm package ${owner.spec} has no ${srcRel}`);
     }
     const bundleDest =
       bundlePlugin === plugin
