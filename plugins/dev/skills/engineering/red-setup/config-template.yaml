@@ -47,6 +47,8 @@ plugins:
   #                               # AFK runs declared commands verbatim; the
   #                               # engine never substitutes a package manager.
   #     validation:               # operator-declared Validation moments (ADR 0135)
+  #       preflight: false        # experimental: preview exact post_done commands
+  #                               # before DONE; default off, gate still enforces
   #       subsecond_failures_are_branch_fault: false
   #                               # Set true only when the declared suite can
   #                               # legitimately fail in under one second.

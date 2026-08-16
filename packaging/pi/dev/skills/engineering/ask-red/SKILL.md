@@ -181,7 +181,8 @@ host-authority boundary) ->
 MCP-session auto-registration and daemon recovery ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md` and
 `plugins/dev/skills/engineering/afk/MCP.md`;
-`/afk` local validation authority (`plugins.dev.afk.validation.{iteration,post_done,landing}`) ->
+`/afk` local validation authority (experimental `plugins.dev.afk.validation.preflight`
+plus the `iteration`, `post_done`, and `landing` moments) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` Appraisal promotion (`plugins.dev.review.appraisal_floor`, advisory `off`
 or a blocking 0–1 floor) ->

@@ -623,6 +623,27 @@ describe("buildMergeGate", () => {
   });
 });
 
+describe("exitProtocolFor Preflight (#3844)", () => {
+  it("is byte-identical to today's instruction when the flag is off", () => {
+    expect(exitProtocolFor({})).toBe(EXIT_PROTOCOL);
+    expect(exitProtocolFor({ preflightCommands: [] })).toBe(EXIT_PROTOCOL);
+  });
+
+  it("lists exactly the feedback commands once when the flag is on", () => {
+    const commands = ["pnpm typecheck", "pnpm -C apps/dev test:invariants"];
+    const out = exitProtocolFor({ preflightCommands: commands });
+    const lines = out.split("\n");
+
+    expect(out).toContain("<preflight>");
+    expect(out).toContain("before declaring DONE");
+    for (const command of commands) {
+      expect(lines.filter((line) => line === `- ${command}`)).toHaveLength(1);
+    }
+    expect(out).not.toContain("pnpm test:landing");
+    expect(out).not.toContain("adversarial review");
+  });
+});
+
 describe("buildIterationMoment", () => {
   it("lists each operator-declared iteration command in order", () => {
     const out = buildIterationMoment(["pnpm test", "pnpm typecheck"]);

@@ -869,6 +869,22 @@ describe("config — block sequences (#430)", () => {
 });
 
 describe("config — validation moments (ADR 0135, #3284)", () => {
+  it("accepts the experimental Preflight flag and defaults it off (#3844)", () => {
+    const absent = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => "afk:\n  validation:\n    post_done:\n      - pnpm test\n",
+    });
+    const enabled = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => "afk:\n  validation:\n    preflight: true\n    post_done:\n      - pnpm test\n",
+    });
+
+    expect(readValidationMoments(absent).preflight ?? false).toBe(false);
+    expect(readValidationMoments(enabled).preflight).toBe(true);
+    expect(() => parseConfigYaml("afk:\n  validation:\n    preflight: sometimes\n"))
+      .toThrow(/afk\.validation\.preflight.*boolean/);
+  });
+
   it("reads the generated-surface cure beside the Validation moments", () => {
     const values = loadConfig("/x/.red/config.yaml", {
       read: () => [
