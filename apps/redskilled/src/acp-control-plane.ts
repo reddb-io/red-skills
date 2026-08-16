@@ -7,7 +7,7 @@
  * its assigned socket and exits when redskilled closes that connection.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import {
@@ -35,6 +35,7 @@ import {
   closeServer,
   connectWithDeadline,
   listen,
+  removeAcpEndpoint,
   socketStream,
   withTimeout,
 } from "./acp-socket.js";
@@ -162,7 +163,7 @@ export async function startRedskillsAcpControlPlane(
     return pending;
   };
   await mkdir(join(paths.runtimeDir, "acp-workers"), { recursive: true, mode: 0o700 });
-  await rm(paths.acpSocketPath, { force: true });
+  await removeAcpEndpoint(paths.acpSocketPath);
 
   const server = createServer((socket) => {
     sockets.add(socket);
@@ -186,7 +187,7 @@ export async function startRedskillsAcpControlPlane(
       closed = true;
       for (const socket of sockets) socket.destroy();
       await closeServer(server);
-      await rm(paths.acpSocketPath, { force: true });
+      await removeAcpEndpoint(paths.acpSocketPath);
     },
   };
 }

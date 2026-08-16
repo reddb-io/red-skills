@@ -45,6 +45,8 @@ export function redskilledResourceIncidentRoot(homeDir: string): string {
 }
 
 export interface RedskilledPaths {
+  /** Host ABI selecting Unix sockets or Windows Named Pipes for ACP authorities. */
+  readonly platform: NodeJS.Platform;
   /** The raw session scope this daemon serves — never published. */
   readonly sessionKey: string;
   /** 12-hex digest of {@link sessionKey}: the publishable session identity. */
@@ -121,6 +123,7 @@ export function resolveMachineIdHash(options: ResolveRedskilledPathsOptions = {}
 
 /** Where the daemon lives, and the machine-wide claim it must hold to live there. PURE. */
 export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = {}): RedskilledPaths {
+  const platform = options.platform ?? process.platform;
   const sessionKey = resolveSessionKey(options);
   const runtimeDir = options.runtimeDir ?? runtimeSocketDir({
     key: `redskilled:${sessionKey}`,
@@ -129,6 +132,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     uid: options.uid,
   });
   const machineIdHash = resolveMachineIdHash(options);
+  const sessionKeyHash = shortDigest(sessionKey);
   const machineClaimPathOfThisHost = resolveMachineClaimPath({
     env: options.env,
     machineIdHash,
@@ -139,12 +143,15 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     ?? (options.runtimeDir == null ? process.env.HOME : options.runtimeDir)
     ?? runtimeDir;
   return {
+    platform,
     sessionKey,
-    sessionKeyHash: shortDigest(sessionKey),
+    sessionKeyHash,
     machineIdHash,
     runtimeDir,
     socketPath: join(runtimeDir, REDSKILLED_SOCKET_FILE),
-    acpSocketPath: join(runtimeDir, REDSKILLED_ACP_SOCKET_FILE),
+    acpSocketPath: platform === "win32"
+      ? windowsNamedPipe(`redskilled-${sessionKeyHash}-acp`)
+      : join(runtimeDir, REDSKILLED_ACP_SOCKET_FILE),
     lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
     eventLanePath: join(redskilledHomeDir(homeDir), REDSKILLED_EVENT_LANE_FILE),
@@ -157,6 +164,18 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     machineClaimPathOfThisHost,
     machineClaimPath: options.machineClaimPath ?? machineClaimPathOfThisHost,
   };
+}
+
+/** Daemon-assigned reconnectable endpoint for one disposable ACP Worker. */
+export function resolveAcpWorkerEndpoint(paths: RedskilledPaths, endpointId: string): string {
+  if (!/^[a-z0-9-]+$/i.test(endpointId)) throw new Error("ACP Worker endpoint id must be alphanumeric or kebab-case");
+  return paths.platform === "win32"
+    ? windowsNamedPipe(`redskilled-${paths.sessionKeyHash}-worker-${endpointId}`)
+    : join(paths.runtimeDir, "acp-workers", `${endpointId}.sock`);
+}
+
+function windowsNamedPipe(name: string): string {
+  return `\\\\.\\pipe\\${name}`;
 }
 
 function shortDigest(value: string): string {

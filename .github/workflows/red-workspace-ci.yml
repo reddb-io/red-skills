@@ -361,6 +361,46 @@ jobs:
         if: env.RUN_ANY != 'true'
         run: echo "No non-dev package is in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no suite to run."
 
+  # The local ACP authority contract is deliberately focused enough to run on
+  # both native endpoint families. Linux proves the known daemon Unix socket and
+  # daemon-assigned Worker sockets; Windows proves the same public and Worker ACP
+  # exchanges over Named Pipes. Stdio appears only in the launch-edge adapter.
+  acp-local-transport:
+    runs-on: ${{ matrix.os }}
+    needs: scope
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      RUN_ACP: ${{ contains(fromJSON(needs.scope.outputs.test_packages), 'apps/redskilled') }}
+    steps:
+      - name: Checkout
+        if: env.RUN_ACP == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - if: env.RUN_ACP == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+
+      - if: env.RUN_ACP == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Install workspace dependencies
+        if: env.RUN_ACP == 'true'
+        env:
+          REDDB_SKIP_POSTINSTALL: "1"
+        run: pnpm install --frozen-lockfile
+
+      - name: Test host-native ACP authority transport
+        if: env.RUN_ACP == 'true'
+        run: pnpm -C apps/redskilled test:acp-local-transport
+
+      - name: Report narrowed scope
+        if: env.RUN_ACP != 'true'
+        run: echo "apps/redskilled is not in the affected cone — no local ACP transport check to run."
+
   # Branch protection requires a check named `test`, so the name survives the
   # fan-out as an aggregate: the work moved, the contract did not.
   test:
@@ -371,7 +411,7 @@ jobs:
     # and shrink their own steps, so a docs-only PR reaches this job green.
     if: always()
     runs-on: ubuntu-latest
-    needs: [scope, test-shard, test-packages]
+    needs: [scope, test-shard, test-packages, acp-local-transport]
     steps:
       - name: Fail when a test dependency failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
@@ -379,6 +419,7 @@ jobs:
           echo "scope=${{ needs.scope.result }}"
           echo "test-shard=${{ needs['test-shard'].result }}"
           echo "test-packages=${{ needs['test-packages'].result }}"
+          echo "acp-local-transport=${{ needs['acp-local-transport'].result }}"
           exit 1
 
       - name: Report aggregate result
