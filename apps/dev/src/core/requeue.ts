@@ -58,6 +58,7 @@ export const REQUEUE_SUPPORTED_KINDS = new Set([
  */
 export const HUMAN_ONLY_BLOCKER_KINDS = new Set([
   "stalled",
+  "spin",
   "wall-clock-capped",
   "crashed",
   "runner",

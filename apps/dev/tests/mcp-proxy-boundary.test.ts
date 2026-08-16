@@ -14,23 +14,14 @@ describe("redskilled MCP lightweight proxy boundary", () => {
     await Promise.all(close.splice(0).map((shutdown) => shutdown()));
   });
 
-  // The resident is a ROLE of this bundle now, so the engine is physically in the
-  // same FILE — the boundary this suite protects was never the file, it is the
-  // stdio SERVE PATH. Two things keep it: nothing here is imported statically
-  // (so serving cannot construct it), and the role runs in a process the proxy
-  // spawns rather than in the stdio process itself. ADR 0143's "no client hosts
-  // an in-process fallback" is the rule at stake.
-  it("keeps engine, GitHub adapters and background belts off the stdio serve path", async () => {
+  it("keeps Project authority off the stateless stdio ACP adapter", async () => {
     const source = await readFile(join(ROOT, "apps/dev/src/mcp-server.ts"), "utf8");
 
-    // The role reaches the engine, and reaches it lazily — a static import would
-    // put it on the path `connect` runs.
-    expect(source).toContain('await import("./castle-resident.js")');
-    expect(source, "the resident must be spawned, never served in-process").toContain(
-      'serverArgs: [fileURLToPath(import.meta.url), "__castle-resident"]',
-    );
+    expect(source).toContain('from "@reddb-io/redskilled/acp-client"');
+    expect(source).toContain("connectRedskillsProjectAcp");
 
     for (const forbidden of [
+      "./castle-resident.js",
       "@reddb-io/red-castle/engine",
       "./mcp-adapter.js",
       "./resident-cron.js",
@@ -44,13 +35,13 @@ describe("redskilled MCP lightweight proxy boundary", () => {
     }
   });
 
-  it("lists static tools locally and sends invocation through the resident wire", async () => {
-    const residentInvoke = vi.fn(async (method: string, input: Record<string, unknown>) => ({
+  it("lists static tools locally and sends invocation through ACP", async () => {
+    const acpInvoke = vi.fn(async (method: string, input: Record<string, unknown>) => ({
       method,
       input,
-      owner: "castle-resident",
+      owner: "redskilled",
     }));
-    const server = createRedskilledMcpServer(ROOT, residentInvoke);
+    const server = createRedskilledMcpServer(ROOT, acpInvoke);
     const client = new Client({ name: "proxy-boundary-test", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -59,12 +50,12 @@ describe("redskilled MCP lightweight proxy boundary", () => {
 
     const tools = await client.listTools();
     expect(tools.tools.length).toBeGreaterThan(20);
-    expect(residentInvoke).not.toHaveBeenCalled();
+    expect(acpInvoke).not.toHaveBeenCalled();
 
     const result = await client.callTool({ name: "runner_list", arguments: {} });
-    expect(residentInvoke).toHaveBeenCalledWith("runner_list", {});
+    expect(acpInvoke).toHaveBeenCalledWith("runner_list", {});
     expect(result.content).toEqual([
-      expect.objectContaining({ type: "text", text: expect.stringContaining("castle-resident") }),
+      expect.objectContaining({ type: "text", text: expect.stringContaining("redskilled") }),
     ]);
   });
 });

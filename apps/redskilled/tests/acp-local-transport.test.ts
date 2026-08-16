@@ -23,7 +23,7 @@ import {
 import type { LaunchedWorker, RedskilledWorkerSpec } from "../src/worker-launch.js";
 
 const require_ = createRequire(import.meta.url);
-const tsxLoader = require_.resolve("tsx");
+const tsxLoader = pathToFileURL(require_.resolve("tsx")).href;
 const childAgentFixture = resolve(__dirname, "fixtures", "bin", "redcode");
 const stdioAdapterProgram = `
   import { runRedskillsAcpAdapter } from ${JSON.stringify(pathToFileURL(resolve(__dirname, "..", "src", "acp-control-plane.ts")).href)};

@@ -4,19 +4,15 @@ import type {
   LaneFollower,
 } from "@reddb-io/red-castle/engine";
 
-type ResidentInvoke = (method: string, input: Record<string, unknown>) => Promise<unknown>;
+type AcpInvoke = (method: string, input: Record<string, unknown>) => Promise<unknown>;
 
 interface EventsSinceResult {
   readonly cursor: string;
   readonly lane_records: CastleLaneRecord[];
 }
 
-/**
- * Turn the resident's bounded cursor read into one session's MCP resource
- * notifications. The stdio process owns only its timer and client buffer; lane
- * discovery and reads stay inside the Castle authority.
- */
-export function createResidentLaneFollower(invoke: ResidentInvoke): LaneFollower {
+/** Project ACP cursor updates projected as MCP resource notifications. */
+export function createAcpLaneFollower(invoke: AcpInvoke): LaneFollower {
   const listeners = new Set<LaneEventListener>();
   let cursor: string | undefined;
   let timer: NodeJS.Timeout | undefined;
@@ -24,7 +20,7 @@ export function createResidentLaneFollower(invoke: ResidentInvoke): LaneFollower
   const read = async (): Promise<EventsSinceResult> => {
     const value = await invoke("events_since", cursor === undefined ? {} : { cursor });
     if (!isRecord(value) || typeof value.cursor !== "string") {
-      throw new Error("Castle resident returned an invalid events_since envelope");
+      throw new Error("redskilled ACP returned an invalid events_since envelope");
     }
     const records = Array.isArray(value.lane_records)
       ? value.lane_records.filter(isRecord) as unknown as CastleLaneRecord[]
@@ -43,7 +39,7 @@ export function createResidentLaneFollower(invoke: ResidentInvoke): LaneFollower
       const result = await read();
       cursor = result.cursor;
       for (const record of result.lane_records) {
-        for (const listener of listeners) listener({ path: "castle-resident", record });
+        for (const listener of listeners) listener({ path: "redskilled-acp", record });
       }
       return result.lane_records.length;
     },
