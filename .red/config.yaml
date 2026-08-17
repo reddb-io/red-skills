@@ -16,6 +16,7 @@ plugins:
       # Declared as the ADR 0135 Validation-moment schedule; the legacy
       # feedback.commands/backpressure knobs are RETIRED at 3.6.0.
       validation:
+        preflight: true
         generated:
           paths:
             - plugins/*/package.json
