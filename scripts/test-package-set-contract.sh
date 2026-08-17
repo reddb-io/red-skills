@@ -16,6 +16,40 @@ pass() {
   printf 'PASS: %s\n' "$*"
 }
 
+WORKFLOW=".github/workflows/red-publish.yml"
+
+line_of_step() {
+  local step="$1"
+  grep -nF -- "- name: $step" "$WORKFLOW" | head -n1 | cut -d: -f1
+}
+
+contract_line="$(line_of_step "Test package-set contract" || true)"
+build_line="$(line_of_step "Build, sign, and offline-verify package set" || true)"
+release_line="$(line_of_step "GitHub Release" || true)"
+[ -n "$contract_line" ] || fail "release workflow must run the focused package-set contract"
+[ -n "$build_line" ] || fail "release workflow must build and verify the package set"
+[ -n "$release_line" ] || fail "release workflow must publish GitHub assets"
+[ "$contract_line" -lt "$build_line" ] && [ "$build_line" -lt "$release_line" ] ||
+  fail "package-set contract, build, and release upload must run in order"
+
+grep -qF 'uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac' "$WORKFLOW" ||
+  fail "release workflow must install cosign from the pinned v3 commit"
+grep -qF 'node scripts/build-package-set.mjs' "$WORKFLOW" ||
+  fail "release workflow must use the deterministic package-set producer"
+grep -qF 'SOURCE_COMMIT: ${{ steps.target.outputs.sha }}' "$WORKFLOW" ||
+  fail "package-set identity must use the resolved release tag commit"
+grep -qF 'cosign sign-blob' "$WORKFLOW" && grep -qF 'dist/package-set.manifest.sigstore.json' "$WORKFLOW" ||
+  fail "release workflow must sign the package-set manifest into a Sigstore bundle"
+grep -qF 'unshare --net' "$WORKFLOW" && grep -qF 'scripts/verify-package-set.mjs' "$WORKFLOW" ||
+  fail "release workflow must smoke the verifier with network access blocked"
+for asset in \
+  dist/package-set.manifest.json \
+  dist/package-set.manifest.sigstore.json \
+  dist/verify-package-set.mjs; do
+  grep -qF "$asset" "$WORKFLOW" || fail "release upload must carry $asset"
+done
+pass "release workflow builds, signs, verifies, and uploads the package set"
+
 source_commit="1111111111111111111111111111111111111111"
 other_commit="2222222222222222222222222222222222222222"
 mkdir -p "$tmp/assets" "$tmp/bin"
