@@ -199,6 +199,10 @@ export function decideDependencyPromotion(
   dependent: DependentIssue,
   hitlTypes: readonly string[] = [],
 ): DependencyPromotionDecision {
+  // The dependency ROLE is required of both callers, and that is the point: a
+  // promotion removes the park role and adds ready/human, so a Ticket that does
+  // not carry the role has nothing to be promoted FROM. A stale `req:*` left on
+  // an already-queued Ticket is exactly what this refuses.
   if (!(dependent.labels ?? []).includes(LABEL_DEPENDENCY)) {
     return { outcome: "held", reason: "missing-dependency-role", pending: [] };
   }
@@ -346,6 +350,19 @@ export async function planUnblockSweep(
     // blockers closing frees a HUMAN-ONLY Ticket for its human, never for an agent.
     const carried = hostHitlTypesIn(labels, hitlTypes);
     const lane: PromotionLane = carried.length > 0 ? "human" : "agent";
+
+    // A Ticket already parked for a human is not the sweep's to promote, and
+    // the refusal comes BEFORE the blocker lookups: asking the tracker about
+    // blockers whose answer cannot change the outcome spends a request out of
+    // the same budget every other read shares (#3940 regression).
+    if (labels.includes(LABEL_HUMAN)) {
+      held.push({
+        issue: candidate.number,
+        outcome: "held",
+        reason: `already parked ${LABEL_HUMAN}; a human owns this park, not the sweep`,
+      });
+      continue;
+    }
 
     // Prefer the structured req:* dependency labels when present.
     if (reqIds.length > 0) {

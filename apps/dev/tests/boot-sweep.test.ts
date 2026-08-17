@@ -115,11 +115,22 @@ describe("cascadeAuditComment", () => {
 describe("planCloseCascade", () => {
   it("promotes a dependent whose every req is closed", () => {
     const deps: DependentIssue[] = [
-      { number: 20, reqs: [{ n: 9, closed: true }] },
+      { number: 20, labels: ["blocked:dependency"], reqs: [{ n: 9, closed: true }] },
     ];
     expect(planCloseCascade(9, deps)).toEqual([
       { number: 20, refs: ["#9"], reqLabels: ["req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#9).", lane: "agent", hitlTypes: [] },
     ]);
+  });
+
+  it("does not promote a dependent that carries no dependency role", () => {
+    // The role is what a promotion removes, so a Ticket without it has nothing
+    // to be promoted FROM — a stale `req:*` on an already-queued Ticket is
+    // exactly this case. Shared with the Unblock Sweep so the two cannot drift
+    // (#3940); before that they disagreed and the sweep silently promoted none.
+    const deps: DependentIssue[] = [
+      { number: 23, labels: ["req:9"], reqs: [{ n: 9, closed: true }] },
+    ];
+    expect(planCloseCascade(9, deps)).toEqual([]);
   });
 
   it("does not promote when one req is still open", () => {
@@ -136,7 +147,7 @@ describe("planCloseCascade", () => {
 
   it("names every satisfied dep in ascending order on a multi-req promote", () => {
     const deps: DependentIssue[] = [
-      { number: 30, reqs: [{ n: 9, closed: true }, { n: 8, closed: true }] },
+      { number: 30, labels: ["blocked:dependency"], reqs: [{ n: 9, closed: true }, { n: 8, closed: true }] },
     ];
     expect(planCloseCascade(9, deps)).toEqual([
       { number: 30, refs: ["#8", "#9"], reqLabels: ["req:8", "req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#8, #9).", lane: "agent", hitlTypes: [] },
@@ -145,7 +156,7 @@ describe("planCloseCascade", () => {
 
   it("plans only the satisfied dependents across a mixed batch", () => {
     const deps: DependentIssue[] = [
-      { number: 20, reqs: [{ n: 9, closed: true }] }, // promote
+      { number: 20, labels: ["blocked:dependency"], reqs: [{ n: 9, closed: true }] }, // promote
       { number: 21, reqs: [{ n: 9, closed: true }, { n: 8, closed: false }] }, // skip
       { number: 22, reqs: [] }, // skip
     ];
