@@ -136,22 +136,27 @@ async function stagePackage({ root, pluginDir, claudePlugin, packagingDir, misma
   // Local manifest checks run from source-only trees where dist/ is absent;
   // the publish-time tarball contract remains the authority that every release
   // actually built and packed this declared file.
-  const bundleName = `${pluginName}.bundle.min.mjs`;
-  const sourceBundle = join(root, "dist", bundleName);
-  const targetBundle = join(targetDir, "dist", bundleName);
-  try {
-    const bundleBytes = await readFile(sourceBundle);
-    if (check) {
-      const stagedBytes = await readFile(targetBundle).catch(() => null);
-      if (stagedBytes === null || !bundleBytes.equals(stagedBytes)) {
-        mismatches.push({ path: targetBundle, bytes: "", note: [`${bundleName}: bytes differ`] });
+  const runtimeAssets = [
+    `${pluginName}.bundle.min.mjs`,
+    ...(pluginName === "memory" ? ["memory-tokenizer.asset.cjs"] : []),
+  ];
+  for (const runtimeAsset of runtimeAssets) {
+    const sourceAsset = join(root, "dist", runtimeAsset);
+    const targetAsset = join(targetDir, "dist", runtimeAsset);
+    try {
+      const assetBytes = await readFile(sourceAsset);
+      if (check) {
+        const stagedBytes = await readFile(targetAsset).catch(() => null);
+        if (stagedBytes === null || !assetBytes.equals(stagedBytes)) {
+          mismatches.push({ path: targetAsset, bytes: "", note: [`${runtimeAsset}: bytes differ`] });
+        }
+      } else {
+        await mkdir(join(targetDir, "dist"), { recursive: true });
+        await cp(sourceAsset, targetAsset);
       }
-    } else {
-      await mkdir(join(targetDir, "dist"), { recursive: true });
-      await cp(sourceBundle, targetBundle);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
 
   // 4. Stage a small README so `npm view` shows project context, not just an

@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import fg from "fast-glob";
-import { getEncoding } from "js-tiktoken";
 import { extractAsset, isAssetFile } from "./extract-asset.js";
 import { extractCode } from "./extract-code.js";
 import {
@@ -16,6 +15,7 @@ import { extractMarkdown } from "./extract-markdown.js";
 import { extractSql } from "./extract-sql.js";
 import { contentHash } from "./hash.js";
 import { readMemoryIgnore } from "./scope.js";
+import { countCl100kTokens } from "./token-count.js";
 import { renderToonOutput } from "./toon-output.js";
 import type { MemoryStore } from "./graph-store.js";
 import type { EdgeLabel, MemoryDoc, MemoryEdgeProps, MemoryNode } from "./schema.js";
@@ -244,16 +244,12 @@ function emptySemanticReport(enabled: boolean): SemanticIngestReport {
   return { enabled, nodes: 0, edges: 0, token_cost: { input: 0, output: 0 } };
 }
 
-let tokenizer: ReturnType<typeof getEncoding> | null = null;
-
 function countProviderRequestTokens(req: ProviderRequest): number {
   return countTokens(`${req.system}\n\n${req.user}`);
 }
 
 function countTokens(text: string): number {
-  if (!text) return 0;
-  tokenizer ??= getEncoding("cl100k_base");
-  return tokenizer.encode(text).length;
+  return countCl100kTokens(text);
 }
 
 export function renderIngestReportToon(

@@ -90,24 +90,25 @@ else
   pass "missing NPM_TOKEN does not skip publish"
 fi
 
-if grep -qF 'npx -y -p "@reddb-io/red-skills@${version}" red-skills-dev --version' "$WORKFLOW"; then
-  pass "registry smoke uses npx against the published package version"
+if grep -qF 'npm view "@reddb-io/red-skills@${version}" version' "$WORKFLOW" &&
+   grep -qF '[ "$resolved" = "${version}" ]' "$WORKFLOW"; then
+  pass "registry smoke resolves the exact published core package version"
 else
-  fail "registry smoke must run the real client via npx from the npm registry"
+  fail "registry smoke must resolve the exact core package version from npm"
 fi
 
-if grep -qF 'package/dist/code-nav.bundle.min.mjs' "$WORKFLOW" &&
-   grep -qF 'npm tarball missing $expected' "$WORKFLOW"; then
-  pass "pack contract checks the code-nav bundle is in the npm tarball"
+if grep -qF 'package/dist/$plugin.bundle.min.mjs' "$WORKFLOW" &&
+   grep -qF 'npm tarball unexpectedly contains $unexpected' "$WORKFLOW"; then
+  pass "pack contract rejects every derived plugin bundle in the core tarball"
 else
-  fail "pack contract must fail when code-nav is missing from the npm tarball"
+  fail "pack contract must reject core plugin bundles derived from the plugin tree"
 fi
 
 if grep -qF 'test -x "$smoke/node_modules/.bin/red-skills-code-nav"' "$WORKFLOW" &&
    grep -qF 'test -f "$smoke/node_modules/@reddb-io/red-skills/dist/code-nav.bundle.min.mjs"' "$WORKFLOW"; then
-  pass "pack contract checks the code-nav npm bin and packaged bundle"
+  pass "pack contract checks the retained code-nav npm bin and supporting bundle"
 else
-  fail "pack contract must verify the code-nav npm bin and packaged bundle"
+  fail "pack contract must verify the retained code-nav npm bin and supporting bundle"
 fi
 
 if grep -qF 'node scripts/check-npm-tarball-boundaries.mjs' "$WORKFLOW" &&
@@ -153,11 +154,14 @@ for expected in \
   .gemini-plugin/marketplace.json \
   scripts/generate-codex-manifests.mjs \
   scripts/generate-gemini-manifests.mjs \
-  scripts/generate-pi-manifests.mjs \
-  dist/opencode-host.bundle.min.mjs; do
+  scripts/generate-pi-manifests.mjs; do
   mkdir -p "$core_tree/$(dirname "$expected")"
   : > "$core_tree/$expected"
 done
+while IFS= read -r bundle; do
+  mkdir -p "$core_tree/dist"
+  : > "$core_tree/dist/$bundle"
+done < <(node -e 'const fs=require("fs");const source=fs.readFileSync("packaging/npm/scripts/prepare.mjs","utf8");for(const match of source.matchAll(/dest:\s*"([^"]+\.bundle\.min\.mjs)"/g))console.log(match[1])')
 cp packaging/npm/package.json "$core_tree/package.json"
 tar -czf "$contract_fixture/core.tgz" -C "$contract_fixture/core-tree" package
 
@@ -169,6 +173,9 @@ while IFS= read -r plugin_json; do
   mkdir -p "$plugin_tree/skills/core/example" "$plugin_tree/dist"
   : > "$plugin_tree/skills/core/example/SKILL.md"
   : > "$plugin_tree/dist/$plugin.bundle.min.mjs"
+  if [ "$plugin" = "memory" ]; then
+    : > "$plugin_tree/dist/memory-tokenizer.asset.cjs"
+  fi
   tar -czf "$plugin_tarballs/reddb-io-red-skills-$plugin-9.9.9.tgz" \
     -C "$contract_fixture/plugin-$plugin" package
 done < <(find plugins -mindepth 3 -maxdepth 3 -path '*/.claude-plugin/plugin.json' -print | sort)
@@ -181,6 +188,19 @@ if node scripts/check-npm-tarball-boundaries.mjs \
 else
   fail "valid core and per-plugin tarballs must satisfy the publish boundary checker"
 fi
+
+memory_tarball="$plugin_tarballs/reddb-io-red-skills-memory-9.9.9.tgz"
+tar --exclude='package/dist/memory-tokenizer.asset.cjs' \
+  -czf "$memory_tarball" -C "$contract_fixture/plugin-memory" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/core.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "memory plugin tarball without its tokenizer asset must fail the publish contract"
+else
+  pass "memory plugin tarball without its tokenizer asset fails the publish contract"
+fi
+tar -czf "$memory_tarball" -C "$contract_fixture/plugin-memory" package
 
 missing_bundle_tree="$contract_fixture/missing-bundle/package"
 mkdir -p "$missing_bundle_tree/skills/core/example"
@@ -196,24 +216,42 @@ else
   pass "per-plugin tarball without its runtime bundle fails the publish contract"
 fi
 
+# Restore the valid per-plugin tarball so this mutation can fail only because
+# the core crossed the package boundary, never because of the prior mutation.
+plugin_tree="$contract_fixture/plugin-$first_plugin/package"
+tar -czf "$plugin_tarballs/reddb-io-red-skills-$first_plugin-9.9.9.tgz" \
+  -C "$contract_fixture/plugin-$first_plugin" package
+
 bad_core_tree="$contract_fixture/bad-core/package"
 mkdir -p "$contract_fixture/bad-core"
 cp -R "$core_tree" "$bad_core_tree"
-mkdir -p "$bad_core_tree/apps/dev"
-: > "$bad_core_tree/apps/dev/runtime.ts"
+mkdir -p "$bad_core_tree/dist"
+: > "$bad_core_tree/dist/$first_plugin.bundle.min.mjs"
 tar -czf "$contract_fixture/bad-core.tgz" -C "$contract_fixture/bad-core" package
 if node scripts/check-npm-tarball-boundaries.mjs \
   --root "$ROOT" \
   --core "$contract_fixture/bad-core.tgz" \
   --plugins "$plugin_tarballs" >/dev/null 2>&1; then
-  fail "core tarball carrying the runtime app tree must fail the publish contract"
+  fail "core tarball carrying a per-plugin runtime bundle must fail the publish contract"
 else
-  pass "core tarball carrying the runtime app tree fails the publish contract"
+  pass "core tarball carrying a per-plugin runtime bundle fails the publish contract"
+fi
+
+rm -f "$bad_core_tree/dist/$first_plugin.bundle.min.mjs"
+: > "$bad_core_tree/dist/memory-tokenizer.asset.cjs"
+tar -czf "$contract_fixture/bad-core-tokenizer.tgz" -C "$contract_fixture/bad-core" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/bad-core-tokenizer.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "core tarball carrying the memory tokenizer asset must fail the publish contract"
+else
+  pass "core tarball carrying the memory tokenizer asset fails the publish contract"
 fi
 rm -rf "$contract_fixture"
 
 if grep -qF 'registry smoke returned' "$WORKFLOW" &&
-   grep -qF 'dev ${version} ' "$WORKFLOW"; then
+   grep -qF '[ "$resolved" = "${version}" ]' "$WORKFLOW"; then
   pass "registry smoke verifies the reported release version"
 else
   fail "registry smoke must fail when --version does not report the release version"

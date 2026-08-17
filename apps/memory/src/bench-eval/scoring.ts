@@ -1,5 +1,5 @@
-import { getEncoding } from "js-tiktoken";
 import type { ProviderClient, ProviderRequest } from "../extract-conversation.js";
+import { countCl100kTokens } from "../token-count.js";
 import type {
   AgentSubstrateTool,
   AgentToolCallOutput,
@@ -217,10 +217,8 @@ function stripJsonFence(response: string): string {
  * Token accounting — real tokenizer, not character counts
  * --------------------------------------------------------------------------*/
 
-const CL100K = getEncoding("cl100k_base");
-
 export function countBenchTokens(text: string): number {
-  return CL100K.encode(text).length;
+  return countCl100kTokens(text);
 }
 
 export function measureAnswererTokens(question: Question, pack: ContextPack, predictedAnswer: string): TokenCounts {

@@ -109,6 +109,86 @@ else
   fail "bundle-app must strip leading v from version"
 fi
 
+# 10 — Memory tokenizer ranks are a lazy, package-owned sibling asset (#3956)
+MEMORY_PACKAGE="apps/memory/package.json"
+MEMORY_BUNDLE="dist/memory.bundle.min.mjs"
+MEMORY_TOKENIZER="dist/memory-tokenizer.asset.cjs"
+MEMORY_BUNDLE_BEFORE=10698895
+RANK_TABLE_PREFIX='bpe_ranks:"! 0 IQ== Ig== Iw=='
+memory_asset_backup="$(mktemp -d)"
+for asset in "$MEMORY_BUNDLE" "$MEMORY_TOKENIZER"; do
+  if [[ -f "$asset" ]]; then
+    cp "$asset" "$memory_asset_backup/$(basename "$asset")"
+  fi
+done
+cleanup_memory_assets() {
+  for asset in "$MEMORY_BUNDLE" "$MEMORY_TOKENIZER"; do
+    rm -f -- "$asset"
+    if [[ -f "$memory_asset_backup/$(basename "$asset")" ]]; then
+      cp "$memory_asset_backup/$(basename "$asset")" "$asset"
+    fi
+  done
+  rm -rf -- "$memory_asset_backup"
+}
+trap cleanup_memory_assets EXIT
+
+if grep -qF -- '--lazy-asset-entry src/tokenizer-asset.ts' "$MEMORY_PACKAGE" \
+  && grep -qF -- '--lazy-asset memory-tokenizer.asset.cjs' "$MEMORY_PACKAGE"; then
+  pass "memory bundle declares its lazy tokenizer asset"
+else
+  fail "memory bundle must declare the lazy tokenizer entry and sibling asset"
+fi
+
+if pnpm -C apps/memory bundle:cli >/dev/null; then
+  pass "memory CLI bundle and tokenizer asset build"
+else
+  fail "memory CLI bundle and tokenizer asset must build"
+fi
+
+if [[ -f "$MEMORY_BUNDLE" && -f "$MEMORY_TOKENIZER" ]]; then
+  pass "memory tokenizer asset is emitted beside the bundle"
+else
+  fail "memory tokenizer asset must be emitted beside the bundle"
+fi
+
+if [[ -f "$MEMORY_BUNDLE" ]]; then
+  memory_bundle_after="$(wc -c < "$MEMORY_BUNDLE")"
+  printf 'INFO: memory bundle bytes before=%d after=%d\n' \
+    "$MEMORY_BUNDLE_BEFORE" "$memory_bundle_after"
+  if ! grep -qF "$RANK_TABLE_PREFIX" "$MEMORY_BUNDLE"; then
+    pass "memory bundle carries no inline BPE rank table"
+  else
+    fail "memory bundle must not inline BPE rank tables"
+  fi
+fi
+
+if [[ -f "$MEMORY_TOKENIZER" ]] && grep -qF "$RANK_TABLE_PREFIX" "$MEMORY_TOKENIZER"; then
+  pass "memory tokenizer sibling asset carries the BPE ranks"
+else
+  fail "memory tokenizer sibling asset must carry the BPE ranks"
+fi
+
+lazy_probe="$(mktemp -d)"
+cp "$MEMORY_BUNDLE" "$lazy_probe/memory.bundle.min.mjs"
+if node "$lazy_probe/memory.bundle.min.mjs" --help >/dev/null; then
+  pass "memory bundle starts without loading the absent tokenizer asset"
+else
+  fail "memory bundle must not load tokenizer ranks before a count is requested"
+fi
+rm -r -- "$lazy_probe"
+
+if grep -qF 'memory-tokenizer.asset.cjs' scripts/build-pi-packages.mjs; then
+  pass "scripts/build-pi-packages.mjs stages the memory tokenizer asset"
+else
+  fail "scripts/build-pi-packages.mjs must stage the memory tokenizer asset"
+fi
+
+if grep -qF 'memory-tokenizer.asset.cjs' packaging/npm/scripts/prepare.mjs; then
+  fail "packaging/npm/scripts/prepare.mjs must not stage the plugin-owned memory tokenizer asset"
+else
+  pass "packaging/npm/scripts/prepare.mjs leaves the memory tokenizer asset in the memory plugin package"
+fi
+
 if (( failures > 0 )); then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
