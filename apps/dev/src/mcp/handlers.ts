@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { waitsDir } from "@reddb-io/shared/red-paths.js";
 import {
   armPr,
@@ -58,6 +59,7 @@ import { executeRespond } from "../commands/respond.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
 import { createRedskilledBirthPort } from "../runtime/redskilled-birth.js";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
+import { createDevGithubMergeRead } from "../runtime/github-merge-read.js";
 
 import type { DevAfkMcpOperations, DevAfkMcpRuntime } from "./operations.js";
 import { dispatchArgs, buildWaitArgs, defaultMcpRuntime, resolveConfiguredBase, latestClaimPerWorker } from "./operations.js";
@@ -353,61 +355,99 @@ export function createDefaultDevAfkMcpOperations(
     async landBranch(input) {
       const context = await resolveRepoContext(root);
       const paths = afkPaths(root);
+      const config = loadConfig(paths.configPath, { warn: () => undefined });
       const gitCtx: gitx.GitContext = { cwd: root, ghProbeTimeoutMs: 60_000 };
       const base = resolveConfiguredBase(root, input.base);
       const changedFiles = await gitx.changedFiles(gitCtx, input.branch, base);
+      const rootPackageJson = changedFiles.includes("package.json")
+        ? await gitx.changedFileContents({ cwd: root }, input.branch, base, "package.json")
+        : undefined;
+      const feedback = makeFeedbackWorktree(
+        root,
+        paths.feedbackWorktreesDir,
+        undefined,
+        {
+          resourceBudget: readValidationResourceBudget(config),
+          setupCommands: readSetupCommands(config),
+        },
+      );
+      const scopes = gateScopes(
+        feedback.layout,
+        changedFiles,
+        rootPackageJson ? { rootPackageJson } : undefined,
+      );
       const slug = (value: string) =>
         value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
       const fireHook = buildMcpLandingFireHook(root, runtime.hookExec ?? makeHookExec(root));
-      const result = await doLanding(
-        {
-          mergeExec: gitx.mergeExec(gitCtx),
-          remoteGit: gitx.gitExec(gitCtx),
-          fireHook,
-          makeLandingWorktree: async (target) => {
-            const dest = join(paths.landingWorktreesDir, `${slug(target)}-mcp-${input.issue}`);
-            await gitx.worktreeRemove(gitCtx, dest);
-            return (await gitx.worktreeAdd(gitCtx, dest, target)).ok ? dest : null;
+      try {
+        const result = await doLanding(
+          {
+            mergeExec: gitx.mergeExec(gitCtx),
+            remoteGit: gitx.gitExec(gitCtx),
+            fireHook,
+            ciAwait: {
+              github: createDevGithubMergeRead(root, "mcp-land-branch"),
+              sleep,
+            },
+            postMergeGate: async (mergedTreeDir) => {
+              const validated = await runFeedback(feedback.pnpm, {
+                worktree: mergedTreeDir,
+                worktreeKind: "checkout",
+                scopes,
+                layout: feedback.layout,
+                now: () => Date.now(),
+                baselineWorktree: base,
+              });
+              return { ok: validated.ok };
+            },
+            requirePostMergeValidation: true,
+            makeLandingWorktree: async (target) => {
+              const dest = join(paths.landingWorktreesDir, `${slug(target)}-mcp-${input.issue}`);
+              await gitx.worktreeRemove(gitCtx, dest);
+              return (await gitx.worktreeAdd(gitCtx, dest, target)).ok ? dest : null;
+            },
+            removeLandingWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
+            makeRebaseWorktree: async (branch) => {
+              const dest = join(paths.rebaseWorktreesDir, `${slug(branch)}-mcp-${input.issue}`);
+              await gitx.worktreeRemove(gitCtx, dest);
+              return (await gitx.worktreeAdd(gitCtx, dest, branch)).ok ? dest : null;
+            },
+            removeRebaseWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
           },
-          removeLandingWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
-          makeRebaseWorktree: async (branch) => {
-            const dest = join(paths.rebaseWorktreesDir, `${slug(branch)}-mcp-${input.issue}`);
-            await gitx.worktreeRemove(gitCtx, dest);
-            return (await gitx.worktreeAdd(gitCtx, dest, branch)).ok ? dest : null;
+          {
+            openPr: input.openPr !== false,
+            locked: false,
+            repo: context.repo,
+            repoDir: root,
+            remote: context.remote,
+            branch: input.branch,
+            base,
+            trunk: base,
+            issue: input.issue,
+            title: input.title ?? `Issue #${input.issue}`,
+            changedFiles,
           },
-          removeRebaseWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
-        },
-        {
-          openPr: input.openPr !== false,
-          locked: false,
-          repo: context.repo,
-          repoDir: root,
-          remote: context.remote,
-          branch: input.branch,
-          base,
-          trunk: base,
-          issue: input.issue,
-          title: input.title ?? `Issue #${input.issue}`,
-          changedFiles,
-        },
-        {
-          preMerge: () =>
-            JSON.stringify({
-              issue: { number: input.issue, title: input.title ?? `Issue #${input.issue}` },
-              workspace: root,
-              branch: input.branch,
-              merge_base: base,
-            }),
-          postMerge: (mergeSha) =>
-            JSON.stringify({
-              issue: { number: input.issue, title: input.title ?? `Issue #${input.issue}` },
-              workspace: root,
-              branch: input.branch,
-              ...(mergeSha ? { merge_commit: { sha: mergeSha, short: mergeSha.slice(0, 7) } } : {}),
-            }),
-        },
-      );
-      return { issue: input.issue, branch: input.branch, base, ...result };
+          {
+            preMerge: () =>
+              JSON.stringify({
+                issue: { number: input.issue, title: input.title ?? `Issue #${input.issue}` },
+                workspace: root,
+                branch: input.branch,
+                merge_base: base,
+              }),
+            postMerge: (mergeSha) =>
+              JSON.stringify({
+                issue: { number: input.issue, title: input.title ?? `Issue #${input.issue}` },
+                workspace: root,
+                branch: input.branch,
+                ...(mergeSha ? { merge_commit: { sha: mergeSha, short: mergeSha.slice(0, 7) } } : {}),
+              }),
+          },
+        );
+        return { issue: input.issue, branch: input.branch, base, ...result };
+      } finally {
+        await feedback.cleanup();
+      }
     },
     async cascadeStatus(input) {
       const context = await resolveRepoContext(root);

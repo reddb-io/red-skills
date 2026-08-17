@@ -43,7 +43,8 @@ describe("MCP-to-ACP adapter packaging", () => {
   it("connects to redskilled through ACP and owns no Castle resident role", async () => {
     const source = await read("apps/dev/src/mcp-server.ts");
     expect(source).toContain("connectRedskillsProjectAcp");
-    expect(source).toContain("invokeProjectMcp(project, method, input)");
+    expect(source).toContain("invokeProjectMcp(await project(), method, input)");
+    expect(source).toContain("resolveMcpProjectRoot(server.server");
     expect(source).not.toContain("__castle-resident");
     expect(source).not.toContain("CastleResidentClient");
     expect(source).not.toContain("resolveCastleResidentBundle");

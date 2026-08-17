@@ -2,6 +2,11 @@
 set -u
 
 root="${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"
+project_root="${RED_SKILLS_PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-${OPENCODE_PROJECT_DIR:-}}}}"
+
+if [ -n "$project_root" ]; then
+  export RED_SKILLS_PROJECT_ROOT="$project_root"
+fi
 
 if [ -z "$root" ]; then
   for candidate in \
