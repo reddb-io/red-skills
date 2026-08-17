@@ -15,6 +15,7 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { ensureRedskilledDaemon } from "./client.js";
+import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 import { REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 
@@ -72,7 +73,8 @@ export async function connectRedskillsProjectAcp(
   const version = options.version ?? "1";
   const paths = options.paths ?? resolveRedskilledPaths();
   await ensureRedskilledDaemon(paths);
-  const socket = await connectEndpoint(paths.acpSocketPath);
+  const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
+  const socket = await connectEndpoint(endpoint.acpSocketPath);
   const pendingUpdates: SessionNotification["update"][] = [];
   let publicSessionId = "";
 
