@@ -115,6 +115,22 @@ MEMORY_BUNDLE="dist/memory.bundle.min.mjs"
 MEMORY_TOKENIZER="dist/memory-tokenizer.asset.cjs"
 MEMORY_BUNDLE_BEFORE=10698895
 RANK_TABLE_PREFIX='bpe_ranks:"! 0 IQ== Ig== Iw=='
+memory_asset_backup="$(mktemp -d)"
+for asset in "$MEMORY_BUNDLE" "$MEMORY_TOKENIZER"; do
+  if [[ -f "$asset" ]]; then
+    cp "$asset" "$memory_asset_backup/$(basename "$asset")"
+  fi
+done
+cleanup_memory_assets() {
+  for asset in "$MEMORY_BUNDLE" "$MEMORY_TOKENIZER"; do
+    rm -f -- "$asset"
+    if [[ -f "$memory_asset_backup/$(basename "$asset")" ]]; then
+      cp "$memory_asset_backup/$(basename "$asset")" "$asset"
+    fi
+  done
+  rm -rf -- "$memory_asset_backup"
+}
+trap cleanup_memory_assets EXIT
 
 if grep -qF -- '--lazy-asset-entry src/tokenizer-asset.ts' "$MEMORY_PACKAGE" \
   && grep -qF -- '--lazy-asset memory-tokenizer.asset.cjs' "$MEMORY_PACKAGE"; then
