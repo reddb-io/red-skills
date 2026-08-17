@@ -17,6 +17,7 @@ pass() {
 }
 
 WORKFLOW=".github/workflows/red-publish.yml"
+WORKSPACE_CI=".github/workflows/red-workspace-ci.yml"
 
 line_of_step() {
   local step="$1"
@@ -49,6 +50,9 @@ for asset in \
   grep -qF "$asset" "$WORKFLOW" || fail "release upload must carry $asset"
 done
 pass "release workflow builds, signs, verifies, and uploads the package set"
+grep -qF 'run: scripts/test-package-set-contract.sh' "$WORKSPACE_CI" ||
+  fail "workspace CI must run the package-set contract before merge"
+pass "workspace CI runs the package-set contract before merge"
 
 source_commit="1111111111111111111111111111111111111111"
 other_commit="2222222222222222222222222222222222222222"
