@@ -44,6 +44,7 @@ import {
   type WaitForReviewInput,
   type CiAwaitInput,
 } from "../merge.js";
+import { openHeldDraftPr } from "../merge-hold.js";
 import { integrateBaseBeforePr, type PrePrIntegrationResult } from "../pre-pr-integration.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
@@ -688,6 +689,40 @@ export async function handoffForReview(
     preserved: true,
     swept: false,
   };
+}
+
+export async function handoffForMergeHold(c: StageCommon): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  await pushAttempt(deps.remoteGit, input.repoDir, c.branch, c.branch);
+  const parked = await parkPrePrIntegrationRefusal(c, await integrateBaseBeforeOpeningPr(c, c.base));
+  if (parked) return parked;
+  const opened = await openHeldDraftPr(deps.mergeExec, {
+    repo: input.repo,
+    branch: c.branch,
+    target: c.base,
+    n: input.issue,
+    title: input.title,
+  });
+  if (!opened.ok) {
+    return await mergeFailed(c, "merge-hold-draft-pr-failed", false, { ensureVisible: false });
+  }
+  await parkTerminalHandoff(deps, input.issue, "held");
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: merge hold is active — Worker and gate completed, and PR #${opened.prNumber} is draft. Remove the merge-hold marker from the Issue before requeueing when the human release condition is satisfied.`,
+  );
+  await recordOutcomeBestEffort(c, "held", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+  });
+  await releaseOwnedClaim(deps, input);
+  return preservedTerminal({
+    outcome: "held",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    locked: false,
+    hooksFired: c.hooksFired,
+  });
 }
 export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Promise<void> {
   try {

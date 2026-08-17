@@ -494,7 +494,9 @@ export function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown>
     "current.phase": "terminal",
     "current.outcome": outcome,
   };
-  if (outcome === "done") return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
+  if (outcome === "done" || outcome === "held") {
+    return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
+  }
   if (outcome === "blocked") return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
   if (outcome === "stalled") {
     return {

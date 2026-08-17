@@ -29,6 +29,7 @@ export function deriveOutcomeRecord(outcome: ProcessOutcome | string): OutcomeRe
     case "done":
       return "success";
     case "review-requested":
+    case "held":
       return "escalated";
     default:
       return "failure";

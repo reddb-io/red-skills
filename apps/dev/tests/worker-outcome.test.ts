@@ -55,6 +55,7 @@ const TABLE: Row[] = [
   { outcome: "infra", label: "blocked:infra", recovery: null },
   // no typed label, no recovery (success / abandoned)
   { outcome: "done", label: null, recovery: null },
+  { outcome: "held", label: null, recovery: null },
   { outcome: "claim-lost", label: null, recovery: null },
 ];
 
@@ -71,6 +72,7 @@ describe("worker-outcome — exhaustive outcome → (label, recovery) table", ()
     // duplicated row is caught.
     const ALL: WorkerOutcome[] = [
       "done",
+      "held",
       "blocked",
       "no-sentinel",
       "signal-killed",
@@ -120,6 +122,7 @@ describe("worker-outcome — exhaustive outcome → (label, recovery) table", ()
 describe("worker-outcome — exhaustive outcome → envelope status table", () => {
   const STATUS_TABLE: Array<{ outcome: WorkerOutcome; status: AttemptStatus }> = [
     { outcome: "done", status: "done" },
+    { outcome: "held", status: "blocked" },
     { outcome: "no-sentinel", status: "no-sentinel" },
     // #1308: signal-killed is still a death without a completion signal — it
     // emits the same `no-sentinel` envelope so the crash sections appear; the
@@ -160,6 +163,7 @@ describe("worker-outcome — exhaustive outcome → envelope status table", () =
   it("covers every WorkerOutcome member exactly once", () => {
     const ALL: WorkerOutcome[] = [
       "done",
+      "held",
       "blocked",
       "no-sentinel",
       "signal-killed",

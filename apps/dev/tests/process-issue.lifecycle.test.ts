@@ -16,6 +16,7 @@ import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./proc
 import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
 import { encodeToonlLines } from "@reddb-io/toon";
 import { vi } from "vitest";
+import { MERGE_HOLD_MARKER } from "../src/core/merge-hold.js";
 
 describe("processIssue — Spin", () => {
   it("re-seeds persistent Spin with the detected pattern, then renders the exhausted fault in the Envelope", async () => {
@@ -32,6 +33,28 @@ describe("processIssue — Spin", () => {
     expect(trace.runAgentCalls[1]?.handoffContent).toContain("Spin persisted after the in-session steer");
     expect(trace.envelopeBodies).toHaveLength(1);
     expect(trace.envelopeBodies[0]).toContain("spin:monologue");
+  });
+});
+
+describe("processIssue — explicit merge hold (#3958)", () => {
+  it("runs the worker and green gate, then exposes a draft PR without landing", async () => {
+    const { deps, input, trace } = harness({
+      body: `## Agent brief\nDo it.\n\n${MERGE_HOLD_MARKER}`,
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result).toMatchObject({ outcome: "held", swept: false });
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.mergeCalls.some((argv) => argv.includes("draft=true"))).toBe(true);
+    expect(trace.mergeCalls.some((argv) => argv.includes("/merge"))).toBe(false);
+    expect(trace.mergeCalls.some((argv) => argv.includes("ready") && !argv.includes("--undo"))).toBe(false);
+    expect(trace.labelEdits.at(-1)?.add).toContain("ready-for-human");
+    expect(trace.closed).toEqual([]);
+    expect(trace.comments.at(-1)?.body).toContain("merge hold");
   });
 });
 

@@ -82,6 +82,9 @@ export function spinPatternFromOutcome(value: SpinOutcome): SpinPattern {
 export type WorkerOutcome =
   | "done"
   | "review-requested"
+  // Explicit Issue-body merge hold (#3958): implementation and validation are
+  // complete on a draft PR, but a maintainer release is still pending.
+  | "held"
   | "blocked"
   | "no-sentinel"
   // External-signal kill (#1308): the inner process was terminated by an OS
@@ -236,6 +239,7 @@ export function blockedLabelFor(o: WorkerOutcome): string | null {
     case "done":
     case "claim-lost":
     case "review-requested":
+    case "held":
       return null;
   }
 }
@@ -309,6 +313,7 @@ export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
     // PR), so it folds into the generic `blocked` bucket only to keep the
     // mapping total — like claim-lost / exhausted above.
     case "review-requested":
+    case "held":
       return "blocked";
   }
 }
@@ -379,6 +384,7 @@ export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
     case "done":
     case "claim-lost":
     case "review-requested":
+    case "held":
       return null;
   }
 }

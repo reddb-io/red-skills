@@ -2,4 +2,4 @@
 "@reddb-io/dev": patch
 ---
 
-Remove the `landing:manual` mode: a held Ticket stays ordinarily requeueable, and the concept is now on the extinction ratchet.
+Replace `landing:manual` with an explicit Issue-body merge hold: Workers still implement and validate, expose a draft PR, and remain ordinarily requeueable without entering the merge path.

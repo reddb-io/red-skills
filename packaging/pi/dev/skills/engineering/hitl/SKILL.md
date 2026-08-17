@@ -95,12 +95,14 @@ Then decide whether the answer makes the Issue delegable:
 
 If delegable, draft the refreshed `## Agent brief` before mutating anything.
 
-**A merge that must not happen yet is not a delegability question.** There is no
-engine mode that runs the pipeline and holds the click: an Issue is delegable or
-it is not. When the coding is delegable but the merge must wait on something
-outside this repository, keep the Issue `ready-for-human` and say what the merge
-waits for — the Ticket sitting in the human queue is what stops a Worker
-claiming it, and whoever owns the pull request owns the click.
+**Treat an explicit merge hold separately from delegability.** When the coding is
+delegable but merge must wait on an external decision, add
+`<!-- afk:merge-hold v1 -->` to the Issue body before requeueing it. The Worker
+runs the normal implementation and validation pipeline, opens or reuses a draft
+PR, and returns the Issue to `ready-for-human` without merging. Keep the marker
+when requeueing requested changes so the next Worker executes the guidance and
+leaves the PR draft again. Remove the marker before the final requeue only when
+the maintainer explicitly releases the merge.
 
 If non-delegable, draft the next pending decision before mutating anything.
 

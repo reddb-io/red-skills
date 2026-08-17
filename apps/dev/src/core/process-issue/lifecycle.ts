@@ -64,6 +64,7 @@ import {
   type WaitForReviewInput,
   type CiAwaitInput,
 } from "../merge.js";
+import { hasMergeHold } from "../merge-hold.js";
 import { ensureResumeRoute } from "./resume-route.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding, type LandingPhase, type LandingPostMergeValidation } from "../landing.js";
@@ -177,7 +178,7 @@ import {
   type EnvironmentLedger,
   type Verdict,
 } from "../verdict.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForMergeHold, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { reportValidationEvidenceInconsistency } from "./validation-park.js";
 import { setupFailureExcerpt } from "./setup-failure.js";
 import { hookAbortDetail, hookAbortedLanding, type HookAbortDetail } from "./hook-landing-failure.js";
@@ -1804,6 +1805,9 @@ export async function processIssue(
   }
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
+  if (hasMergeHold(input.body)) {
+    return await handoffForMergeHold(common);
+  }
   if (openPr && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
     return await handoffForReview(common, activeTaskClass, completeValidationSidecar());
   }
