@@ -111,13 +111,6 @@ const SITES: SiteDelta[] = [
     remove: [LABEL_RUNNING],
     add: [LABEL_HUMAN],
   },
-  {
-    site: "core/process-issue/terminal.ts:handoffForManualLanding",
-    current: [LABEL_RUNNING],
-    transition: parkOrHuman(null),
-    remove: [LABEL_RUNNING],
-    add: [LABEL_HUMAN],
-  },
 
   // ---------- core/process-issue/recovery.ts ----------
   {

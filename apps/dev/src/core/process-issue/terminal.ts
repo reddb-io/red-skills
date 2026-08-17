@@ -38,12 +38,13 @@ import {
 import { runPostWorkerFormat, type PostWorkerFormatExec } from "../post-worker-format.js";
 import {
   openReviewPr,
-  openManualLandingPr,
+  openPrWithoutMerging,
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
   type CiAwaitInput,
 } from "../merge.js";
+import { openHeldDraftPr } from "../merge-hold.js";
 import { integrateBaseBeforePr, type PrePrIntegrationResult } from "../pre-pr-integration.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
@@ -104,7 +105,6 @@ import {
   LABEL_HUMAN,
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
-  LABEL_LANDING_MANUAL,
   LABEL_SPEC,
 } from "../triage-labels.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
@@ -362,7 +362,7 @@ export async function terminalFailure(
  * with no pull request leaves nothing anyone browsing the tracker can see, and
  * 624 committed lines were found only by hand-inspecting `git ls-remote` while
  * three workers re-did them. The PR is the visibility surface, so open it —
- * `openManualLandingPr` reuses an existing one, making this idempotent.
+ * `openPrWithoutMerging` reuses an existing one, making this idempotent.
  *
  * Best-effort by construction: the park is the caller's outcome and a forge
  * that refuses the PR must not change it. Returns the PR number when the work
@@ -383,7 +383,7 @@ export async function ensureRemoteWorkVisible(c: StageCommon): Promise<number | 
     // No commits on the remote branch → nothing to make visible. An unreadable
     // count is treated as "nothing", never as a reason to mint an empty PR.
     if (ahead.code !== 0 || !(Number(ahead.stdout.trim() || "0") > 0)) return undefined;
-    const opened = await openManualLandingPr(deps.mergeExec, {
+    const opened = await openPrWithoutMerging(deps.mergeExec, {
       repo: input.repo,
       branch: c.branch,
       target: c.base,
@@ -574,7 +574,7 @@ export async function trunkDivergedBlocked(
  * one-state-role invariant BEFORE the tracker call. The delta is unchanged:
  * remove [running], add [ready-for-human] plus the typed `blocked:*` reason
  * when the outcome has one (a handoff like `review-requested` /
- * `manual-landing` has none, so it parks on the plain human gate).
+ * a handoff has none, so it parks on the plain human gate).
  */
 async function parkTerminalHandoff(
   deps: ProcessIssueDeps,
@@ -690,61 +690,39 @@ export async function handoffForReview(
     swept: false,
   };
 }
-export async function handoffForManualLanding(
-  c: StageCommon,
-  base: string,
-  validationSidecar: string[],
-): Promise<ProcessIssueResult> {
+
+export async function handoffForMergeHold(c: StageCommon): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   await pushAttempt(deps.remoteGit, input.repoDir, c.branch, c.branch);
-  const parked = await parkPrePrIntegrationRefusal(c, await integrateBaseBeforeOpeningPr(c, base));
+  const parked = await parkPrePrIntegrationRefusal(c, await integrateBaseBeforeOpeningPr(c, c.base));
   if (parked) return parked;
-  const opened = await openManualLandingPr(deps.mergeExec, {
+  const opened = await openHeldDraftPr(deps.mergeExec, {
     repo: input.repo,
     branch: c.branch,
-    target: base,
+    target: c.base,
     n: input.issue,
     title: input.title,
   });
   if (!opened.ok) {
-    return await mergeFailed(c, "manual-landing-pr-open-failed", false, { ensureVisible: false });
+    return await mergeFailed(c, "merge-hold-draft-pr-failed", false, { ensureVisible: false });
   }
-  await emitBackpressureReview(c, opened.prNumber);
-  const prRef = opened.prNumber !== undefined ? `PR #${opened.prNumber}` : "the open PR";
-  const prUrl = opened.prNumber !== undefined ? `https://github.com/${input.repo}/pull/${opened.prNumber}` : undefined;
-  const reason =
-    `manual landing (\`landing:manual\`): the full pipeline ran and ${prRef}` +
-    ` is open, but the merge is HELD for a human's final merge click`;
-  await parkTerminalHandoff(deps, input.issue, "manual-landing");
-  const envelopeLines = [
-    `Inner agent completed (DONE, committed) and ${prRef} is open (${prUrl ?? "PR URL unavailable"}).`,
-    `Held for MANUAL LANDING (\`landing:manual\`, #1049): a human drives the final merge click; the inner agent was NOT re-run.`,
-    `The issue auto-closes on PR merge via \`Closes #${input.issue}\`.`,
-  ];
-  const posted = await emitFailureEnvelope(c, envelopeStatusFor("manual-landing"), "manual-landing", {
-    notes: envelopeLines.join("\n"),
-    validation: validationSidecar.length > 0 ? validationSidecar.join("\n") : undefined,
-  });
-  await writeCurrentBlockerBestEffort(c.deps, input, blockerForFailure("manual-landing", { log: reason }));
+  await parkTerminalHandoff(deps, input.issue, "held");
   await deps.gh.comment(
     input.issue,
-    `🤖 /afk: ${reason}. ${prUrl ? `${prUrl} — ` : ""}the implementation is complete and committed. ` +
-      `Holding for a human to land the existing PR (merge it to auto-close this issue); the inner agent was NOT re-run (#1049).`,
+    `🤖 /afk: merge hold is active — Worker and gate completed, and PR #${opened.prNumber} is draft. Remove the merge-hold marker from the Issue before requeueing when the human release condition is satisfied.`,
   );
-  await recordOutcomeBestEffort(c, "manual-landing", {
+  await recordOutcomeBestEffort(c, "held", {
     durationS: deps.nowEpoch() - c.startedEpoch,
   });
   await releaseOwnedClaim(deps, input);
-  return {
-    outcome: "manual-landing",
+  return preservedTerminal({
+    outcome: "held",
     issue: input.issue,
     branch: c.branch,
     base: c.base,
+    locked: false,
     hooksFired: c.hooksFired,
-    envelopePosted: posted,
-    preserved: true,
-    swept: false,
-  };
+  });
 }
 export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Promise<void> {
   try {

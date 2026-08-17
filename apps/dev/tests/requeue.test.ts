@@ -119,23 +119,6 @@ describe("requeue — supported kinds (validation, validation-infra, spec, infra
     expect(plan.addLabels).toEqual(["ready-for-agent"]);
   });
 
-  it("requeues a manual-landing validation park without stripping the landing mode", () => {
-    const plan = planRequeue({
-      body: parkedBody,
-      labels: ["ready-for-human", "landing:manual", "blocked:validation"],
-      guidance: "Validation failure fixed; rerun the agent.",
-    });
-    expect(plan.requeueable).toBe(true);
-    expect(plan.refuseForHitl).toBe(false);
-    expect(plan.activeBlocker?.kind).toBe("validation");
-    expect(plan.bodyChanged).toBe(true);
-    expect(plan.body).not.toContain("<!-- red:blocker-state v1 -->");
-    expect(plan.body).toContain("## Resolved blockers");
-    expect(plan.removeLabels).toEqual(expect.arrayContaining(["ready-for-human", "blocked:validation"]));
-    expect(plan.removeLabels).not.toContain("landing:manual");
-    expect(plan.addLabels).toEqual(["ready-for-agent"]);
-  });
-
   it("accepts blocked:spec with a consistent body blocker", () => {
     const plan = planRequeue({
       body: specBody,

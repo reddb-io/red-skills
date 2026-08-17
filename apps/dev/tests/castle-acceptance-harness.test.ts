@@ -292,7 +292,7 @@ describe("castle acceptance harness", () => {
               state: "CLOSED",
               createdAt: "2026-07-17T02:00:00.000Z",
               closedAt: PROVEN_TICKET.closedAt,
-              labels: ["spec:1900", "landing:manual"],
+              labels: ["spec:1900"],
               url: PROVEN_TICKET.evidence,
             },
           ],

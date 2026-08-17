@@ -32,6 +32,7 @@ import {
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
+import { openHeldDraftPr } from "../src/core/merge-hold.js";
 
 /**
  * Build a fake Exec that records every argv it sees and replies from a
@@ -829,6 +830,77 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
       reviewLabel: "ready-for-review",
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("openHeldDraftPr (explicit merge hold, #3958)", () => {
+  it("creates a draft PR and never makes it ready or merges it", async () => {
+    let prMade = false;
+    const recorded: string[][] = [];
+    const exec: Exec = async (argv) => {
+      recorded.push(argv);
+      if (argv.includes("POST") && argv.some((arg) => /repos\/.+\/pulls$/.test(arg))) {
+        prMade = true;
+        return { code: 0, stdout: JSON.stringify({ number: 88 }), stderr: "" };
+      }
+      if (listsOpenPr(argv)) return { code: 0, stdout: prMade ? "88\n" : "", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    const result = await openHeldDraftPr(exec, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/9-risky-change",
+      target: "main",
+      n: 9,
+      title: "risky change",
+    });
+
+    expect(result).toEqual({ ok: true, prNumber: 88 });
+    const calls = joined(recorded);
+    expect(calls.some((call) => call.includes("draft=true") && call.includes("base=main"))).toBe(true);
+    expect(calls.some((call) => call.includes("pr ready"))).toBe(false);
+    expect(calls.some((call) => call.includes("/merge"))).toBe(false);
+  });
+
+  it("converts an existing PR back to draft without entering the merge path", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (argv) => listsOpenPr(argv), result: { stdout: "42\n" } },
+    ]);
+
+    const result = await openHeldDraftPr(exec, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/9-risky-change",
+      target: "main",
+      n: 9,
+      title: "risky change",
+    });
+
+    expect(result).toEqual({ ok: true, prNumber: 42 });
+    const commands = joined(calls);
+    expect(commands).toContain("gh -R reddb-io/red-skills pr ready 42 --undo");
+    expect(commands.some((call) => call.includes("/merge"))).toBe(false);
+  });
+
+  it("leaves an existing draft untouched on repeated held attempts", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (argv) => listsOpenPr(argv), result: { stdout: "42\n" } },
+      {
+        match: (argv) => argv.includes("ready") && argv.includes("--undo"),
+        result: { code: 1, stderr: "Pull request is already a draft" },
+      },
+    ]);
+
+    const result = await openHeldDraftPr(exec, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/9-risky-change",
+      target: "main",
+      n: 9,
+      title: "risky change",
+    });
+
+    expect(result).toEqual({ ok: true, prNumber: 42 });
+    expect(joined(calls)).toContain("gh -R reddb-io/red-skills pr ready 42 --undo");
+    expect(joined(calls).some((call) => call.includes("/merge"))).toBe(false);
   });
 });
 
