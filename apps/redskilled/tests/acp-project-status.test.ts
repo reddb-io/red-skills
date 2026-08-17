@@ -35,7 +35,8 @@ describe("Project-scoped ACP status context", () => {
     });
     let connection: ClientConnection | undefined;
     try {
-      connection = await connectProject(control.socketPath, root);
+      const connected = await connectProject(control.socketPath, root);
+      connection = connected.connection;
       const status = await connection.agent.request<RedskillsProjectStatusSnapshot>(
         "_redskills/project_status",
         {},
@@ -76,6 +77,13 @@ describe("Project-scoped ACP status context", () => {
           detail: "the request lane missed its threshold",
         },
       });
+
+      const generic = await connection.agent.request(methods.agent.session.prompt, {
+        sessionId: connected.sessionId,
+        prompt: [{ type: "text", text: "/status" }],
+      });
+      expect((generic._meta as { redskills?: { projectControl?: unknown } } | undefined)
+        ?.redskills?.projectControl).toEqual(status);
 
       observed = hostState(identity.projectLabel, false);
       const unknown = await connection.agent.request<RedskillsProjectStatusSnapshot>(
@@ -161,7 +169,10 @@ function hostState(projectLabel: string, measured: boolean) {
   };
 }
 
-async function connectProject(socketPath: string, cwd: string): Promise<ClientConnection> {
+async function connectProject(
+  socketPath: string,
+  cwd: string,
+): Promise<{ readonly connection: ClientConnection; readonly sessionId: string }> {
   const socket = connect(socketPath);
   await once(socket, "connect");
   const connection = client({ name: "Project status contract" }).connect(socketStream(socket));
@@ -170,6 +181,6 @@ async function connectProject(socketPath: string, cwd: string): Promise<ClientCo
     clientCapabilities: {},
     clientInfo: { name: "Project status contract", version: "1" },
   });
-  await connection.agent.request(methods.agent.session.new, { cwd, mcpServers: [] });
-  return connection;
+  const session = await connection.agent.request(methods.agent.session.new, { cwd, mcpServers: [] });
+  return { connection, sessionId: session.sessionId };
 }
