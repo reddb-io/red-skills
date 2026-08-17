@@ -6,6 +6,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   isRspRewriteHook,
@@ -229,6 +230,46 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
     expect(stop.source).toContain("hook_event_name: __sourceEvent");
     expect(stop.source).toContain("transcript_text");
     expect(stop.source).toContain("sessionApi.messages");
+  });
+
+  it("emits lexically valid Stop bindings for the Codex and Claude adapter commands", () => {
+    writeHookFile("codex.hooks.json", {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: `sh -c 'tmp="$(mktemp)"; trap "rm -f \\"$tmp\\"" EXIT; timeout "${"$"}{RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat >"$tmp" 2>/dev/null || true; timeout "${"$"}{RED_SKILLS_HOOK_TIMEOUT_S:-3s}" node "${"$"}{CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs" hook Stop --runner codex <"$tmp" || printf "{}"'`,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: `sh -c 'timeout "${"$"}{RED_SKILLS_HOOK_TIMEOUT_S:-3s}" node "${"$"}{CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" hook Stop --runner claude || printf "{}"'`,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const stop = planPluginHooks(root, "dev").find((plan) => plan.sourceEvent === "Stop")!;
+    const compiled = ts.transpileModule(stop.source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    });
+
+    expect(stop.source).toContain("--runner codex");
+    expect(stop.source).toContain("--runner claude");
+    expect(() => Function(compiled.outputText)).not.toThrow();
   });
 
   it("maps PreCompact to experimental.session.compacting", () => {
