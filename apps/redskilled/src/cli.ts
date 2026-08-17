@@ -78,6 +78,7 @@ import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-re
 import { stabilizeRedskilledEntry } from "./stable-bundle.js";
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
 import { runAcpWorkerCommand } from "./acp-worker-command.js";
+import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -599,7 +600,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "acp") {
     const paths = resolveRedskilledPaths();
     await ensureRedskilledDaemon(paths);
-    return await runRedskillsAcpAdapter(paths);
+    return await runRedskillsAcpAdapter((await resolveRedskilledClientEndpoint(paths)).paths);
   }
 
   if (command === "acp-worker") {

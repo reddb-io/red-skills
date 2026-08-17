@@ -60,6 +60,9 @@ export async function resolveRedskilledClientEndpoint(
       ...paths,
       runtimeDir,
       socketPath: claim.socket_path,
+      acpSocketPath: paths.platform === "win32"
+        ? `\\\\.\\pipe\\redskilled-${claim.session_key_hash}-acp`
+        : join(runtimeDir, basename(paths.acpSocketPath)),
       lockPath: join(runtimeDir, basename(paths.lockPath)),
       leasePath: join(runtimeDir, basename(paths.leasePath)),
     },
