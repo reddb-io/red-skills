@@ -31,6 +31,7 @@ const HOST_WIRING_FILES = [
   "scripts/generate-pi-manifests.mjs",
   "scripts/build-gemini-extension.mjs",
   "scripts/validate-gemini-extension.mjs",
+  "scripts/install-hermes-skills.mjs",
   "scripts/install-opencode.sh",
   "scripts/install-pi.sh",
   "scripts/lib/manifest-core.mjs",
