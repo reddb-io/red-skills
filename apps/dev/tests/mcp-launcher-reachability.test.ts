@@ -86,4 +86,13 @@ describe("every MCP server resolves from a directory that is not this repo (#318
       expect(HOME_ANCHORED.test(server.script), `${server.server} lost its $HOME-anchored candidate`).toBe(true);
     }
   });
+
+  it("forwards host project-directory variables through the redskilled npm launcher", async () => {
+    const launcher = await readFile(join(ROOT, "plugins/dev/hooks/redskilled-mcp.sh"), "utf8");
+    expect(launcher).toContain("RED_SKILLS_PROJECT_ROOT");
+    expect(launcher).toContain("CLAUDE_PROJECT_DIR");
+    expect(launcher).toContain("CODEX_PROJECT_DIR");
+    expect(launcher).toContain("OPENCODE_PROJECT_DIR");
+    expect(launcher).toContain('export RED_SKILLS_PROJECT_ROOT="$project_root"');
+  });
 });

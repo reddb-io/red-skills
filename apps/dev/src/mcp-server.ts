@@ -97,6 +97,39 @@ export interface ConnectProjectMcpOptions {
   readonly transport: StdioServerTransport;
 }
 
+export interface McpRootClient {
+  getClientCapabilities(): { roots?: unknown } | undefined;
+  listRoots(): Promise<{ roots: Array<{ uri: string }> }>;
+}
+
+export async function resolveMcpProjectRoot(
+  client: McpRootClient,
+  env: NodeJS.ProcessEnv = process.env,
+  fallback = process.cwd(),
+): Promise<string> {
+  const explicit = (
+    env.RED_SKILLS_PROJECT_ROOT ??
+    env.CLAUDE_PROJECT_DIR ??
+    env.CODEX_PROJECT_DIR ??
+    env.OPENCODE_PROJECT_DIR ??
+    ""
+  ).trim();
+  if (explicit !== "") return resolve(explicit);
+
+  if (client.getClientCapabilities()?.roots !== undefined) {
+    try {
+      const listed = await client.listRoots();
+      for (const root of listed.roots) {
+        if (root.uri.startsWith("file:")) return resolve(fileURLToPath(root.uri));
+      }
+    } catch {
+      // Clients may advertise roots but refuse the optional request; cwd remains
+      // the compatibility fallback for source-checkout launchers.
+    }
+  }
+  return resolve(fallback);
+}
+
 export async function connectProjectMcp(
   options: ConnectProjectMcpOptions,
 ): Promise<void> {
@@ -110,14 +143,20 @@ export async function connectProjectMcp(
 }
 
 async function run(): Promise<void> {
-  const root = process.cwd();
-  const project = await connectRedskillsProjectAcp({
-    cwd: root,
-    name: "RedSkills MCP adapter",
-    version: buildInfo.version,
-  });
-  const server = createRedskilledMcpServer(root, (method, input) =>
-    invokeProjectMcp(project, method, input));
+  const fallbackRoot = process.cwd();
+  let projectPromise: ReturnType<typeof connectRedskillsProjectAcp> | undefined;
+  let server!: McpServer;
+  const project = () => {
+    projectPromise ??= resolveMcpProjectRoot(server.server, process.env, fallbackRoot).then((root) =>
+      connectRedskillsProjectAcp({
+        cwd: root,
+        name: "RedSkills MCP adapter",
+        version: buildInfo.version,
+      }));
+    return projectPromise;
+  };
+  server = createRedskilledMcpServer(fallbackRoot, async (method, input) =>
+    invokeProjectMcp(await project(), method, input));
   const close = () => {
     void server.close();
   };
@@ -129,7 +168,13 @@ async function run(): Promise<void> {
       transport: new StdioServerTransport(),
     });
   } finally {
-    project.close();
+    if (projectPromise !== undefined) {
+      try {
+        (await projectPromise).close();
+      } catch {
+        // A failed lazy ACP connection has no live transport to close.
+      }
+    }
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);
   }

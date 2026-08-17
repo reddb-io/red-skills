@@ -1,5 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
-import { connectProjectMcp, main } from "../src/mcp-server.js";
+import { connectProjectMcp, main, resolveMcpProjectRoot } from "../src/mcp-server.js";
+
+describe("MCP project root", () => {
+  it("prefers an explicit host project directory over the plugin cwd", async () => {
+    const client = {
+      getClientCapabilities: () => ({ roots: { listChanged: true } }),
+      listRoots: vi.fn(async () => ({ roots: [{ uri: "file:///wrong" }] })),
+    };
+
+    await expect(resolveMcpProjectRoot(client, {
+      CLAUDE_PROJECT_DIR: "/workspace/project",
+    }, "/installed/plugin")).resolves.toBe("/workspace/project");
+    expect(client.listRoots).not.toHaveBeenCalled();
+  });
+
+  it("uses the MCP client root when the process cwd belongs to the installed plugin", async () => {
+    const client = {
+      getClientCapabilities: () => ({ roots: { listChanged: true } }),
+      listRoots: vi.fn(async () => ({
+        roots: [{ uri: "file:///home/cyber/workspace/red-skills", name: "red-skills" }],
+      })),
+    };
+
+    await expect(resolveMcpProjectRoot(client, {}, "/installed/plugin"))
+      .resolves.toBe("/home/cyber/workspace/red-skills");
+  });
+
+  it("falls back to cwd when the client does not publish roots", async () => {
+    const client = {
+      getClientCapabilities: () => ({}),
+      listRoots: vi.fn(async () => ({ roots: [] })),
+    };
+
+    await expect(resolveMcpProjectRoot(client, {}, "/workspace/fallback"))
+      .resolves.toBe("/workspace/fallback");
+    expect(client.listRoots).not.toHaveBeenCalled();
+  });
+});
 
 describe("dev:afk MCP entrypoint routing", () => {
   it.each([["__castle-resident"], ["__supervise"], ["run"], ["run", "--once"], ["--once"], ["monitor"]])(
