@@ -6,7 +6,8 @@ name: red-publish
 # reviewed Version Packages PR. THIS workflow owns everything downstream of the
 # tag and nothing upstream of it:
 #
-#   1. Build every plugin/runtime bundle + checksum manifest at the tagged tree.
+#   1. Build every plugin/runtime bundle and the signed package-set manifest at
+#      the tagged tree.
 #   2. Pack the npm package, run the REAL packaged client against the packed
 #      tarball as a producer/consumer contract check, publish, and smoke the
 #      published package from the registry.
@@ -219,6 +220,10 @@ jobs:
         if: steps.target.outputs.publish == 'true'
         run: scripts/test-red-release-reddb-assets-contract.sh
 
+      - name: Test package-set contract
+        if: steps.target.outputs.publish == 'true'
+        run: scripts/test-package-set-contract.sh
+
       - name: Test agent metadata fixtures
         if: steps.target.outputs.publish == 'true'
         run: scripts/test-validate-agent-metadata.sh
@@ -241,6 +246,13 @@ jobs:
           REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
+      # The package set is a separate workstation acquisition contract, not a
+      # return to the removed per-bundle client signatures from ADR 0091.
+      # Pin the signer installer like every other third-party workflow action.
+      - name: Install cosign
+        if: steps.target.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+
       # The tag is the contract. The release engine wrote every version surface
       # when it made the Version PR, so a tag that disagrees with the tree means
       # someone tagged by hand at the wrong commit — fail before publishing
@@ -262,9 +274,9 @@ jobs:
           echo "tag and tree agree on ${VERSION}"
 
       # ADR 0091: the plugin bundles are distributed over npm with npm's own
-      # tarball shasum/provenance for integrity — the client no longer verifies a
-      # hand-rolled sigstore manifest signature, so cosign is not installed and
-      # manifests are not signed.
+      # tarball shasum/provenance for integrity. Their old per-bundle signature
+      # channel stays retired; the package-set signature below authenticates the
+      # complete workstation release contract instead.
 
       # ADR 0039: the two committed, dependency-free entrypoints —
       # plugins/dev/hooks/red-fetch.mjs (fetch role) and
@@ -652,6 +664,61 @@ jobs:
           set -euo pipefail
           pnpm package
 
+      # The first package-set contract covers the workstation artifacts the
+      # tagged tree can produce coherently today. Plugin payloads and host
+      # projections remain in the source snapshot named by SOURCE_COMMIT;
+      # Gemini/Hermes completeness is added by later Spec #3973 slices.
+      - name: Build, sign, and offline-verify package set
+        if: steps.target.outputs.publish == 'true'
+        env:
+          SOURCE_COMMIT: ${{ steps.target.outputs.sha }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp scripts/verify-package-set.mjs dist/verify-package-set.mjs
+          workstation_assets=(
+            "dist/vscode-extension-red-skills-${VERSION}.vsix"
+            dist/herdr-plugin-red-skills.bundle.min.mjs
+            dist/dev.bundle.min.mjs
+            dist/dev.manifest.json
+            dist/redskilled-mcp.bundle.min.mjs
+            dist/code-nav.bundle.min.mjs
+            dist/code-nav.manifest.json
+            dist/opencode-host.bundle.min.mjs
+            dist/opencode-host.generated.tgz
+            dist/memory.bundle.min.mjs
+            dist/memory-mcp.bundle.min.mjs
+            dist/memory-runtime-manifest.json
+            dist/brain.bundle.min.mjs
+            dist/brain-mcp.bundle.min.mjs
+            dist/brain-runtime-manifest.json
+            dist/rsp.bundle.min.mjs
+            dist/rsp-core.bundle.min.mjs
+            dist/redskilled.bundle.min.mjs
+            dist/verify-package-set.mjs
+          )
+          build_args=()
+          for asset in "${workstation_assets[@]}"; do
+            build_args+=(--asset "$asset")
+          done
+          node scripts/build-package-set.mjs \
+            --source-commit "$SOURCE_COMMIT" \
+            --out dist/package-set.manifest.json \
+            "${build_args[@]}"
+          cosign sign-blob \
+            --yes \
+            --bundle dist/package-set.manifest.sigstore.json \
+            dist/package-set.manifest.json
+
+          # Signing needs Fulcio/Rekor; verification does not. Enter a fresh
+          # network namespace after signing so this smoke proves the downloaded
+          # manifest, bundle, verifier, and payloads are sufficient by themselves.
+          sudo --preserve-env=HOME unshare --net -- \
+            "$(command -v node)" scripts/verify-package-set.mjs \
+              --manifest dist/package-set.manifest.json \
+              --bundle dist/package-set.manifest.sigstore.json \
+              --cosign-bin "$(command -v cosign)"
+
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver
       # (the packaged bin) against the packed tarball as a producer/consumer
@@ -862,10 +929,10 @@ jobs:
           major="v${NEXT#v}"
           major="${major%%.*}"
 
-          # ADR 0091: the client resolves bundles over npm; these Release assets
-          # are kept as an INERT backup artifact the client never reads. No
-          # sigstore signatures are uploaded (client signature verification
-          # removed).
+          # ADR 0091: the client resolves individual bundles over npm; those
+          # assets remain inert backups. The package-set manifest is a distinct
+          # workstation contract and carries one Sigstore bundle for the whole
+          # declared set.
           # Two of these are not an inert backup: the `.vsix` and the herdr
           # bundle are the ONLY way either companion surface is installed on a
           # machine without this monorepo (issue #3060).
@@ -892,6 +959,9 @@ jobs:
             dist/rsp.bundle.min.mjs
             dist/rsp-core.bundle.min.mjs
             dist/redskilled.bundle.min.mjs
+            dist/package-set.manifest.json
+            dist/package-set.manifest.sigstore.json
+            dist/verify-package-set.mjs
           )
           # The Release standard owns the Release; this job only ever attaches to
           # it. Two owners would race over one object: the engine re-reads the
