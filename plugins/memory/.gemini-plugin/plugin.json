@@ -21,7 +21,6 @@
   "skills": [
     "./skills/core/"
   ],
-  "hooks": "./hooks/gemini.hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "RedSkills Memory",

@@ -154,7 +154,9 @@ for expected in \
   .gemini-plugin/marketplace.json \
   scripts/generate-codex-manifests.mjs \
   scripts/generate-gemini-manifests.mjs \
-  scripts/generate-pi-manifests.mjs; do
+  scripts/generate-pi-manifests.mjs \
+  scripts/build-gemini-extension.mjs \
+  scripts/validate-gemini-extension.mjs; do
   mkdir -p "$core_tree/$(dirname "$expected")"
   : > "$core_tree/$expected"
 done

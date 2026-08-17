@@ -101,11 +101,6 @@ function deriveGeminiSkillRoots(skills) {
   return orderedRoots.map((root) => `./skills/${root}/`);
 }
 
-function geminiHooksPath(hooks) {
-  if (typeof hooks !== "string") return undefined;
-  return hooks.replace(/claude\.hooks\.json$/, "gemini.hooks.json");
-}
-
 function defaultPromptForPlugin(name, skills) {
   const skillEntries = Array.isArray(skills) ? skills : [];
   const skillNames = skillEntries
@@ -162,7 +157,9 @@ export function buildGeminiPluginManifest(claudePlugin) {
   maybeSet(manifest, "dependencies", claudePlugin.dependencies);
   manifest.keywords = pluginKeywords(claudePlugin.name);
   maybeSet(manifest, "skills", deriveGeminiSkillRoots(claudePlugin.skills));
-  maybeSet(manifest, "hooks", geminiHooksPath(claudePlugin.hooks));
+  // Gemini CLI hooks are not Claude hook manifests with a renamed file. The
+  // native dev extension builder emits the supported hooks/hooks.json subset;
+  // this compatibility metadata must not advertise a fabricated sidecar.
   maybeSet(manifest, "mcpServers", claudePlugin.mcpServers);
   manifest.interface = {
     displayName: `RedSkills ${titleCaseName(claudePlugin.name)}`,
