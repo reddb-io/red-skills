@@ -161,13 +161,17 @@ else
 fi
 rm -r -- "$lazy_probe"
 
-for package_writer in packaging/npm/scripts/prepare.mjs scripts/build-pi-packages.mjs; do
-  if grep -qF 'memory-tokenizer.asset.cjs' "$package_writer"; then
-    pass "$package_writer stages the memory tokenizer asset"
-  else
-    fail "$package_writer must stage the memory tokenizer asset"
-  fi
-done
+if grep -qF 'memory-tokenizer.asset.cjs' scripts/build-pi-packages.mjs; then
+  pass "scripts/build-pi-packages.mjs stages the memory tokenizer asset"
+else
+  fail "scripts/build-pi-packages.mjs must stage the memory tokenizer asset"
+fi
+
+if grep -qF 'memory-tokenizer.asset.cjs' packaging/npm/scripts/prepare.mjs; then
+  fail "packaging/npm/scripts/prepare.mjs must not stage the plugin-owned memory tokenizer asset"
+else
+  pass "packaging/npm/scripts/prepare.mjs leaves the memory tokenizer asset in the memory plugin package"
+fi
 
 if (( failures > 0 )); then
   printf '\n%d failure(s)\n' "$failures" >&2

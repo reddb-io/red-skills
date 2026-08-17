@@ -85,6 +85,11 @@ function checkCore(root, tarball) {
     }
   }
 
+  const unexpectedTokenizer = `package/dist/${MEMORY_TOKENIZER_ASSET}`;
+  if (listing.includes(unexpectedTokenizer)) {
+    throw new Error(`core npm tarball unexpectedly contains ${unexpectedTokenizer}`);
+  }
+
   const forbidden = listing.find(
     (entry) => entry.startsWith("package/apps/") || entry.startsWith("package/packages/"),
   );
