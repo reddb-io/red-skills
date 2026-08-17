@@ -8,6 +8,7 @@
 # runtime tree under ~/.red-skills, detects supported local CLIs, then wires each host:
 #   - Claude Code: marketplace + plugins
 #   - Codex CLI: marketplace + plugins
+#   - Gemini CLI: self-contained dev extension from the local package set
 #   - OpenCode/RedCode: generated plugin/skill/MCP/statusline surface
 #
 # The Claude and Codex marketplaces are registered from the GitHub source
@@ -52,6 +53,7 @@ Usage: install.sh [options]
 Installs RedSkills into every detected supported CLI:
   claude   -> Claude Code marketplace + dev/memory/brain plugins
   codex    -> Codex marketplace + dev/memory/brain plugins
+  gemini   -> generated, self-contained dev extension from the local package set
   opencode -> generated OpenCode plugins, skills, MCP config, and TUI config
   redcode  -> generated RedCode plugins, skills, MCP config, and TUI config
   pi       -> per-plugin Pi packages installed via `pi install`, registered in
@@ -62,7 +64,7 @@ Options:
                         Pins the materialised npm packages, not the marketplace;
                         combine with --local-marketplace to pin Claude/Codex too.
   --install-root <dir>  Install versioned runtime trees here (default: ~/.red-skills)
-  --only <list>         Comma list: claude,codex,opencode,redcode,pi (default: auto-detect)
+  --only <list>         Comma list: claude,codex,gemini,opencode,redcode,pi (default: auto-detect)
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
   --source-dir <dir>    Use an existing red-skills checkout instead of npm packages
@@ -395,6 +397,31 @@ install_codex() {
   done
 }
 
+install_gemini() {
+  if ! command -v gemini >/dev/null 2>&1; then
+    warn "gemini not found; skipping Gemini CLI"
+    return 0
+  fi
+
+  local generator="$SOURCE_DIR/scripts/build-gemini-extension.mjs"
+  local validator="$SOURCE_DIR/scripts/validate-gemini-extension.mjs"
+  local extension_root="$INSTALL_ROOT/gemini/dev"
+  if [[ "$DRY_RUN" != "true" ]]; then
+    [[ -f "$generator" ]] || die "source is missing scripts/build-gemini-extension.mjs"
+    [[ -f "$validator" ]] || die "source is missing scripts/validate-gemini-extension.mjs"
+  fi
+
+  log "building Gemini dev extension from local package set $SOURCE_DIR"
+  run node "$generator" --root "$SOURCE_DIR" --output "$extension_root"
+  run node "$validator" --extension "$extension_root"
+
+  # Gemini copies a local extension into its own home. Remove/reinstall makes a
+  # repeat converge on the selected package set without asking the host to
+  # update from GitHub or any package registry.
+  try_run gemini extensions uninstall dev || true
+  run gemini extensions install "$extension_root" --consent
+}
+
 install_opencode_compatible() {
   local host="$1"
   local label="$2"
@@ -559,6 +586,14 @@ uninstall_codex() {
   try_run codex plugin marketplace remove red-skills || true
 }
 
+uninstall_gemini() {
+  if ! command -v gemini >/dev/null 2>&1; then
+    warn "gemini not found; skipping Gemini CLI"
+    return 0
+  fi
+  try_run gemini extensions uninstall dev || true
+}
+
 opencode_source_dir_for_uninstall() {
   if [[ -n "$SOURCE_DIR" && -x "$SOURCE_DIR/scripts/install-opencode.sh" ]] \
     && grep -Fq -- '--uninstall' "$SOURCE_DIR/scripts/install-opencode.sh"; then
@@ -664,6 +699,10 @@ run_uninstall() {
     uninstall_codex
     touched_any="true"
   fi
+  if has_uninstall_target gemini; then
+    uninstall_gemini
+    touched_any="true"
+  fi
   if has_uninstall_target opencode; then
     uninstall_opencode
     touched_any="true"
@@ -682,7 +721,7 @@ run_uninstall() {
   fi
 
   if [[ "$touched_any" != "true" ]]; then
-    warn "no supported CLIs/configs detected (claude, codex, opencode, redcode, pi)"
+    warn "no supported CLIs/configs detected (claude, codex, gemini, opencode, redcode, pi)"
   fi
 }
 
@@ -793,7 +832,7 @@ case "$ONLY" in
     IFS=',' read -r -a requested_targets <<<"$ONLY"
     for target in "${requested_targets[@]}"; do
       case "$target" in
-        claude|codex|opencode|redcode|pi) ;;
+        claude|codex|gemini|opencode|redcode|pi) ;;
         *) die "--only contains unsupported target '$target'" ;;
       esac
     done
@@ -808,7 +847,9 @@ if [[ "$ACTION" == "uninstall" ]]; then
 fi
 
 require_cmd node
-require_cmd npm
+if [[ -z "$SOURCE_DIR" ]]; then
+  require_cmd npm
+fi
 prepare_source
 
 installed_any="false"
@@ -818,6 +859,10 @@ if has_target claude; then
 fi
 if has_target codex; then
   install_codex
+  installed_any="true"
+fi
+if has_target gemini; then
+  install_gemini
   installed_any="true"
 fi
 if has_target opencode; then
@@ -834,7 +879,7 @@ if has_target pi; then
 fi
 
 if [[ "$installed_any" != "true" ]]; then
-  warn "no supported CLIs detected (claude, codex, opencode, redcode, pi)"
+  warn "no supported CLIs detected (claude, codex, gemini, opencode, redcode, pi)"
 fi
 
 log "done"

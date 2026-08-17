@@ -22,7 +22,6 @@
     "./skills/productivity/",
     "./skills/misc/"
   ],
-  "hooks": "./hooks/gemini.hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "RedSkills Dev",
