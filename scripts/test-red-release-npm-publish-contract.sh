@@ -154,11 +154,14 @@ for expected in \
   .gemini-plugin/marketplace.json \
   scripts/generate-codex-manifests.mjs \
   scripts/generate-gemini-manifests.mjs \
-  scripts/generate-pi-manifests.mjs \
-  dist/opencode-host.bundle.min.mjs; do
+  scripts/generate-pi-manifests.mjs; do
   mkdir -p "$core_tree/$(dirname "$expected")"
   : > "$core_tree/$expected"
 done
+while IFS= read -r bundle; do
+  mkdir -p "$core_tree/dist"
+  : > "$core_tree/dist/$bundle"
+done < <(node -e 'const fs=require("fs");const source=fs.readFileSync("packaging/npm/scripts/prepare.mjs","utf8");for(const match of source.matchAll(/dest:\s*"([^"]+\.bundle\.min\.mjs)"/g))console.log(match[1])')
 cp packaging/npm/package.json "$core_tree/package.json"
 tar -czf "$contract_fixture/core.tgz" -C "$contract_fixture/core-tree" package
 
@@ -232,6 +235,18 @@ if node scripts/check-npm-tarball-boundaries.mjs \
   fail "core tarball carrying a per-plugin runtime bundle must fail the publish contract"
 else
   pass "core tarball carrying a per-plugin runtime bundle fails the publish contract"
+fi
+
+rm -f "$bad_core_tree/dist/$first_plugin.bundle.min.mjs"
+: > "$bad_core_tree/dist/memory-tokenizer.asset.cjs"
+tar -czf "$contract_fixture/bad-core-tokenizer.tgz" -C "$contract_fixture/bad-core" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/bad-core-tokenizer.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "core tarball carrying the memory tokenizer asset must fail the publish contract"
+else
+  pass "core tarball carrying the memory tokenizer asset fails the publish contract"
 fi
 rm -rf "$contract_fixture"
 

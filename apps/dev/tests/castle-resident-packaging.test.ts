@@ -21,8 +21,14 @@ describe("MCP-to-ACP adapter packaging", () => {
 
   it("checks it in the npm tarball and the release backup", async () => {
     const workflow = await read(".github/workflows/red-publish.yml");
-    expect(workflow).toContain(`package/dist/${ARTIFACT}`);
-    expect(workflow).toContain(`dist/${ARTIFACT}`);
+    // The publish-time presence guard moved out of the workflow YAML into the
+    // boundary script (#3957), so assert it WHERE IT LIVES. The script derives
+    // the list from `prepare.mjs`, which is why staging the artifact is enough
+    // to be guarded — and why a hand-edited list cannot silently drop it again.
+    const boundaries = await read("scripts/check-npm-tarball-boundaries.mjs");
+    expect(boundaries).toContain("stagedCoreBundles");
+    expect(boundaries).toContain("package/dist/");
+    expect(workflow).toContain("check-npm-tarball-boundaries.mjs");
     expect(workflow, "the retired sibling is still checked").not.toContain("castle-resident.bundle.min.mjs");
   });
 

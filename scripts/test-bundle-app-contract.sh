@@ -115,6 +115,22 @@ MEMORY_BUNDLE="dist/memory.bundle.min.mjs"
 MEMORY_TOKENIZER="dist/memory-tokenizer.asset.cjs"
 MEMORY_BUNDLE_BEFORE=10698895
 RANK_TABLE_PREFIX='bpe_ranks:"! 0 IQ== Ig== Iw=='
+memory_asset_backup="$(mktemp -d)"
+for asset in "$MEMORY_BUNDLE" "$MEMORY_TOKENIZER"; do
+  if [[ -f "$asset" ]]; then
+    cp "$asset" "$memory_asset_backup/$(basename "$asset")"
+  fi
+done
+cleanup_memory_assets() {
+  for asset in "$MEMORY_BUNDLE" "$MEMORY_TOKENIZER"; do
+    rm -f -- "$asset"
+    if [[ -f "$memory_asset_backup/$(basename "$asset")" ]]; then
+      cp "$memory_asset_backup/$(basename "$asset")" "$asset"
+    fi
+  done
+  rm -rf -- "$memory_asset_backup"
+}
+trap cleanup_memory_assets EXIT
 
 if grep -qF -- '--lazy-asset-entry src/tokenizer-asset.ts' "$MEMORY_PACKAGE" \
   && grep -qF -- '--lazy-asset memory-tokenizer.asset.cjs' "$MEMORY_PACKAGE"; then
@@ -161,13 +177,17 @@ else
 fi
 rm -r -- "$lazy_probe"
 
-for package_writer in packaging/npm/scripts/prepare.mjs scripts/build-pi-packages.mjs; do
-  if grep -qF 'memory-tokenizer.asset.cjs' "$package_writer"; then
-    pass "$package_writer stages the memory tokenizer asset"
-  else
-    fail "$package_writer must stage the memory tokenizer asset"
-  fi
-done
+if grep -qF 'memory-tokenizer.asset.cjs' scripts/build-pi-packages.mjs; then
+  pass "scripts/build-pi-packages.mjs stages the memory tokenizer asset"
+else
+  fail "scripts/build-pi-packages.mjs must stage the memory tokenizer asset"
+fi
+
+if grep -qF 'memory-tokenizer.asset.cjs' packaging/npm/scripts/prepare.mjs; then
+  fail "packaging/npm/scripts/prepare.mjs must not stage the plugin-owned memory tokenizer asset"
+else
+  pass "packaging/npm/scripts/prepare.mjs leaves the memory tokenizer asset in the memory plugin package"
+fi
 
 if (( failures > 0 )); then
   printf '\n%d failure(s)\n' "$failures" >&2
