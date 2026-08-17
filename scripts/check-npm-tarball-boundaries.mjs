@@ -74,6 +74,8 @@ function checkCore(root, tarball) {
     "package/scripts/generate-codex-manifests.mjs",
     "package/scripts/generate-gemini-manifests.mjs",
     "package/scripts/generate-pi-manifests.mjs",
+    "package/scripts/build-gemini-extension.mjs",
+    "package/scripts/validate-gemini-extension.mjs",
     ...stagedCoreBundles(root).map((name) => `package/dist/${name}`),
   ];
   for (const expected of required) requireEntry(listing, expected, "core npm");
