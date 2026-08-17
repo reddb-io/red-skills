@@ -9,6 +9,7 @@
 #   - Claude Code: marketplace + plugins
 #   - Codex CLI: marketplace + plugins
 #   - Gemini CLI: self-contained dev extension from the local package set
+#   - Hermes: complete dev skills in its user-global skills directory
 #   - OpenCode/RedCode: generated plugin/skill/MCP/statusline surface
 #
 # The Claude and Codex marketplaces are registered from the GitHub source
@@ -54,6 +55,7 @@ Installs RedSkills into every detected supported CLI:
   claude   -> Claude Code marketplace + dev/memory/brain plugins
   codex    -> Codex marketplace + dev/memory/brain plugins
   gemini   -> generated, self-contained dev extension from the local package set
+  hermes   -> complete dev skills in $HERMES_HOME/skills (default: ~/.hermes/skills)
   opencode -> generated OpenCode plugins, skills, MCP config, and TUI config
   redcode  -> generated RedCode plugins, skills, MCP config, and TUI config
   pi       -> per-plugin Pi packages installed via `pi install`, registered in
@@ -64,7 +66,7 @@ Options:
                         Pins the materialised npm packages, not the marketplace;
                         combine with --local-marketplace to pin Claude/Codex too.
   --install-root <dir>  Install versioned runtime trees here (default: ~/.red-skills)
-  --only <list>         Comma list: claude,codex,gemini,opencode,redcode,pi (default: auto-detect)
+  --only <list>         Comma list: claude,codex,gemini,hermes,opencode,redcode,pi (default: auto-detect)
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
   --source-dir <dir>    Use an existing red-skills checkout instead of npm packages
@@ -149,6 +151,11 @@ has_uninstall_target() {
     pi)
       command -v pi >/dev/null 2>&1 && return 0
       [[ -d "$HOME/.pi/agent" ]] && return 0
+      return 1
+      ;;
+    hermes)
+      command -v hermes >/dev/null 2>&1 && return 0
+      [[ -f "${HERMES_HOME:-$HOME/.hermes}/redskills-dev-owned.txt" ]] && return 0
       return 1
       ;;
     *)
@@ -422,6 +429,16 @@ install_gemini() {
   run gemini extensions install "$extension_root" --consent
 }
 
+install_hermes() {
+  local installer="$SOURCE_DIR/scripts/install-hermes-skills.mjs"
+  local hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+  if [[ "$DRY_RUN" != "true" ]]; then
+    [[ -f "$installer" ]] || die "source is missing scripts/install-hermes-skills.mjs"
+  fi
+  log "installing complete Hermes dev skills from local package set $SOURCE_DIR"
+  run node "$installer" --install --source "$SOURCE_DIR" --home "$hermes_home"
+}
+
 install_opencode_compatible() {
   local host="$1"
   local label="$2"
@@ -594,6 +611,29 @@ uninstall_gemini() {
   try_run gemini extensions uninstall dev || true
 }
 
+hermes_source_dir_for_uninstall() {
+  if [[ -n "$SOURCE_DIR" && -f "$SOURCE_DIR/scripts/install-hermes-skills.mjs" ]]; then
+    printf '%s\n' "$SOURCE_DIR"
+    return 0
+  fi
+  if [[ -f "$INSTALL_ROOT/current/scripts/install-hermes-skills.mjs" ]]; then
+    printf '%s\n' "$INSTALL_ROOT/current"
+    return 0
+  fi
+  return 1
+}
+
+uninstall_hermes() {
+  local source hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+  if ! source="$(hermes_source_dir_for_uninstall)"; then
+    warn "no RedSkills source found; skipped Hermes owned-state uninstall"
+    return 0
+  fi
+  require_cmd node
+  log "uninstalling Hermes RedSkills owned state"
+  run node "$source/scripts/install-hermes-skills.mjs" --uninstall --home "$hermes_home"
+}
+
 opencode_source_dir_for_uninstall() {
   if [[ -n "$SOURCE_DIR" && -x "$SOURCE_DIR/scripts/install-opencode.sh" ]] \
     && grep -Fq -- '--uninstall' "$SOURCE_DIR/scripts/install-opencode.sh"; then
@@ -703,6 +743,10 @@ run_uninstall() {
     uninstall_gemini
     touched_any="true"
   fi
+  if has_uninstall_target hermes; then
+    uninstall_hermes
+    touched_any="true"
+  fi
   if has_uninstall_target opencode; then
     uninstall_opencode
     touched_any="true"
@@ -721,7 +765,7 @@ run_uninstall() {
   fi
 
   if [[ "$touched_any" != "true" ]]; then
-    warn "no supported CLIs/configs detected (claude, codex, gemini, opencode, redcode, pi)"
+    warn "no supported CLIs/configs detected (claude, codex, gemini, hermes, opencode, redcode, pi)"
   fi
 }
 
@@ -832,7 +876,7 @@ case "$ONLY" in
     IFS=',' read -r -a requested_targets <<<"$ONLY"
     for target in "${requested_targets[@]}"; do
       case "$target" in
-        claude|codex|gemini|opencode|redcode|pi) ;;
+        claude|codex|gemini|hermes|opencode|redcode|pi) ;;
         *) die "--only contains unsupported target '$target'" ;;
       esac
     done
@@ -865,6 +909,10 @@ if has_target gemini; then
   install_gemini
   installed_any="true"
 fi
+if has_target hermes; then
+  install_hermes
+  installed_any="true"
+fi
 if has_target opencode; then
   install_opencode
   installed_any="true"
@@ -879,7 +927,7 @@ if has_target pi; then
 fi
 
 if [[ "$installed_any" != "true" ]]; then
-  warn "no supported CLIs detected (claude, codex, gemini, opencode, redcode, pi)"
+  warn "no supported CLIs detected (claude, codex, gemini, hermes, opencode, redcode, pi)"
 fi
 
 log "done"

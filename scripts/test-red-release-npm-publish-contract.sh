@@ -156,7 +156,8 @@ for expected in \
   scripts/generate-gemini-manifests.mjs \
   scripts/generate-pi-manifests.mjs \
   scripts/build-gemini-extension.mjs \
-  scripts/validate-gemini-extension.mjs; do
+  scripts/validate-gemini-extension.mjs \
+  scripts/install-hermes-skills.mjs; do
   mkdir -p "$core_tree/$(dirname "$expected")"
   : > "$core_tree/$expected"
 done
