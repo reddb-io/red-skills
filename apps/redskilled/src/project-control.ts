@@ -7,7 +7,10 @@ import {
 } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import type { RedskilledDemandOutcome } from "./demand-loop.js";
+import type { RedskilledHostState } from "./host-state.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
+import { REDSKILLED_QUEUE_STALENESS_MS } from "./queue-discovery.js";
 
 export const PROJECT_CONTROL_METHODS = [
   "_redskills/project_drain",
@@ -16,8 +19,46 @@ export const PROJECT_CONTROL_METHODS = [
 ] as const;
 
 export type ProjectControlOperation = "drain" | "stop";
+export type ProjectControlCommand = ProjectControlOperation | "status";
 type ProjectDrainIntent = "inactive" | "draining" | "stopped";
 export type ProjectControlOperationStatus = "draining" | "already-draining" | "stopped" | "already-stopped";
+export type ProjectStatusFreshness = "fresh" | "stale" | "unknown";
+
+export interface ProjectStatusContext {
+  readonly version: 1;
+  readonly observed_at: string;
+  readonly queue: {
+    readonly posture: RedskilledDemandOutcome | "queued" | "unknown";
+    readonly depth: number | null;
+    readonly target: number | null;
+    readonly live: number;
+    readonly wanted: number | null;
+    readonly observed_at: string | null;
+    readonly age_ms: number | null;
+    readonly freshness: ProjectStatusFreshness;
+    readonly detail: string;
+  };
+  readonly workers: {
+    readonly total: number;
+    readonly freshness: "fresh";
+    readonly observed_at: string;
+    readonly items: readonly {
+      readonly worker_id: string;
+      readonly state: "running";
+      readonly started_at: string;
+      readonly isolated: boolean;
+      readonly warnings: readonly string[];
+      readonly base_commits_ahead: number | null;
+    }[];
+  };
+  readonly adapter_health: {
+    readonly status: "healthy" | "degraded" | "unknown";
+    readonly checked_at: string | null;
+    readonly last_success_at: string | null;
+    readonly last_failure_at: string | null;
+    readonly detail: string;
+  };
+}
 
 interface ProjectControlUpdate {
   readonly sequence: number;
@@ -66,6 +107,75 @@ export function projectControlSnapshot(
     revision: control.revision,
     updates: [...control.updates],
   };
+}
+
+/** Project-safe status derived from one daemon read; no adapter performs its own observation. */
+export function projectStatusSnapshot(
+  project: AcpProjectWorkspace,
+  projectControls: Map<string, ProjectControlState>,
+  host: RedskilledHostState,
+  observedAt: string,
+) {
+  const workers = host.workers
+    .filter((worker) => worker.project_label === project.projectLabel)
+    .sort((left, right) => left.worker_id.localeCompare(right.worker_id));
+  const registration = host.registrations?.find((entry) => entry.project_label === project.projectLabel);
+  const intent = host.demand?.projects.find((entry) => entry.project_label === project.projectLabel);
+  const poll = registration?.last_poll;
+  const ageMs = ageBetween(observedAt, poll?.at);
+  const freshness: ProjectStatusFreshness = poll == null || ageMs == null
+    ? "unknown"
+    : ageMs > REDSKILLED_QUEUE_STALENESS_MS
+      ? "stale"
+      : "fresh";
+  const depth = poll?.outcome === "counted" ? poll.depth : null;
+  const posture = intent?.outcome ?? (depth == null ? "unknown" : depth === 0 ? "queue-drained" : "queued");
+  const health = host.request_health;
+
+  const context: ProjectStatusContext = {
+    version: 1,
+    observed_at: observedAt,
+    queue: {
+      posture,
+      depth,
+      target: intent?.target ?? registration?.target ?? null,
+      live: workers.length,
+      wanted: intent?.wanted ?? null,
+      observed_at: poll?.at ?? null,
+      age_ms: ageMs,
+      freshness,
+      detail: intent?.detail ?? poll?.detail ?? "the daemon has not observed this Project queue",
+    },
+    workers: {
+      total: workers.length,
+      freshness: "fresh",
+      observed_at: observedAt,
+      items: workers.map((worker) => ({
+        worker_id: worker.worker_id,
+        state: "running",
+        started_at: worker.started_at,
+        isolated: worker.isolated,
+        warnings: [...worker.warnings],
+        base_commits_ahead: worker.base_commits_ahead ?? null,
+      })),
+    },
+    adapter_health: health == null
+      ? {
+          status: "unknown",
+          checked_at: null,
+          last_success_at: null,
+          last_failure_at: null,
+          detail: "the daemon has not published request-lane health",
+        }
+      : {
+          status: health.status,
+          checked_at: health.last_probe_at,
+          last_success_at: health.last_success_at,
+          last_failure_at: health.last_failure_at,
+          detail: health.detail,
+        },
+  };
+  return { ...projectControlSnapshot(project, projectControls), context };
 }
 
 export async function applyProjectControl(
@@ -140,10 +250,11 @@ export function createProjectControlStore(path: string): ProjectControlStore {
   };
 }
 
-export function coreProjectOperation(prompt: unknown): ProjectControlOperation | undefined {
+export function coreProjectOperation(prompt: unknown): ProjectControlCommand | undefined {
   const text = promptBlocksText(prompt).trim().toLowerCase();
   if (text === "/drain" || text === "drain") return "drain";
   if (text === "/stop" || text === "stop" || text === "/project_stop") return "stop";
+  if (text === "/status" || text === "status" || text === "/project_status") return "status";
   return undefined;
 }
 
@@ -159,15 +270,17 @@ function promptBlocksText(prompt: unknown): string {
 export async function notifyV1ProjectControl(
   upstream: AgentConnection["client"],
   sessionId: string,
-  operation: ProjectControlOperation,
-  control: Awaited<ReturnType<typeof applyProjectControl>>,
+  operation: ProjectControlCommand,
+  control: { readonly drain_intent: ProjectDrainIntent; readonly revision: number },
 ): Promise<void> {
   await upstream.notify(methods.client.session.update, {
     sessionId,
     update: {
       sessionUpdate: "plan",
       entries: [{
-        content: `${operation === "drain" ? "Continue" : "Stop"} the Project drain`,
+        content: operation === "status"
+          ? "Observe the Project status"
+          : `${operation === "drain" ? "Continue" : "Stop"} the Project drain`,
         priority: "high",
         status: "completed",
       }],
@@ -189,13 +302,16 @@ export async function runV2ProjectControlTurn(
   sessions: ReadonlyMap<string, ProjectControlSession>,
   params: acpV2.PromptRequest,
   upstream: acpV2.AgentContext,
-  operation: ProjectControlOperation,
+  operation: ProjectControlCommand,
   projectControls: Map<string, ProjectControlState>,
   persist: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
+  readStatus: (project: AcpProjectWorkspace) => Promise<ReturnType<typeof projectStatusSnapshot>>,
 ): Promise<void> {
   const session = sessions.get(params.sessionId);
   if (session == null) return;
-  const control = await applyProjectControl(session.project, operation, projectControls, persist);
+  const control = operation === "status"
+    ? await readStatus(session.project)
+    : await applyProjectControl(session.project, operation, projectControls, persist);
   await upstream.notify(acpV2.methods.client.session.update, {
     sessionId: params.sessionId,
     update: {
@@ -204,7 +320,9 @@ export async function runV2ProjectControlTurn(
         type: "items",
         planId: "project-control",
         entries: [{
-          content: `${operation === "drain" ? "Continue" : "Stop"} the Project drain`,
+          content: operation === "status"
+            ? "Observe the Project status"
+            : `${operation === "drain" ? "Continue" : "Stop"} the Project drain`,
           priority: "high",
           status: "completed",
         }],
@@ -216,6 +334,15 @@ export async function runV2ProjectControlTurn(
     update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
     _meta: { redskills: { authority: "redskilled", projectControl: control } },
   });
+}
+
+function ageBetween(now: string, observed: string | undefined): number | null {
+  if (observed == null) return null;
+  const nowMs = Date.parse(now);
+  const observedMs = Date.parse(observed);
+  return Number.isFinite(nowMs) && Number.isFinite(observedMs)
+    ? Math.max(0, nowMs - observedMs)
+    : null;
 }
 
 function parseStoreSnapshot(raw: string): unknown {

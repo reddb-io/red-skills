@@ -18,7 +18,10 @@ export async function invokeProjectMcp(
   input: Readonly<Record<string, unknown>>,
 ): Promise<unknown> {
   const operation = CONTROL_TOOL.get(tool);
-  if (operation != null && Object.keys(input).length === 0) return await session.control(operation);
+  if (operation != null && Object.keys(input).length === 0) {
+    if (operation === "status") return await session.control("status");
+    return await session.control(operation);
+  }
   if (!isPublicCapability(tool)) {
     throw new Error(`unsupported ACP Project capability ${JSON.stringify(tool)}`);
   }

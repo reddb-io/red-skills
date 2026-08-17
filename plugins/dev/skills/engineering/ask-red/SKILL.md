@@ -175,7 +175,10 @@ forge state, next action, terminal outcome, or bounded inert-custodian fault) ->
 `apps/redskilled/src/github-gateway.ts` and `apps/redskilled/src/acp-github.ts`;
 ACP Project adapter lifecycle (generic core and typed `_redskills/*` parity,
 ordered updates, permissions and cancellation, with MCP/CLI adapters owning no
-durable Project state, GitHub client, Worker birth, or private daemon protocol) ->
+durable Project state, GitHub client, Worker birth, or private daemon protocol;
+Project status carries daemon-projected drain intent, dated queue posture,
+Project Worker summaries, and request-lane adapter health, preserving stale and
+unknown markers for stateless host sidebars) ->
 `apps/redskilled/src/acp-client.ts`, `apps/dev/src/project-acp-adapter.ts`, and
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->

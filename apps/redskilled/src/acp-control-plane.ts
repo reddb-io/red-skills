@@ -82,7 +82,7 @@ import {
   createProjectControlStore,
   notifyV1ProjectControl,
   PROJECT_CONTROL_METHODS,
-  projectControlSnapshot,
+  projectStatusSnapshot,
   projectControlStorePath,
   runV2ProjectControlTurn,
   type ProjectControlOperation,
@@ -135,6 +135,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly githubGateway?: RedskilledGithubGatewayRegistration;
   /** Explicit endpoint authority; ordinary public/project ACP stays false. */
   readonly hostAdministration?: boolean;
+  /** Daemon clock used to date status projections. */
+  readonly clock?: () => string;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -240,11 +242,17 @@ async function servePublicConnection(
   const writeGithub = bindAcpProjectGithubWrite(options.githubGateway, scopedProject);
   const handoffGithubCustody = bindAcpProjectGithubCustodyHandoff(options.githubGateway, scopedProject);
   const readGithubCustody = bindAcpProjectGithubCustodyStatus(options.githubGateway, scopedProject);
-  const readProjectControl = async () => {
-    const control = projectControlSnapshot(scopedProject(), projectControls);
+  const readProjectStatus = async (project: AcpProjectWorkspace) => {
+    const control = projectStatusSnapshot(
+      project,
+      projectControls,
+      options.hostState(),
+      options.clock?.() ?? new Date().toISOString(),
+    );
     const mergeCustody = await readGithubCustody();
     return mergeCustody == null ? control : { ...control, merge_custody: mergeCustody };
   };
+  const readProjectControl = () => readProjectStatus(scopedProject());
   const readProjectBudget = bindAcpProjectGithubBudget(options.githubGateway, scopedProject);
   const readHostBudget = bindAcpHostGithubBudget(options.githubGateway, options.hostAdministration === true);
   const emptyParams = () => ({});
@@ -337,12 +345,14 @@ async function servePublicConnection(
 
       const controlOperation = coreProjectOperation(params.prompt);
       if (controlOperation != null) {
-        const control = await applyProjectControl(
-          session.project,
-          controlOperation,
-          projectControls,
-          persistProjectControls,
-        );
+        const control = controlOperation === "status"
+          ? await readProjectStatus(session.project)
+          : await applyProjectControl(
+              session.project,
+              controlOperation,
+              projectControls,
+              persistProjectControls,
+            );
         await notifyV1ProjectControl(upstream, params.sessionId, controlOperation, control);
         return {
           stopReason: "end_turn",
@@ -505,6 +515,7 @@ async function servePublicConnection(
               controlOperation,
               projectControls,
               persistProjectControls,
+              readProjectStatus,
             );
         })
         .catch(() => {})

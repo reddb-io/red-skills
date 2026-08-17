@@ -18,6 +18,7 @@ import { ensureRedskilledDaemon } from "./client.js";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 import { REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
+import type { ProjectStatusContext } from "./project-control.js";
 
 export type RedskillsProjectControlOperation = "drain" | "stop" | "status";
 
@@ -35,6 +36,12 @@ export interface RedskillsProjectControlSnapshot {
   }>;
 }
 
+export type RedskillsProjectStatusContext = ProjectStatusContext;
+
+export interface RedskillsProjectStatusSnapshot extends RedskillsProjectControlSnapshot {
+  readonly context: RedskillsProjectStatusContext;
+}
+
 export interface RedskillsProjectPromptResult {
   readonly stopReason: string;
   readonly projectControl?: RedskillsProjectControlSnapshot;
@@ -42,7 +49,8 @@ export interface RedskillsProjectPromptResult {
 }
 
 export interface RedskillsProjectAcpSession {
-  control(operation: RedskillsProjectControlOperation): Promise<RedskillsProjectControlSnapshot>;
+  control(operation: "status"): Promise<RedskillsProjectStatusSnapshot>;
+  control(operation: "drain" | "stop"): Promise<RedskillsProjectControlSnapshot>;
   prompt(text: string): Promise<RedskillsProjectPromptResult>;
   cancel(): Promise<void>;
   permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;
@@ -103,10 +111,17 @@ export async function connectRedskillsProjectAcp(
     mcpServers: [],
   })).sessionId;
 
+  const control = (async (operation: RedskillsProjectControlOperation) => {
+    const outcome = await connection.agent.request<unknown>(PROJECT_CONTROL_METHOD[operation], {});
+    if (!isProjectControl(outcome)) throw new Error("redskilled returned an invalid Project control outcome");
+    if (operation === "status" && !isProjectStatus(outcome)) {
+      throw new Error("redskilled returned Project status without a valid RedSkills context");
+    }
+    return outcome;
+  }) as RedskillsProjectAcpSession["control"];
+
   return {
-    control(operation) {
-      return connection.agent.request<RedskillsProjectControlSnapshot>(PROJECT_CONTROL_METHOD[operation], {});
-    },
+    control,
     async prompt(text) {
       const firstUpdate = pendingUpdates.length;
       const response = await connection.agent.request(methods.agent.session.prompt, {
@@ -150,6 +165,39 @@ function isProjectControl(value: unknown): boolean {
   const control = record(value);
   return control?.version === 1 && typeof control.project_id === "string" &&
     typeof control.revision === "number" && Array.isArray(control.updates);
+}
+
+function isProjectStatus(value: unknown): value is RedskillsProjectStatusSnapshot {
+  const context = record(record(value)?.context);
+  const queue = record(context?.queue);
+  const workers = record(context?.workers);
+  const adapter = record(context?.adapter_health);
+  return context?.version === 1 && typeof context.observed_at === "string" &&
+    typeof queue?.posture === "string" &&
+    (queue.depth === null || typeof queue.depth === "number") &&
+    (queue.target === null || typeof queue.target === "number") &&
+    typeof queue.live === "number" &&
+    (queue.wanted === null || typeof queue.wanted === "number") &&
+    (queue.observed_at === null || typeof queue.observed_at === "string") &&
+    (queue.age_ms === null || typeof queue.age_ms === "number") &&
+    (queue.freshness === "fresh" || queue.freshness === "stale" || queue.freshness === "unknown") &&
+    typeof queue.detail === "string" &&
+    workers?.freshness === "fresh" && typeof workers.observed_at === "string" &&
+    typeof workers.total === "number" && Array.isArray(workers.items) &&
+    workers.items.every(isProjectWorkerSummary) &&
+    (adapter?.status === "healthy" || adapter?.status === "degraded" || adapter?.status === "unknown") &&
+    (adapter.checked_at === null || typeof adapter.checked_at === "string") &&
+    (adapter.last_success_at === null || typeof adapter.last_success_at === "string") &&
+    (adapter.last_failure_at === null || typeof adapter.last_failure_at === "string") &&
+    typeof adapter.detail === "string";
+}
+
+function isProjectWorkerSummary(value: unknown): boolean {
+  const worker = record(value);
+  return typeof worker?.worker_id === "string" && worker.state === "running" &&
+    typeof worker.started_at === "string" && typeof worker.isolated === "boolean" &&
+    Array.isArray(worker.warnings) && worker.warnings.every((warning) => typeof warning === "string") &&
+    (worker.base_commits_ahead === null || typeof worker.base_commits_ahead === "number");
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
