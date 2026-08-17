@@ -175,7 +175,6 @@ describe("#2811 — a blocker's kind and summary cannot contradict", () => {
       "trunk-diverged",
       "base-stale",
       "infra",
-      "manual-landing",
     ] as const;
     for (const outcome of outcomes) {
       const blocker = blockerForFailure(outcome, { log: PUSH_SUMMARY, notes: PUSH_SUMMARY, validation: PUSH_SUMMARY });

@@ -2492,8 +2492,8 @@ export async function openReviewPr(exec: Exec, input: OpenReviewPrInput): Promis
   return { ok: true, prNumber };
 }
 
-/** Inputs for the manual-landing PR handoff, {@link openManualLandingPr}. */
-export interface OpenManualLandingPrInput {
+/** Inputs for the no-merge PR opener, {@link openPrWithoutMerging}. */
+export interface OpenPrWithoutMergingInput {
   /** `owner/repo` slug passed to `gh -R`. */
   repo: string;
   /** Attempt branch (PR head, already pushed to the remote). */
@@ -2506,28 +2506,30 @@ export interface OpenManualLandingPrInput {
   title: string;
 }
 
-export interface OpenManualLandingPrResult {
+export interface OpenPrWithoutMergingResult {
   ok: boolean;
   /** PR number that was opened/reused, when one resolved. */
   prNumber?: number;
 }
 
 /**
- * Manual-landing handoff (issue #1049). Open (or reuse) the PR for the attempt
- * branch WITHOUT merging and WITHOUT applying any label — the whole point of the
- * `landing:manual` mode is that the full agent pipeline runs and opens the PR,
- * then a HUMAN drives the final merge click. Reuses {@link ensurePr}, so the PR
- * body carries `Closes #${n}` and GitHub auto-closes the issue when the human
- * merges. Mirrors {@link openReviewPr} but stops at step 1 (no review label): the
- * merge is held for a human, not for a fresh-agent review.
+ * Open (or reuse) the PR for an attempt branch WITHOUT merging and WITHOUT
+ * applying any label. Its live caller is `ensureRemoteWorkVisible` (#2811):
+ * committed work sitting on a remote branch with no pull request is invisible
+ * to anyone browsing the tracker, and 624 committed lines were once found only
+ * by hand-inspecting `git ls-remote`. The PR is the visibility surface.
+ *
+ * Reuses {@link ensurePr}, so the body carries `Closes #${n}` and GitHub closes
+ * the issue when someone merges. Mirrors {@link openReviewPr} but stops at step
+ * 1 (no review label).
  *
  * The branch must already be on the remote (the caller pushes it, exactly as the
  * landing path does). Idempotent: a re-attempt reuses the open PR.
  */
-export async function openManualLandingPr(
+export async function openPrWithoutMerging(
   exec: Exec,
-  input: OpenManualLandingPrInput,
-): Promise<OpenManualLandingPrResult> {
+  input: OpenPrWithoutMergingInput,
+): Promise<OpenPrWithoutMergingResult> {
   const prNumber = await ensurePr(exec, input);
   if (prNumber === undefined) return { ok: false };
   return { ok: true, prNumber };

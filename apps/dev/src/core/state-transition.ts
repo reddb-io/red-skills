@@ -201,7 +201,7 @@ export function hostHitlTypesIn(
 /**
  * The escalation shape every terminal site wants: park under the typed
  * `blocked:<reason>` when the outcome HAS one, a plain human gate when it does
- * not (a handoff like `review-requested` / `manual-landing` carries no typed
+ * not (a handoff like `review-requested` carries no typed
  * reason). Callers pass `blockedLabelFor(outcome)` / `disp.typedLabel` straight
  * through instead of re-deriving the two-armed branch per site (#2663).
  */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BranchRef } from "../src/core/branch-cleanup.js";
 import { harness } from "./process-issue.test-helpers.js";
 import { installProcessSafety, noopSafetyLogger } from "./process-issue.test-helpers.js";
+import { MERGE_HOLD_MARKER } from "../src/core/merge-hold.js";
 
 // Refs #2397
 
@@ -269,6 +270,46 @@ describe("branch-resume: existing open PR adoption (issue #2416)", () => {
     expect(trace.comments.some((comment) =>
       comment.body.includes("Attempt PRs for #9: #2398, #2408")
     )).toBe(true);
+  });
+
+  it("runs fresh requeue guidance and keeps the adopted PR draft while the merge hold remains", async () => {
+    const { deps, input, trace } = harness({
+      body: `## Agent brief\nFix the remaining review finding.\n\n${MERGE_HOLD_MARKER}`,
+      prevFailureContext: gateGreenContext("held"),
+    });
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+    deps.lookups.comments = async () => [
+      { body: "<!-- red-envelope:v1 status=held -->", author: "worker" },
+      {
+        body: '<details data-kind="directive">\n<summary>directive</summary>\nAddress the review finding.\n</details>',
+        author: "maintainer",
+        sourceTrust: "trusted" as const,
+      },
+    ];
+    Object.assign(deps.lookups, {
+      discoverOpenPullRequests: async () => [
+        { number: 2408, headRefName: PRIOR_BRANCH, body: "Closes #9" },
+      ],
+    });
+    const innerMergeExec = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      if (argv.includes("state=open") && argv.some((arg) => /repos\/.+\/pulls$/.test(arg))) {
+        trace.mergeCalls.push([...argv]);
+        return { code: 0, stdout: "2408\n", stderr: "" };
+      }
+      return await innerMergeExec(argv);
+    };
+
+    const result = await import("../src/core/process-issue.js").then((m) =>
+      m.processIssue(deps, input),
+    );
+
+    expect(result.outcome).toBe("held");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.mergeCalls).toContainEqual([
+      "gh", "-R", "o/r", "pr", "ready", "2408", "--undo",
+    ]);
+    expect(trace.mergeCalls.some((argv) => argv.includes("/merge"))).toBe(false);
   });
 });
 

@@ -40,7 +40,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
   Ticket only needs queue promotion, use `/retake`. A `quarantine` Ticket is
   still owned by the Issue curator; route it to `/hitl` only after the bounded
-  curator re-checks have changed it to `ready-for-human`.
+  curator re-checks have changed it to `ready-for-human`. When coding may run but
+  merge must wait, `/hitl` records an explicit merge hold in the Issue body,
+  requeues the Ticket, and later removes that hold only on maintainer release.
 - **A manual implementation slice** -> `/implement`, using `/tdd` for the build
   loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,
