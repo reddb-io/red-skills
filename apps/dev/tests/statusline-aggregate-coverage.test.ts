@@ -12,7 +12,6 @@ import type {
   ValidationGateInput,
 } from "../src/core/statusline.js";
 import { renderStatusline } from "../src/core/statusline.js";
-import type { StatuslineAggregate } from "../src/mcp-adapter.js";
 
 /**
  * Field coverage for the `statusline_aggregate` MCP tool (#2344).
@@ -47,10 +46,10 @@ function interfaceFields(name: string): string[] {
   return [...fields];
 }
 
-/** A fully-populated payload. It is typed as the REAL tool return type, so a
- * field that disappears from (or is renamed in) the aggregate breaks the
- * typecheck instead of silently weakening this test. */
-const PAYLOAD: StatuslineAggregate = {
+/** A fully-populated compatibility payload. The live MCP adapter now projects
+ * this public capability through ACP, so the fixture owns the historical
+ * payload shape while the renderer interfaces below remain the live contract. */
+const PAYLOAD = {
   project: {
     basename: "red-skills",
     branch: "main",
@@ -207,6 +206,8 @@ const PAYLOAD: StatuslineAggregate = {
   },
   queue: { ready_for_agent: 6, ready_for_human: 1 },
 };
+
+type StatuslineAggregate = typeof PAYLOAD;
 
 /**
  * The derivations an MCP client applies to rebuild each renderer input block

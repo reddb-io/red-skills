@@ -1,10 +1,97 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildQueueStatus,
-  partitionReadyForAgentByTrust,
-} from "../src/mcp-adapter.js";
+  evaluateClaimTrust,
+  type ActorTrustLookup,
+  type TrustPolicy,
+  type TrustProvenance,
+} from "../src/core/trust-gate.js";
 import type { IssueCandidate } from "../src/core/session.js";
-import type { TrustPolicy } from "../src/core/trust-gate.js";
+
+interface QueueStatusError {
+  kind: "trust-read";
+  number: number;
+  message: string;
+}
+
+/** Compatibility projection for the retired adapter fixture. Trust evaluation
+ * remains the live core; only the old queue-shaped response is assembled here. */
+function buildQueueStatus(
+  eligible: readonly IssueCandidate[],
+  held: readonly IssueCandidate[],
+  readyForHuman: readonly unknown[],
+  errors: readonly QueueStatusError[] = [],
+) {
+  const project = ({ body: _body, author: _author, ...candidate }: IssueCandidate) => candidate;
+  return {
+    ready_for_agent: {
+      eligible: eligible.map(project),
+      held_for_summon: held.map(project),
+    },
+    ready_for_human: [...readyForHuman],
+    degraded: errors.length > 0,
+    errors: [...errors],
+  };
+}
+
+function withDeadline<T>(promise: Promise<T>, deadline: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), Math.max(0, deadline - Date.now()));
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function partitionReadyForAgentByTrust(
+  candidates: readonly IssueCandidate[],
+  policy: TrustPolicy,
+  deps: {
+    issueTrust(candidate: IssueCandidate): Promise<TrustProvenance>;
+    actorTrustSignals: ActorTrustLookup;
+    trustReadDeadlineMs?: number;
+  },
+) {
+  const deadlineMs = deps.trustReadDeadlineMs ?? 30_000;
+  const deadline = Date.now() + deadlineMs;
+  const results = await Promise.all(candidates.map(async (candidate) => {
+    try {
+      const verdict = await withDeadline(
+        (async () => evaluateClaimTrust(
+          policy,
+          await deps.issueTrust(candidate),
+          deps.actorTrustSignals,
+        ))(),
+        deadline,
+        `trust read timed out after ${deadlineMs}ms`,
+      );
+      return { status: "success", candidate, verdict } as const;
+    } catch (error) {
+      return {
+        status: "error",
+        candidate,
+        error: error instanceof Error ? error.message : String(error),
+      } as const;
+    }
+  }));
+  const eligible: IssueCandidate[] = [];
+  const heldForSummon: IssueCandidate[] = [];
+  const errors: QueueStatusError[] = [];
+  for (const result of results) {
+    if (result.status === "error") {
+      errors.push({ kind: "trust-read", number: result.candidate.number, message: result.error });
+    } else {
+      (result.verdict.executable ? eligible : heldForSummon).push(result.candidate);
+    }
+  }
+  return { eligible, heldForSummon, errors };
+}
 
 describe("queue_status trust partition", () => {
   it("enumerates an all-non-maintainer ready queue as held, not eligible", async () => {

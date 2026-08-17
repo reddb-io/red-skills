@@ -1,123 +1,111 @@
 /**
- * Pins the worker partition introduced by #2345, after the per-project process.
- *
- * ADR 0130 Amendment 4 removed the process that used to own a slot map, so the
- * question "is this Worker ours" is answered by the HOST — the daemon that
- * birthed it — rather than by a pid table of our own (#2909). The failure mode
- * that closes is attribution nobody can vouch for: a host that does not answer
- * yields NO owned workers, and every live worker is reported in
- * `unattributed_workers` rather than silently counted as ours.
+ * The host daemon owns Worker attribution after the Project coordinator
+ * contraction. This compatibility fixture now poses the same partition to the
+ * daemon-owned status payload instead of rebuilding it in a Project adapter.
  */
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import {
-  castleStateSnapshotPath,
-  createCastleLaneWriters,
-  createEnginePaths,
-  PROJECT_SUPERVISOR_LANE,
-  writeCastleStateSnapshot,
-} from "@reddb-io/red-castle/engine";
-import { afterEach, describe, expect, it } from "vitest";
-import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
-import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
+import { describe, expect, it } from "vitest";
+import type { RedskilledWorkerView } from "@reddb-io/redskilled/host-state";
+import { buildStatuslinePayload } from "@reddb-io/redskilled/statusline-payload";
 
-// Snapshot timestamps are fixed; liveness records use real wall-clock time so
-// the 180-second idle window in readCastleMonitorWorkers sees them as fresh.
-const SNAPSHOT_ISO = "2026-07-21T12:00:00.000Z";
+const UNBOUNDED_HOST_CEILING = {
+  memory_bytes: null,
+  worker_count: null,
+  source: "declared" as const,
+};
 
-function workerSnapshot(
-  id: string,
-  issue: number,
+function worker(
+  workerId: string,
+  projectLabel: string,
   pid: number,
-  lane: string,
-) {
+): RedskilledWorkerView {
   return {
-    kind: "worker" as const,
-    id,
-    worker_id: id,
-    version: 1,
-    updated_at: SNAPSHOT_ISO,
-    started_at: SNAPSHOT_ISO,
-    runner: "claude",
+    worker_id: workerId,
+    project_label: projectLabel,
     pid,
-    supervisor_id: lane,
-    current: {
-      origin: "afk",
-      number: issue,
-      title: `Issue ${issue}`,
-      activity: "implementing",
-      phase: "implementing",
-    },
-    queue: [issue],
-    completed: [],
-    envelope: { posted: false },
+    started_at: "2026-07-21T12:00:00.000Z",
+    workspace_path: `/tmp/${workerId}`,
+    isolated: false,
+    warnings: [],
   };
 }
 
-describe("project_status worker partition — the host attributes, not us (#2345, #2909)", () => {
-  const roots: string[] = [];
+function hostStateOf(workers: readonly RedskilledWorkerView[]) {
+  return {
+    version: 1 as const,
+    protocol_version: 1,
+    daemon_version: "0.0.0-test",
+    machine_id_hash: "machine",
+    session_key_hash: "session",
+    pid: 999,
+    started_at: "2026-07-21T11:00:00.000Z",
+    workers,
+    projects: [...new Set(workers.map((candidate) => candidate.project_label))]
+      .sort()
+      .map((project_label) => ({
+        project_label,
+        worker_count: workers.filter((candidate) => candidate.project_label === project_label).length,
+      })),
+    budget_accounting: {
+      version: 1 as const,
+      worker_count: workers.length,
+      memory_high_bytes: 0,
+      memory_max_bytes: 0,
+      cpu_weight_total: 0,
+      unaccounted_workers: [],
+      unisolated_workers: workers.map((candidate) => candidate.worker_id),
+    },
+    upgrade: {
+      running_version: "0.0.0-test",
+      published_version: null,
+      published_unknown: 1,
+      newer_published: 0,
+      replacement: "none" as const,
+      checked_at: null,
+      checks: 0,
+      hold_reason: null,
+      newest_published_version: null,
+      major_held: 0,
+      major_hold: null,
+    },
+  };
+}
 
-  afterEach(async () => {
-    await Promise.all(roots.map((r) => rm(r, { recursive: true, force: true })));
-    roots.length = 0;
-  });
+describe("daemon-owned Worker partition", () => {
+  it("attributes every live Worker from the host's one state document", () => {
+    const workers = [
+      worker("w_mine", "acme/widgets", 1001),
+      worker("w_foreign", "acme/gadgets", 2001),
+    ];
+    const payload = buildStatuslinePayload({
+      hostState: hostStateOf(workers),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      rss: {},
+      sampledAt: null,
+      now: "2026-07-21T12:00:00.000Z",
+    });
 
-  it("claims no worker the host did not name, and sets every one aside", async () => {
-    const root = await mkdtemp(join(tmpdir(), "project-partition-"));
-    roots.push(root);
-
-    const enginePaths = createEnginePaths(join(root, ".red"));
-    // Liveness records use real wall-clock time so the 180-second idle window in
-    // readCastleMonitorWorkers sees them as fresh (no fixed clock injected).
-    const lanes = createCastleLaneWriters(enginePaths);
-
-    await writeCastleStateSnapshot(
-      castleStateSnapshotPath(enginePaths, "worker", "w_mine"),
-      workerSnapshot("w_mine", 100, 1001, PROJECT_SUPERVISOR_LANE),
-    );
-    await writeCastleStateSnapshot(
-      castleStateSnapshotPath(enginePaths, "worker", "w_foreign"),
-      workerSnapshot("w_foreign", 200, 2001, "some-other-lane"),
-    );
-
-    for (const [workerId, issue] of [["w_mine", 100], ["w_foreign", 200]] as const) {
-      await lanes.liveness(workerId).append({
-        kind: "worker.heartbeat",
-        worker_id: workerId,
-        issue,
-        payload: {},
-      });
-    }
-
-    // A minimal supervisor snapshot so readFleetState does not return null; the
-    // slot-pid fallback is not exercised here because both workers are stamped.
-    const supervisorDir = join(root, ".red", "tmp", "supervisors", PROJECT_SUPERVISOR_LANE);
-    await mkdir(supervisorDir, { recursive: true });
-    await writeFile(
-      join(supervisorDir, "state.toon"),
-      encodeDevSnapshotToon({
-        ts: new Date().toISOString(),
-        epoch: Math.floor(Date.now() / 1000),
-        runner: "claude",
-        ready_for_agent: 0,
-        slots: { busy: 1, free: 0, total: 1, parked: 0 },
-        spawns_this_tick: 1,
-        churn: { deaths: 0, respawns: 0, window_s: 300 },
-      }),
-    );
-
-    const status = (await createCastleMcpDependencies(root).projectStatus()) as {
-      live_workers: Array<{ id: string }>;
-      unattributed_workers: Array<{ id: string }>;
-    };
-
-    const live = status.live_workers.map((w) => w.id);
-    const unattributed = status.unattributed_workers.map((w) => w.id);
-    // No daemon answers here, so nothing is claimed: a stamp this project wrote
-    // for itself is not evidence the host ever admitted the Worker.
-    expect(live).toEqual([]);
-    expect(unattributed).toContain("w_mine");
-    expect(unattributed).toContain("w_foreign");
+    expect(payload.workers.map((candidate) => [
+      candidate.worker_id,
+      candidate.project_label,
+    ])).toEqual([
+      ["w_mine", "acme/widgets"],
+      ["w_foreign", "acme/gadgets"],
+    ]);
+    expect(payload.projects).toEqual([
+      {
+        project_label: "acme/gadgets",
+        worker_count: 1,
+        declared_memory_bytes: 0,
+        observed_rss_bytes: 0,
+        measured_worker_count: 0,
+      },
+      {
+        project_label: "acme/widgets",
+        worker_count: 1,
+        declared_memory_bytes: 0,
+        observed_rss_bytes: 0,
+        measured_worker_count: 0,
+      },
+    ]);
   });
 });

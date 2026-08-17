@@ -50,16 +50,6 @@ export const DECLARED_REPAIR_SITES: readonly DeclaredRepairSite[] = [
     fn: "invoke",
     surface: "empty-state",
   },
-  {
-    path: "apps/dev/src/mcp/project.ts",
-    fn: "projectStatus",
-    surface: "empty-state",
-  },
-  {
-    path: "apps/dev/src/mcp/events.ts",
-    fn: "cursorRefusal",
-    surface: "refusal",
-  },
 ];
 
 export interface RepairViolation {
@@ -76,13 +66,12 @@ export type RepairDeclarationViolation =
   | ({ readonly kind: "invalid-repair" } & RepairViolation);
 
 /**
- * Scanned as a DIRECTORY, not as one file. `mcp-adapter.ts` used to hold the
- * whole surface; it is a façade now, and naming it here would scan a file that
- * declares nothing while the refusals it forwards to went unread.
+ * Scanned as a DIRECTORY, not as one file, so every engine refusal is covered.
+ * The deleted Dev MCP workflow implementation is intentionally absent: the
+ * surviving stdio adapter translates every invocation into ACP.
  */
 export const REPAIR_SCAN_ROOTS = [
   "packages/red-castle/src/mcp",
-  "apps/dev/src/mcp",
 ] as const;
 
 export function readRepairScanFiles(

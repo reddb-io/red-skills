@@ -26,7 +26,8 @@ import {
 import type { PublishedVersionObservation } from "../src/core/published-version.js";
 import { CONFIG_DEFAULTS } from "../src/core/config.js";
 import { goCommand, type GoRuntime } from "../src/commands/go.js";
-import { createDefaultDevAfkMcpOperations } from "../src/mcp-adapter.js";
+import { invokeProjectMcp } from "../src/project-acp-adapter.js";
+import type { RedskillsProjectAcpSession } from "@reddb-io/redskilled/acp-client";
 import type { DispatchedWorkerBirth } from "../src/runtime/mcp-worker-birth.js";
 
 const roots: string[] = [];
@@ -387,48 +388,22 @@ describe("/go carries the floor", () => {
   });
 });
 
-describe("worker_dispatch carries the same floor", () => {
-  it("refuses an issue dispatch and asks the host for nothing", async () => {
-    const root = await scratch();
-    const birthWorker = vi.fn(async () => GRANTED);
-    const operations = createDefaultDevAfkMcpOperations(root, {
-      birthWorker,
-      checkEngineFloor: async () => SUPERSEDED,
-    });
+describe("worker_dispatch crosses only the public ACP Project surface", () => {
+  it.each([
+    [{ issue: 3031 }],
+    [{ demand: "fix it" }],
+  ])("hands %o to the daemon-owned workflow without a local dispatch", async (input) => {
+    const prompt = vi.fn(async () => ({ stopReason: "end_turn", updates: [] }));
+    const session = {
+      prompt,
+      control: vi.fn(),
+      cancel: vi.fn(),
+      permission: vi.fn(),
+      close: vi.fn(),
+    } as unknown as RedskillsProjectAcpSession;
 
-    await expect(operations.dispatchIssue(root, { issue: 3031 })).rejects.toThrow(/3\.4\.1/);
-    expect(birthWorker).not.toHaveBeenCalled();
-  });
-
-  it("refuses a demand dispatch before any issue is minted", async () => {
-    const root = await scratch();
-    const birthWorker = vi.fn(async () => GRANTED);
-    const createIssue = vi.fn(async () => 3031);
-    const operations = createDefaultDevAfkMcpOperations(root, {
-      birthWorker,
-      createIssue,
-      ensureLabel: async () => undefined,
-      checkEngineFloor: async () => SUPERSEDED,
-    });
-
-    await expect(operations.dispatchDemand(root, { demand: "fix it" })).rejects.toThrow(/3\.2\.0/);
-    expect(createIssue).not.toHaveBeenCalled();
-    expect(birthWorker).not.toHaveBeenCalled();
-  });
-
-  it("dispatches under `warn` and returns the warning with the birth", async () => {
-    const root = await scratch();
-    const operations = createDefaultDevAfkMcpOperations(root, {
-      birthWorker: async () => GRANTED,
-      checkEngineFloor: async () => SUPERSEDED_WARNING,
-    });
-
-    const answer = (await operations.dispatchIssue(root, { issue: 3031 })) as {
-      status: string;
-      warnings?: string[];
-    };
-    expect(answer.status).toBe("dispatched");
-    expect(answer.warnings?.join("")).toContain("3.2.0");
-    expect(answer.warnings?.join("")).toContain("3.4.1");
+    await expect(invokeProjectMcp(session, "worker_dispatch", input))
+      .resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(prompt).toHaveBeenCalledWith(`/worker_dispatch ${JSON.stringify(input)}`);
   });
 });

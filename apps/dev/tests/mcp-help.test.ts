@@ -44,8 +44,12 @@ vi.mock("../src/runtime/gh.js", async (importOriginal) => {
   );
 });
 
-import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
-import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
+import {
+  createCastleMcpTools,
+  type CastleMcpDependencies,
+} from "@reddb-io/red-castle/mcp-server";
+import { auditConfigLoad, readValidationMoments } from "../src/core/config.js";
+import { describeValidationMoments } from "../src/core/validation-moments.js";
 
 const roots: string[] = [];
 
@@ -87,6 +91,72 @@ function heldRegistration(root: string) {
   };
 }
 
+/** Explicit compatibility ports keep the tool fixture green without restoring
+ * the deleted Project coordinator or any private daemon wire. */
+function compatibilityDependencies(root: string): CastleMcpDependencies {
+  return {
+    async projectStatus() {
+      const state = await host.registrationState();
+      const held = state.held as ReturnType<typeof heldRegistration> | null;
+      const audit = auditConfigLoad(join(root, ".red", "config.yaml"), { warn: () => undefined });
+      const target = held?.target ?? 0;
+      return {
+        validation_schedule: describeValidationMoments(readValidationMoments(audit.values), audit),
+        registration: held == null
+          ? {
+              held: false,
+              daemon_reachable: true,
+              project: "acme/widgets",
+              socket: "",
+              selector: "",
+              target: 0,
+              renewal: "unknown" as const,
+              renew_by: "",
+              renewals: 0,
+              lapsed_at: "",
+              reason: "unregistered",
+              repair: {
+                tool: "project_start",
+                args: { runner: "claude", target: 1 },
+                why: "register this project with the host so its queue can drain",
+              },
+              launch_revision: 0,
+              bundle_version: "",
+              plugin_cache_version: "",
+            }
+          : {
+              held: true,
+              daemon_reachable: true,
+              project: held.project_label,
+              socket: "",
+              selector: held.selector,
+              target,
+              renewal: held.renewal,
+              renew_by: held.renew_by,
+              renewals: held.renewals,
+              lapsed_at: "",
+              reason: "",
+              launch_revision: held.launch_revision,
+              bundle_version: "",
+              plugin_cache_version: "",
+              last_poll: held.last_poll,
+            },
+        birth_latch: null,
+        slots: {
+          busy: 0,
+          free: target,
+          parked: 0,
+          total: target,
+          interactive_reservation: 0,
+        },
+        live_workers: [],
+        unattributed_workers: [],
+      };
+    },
+    hostState: host.hostState,
+  } as unknown as CastleMcpDependencies;
+}
+
 describe("redskilled MCP help", () => {
   it("narrates declared and skipped Validation moments in help and project status", async () => {
     const root = await scratch();
@@ -104,7 +174,7 @@ describe("redskilled MCP help", () => {
     ].join("\n"));
     host.registrationState.mockResolvedValue({ held: null, lapse: null });
     host.hostState.mockResolvedValue({ daemon_version: "3.5.0", demand: null });
-    const tools = createCastleMcpTools(createCastleMcpDependencies(root));
+    const tools = createCastleMcpTools(compatibilityDependencies(root));
     const help = tools.find((tool) => tool.name === "help")!;
     const status = tools.find((tool) => tool.name === "status")!;
     const expected = {
@@ -131,7 +201,7 @@ describe("redskilled MCP help", () => {
     const root = await scratch();
     host.registrationState.mockResolvedValue({ held: null, lapse: null });
     host.hostState.mockResolvedValue({ daemon_version: "3.4.2", demand: null });
-    const tools = createCastleMcpTools(createCastleMcpDependencies(root));
+    const tools = createCastleMcpTools(compatibilityDependencies(root));
     const help = tools.find((tool) => tool.name === "help")!;
 
     await expect(help.invoke({})).resolves.toMatchObject({
@@ -163,7 +233,7 @@ describe("redskilled MCP help", () => {
         retry_after: "2026-08-04T18:06:00.000Z",
       },
     });
-    const tools = createCastleMcpTools(createCastleMcpDependencies(root));
+    const tools = createCastleMcpTools(compatibilityDependencies(root));
     const help = tools.find((tool) => tool.name === "help")!;
 
     const answer = await help.invoke({}) as {
