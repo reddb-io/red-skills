@@ -349,7 +349,13 @@ function sideEffectCases(input: {
         `        const __stdout = await __runHook(${JSON.stringify(inner)}, ${input.payloadExpression});`,
         input.contextSink ? `        const __ctx = __extractContext(__stdout); if (__ctx) ${input.contextSink};` : "",
       ].filter(Boolean).join("\n");
-      if (!input.toolExpression) return run;
+      if (!input.toolExpression) {
+        return [
+          "      {",
+          run,
+          "      }",
+        ].join("\n");
+      }
       return [
         `      if (${matcherToRegex(g.matcher)}.test(${input.toolExpression})) {`,
         run,
