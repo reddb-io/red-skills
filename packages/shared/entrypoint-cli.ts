@@ -40,6 +40,7 @@ import {
   bundleFileName,
   ensureBundle,
   isCacheableVersion,
+  npmBundlePackage,
   resolveBundle,
 } from "./bundle-fetch.js";
 import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
@@ -71,13 +72,18 @@ function cacheRoot(override?: string): string {
   return join(homedir(), ".cache", "red-skills", "bundles");
 }
 
+/** Versioned runtime tree populated by the standalone installer. */
+function installRoot(): string {
+  return process.env.RED_SKILLS_INSTALL_ROOT || join(homedir(), ".red-skills");
+}
+
 const realIO: BundleIO = {
   async materialize(spec, stagingDir) {
     await mkdir(stagingDir, { recursive: true });
     // `npm install <spec> --prefix <staging>` resolves the pinned package via
-    // npm's own cache (cache-first, shasum-verified) and lands it at
-    // <staging>/node_modules/@reddb-io/red-skills. --no-save keeps the staging
-    // dir free of a package.json; --ignore-scripts because our package has no
+    // npm's own cache (cache-first, shasum-verified) and lands it under
+    // <staging>/node_modules/. --no-save keeps the staging dir free of a root
+    // package.json; --ignore-scripts because our packages have no
     // postinstall (ADR 0091) and we never want to run arbitrary lifecycle code.
     const res = spawnSync(
       "npm",
@@ -98,7 +104,9 @@ const realIO: BundleIO = {
     if (res.status !== 0) {
       throw new Error(`npm install ${spec} -> ${res.status}: ${(res.stderr || "").trim()}`);
     }
-    return join(stagingDir, "node_modules", ...NPM_PACKAGE.split("/"));
+    const versionSeparator = spec.lastIndexOf("@");
+    const packageName = spec.slice(0, versionSeparator);
+    return join(stagingDir, "node_modules", ...packageName.split("/"));
   },
   async readFile(path) {
     return new Uint8Array(await readFile(path));
@@ -341,7 +349,14 @@ async function runMode(plan: RunPlan): Promise<never> {
   let bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
   if (!bundle && (version || channel === "canary")) {
     try {
-      bundle = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
+      bundle = await ensureBundle(realIO, {
+        plugin,
+        version,
+        repo: plan.repo,
+        cacheDir,
+        installRoot: installRoot(),
+        channel,
+      });
     } catch (err) {
       const kind = err instanceof BundleFetchError ? err.kind : "unknown";
       const msg = err instanceof Error ? err.message : String(err);
@@ -358,7 +373,7 @@ async function runMode(plan: RunPlan): Promise<never> {
     process.stderr.write(
       `entrypoint: could not resolve the ${plugin} runtime bundle (${want}).\n` +
         `  Looked in cache ${cacheDir} and repo-root dist/.\n` +
-        `  The bundle ships inside the ${NPM_PACKAGE} npm package (ADR 0091),\n` +
+        `  The bundle ships inside the ${npmBundlePackage(plugin)} npm package (ADR 0146),\n` +
         `  resolved via npm on first run; ensure network access, or build locally:\n` +
         `    pnpm -C apps/${plugin} run bundle\n`,
     );
@@ -418,7 +433,14 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
       ? resolveBundle({ plugin, version, cacheDir, channel })
       : `${cacheDir}/${plugin}-<version>.bundle.min.mjs`;
   try {
-    const path = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
+    const path = await ensureBundle(realIO, {
+      plugin,
+      version,
+      repo: plan.repo,
+      cacheDir,
+      installRoot: installRoot(),
+      channel,
+    });
     process.stdout.write(`entrypoint: bundle ready at ${path} (${channel})\n`);
   } catch (err) {
     const kind = err instanceof BundleFetchError ? err.kind : "unknown";

@@ -60,7 +60,6 @@ export const DECLARED_BLOCKER_KINDS: ReadonlySet<string> = new Set([
   "claim-hygiene",
   "decision",
   "drift",
-  "manual-landing",
   "push-failed",
   "push-rejected",
   "unclassified",

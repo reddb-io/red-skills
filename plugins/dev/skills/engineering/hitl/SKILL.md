@@ -91,12 +91,18 @@ Ask for the answer to the pending decision. **Read [`/start`'s INTERVIEW-ROUNDS.
 Then decide whether the answer makes the Issue delegable:
 
 - **Delegable** means a complete `## Agent brief` can now be written and an AFK agent can execute without guessing.
-- **Delegable with manual landing** means the *coding* is fully delegable but the *merge* must stay human — e.g. changes to AFK's own landing/claim machinery, where auto-merge by the fleet is the exact failure the slice guards against.
 - **Non-delegable** means another human decision remains.
 
 If delegable, draft the refreshed `## Agent brief` before mutating anything.
 
-If delegable with manual landing, do **not** apply the plain-delegable transition: a bare `ready-for-agent` would let a live fleet claim and **auto-merge** what must not be auto-merged. Instead route it into the autonomous lane in **manual-landing mode** (#1049): apply `ready-for-agent` **and** `landing:manual` together, record the disposition as `delegable-manual-landing` in the Directive. `/afk` then runs the full pipeline, opens the PR, and parks the issue `ready-for-human` with the PR link — a human drives only the final merge click (the agent is never re-run). This keeps agent-codable landing-machinery slices in `/afk` instead of hand-dispatching them via `/go`. Do not force these issues into the binary — parking them as plain non-delegable hides agent-executable work.
+**Treat an explicit merge hold separately from delegability.** When the coding is
+delegable but merge must wait on an external decision, add
+`<!-- afk:merge-hold v1 -->` to the Issue body before requeueing it. The Worker
+runs the normal implementation and validation pipeline, opens or reuses a draft
+PR, and returns the Issue to `ready-for-human` without merging. Keep the marker
+when requeueing requested changes so the next Worker executes the guidance and
+leaves the PR draft again. Remove the marker before the final requeue only when
+the maintainer explicitly releases the merge.
 
 If non-delegable, draft the next pending decision before mutating anything.
 
@@ -123,12 +129,6 @@ atomically: archives the active `## Current blocker` into `## Resolved
 blockers`, posts the guidance as the auditable Directive comment, removes
 `ready-for-human` and every stale `blocked:*` label, adds `ready-for-agent`.
 CLI fallback: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue N --guidance "..."`.
-
-If delegable-manual-landing (see Step 4 for what this mode is and why AFK must
-not auto-merge it): run the same `requeue` tool, then add the `landing:manual`
-label (#1049) so `/afk` runs the full pipeline but parks the PR for the human
-merge click. Record disposition `delegable-manual-landing` in the guidance; the
-issue auto-closes via the PR's `Closes #N` back-reference.
 
 If non-delegable — the `hitl_resolve` tool (MUTATING),
 `{issue, decision: "park", rationale}` with the next pending decision as the
@@ -170,7 +170,7 @@ Human answer:
 ...
 
 Disposition:
-delegable | delegable-manual-landing | non-delegable
+delegable | non-delegable
 
 Next pending decision:
 ...   <!-- only when non-delegable -->

@@ -462,6 +462,7 @@ function nameProbeFor(id: string): string {
     "project-supervisor-naming": `export async function spawnSupervisor(opts: SupervisorEntryLookup): Promise<number> { return 0; }`,
     "project-supervisor-tick": `export async function superviseTick(): Promise<void> {}`,
     "project-supervisor-loop": `export async function runSupervisor(): Promise<void> {}`,
+    "manual-landing-mode": `export async function handoffForManualLanding(c: StageCommon): Promise<void> {}`,
   };
   const probe = probes[id];
   if (!probe) throw new Error(`no probe for extinct name ${id} — add one when adding an inventory entry`);

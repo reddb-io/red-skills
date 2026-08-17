@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+const MEMORY_TOKENIZER_ASSET = "memory-tokenizer.asset.cjs";
+
 function parseArgs(argv) {
   const args = { root: process.cwd(), core: "", plugins: "" };
   for (let index = 0; index < argv.length; index += 1) {
@@ -43,6 +45,24 @@ function requireEntry(listing, expected, label) {
   }
 }
 
+/**
+ * Every bundle `prepare.mjs` stages into the core package, read from that file
+ * so the two cannot drift. Hand-listing them is what let six of them — the
+ * `redskilled-mcp` server every agent launches among them — lose their
+ * publish-time presence guard when the per-plugin bundles were contracted out
+ * (#3957): the absence check for plugins landed, and the presence check for
+ * what the core still carries did not come with it. A bin shim passing is not
+ * the same fact: the shim forwards to a bundle that has to be in the tarball.
+ */
+function stagedCoreBundles(root) {
+  const prepare = readFileSync(join(root, "packaging/npm/scripts/prepare.mjs"), "utf8");
+  const names = [...prepare.matchAll(/dest:\s*"([^"]+\.bundle\.min\.mjs)"/g)].map((m) => m[1]);
+  if (names.length === 0) {
+    throw new Error("check-npm-tarball-boundaries: prepare.mjs staged no bundles — the parse is stale");
+  }
+  return names;
+}
+
 function checkCore(root, tarball) {
   const listing = materializeListing(tarball);
   const packageJson = readJson(join(root, "packaging/npm/package.json"));
@@ -54,9 +74,21 @@ function checkCore(root, tarball) {
     "package/scripts/generate-codex-manifests.mjs",
     "package/scripts/generate-gemini-manifests.mjs",
     "package/scripts/generate-pi-manifests.mjs",
-    "package/dist/opencode-host.bundle.min.mjs",
+    ...stagedCoreBundles(root).map((name) => `package/dist/${name}`),
   ];
   for (const expected of required) requireEntry(listing, expected, "core npm");
+
+  for (const plugin of pluginManifests(root)) {
+    const unexpected = `package/dist/${plugin.name}.bundle.min.mjs`;
+    if (listing.includes(unexpected)) {
+      throw new Error(`core npm tarball unexpectedly contains ${unexpected}`);
+    }
+  }
+
+  const unexpectedTokenizer = `package/dist/${MEMORY_TOKENIZER_ASSET}`;
+  if (listing.includes(unexpectedTokenizer)) {
+    throw new Error(`core npm tarball unexpectedly contains ${unexpectedTokenizer}`);
+  }
 
   const forbidden = listing.find(
     (entry) => entry.startsWith("package/apps/") || entry.startsWith("package/packages/"),
@@ -94,6 +126,9 @@ function checkPlugins(root, tarballsDir) {
     );
     if (!skill) throw new Error(`${packageName} tarball carries no published skills`);
     requireEntry(listing, `package/dist/${plugin.name}.bundle.min.mjs`, packageName);
+    if (plugin.name === "memory") {
+      requireEntry(listing, `package/dist/${MEMORY_TOKENIZER_ASSET}`, packageName);
+    }
   }
 }
 

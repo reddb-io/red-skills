@@ -51,7 +51,6 @@ export function tagLabel(value: string): string {
 // hand-dispatched via `/go`. The issue closes on PR merge via the `Closes #N`
 // back-reference. Created idempotently by `/red-setup`; `/triage` may set
 // it at brief-writing time when the slice touches landing/claim machinery.
-export const LABEL_LANDING_MANUAL = "landing:manual";
 
 // Triage state labels
 export const LABEL_NEEDS_TRIAGE = "needs-triage";
