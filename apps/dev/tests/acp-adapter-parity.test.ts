@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   RedskillsProjectAcpSession,
   RedskillsProjectControlSnapshot,
+  RedskillsProjectStatusSnapshot,
 } from "@reddb-io/redskilled/acp-client";
 import {
   invokeProjectCli,
@@ -26,13 +27,43 @@ function projectSession() {
     revision,
     updates: [...updates],
   });
+  const statusSnapshot = (): RedskillsProjectStatusSnapshot => ({
+    ...snapshot(),
+    context: {
+      version: 1,
+      observed_at: "2026-08-17T15:00:00.000Z",
+      queue: {
+        posture: "queue-drained",
+        depth: 0,
+        target: 1,
+        live: 0,
+        wanted: 0,
+        observed_at: "2026-08-17T14:59:59.000Z",
+        age_ms: 1_000,
+        freshness: "fresh",
+        detail: "the Project queue is drained",
+      },
+      workers: {
+        total: 0,
+        freshness: "fresh",
+        observed_at: "2026-08-17T15:00:00.000Z",
+        items: [],
+      },
+      adapter_health: {
+        status: "healthy",
+        checked_at: "2026-08-17T14:59:59.000Z",
+        last_success_at: "2026-08-17T14:59:59.000Z",
+        last_failure_at: null,
+        detail: "the daemon request lane answers",
+      },
+    },
+  });
   const control = vi.fn(async (operation: "drain" | "stop" | "status") => {
-    if (operation !== "status") {
-      revision += 1;
-      drainIntent = operation === "drain" ? "draining" : "stopped";
-      updates.push({ sequence: revision, operation, drain_intent: drainIntent });
-      emitted.push("plan", "update");
-    }
+    if (operation === "status") return statusSnapshot();
+    revision += 1;
+    drainIntent = operation === "drain" ? "draining" : "stopped";
+    updates.push({ sequence: revision, operation, drain_intent: drainIntent });
+    emitted.push("plan", "update");
     return snapshot();
   });
   const prompt = vi.fn(async (text: string) => {
@@ -64,8 +95,21 @@ describe("ACP Project adapter parity", () => {
     expect(mcpDrain).toEqual(coreDrain.projectControl);
     expect(cliDrain).toEqual(coreDrain.projectControl);
     expect(redcodeDrain.projectControl).toEqual(coreDrain.projectControl);
-    expect(await invokeProjectMcp(mcp.session, "project_status", {}))
-      .toEqual(await invokeProjectCli(cli.session, ["project", "status"]));
+
+    const coreStatus = await generic.session.prompt("/status");
+    const mcpStatus = await invokeProjectMcp(mcp.session, "project_status", {});
+    const cliStatus = await invokeProjectCli(cli.session, ["project", "status"]);
+    const redcodeStatus = await invokeRedcodeProject(redcode.session, "/status");
+    expect(mcpStatus).toEqual(coreStatus.projectControl);
+    expect(cliStatus).toEqual(coreStatus.projectControl);
+    expect(redcodeStatus.projectControl).toEqual(coreStatus.projectControl);
+    expect(mcpStatus).toMatchObject({
+      context: {
+        queue: { depth: 0, freshness: "fresh" },
+        workers: { total: 0, freshness: "fresh" },
+        adapter_health: { status: "healthy" },
+      },
+    });
     expect(mcp.control).toHaveBeenCalledWith("drain");
     expect(cli.control).toHaveBeenCalledWith("drain");
     expect(redcode.prompt).toHaveBeenCalledWith("/drain");
