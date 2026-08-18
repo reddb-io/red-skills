@@ -43,15 +43,21 @@ grep -qF 'cosign sign-blob' "$WORKFLOW" && grep -qF 'dist/package-set.manifest.s
   fail "release workflow must sign the package-set manifest into a Sigstore bundle"
 grep -qF 'unshare --net' "$WORKFLOW" && grep -qF 'scripts/verify-package-set.mjs' "$WORKFLOW" ||
   fail "release workflow must smoke the verifier with network access blocked"
-# verify-blob reads the legacy TUF cache (tuf.db + targets/), which signing
-# does not populate; without a prime step the offline smoke reaches for the
-# network and fails (v3.19.0). The prime must precede the network drop.
+# The legacy bundle shape reads trust roots from an older TUF store nothing in
+# cosign 2.5 primes, so its offline verify always reached for the network and
+# failed (v3.19.0). The Sigstore bundle format plus an explicit trusted root,
+# fetched by `cosign initialize` BEFORE the network drop, is the recipe.
+grep -qF -- '--new-bundle-format' "$WORKFLOW" ||
+  fail "release workflow must sign in the Sigstore bundle format"
 initialize_line="$(grep -nF 'cosign initialize' "$WORKFLOW" | head -n1 | cut -d: -f1)"
 unshare_line="$(grep -nF 'unshare --net' "$WORKFLOW" | head -n1 | cut -d: -f1)"
 [ -n "$initialize_line" ] && [ "$initialize_line" -lt "$unshare_line" ] ||
   fail "release workflow must run 'cosign initialize' before dropping the network"
+grep -qF -- '--trusted-root "$trusted_root"' "$WORKFLOW" ||
+  fail "release offline verify must hand the verifier the cached trusted root"
 SMOKE=".github/workflows/red-package-set-smoke.yml"
-grep -qF 'cosign sign-blob' "$SMOKE" && grep -qF 'cosign initialize' "$SMOKE" &&
+grep -qF 'cosign sign-blob' "$SMOKE" && grep -qF -- '--new-bundle-format' "$SMOKE" &&
+  grep -qF 'cosign initialize' "$SMOKE" && grep -qF -- '--trusted-root' "$SMOKE" &&
   grep -qF 'unshare --net' "$SMOKE" && grep -qF 'scripts/verify-package-set.mjs' "$SMOKE" ||
   fail "pull-request smoke must rehearse the release's real cosign sign + offline verify recipe"
 for asset in \

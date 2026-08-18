@@ -59,11 +59,14 @@ jobs:
           cosign version
           cosign sign-blob \
             --yes \
+            --new-bundle-format \
             --bundle dist/package-set.manifest.sigstore.json \
             dist/package-set.manifest.json
-          # Same as the release: prime the TUF trust-root cache verify-blob
-          # reads, while the network is still up.
+          # Same as the release: fetch and cache the Sigstore trust root while
+          # the network is still up; the offline verify hands it over by path.
           cosign initialize
+          trusted_root="$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
+          [ -f "$trusted_root" ] || { echo "cosign initialize did not cache $trusted_root" >&2; exit 1; }
 
       - name: Offline verify (release recipe)
         env:
@@ -75,7 +78,21 @@ jobs:
               --manifest dist/package-set.manifest.json \
               --bundle dist/package-set.manifest.sigstore.json \
               --cosign-bin "$(command -v cosign)" \
+              --trusted-root "$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json" \
               --certificate-identity-regexp "$IDENTITY"
+
+      # A verifier without --trusted-root is what an ordinary workstation runs:
+      # cosign resolves the trust root through TUF over the network.
+      - name: Online verify (workstation default)
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
+        run: |
+          set -euo pipefail
+          node scripts/verify-package-set.mjs \
+            --manifest dist/package-set.manifest.json \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --cosign-bin "$(command -v cosign)" \
+            --certificate-identity-regexp "$IDENTITY"
 
       - name: Diagnostics when the release recipe fails
         if: failure()
@@ -83,33 +100,21 @@ jobs:
           IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
         run: |
           set +e
-          echo "=== A. same verifier, network on, no sudo"
-          node scripts/verify-package-set.mjs \
-            --manifest dist/package-set.manifest.json \
-            --bundle dist/package-set.manifest.sigstore.json \
-            --cosign-bin "$(command -v cosign)" \
-            --certificate-identity-regexp "$IDENTITY"
-          echo "exit=$?"
-          echo "=== B. same verifier, network on, under sudo"
-          sudo --preserve-env=HOME "$(command -v node)" scripts/verify-package-set.mjs \
-            --manifest dist/package-set.manifest.json \
-            --bundle dist/package-set.manifest.sigstore.json \
-            --cosign-bin "$(command -v cosign)" \
-            --certificate-identity-regexp "$IDENTITY"
-          echo "exit=$?"
-          echo "=== C. cosign directly, offline, no sudo, verbose"
+          echo "=== cosign directly, verbose, network on"
           cosign verify-blob --verbose --offline \
             --bundle dist/package-set.manifest.sigstore.json \
             --certificate-identity-regexp "$IDENTITY" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             dist/package-set.manifest.json
           echo "exit=$?"
-          echo "=== D. cosign directly, offline, netns, verbose"
+          echo "=== cosign directly, verbose, network namespace, explicit trusted root"
           sudo --preserve-env=HOME unshare --net -- "$(command -v cosign)" verify-blob --verbose --offline \
             --bundle dist/package-set.manifest.sigstore.json \
             --certificate-identity-regexp "$IDENTITY" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --trusted-root "$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json" \
             dist/package-set.manifest.json
           echo "exit=$?"
-          echo "=== E. cert SAN"
-          node -e 'const b=require("./dist/package-set.manifest.sigstore.json"); process.stdout.write(Buffer.from(b.cert,"base64").toString())' | openssl x509 -noout -text | grep -A2 -i "subject alternative\|Issuer:" || true
+          echo "=== bundle shape and sigstore cache"
+          node -e 'const b=require("./dist/package-set.manifest.sigstore.json"); console.log(Object.keys(b), b.mediaType)'
+          ls -laR "$HOME/.sigstore" 2>&1 | head -60 || true

@@ -32,8 +32,9 @@ function fail(message) {
   throw new Error(message);
 }
 
-function verifySignature({ manifestPath, bundlePath, cosignBin, identityRegexp }) {
+function verifySignature({ manifestPath, bundlePath, cosignBin, identityRegexp, trustedRootPath }) {
   if (!existsSync(bundlePath)) fail("signature bundle is missing");
+  if (trustedRootPath && !existsSync(trustedRootPath)) fail("trusted root is missing");
   const result = spawnSync(
     cosignBin,
     [
@@ -45,6 +46,12 @@ function verifySignature({ manifestPath, bundlePath, cosignBin, identityRegexp }
       identityRegexp,
       "--certificate-oidc-issuer",
       GITHUB_ISSUER,
+      // The Sigstore trust roots (Fulcio, Rekor, CT log keys) are the one input
+      // the bundle cannot carry. cosign fetches them through TUF, verified
+      // against its embedded root, when no --trusted-root is given; a host with
+      // no network passes the trusted_root.json a prior `cosign initialize`
+      // cached.
+      ...(trustedRootPath ? ["--trusted-root", trustedRootPath] : []),
       manifestPath,
     ],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
@@ -137,6 +144,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (argument === "--cosign-bin" && value) {
       options.cosignBin = value;
+      index += 1;
+    } else if (argument === "--trusted-root" && value) {
+      options.trustedRootPath = resolve(value);
       index += 1;
     } else if (argument === "--certificate-identity-regexp" && value) {
       // Smoke/test override only: the release verifier default pins the
