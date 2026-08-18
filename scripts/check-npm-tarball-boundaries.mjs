@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const MEMORY_TOKENIZER_ASSET = "memory-tokenizer.asset.cjs";
@@ -113,6 +113,10 @@ function pluginManifests(root) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function pluginHasRuntime(root, pluginName) {
+  return existsSync(join(root, "apps", pluginName, "package.json"));
+}
+
 function checkPlugins(root, tarballsDir) {
   const tarballs = readdirSync(tarballsDir).filter((entry) => entry.endsWith(".tgz"));
   for (const plugin of pluginManifests(root)) {
@@ -128,7 +132,16 @@ function checkPlugins(root, tarballsDir) {
       (entry) => entry.startsWith("package/skills/") && entry.endsWith("/SKILL.md"),
     );
     if (!skill) throw new Error(`${packageName} tarball carries no published skills`);
-    requireEntry(listing, `package/dist/${plugin.name}.bundle.min.mjs`, packageName);
+    // A plugin carries its runtime bundle iff it has a runtime app
+    // (apps/<name>); `internal` is skills-only, and demanding a bundle nothing
+    // builds refused the v3.19.1 publish. The inverse is refused too, so a
+    // stray bundle cannot ride a skills-only package.
+    const bundle = `package/dist/${plugin.name}.bundle.min.mjs`;
+    if (pluginHasRuntime(root, plugin.name)) {
+      requireEntry(listing, bundle, packageName);
+    } else if (listing.includes(bundle)) {
+      throw new Error(`${packageName} is skills-only but its tarball carries ${bundle}`);
+    }
     if (plugin.name === "memory") {
       requireEntry(listing, `package/dist/${MEMORY_TOKENIZER_ASSET}`, packageName);
     }

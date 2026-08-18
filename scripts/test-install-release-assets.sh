@@ -29,19 +29,27 @@ test -f "$root/dist/opencode-host.bundle.min.mjs"
 for plugin in dev memory brain internal; do
   test -f "$root/plugins/$plugin/package.json"
   test -f "$root/plugins/$plugin/skills/example/SKILL.md"
+done
+for plugin in dev memory brain; do
   test -f "$root/dist/$plugin.bundle.min.mjs"
 done
+test ! -e "$root/dist/internal.bundle.min.mjs"
 test ! -e "$root/apps"
 test ! -e "$root/packages"
 INSTALL_OPENCODE
 chmod +x "$core/scripts/install-opencode.sh"
 
+# `internal` is skills-only: its package ships no runtime bundle, and the
+# installer must materialise it without demanding one.
 for plugin in dev memory brain internal; do
   package="$packages/red-skills-$plugin"
-  mkdir -p "$package/skills/example" "$package/dist"
+  mkdir -p "$package/skills/example"
   printf '{"name":"@reddb-io/red-skills-%s","version":"9.9.9"}\n' "$plugin" >"$package/package.json"
   printf '# Example\n' >"$package/skills/example/SKILL.md"
-  printf '%s bundle\n' "$plugin" >"$package/dist/$plugin.bundle.min.mjs"
+  if [ "$plugin" != internal ]; then
+    mkdir -p "$package/dist"
+    printf '%s bundle\n' "$plugin" >"$package/dist/$plugin.bundle.min.mjs"
+  fi
 done
 
 # npm installs the local fixture packages into the same node_modules shape as
@@ -109,8 +117,11 @@ test -f "$version/.agents/plugins/marketplace.json"
 test -f "$version/dist/opencode-host.bundle.min.mjs"
 for plugin in dev memory brain internal; do
   test -f "$version/plugins/$plugin/skills/example/SKILL.md"
+done
+for plugin in dev memory brain; do
   test -f "$version/dist/$plugin.bundle.min.mjs"
 done
+test ! -e "$version/dist/internal.bundle.min.mjs"
 test ! -e "$version/apps"
 test ! -e "$version/packages"
 test -f "$tmp/install/current/plugins/dev/skills/example/SKILL.md"
