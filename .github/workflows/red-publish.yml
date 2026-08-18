@@ -51,9 +51,11 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # Repository settings protect the red-release environment with required
-    # reviewers. Approval happens before this job can build, publish assets, or
-    # move the matching major tag.
+    # The job runs in the red-release environment so repository settings CAN
+    # gate it with required reviewers; this file does not enforce that, and as
+    # of 2026-08-18 the environment carries no protection rules — merging the
+    # Version PR publishes to npm without a further approval. Whoever wants a
+    # human gate configures it on the environment, not here.
     environment:
       name: red-release
     steps:
