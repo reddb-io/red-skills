@@ -705,19 +705,35 @@ jobs:
             --source-commit "$SOURCE_COMMIT" \
             --out dist/package-set.manifest.json \
             "${build_args[@]}"
+          # The Sigstore bundle format (--new-bundle-format) carries the
+          # certificate, signature, and Rekor entry with its inclusion proof,
+          # so verification needs no Fulcio/Rekor round-trip. The one input a
+          # bundle cannot carry is the Sigstore trust root (Fulcio, Rekor and
+          # CT log keys): cosign fetches it through TUF, verified against its
+          # embedded root. `cosign initialize` does that fetch while the
+          # network is still up and caches trusted_root.json; the offline
+          # verify below hands that file over explicitly. The legacy bundle
+          # shape could never be verified with the network gone — its trust
+          # roots come from an older TUF store nothing in cosign 2.5 primes —
+          # which is how the v3.19.0 publish died inside the network namespace.
           cosign sign-blob \
             --yes \
+            --new-bundle-format \
             --bundle dist/package-set.manifest.sigstore.json \
             dist/package-set.manifest.json
+          cosign initialize
+          trusted_root="$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
+          [ -f "$trusted_root" ] || { echo "cosign initialize did not cache $trusted_root" >&2; exit 1; }
 
-          # Signing needs Fulcio/Rekor; verification does not. Enter a fresh
-          # network namespace after signing so this smoke proves the downloaded
-          # manifest, bundle, verifier, and payloads are sufficient by themselves.
+          # Enter a fresh network namespace so this smoke proves the downloaded
+          # manifest, bundle, verifier, payloads, and a trust root the operator
+          # already holds are sufficient by themselves.
           sudo --preserve-env=HOME unshare --net -- \
             "$(command -v node)" scripts/verify-package-set.mjs \
               --manifest dist/package-set.manifest.json \
               --bundle dist/package-set.manifest.sigstore.json \
-              --cosign-bin "$(command -v cosign)"
+              --cosign-bin "$(command -v cosign)" \
+              --trusted-root "$trusted_root"
 
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver

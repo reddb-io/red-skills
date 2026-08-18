@@ -1,0 +1,120 @@
+name: red-package-set-smoke
+
+# Rehearse the release's package-set signing recipe BEFORE a tag depends on it.
+#
+# red-publish.yml signs the package-set manifest keylessly and then proves the
+# downloaded verifier works with the network gone. That step first ran for real
+# on v3.19.0 and failed, which blocked npm publish and broke every installer
+# that materialises the release packages. Nothing on a pull request had ever
+# exercised real cosign: the workspace contract test drives a fake. This
+# workflow signs a fixture manifest under its own OIDC identity and runs the
+# exact offline verifier the release runs, so a recipe regression fails the PR
+# instead of the release.
+
+on:
+  pull_request:
+    paths:
+      - scripts/build-package-set.mjs
+      - scripts/verify-package-set.mjs
+      - scripts/test-package-set-contract.sh
+      - .github/workflows/red-package-set-smoke.yml
+      - .github/workflows/red-publish.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    # Fork pull requests carry no OIDC token, so keyless signing cannot run there.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+
+      - name: Build and sign a fixture package set
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          printf 'alpha payload\n' >dist/alpha.bin
+          printf 'beta payload\n' >dist/beta.bin
+          cp scripts/verify-package-set.mjs dist/verify-package-set.mjs
+          node scripts/build-package-set.mjs \
+            --source-commit "$SOURCE_COMMIT" \
+            --out dist/package-set.manifest.json \
+            --asset dist/alpha.bin \
+            --asset dist/beta.bin \
+            --asset dist/verify-package-set.mjs
+          cosign version
+          cosign sign-blob \
+            --yes \
+            --new-bundle-format \
+            --bundle dist/package-set.manifest.sigstore.json \
+            dist/package-set.manifest.json
+          # Same as the release: fetch and cache the Sigstore trust root while
+          # the network is still up; the offline verify hands it over by path.
+          cosign initialize
+          trusted_root="$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
+          [ -f "$trusted_root" ] || { echo "cosign initialize did not cache $trusted_root" >&2; exit 1; }
+
+      - name: Offline verify (release recipe)
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=HOME unshare --net -- \
+            "$(command -v node)" scripts/verify-package-set.mjs \
+              --manifest dist/package-set.manifest.json \
+              --bundle dist/package-set.manifest.sigstore.json \
+              --cosign-bin "$(command -v cosign)" \
+              --trusted-root "$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json" \
+              --certificate-identity-regexp "$IDENTITY"
+
+      # A verifier without --trusted-root is what an ordinary workstation runs:
+      # cosign resolves the trust root through TUF over the network.
+      - name: Online verify (workstation default)
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
+        run: |
+          set -euo pipefail
+          node scripts/verify-package-set.mjs \
+            --manifest dist/package-set.manifest.json \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --cosign-bin "$(command -v cosign)" \
+            --certificate-identity-regexp "$IDENTITY"
+
+      - name: Diagnostics when the release recipe fails
+        if: failure()
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
+        run: |
+          set +e
+          echo "=== cosign directly, verbose, network on"
+          cosign verify-blob --verbose --offline \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/package-set.manifest.json
+          echo "exit=$?"
+          echo "=== cosign directly, verbose, network namespace, explicit trusted root"
+          sudo --preserve-env=HOME unshare --net -- "$(command -v cosign)" verify-blob --verbose --offline \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --trusted-root "$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json" \
+            dist/package-set.manifest.json
+          echo "exit=$?"
+          echo "=== bundle shape and sigstore cache"
+          node -e 'const b=require("./dist/package-set.manifest.sigstore.json"); console.log(Object.keys(b), b.mediaType)'
+          ls -laR "$HOME/.sigstore" 2>&1 | head -60 || true
