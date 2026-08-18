@@ -696,10 +696,58 @@ jobs:
           set -euo pipefail
           pnpm package
 
-      # The first package-set contract covers the workstation artifacts the
-      # tagged tree can produce coherently today. Plugin payloads and host
-      # projections remain in the source snapshot named by SOURCE_COMMIT;
-      # Gemini/Hermes completeness is added by later Spec #3973 slices.
+      # The payloads a workstation installs that are not a runtime bundle: the
+      # four plugin definition trees every host registers, the canonical
+      # marketplace projections, the generated Gemini extension (#3975), the
+      # Hermes skills installer (#3976), and the Zellij dashboard integration.
+      # Each host generator ships BESIDE its output, so an operator whose
+      # network is gone can re-generate and re-validate from the expanded tree
+      # instead of being told to fetch the repository that produced it.
+      - name: Build workstation payloads
+        if: steps.target.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          # The plugin list is never spelled here: it comes from the same
+          # enumeration the signed set derives from, which the contract test
+          # holds against the plugin tree itself. A fifth plugin gets a payload
+          # by existing, not by someone remembering this loop.
+          while IFS= read -r payload; do
+            plugin="${payload#dist/plugin-}"
+            plugin="${plugin%.payload.tgz}"
+            [ -f "plugins/$plugin/.claude-plugin/plugin.json" ] || {
+              echo "::error::declared plugin payload has no plugin tree: plugins/$plugin" >&2
+              exit 1
+            }
+            tar -czf "$payload" "plugins/$plugin"
+          done < <(node scripts/workstation-package-set.mjs --plugin-payloads)
+          tar -czf dist/marketplace-manifests.tgz \
+            .claude-plugin/marketplace.json \
+            .agents/plugins/marketplace.json \
+            .gemini-plugin/marketplace.json
+          tar -czf dist/zellij-dashboard.tgz -C apps zellij-plugin-dashboard
+          # Generate the self-contained Gemini dev extension from this tree's
+          # plugin payload plus the bundles built above, and run the
+          # generated-path validator BEFORE the bytes can enter the signed set:
+          # an extension that fails validation must never become a signed
+          # artifact an operator trusts.
+          rm -rf dist/gemini
+          node scripts/build-gemini-extension.mjs --root . --output dist/gemini/dev
+          node scripts/validate-gemini-extension.mjs --extension dist/gemini/dev
+          tar -czf dist/gemini-extension.tgz -C dist gemini
+          cp scripts/build-gemini-extension.mjs dist/build-gemini-extension.mjs
+          cp scripts/validate-gemini-extension.mjs dist/validate-gemini-extension.mjs
+          cp scripts/install-hermes-skills.mjs dist/install-hermes-skills.mjs
+          cp scripts/expand-package-set.mjs dist/expand-package-set.mjs
+          cp scripts/workstation-package-set.mjs dist/workstation-package-set.mjs
+
+      # The package set is the COMPLETE workstation release contract (Spec
+      # #3973): every payload a machine needs to install RedSkills with no
+      # network, correlated to one source commit and authenticated by one
+      # signature. The membership list is not written here — it is derived from
+      # scripts/workstation-package-set.mjs, the one enumeration
+      # scripts/test-package-set-contract.sh pins, because two hand-kept bash
+      # arrays in this file is exactly how a payload lands in the upload and
+      # not in the signed set.
       - name: Build, sign, and offline-verify package set
         if: steps.target.outputs.publish == 'true'
         env:
@@ -708,27 +756,11 @@ jobs:
         run: |
           set -euo pipefail
           cp scripts/verify-package-set.mjs dist/verify-package-set.mjs
-          workstation_assets=(
-            "dist/vscode-extension-red-skills-${VERSION}.vsix"
-            dist/herdr-plugin-red-skills.bundle.min.mjs
-            dist/dev.bundle.min.mjs
-            dist/dev.manifest.json
-            dist/redskilled-mcp.bundle.min.mjs
-            dist/code-nav.bundle.min.mjs
-            dist/code-nav.manifest.json
-            dist/opencode-host.bundle.min.mjs
-            dist/opencode-host.generated.tgz
-            dist/memory.bundle.min.mjs
-            dist/memory-mcp.bundle.min.mjs
-            dist/memory-runtime-manifest.json
-            dist/brain.bundle.min.mjs
-            dist/brain-mcp.bundle.min.mjs
-            dist/brain-runtime-manifest.json
-            dist/rsp.bundle.min.mjs
-            dist/rsp-core.bundle.min.mjs
-            dist/redskilled.bundle.min.mjs
-            dist/verify-package-set.mjs
-          )
+          mapfile -t workstation_assets < <(node scripts/workstation-package-set.mjs --version "$VERSION")
+          [ "${#workstation_assets[@]}" -gt 0 ] || {
+            echo "::error::the workstation package set resolved to no assets" >&2
+            exit 1
+          }
           build_args=()
           for asset in "${workstation_assets[@]}"; do
             build_args+=(--asset "$asset")
@@ -759,13 +791,21 @@ jobs:
 
           # Enter a fresh network namespace so this smoke proves the downloaded
           # manifest, bundle, verifier, payloads, and a trust root the operator
-          # already holds are sufficient by themselves.
+          # already holds are sufficient by themselves. The expander runs from
+          # dist/ rather than scripts/ because the DOWNLOADED copies are what an
+          # operator has; it verifies the signature, refuses an incomplete or
+          # developer-only set, expands every archive payload, and drives the
+          # Gemini and Hermes local surfaces through their own validators.
+          expansion="$(mktemp -d)"
           sudo --preserve-env=HOME unshare --net -- \
-            "$(command -v node)" scripts/verify-package-set.mjs \
+            "$(command -v node)" dist/expand-package-set.mjs \
               --manifest dist/package-set.manifest.json \
               --bundle dist/package-set.manifest.sigstore.json \
+              --into "$expansion" \
+              --version "$VERSION" \
               --cosign-bin "$(command -v cosign)" \
               --trusted-root "$trusted_root"
+          sudo rm -rf "$expansion"
 
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver
@@ -984,33 +1024,16 @@ jobs:
           # Two of these are not an inert backup: the `.vsix` and the herdr
           # bundle are the ONLY way either companion surface is installed on a
           # machine without this monorepo (issue #3060).
-          assets=(
-            "dist/vscode-extension-red-skills-${NEXT#v}.vsix"
-            dist/herdr-plugin-red-skills.bundle.min.mjs
-            dist/dev.bundle.min.mjs
-            dist/dev.manifest.json
-            dist/redskilled-mcp.bundle.min.mjs
-            dist/code-nav.bundle.min.mjs
-            dist/code-nav.manifest.json
-            dist/benchmark-memory.bundle.min.mjs
-            dist/benchmark-memory.manifest.json
-            dist/opencode-host.bundle.min.mjs
-            dist/opencode-host.generated.tgz
-            dist/benchmark-code-understanding.bundle.min.mjs
-            dist/benchmark-code-understanding.manifest.json
-            dist/memory.bundle.min.mjs
-            dist/memory-mcp.bundle.min.mjs
-            dist/memory-runtime-manifest.json
-            dist/brain.bundle.min.mjs
-            dist/brain-mcp.bundle.min.mjs
-            dist/brain-runtime-manifest.json
-            dist/rsp.bundle.min.mjs
-            dist/rsp-core.bundle.min.mjs
-            dist/redskilled.bundle.min.mjs
-            dist/package-set.manifest.json
-            dist/package-set.manifest.sigstore.json
-            dist/verify-package-set.mjs
-          )
+          # Derived from the same enumeration that decides the signed set, so a
+          # new payload cannot land in one array and be forgotten in the other.
+          # `--github-release` adds what the workstation set deliberately
+          # excludes: the benchmark evidence this repository publishes for its
+          # own measurements, and the signed manifest plus its Sigstore bundle.
+          mapfile -t assets < <(node scripts/workstation-package-set.mjs --github-release --version "${NEXT#v}")
+          [ "${#assets[@]}" -gt 0 ] || {
+            echo "::error::the release asset set resolved to no files" >&2
+            exit 1
+          }
           # The Release standard owns the Release; this job only ever attaches to
           # it. Two owners would race over one object: the engine re-reads the
           # Release it created and refuses a body it did not write, so a Release

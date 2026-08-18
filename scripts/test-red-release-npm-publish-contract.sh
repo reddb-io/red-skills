@@ -471,6 +471,11 @@ fi
 # The standalone installer downloads the RSP bundle into the source snapshot
 # used by OpenCode. Building it only for the npm tarball is insufficient: the
 # GitHub Release upload list is the installer's public artifact contract.
+#
+# That list is no longer written in the workflow — it is derived from
+# scripts/workstation-package-set.mjs (#3977) — so this reads the derivation and
+# separately pins that the step still uses it. Grepping the step's own text
+# would pass on an empty upload.
 github_release_step="$(mktemp)"
 trap 'rm -f "$github_release_step"' EXIT
 awk '
@@ -478,8 +483,10 @@ awk '
   in_step && /^      - name:/ && $0 != "      - name: GitHub Release" { exit }
   in_step { print }
 ' "$WORKFLOW" >"$github_release_step"
-if grep -qF 'dist/rsp.bundle.min.mjs' "$github_release_step" &&
-   grep -qF 'dist/rsp-core.bundle.min.mjs' "$github_release_step"; then
+release_assets="$(node scripts/workstation-package-set.mjs --github-release --version 0.0.0)"
+if grep -qF 'node scripts/workstation-package-set.mjs --github-release' "$github_release_step" &&
+   printf '%s\n' "$release_assets" | grep -qxF 'dist/rsp.bundle.min.mjs' &&
+   printf '%s\n' "$release_assets" | grep -qxF 'dist/rsp-core.bundle.min.mjs'; then
   pass "GitHub Release publishes the RSP launcher and core consumed by the installer"
 else
   fail "GitHub Release must upload both RSP boundary assets for standalone installs"
