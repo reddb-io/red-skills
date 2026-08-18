@@ -710,9 +710,16 @@ jobs:
             --bundle dist/package-set.manifest.sigstore.json \
             dist/package-set.manifest.json
 
-          # Signing needs Fulcio/Rekor; verification does not. Enter a fresh
-          # network namespace after signing so this smoke proves the downloaded
-          # manifest, bundle, verifier, and payloads are sufficient by themselves.
+          # Verification needs no Fulcio/Rekor round-trip, but it does need the
+          # Sigstore TUF trust roots (Rekor and Fulcio public keys). Signing
+          # caches only sigstore-go's trusted_root.json; verify-blob on this
+          # bundle shape reads the older TUF cache (tuf.db + targets/), which
+          # is empty until `cosign initialize` fills it — the v3.19.0 publish
+          # died on exactly that inside the network namespace. Initialize
+          # while the network is up, then drop it: the smoke proves the
+          # downloaded manifest, bundle, verifier, payloads, and a primed
+          # trust-root cache are sufficient by themselves.
+          cosign initialize
           sudo --preserve-env=HOME unshare --net -- \
             "$(command -v node)" scripts/verify-package-set.mjs \
               --manifest dist/package-set.manifest.json \

@@ -43,6 +43,17 @@ grep -qF 'cosign sign-blob' "$WORKFLOW" && grep -qF 'dist/package-set.manifest.s
   fail "release workflow must sign the package-set manifest into a Sigstore bundle"
 grep -qF 'unshare --net' "$WORKFLOW" && grep -qF 'scripts/verify-package-set.mjs' "$WORKFLOW" ||
   fail "release workflow must smoke the verifier with network access blocked"
+# verify-blob reads the legacy TUF cache (tuf.db + targets/), which signing
+# does not populate; without a prime step the offline smoke reaches for the
+# network and fails (v3.19.0). The prime must precede the network drop.
+initialize_line="$(grep -nF 'cosign initialize' "$WORKFLOW" | head -n1 | cut -d: -f1)"
+unshare_line="$(grep -nF 'unshare --net' "$WORKFLOW" | head -n1 | cut -d: -f1)"
+[ -n "$initialize_line" ] && [ "$initialize_line" -lt "$unshare_line" ] ||
+  fail "release workflow must run 'cosign initialize' before dropping the network"
+SMOKE=".github/workflows/red-package-set-smoke.yml"
+grep -qF 'cosign sign-blob' "$SMOKE" && grep -qF 'cosign initialize' "$SMOKE" &&
+  grep -qF 'unshare --net' "$SMOKE" && grep -qF 'scripts/verify-package-set.mjs' "$SMOKE" ||
+  fail "pull-request smoke must rehearse the release's real cosign sign + offline verify recipe"
 for asset in \
   dist/package-set.manifest.json \
   dist/package-set.manifest.sigstore.json \

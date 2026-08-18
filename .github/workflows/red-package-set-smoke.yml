@@ -61,18 +61,15 @@ jobs:
             --yes \
             --bundle dist/package-set.manifest.sigstore.json \
             dist/package-set.manifest.json
-          echo "--- bundle shape"
-          node -e 'const b=require("./dist/package-set.manifest.sigstore.json"); console.log(Object.keys(b))'
-          echo "--- sigstore cache after signing"
-          ls -laR "$HOME/.sigstore" 2>&1 | head -60 || true
+          # Same as the release: prime the TUF trust-root cache verify-blob
+          # reads, while the network is still up.
+          cosign initialize
 
       - name: Offline verify (release recipe)
         env:
           IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
         run: |
           set -euo pipefail
-          echo "--- environment seen under sudo"
-          sudo --preserve-env=HOME env | grep -E '^(HOME|USER|PATH)=' || true
           sudo --preserve-env=HOME unshare --net -- \
             "$(command -v node)" scripts/verify-package-set.mjs \
               --manifest dist/package-set.manifest.json \
