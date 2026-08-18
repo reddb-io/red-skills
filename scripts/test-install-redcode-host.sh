@@ -45,6 +45,21 @@ HOME="$HOME_DIR" XDG_CONFIG_HOME="$XDG_DIR" \
   "$FIXTURE/scripts/install-opencode.sh" --global --host opencode >/dev/null
 test -f "$XDG_DIR/opencode/plugins/redskills-dev-example.ts"
 
+# A re-install prunes what the previous install recorded and this one no
+# longer produces (a skill renamed upstream), and leaves user files alone.
+mv "$FIXTURE/dist/opencode/dev/.opencode/skills/example" "$FIXTURE/dist/opencode/dev/.opencode/skills/renamed"
+mkdir -p "$XDG_DIR/redcode/skills/mine"
+printf '# Mine
+' > "$XDG_DIR/redcode/skills/mine/SKILL.md"
+HOME="$HOME_DIR" XDG_CONFIG_HOME="$XDG_DIR" \
+  "$FIXTURE/scripts/install-opencode.sh" --global --host redcode >/dev/null
+test -f "$XDG_DIR/redcode/skills/renamed/SKILL.md"
+test ! -e "$XDG_DIR/redcode/skills/example"
+test -f "$XDG_DIR/redcode/skills/mine/SKILL.md"
+grep -qxF "$XDG_DIR/redcode/skills/renamed" "$XDG_DIR/redcode/redskills-install-manifest.txt"
+! grep -qxF "$XDG_DIR/redcode/skills/example" "$XDG_DIR/redcode/redskills-install-manifest.txt"
+mv "$FIXTURE/dist/opencode/dev/.opencode/skills/renamed" "$FIXTURE/dist/opencode/dev/.opencode/skills/example"
+
 HOME="$HOME_DIR" XDG_CONFIG_HOME="$XDG_DIR" \
   "$FIXTURE/scripts/install-opencode.sh" --uninstall --global --host redcode >/dev/null
 test ! -e "$XDG_DIR/redcode/plugins/redskills-dev-example.ts"

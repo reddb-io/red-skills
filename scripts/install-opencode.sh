@@ -159,8 +159,37 @@ record_manifest() {
   printf '%s\n' "$path" >> "$MANIFEST_TMP"
 }
 
+# A re-install replaces the manifest wholesale, so anything the PREVIOUS
+# install recorded and this one did not reproduce — a skill renamed or
+# removed upstream, a hook module that stopped shipping — would linger on the
+# host forever, still loaded next to its successor (a stale `view` beside
+# `memory-view`, 3.19.4). Prune those entries before the new manifest lands;
+# only paths under the manifest's own root are ever touched.
+prune_stale_manifest_paths() {
+  previous="$1"
+  next="$2"
+  allowed_root="$(dirname "$previous")"
+  [ -f "$previous" ] || return 0
+  while IFS= read -r path || [ -n "$path" ]; do
+    case "$path" in
+      ""|\#*) continue ;;
+    esac
+    grep -qxF -- "$path" "$next" && continue
+    case "$path" in
+      "$allowed_root"/*)
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          run_rm "$path"
+          log "pruned stale $path (recorded by the previous install, not produced by this one)"
+        fi
+        ;;
+      *) log "(note) skipped stale manifest path outside $allowed_root: $path" ;;
+    esac
+  done < "$previous"
+}
+
 finish_manifest() {
   [ -n "$MANIFEST_TMP" ] || return 0
+  prune_stale_manifest_paths "$MANIFEST_FILE" "$MANIFEST_TMP"
   mv "$MANIFEST_TMP" "$MANIFEST_FILE"
   log "wrote uninstall manifest $MANIFEST_FILE"
 }
