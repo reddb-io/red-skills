@@ -76,7 +76,7 @@ latest RedSkills release, detects `opencode` and `redcode` alongside Claude Code
 and Codex, and invokes the adapter for every host present:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
 ```
 
 That path installs OpenCode under `~/.config/opencode/`, RedCode under

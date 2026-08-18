@@ -48,7 +48,7 @@ is enough:
 
 ```bash
 # re-run the one-liner: it detects the Directory source and re-registers it
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
 
 # or repoint by hand
 claude plugin marketplace remove red-skills
