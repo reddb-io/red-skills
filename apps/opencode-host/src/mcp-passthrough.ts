@@ -97,18 +97,22 @@ export function resolveScriptPath(
   const candidates = [
     join(pluginsRoot, plugin, relativeScriptPath),
     join(pluginsRoot, plugin, "hooks", relativeScriptPath.split("/").pop() ?? ""),
+    // The tree that owns `plugins/` (a checkout or the installer's
+    // materialised package set): `$root/dist/rsp.bundle.min.mjs` in the
+    // source chain names a repo-root bundle, not a plugin-root one.
+    join(pluginsRoot, "..", relativeScriptPath),
     join(pluginsRoot, "..", "..", ".codex", ".tmp", "marketplaces", "red-skills", "plugins", plugin, relativeScriptPath),
     join(homedir(), ".codex", "plugins", "cache", "red-skills", plugin, relativeScriptPath),
   ];
   // The .codex cache path is `<cache>/<plugin>/*/<relativeScriptPath>`;
   // walk one level deep into the cache dir and pick the first hit.
-  for (const c of candidates.slice(0, 2)) {
+  for (const c of candidates.slice(0, 3)) {
     if (existsSync(c)) return { path: c, candidate: c };
   }
-  // Codexa cache: glob one level (best-effort; not as robust as the
+  // Codex cache: glob one level (best-effort; not as robust as the
   // source's shell glob, but the dev checkout path is the common
   // case and the build-time check is a warning, not a fail-closed).
-  for (const c of candidates.slice(2)) {
+  for (const c of candidates.slice(3)) {
     if (existsSync(c)) return { path: c, candidate: c };
   }
   return { path: null, candidate: candidates[0] ?? null };
@@ -212,16 +216,20 @@ function rewriteShC(
     }
   }
 
-  let resolvedPath = resolveHomeScriptPath(body);
-  if (!resolvedPath) {
-    for (const rel of candidates) {
-      const { path } = resolveScriptPath(pluginsRoot, plugin, rel);
-      if (path) {
-        resolvedPath = path;
-        break;
-      }
+  // The tree being generated FROM wins. The explicit `$HOME/...` launchers
+  // in the source chain are fallbacks for hosts that never materialised a
+  // tree; consulting them first baked a Codex marketplace cache path into
+  // every OpenCode install that happened to have one, and the MCP died the
+  // day that cache was cleaned.
+  let resolvedPath: string | null = null;
+  for (const rel of candidates) {
+    const { path } = resolveScriptPath(pluginsRoot, plugin, rel);
+    if (path) {
+      resolvedPath = path;
+      break;
     }
   }
+  if (!resolvedPath) resolvedPath = resolveHomeScriptPath(body);
 
   if (!resolvedPath) {
     warnings.push(

@@ -18,7 +18,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if command -v rsp >/dev/null 2>&1; then exec rsp mcp; fi; for bundle in \"$PWD/dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\" \"$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs\" \"$HOME/.codex/.tmp/marketplaces/red-skills/packaging/npm/bin/rsp.mjs\"; do if [ -f \"$bundle\" ]; then exec node \"$bundle\" mcp; fi; done; printf 'rsp: could not locate rsp MCP launcher\\n' >&2; exit 1"
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if command -v rsp >/dev/null 2>&1; then exec rsp mcp; fi; for bundle in \"$PWD/dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\" \"$HOME/.red-skills/current/bin/rsp.mjs\" \"$HOME/.codex/.tmp/marketplaces/red-skills/packaging/npm/bin/rsp.mjs\"; do if [ -f \"$bundle\" ]; then exec node \"$bundle\" mcp; fi; done; printf 'rsp: could not locate rsp MCP launcher\\n' >&2; exit 1"
       ]
     }
   }
