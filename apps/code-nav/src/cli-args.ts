@@ -111,7 +111,11 @@ Options:
   -h, --help       show this help
 
 Environment:
-  CODE_NAV_ROOT     workspace root the language servers index (default: cwd)
+  CODE_NAV_ROOT     workspace root the language servers index. Absent, the root
+                    follows the project the host announces (RED_SKILLS_PROJECT_ROOT,
+                    CLAUDE_PROJECT_DIR, CODEX_PROJECT_DIR, OPENCODE_PROJECT_DIR),
+                    then the cwd. A plugin installation directory is never the
+                    root unless nothing else is available.
   CODE_NAV_SERVERS  JSON registry overriding the default language servers, e.g.
                     '{"go":{"command":"gopls","args":[],"extensions":[".go"],"languageId":"go"}}'
 
