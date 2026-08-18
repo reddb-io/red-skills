@@ -9,8 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   listSkillFiles,
   parseFrontmatter,
+  planAllSkills,
   planPluginSkills,
   planSkill,
+  renameSkillFrontmatter,
   skillRelativeParts,
 } from "../src/skills-to-opencode.js";
 
@@ -154,5 +156,44 @@ describe("planPluginSkills", () => {
     expect(result.plans.map((p) => p.name).sort()).toEqual(["afk", "ship"]);
     expect(result.errors.length).toBe(1);
     expect(result.errors[0]!.code).toBe("name-not-valid");
+  });
+});
+
+describe("planAllSkills (flat-namespace collisions across plugins)", () => {
+  function writePluginSkill(plugin: string, name: string, body: string, bucket = "core"): void {
+    const dir = join(root, plugin, "skills", bucket, name);
+    require("node:fs").mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), body, "utf8");
+  }
+
+  it("renames every claimant of a shared name to <plugin>-<name> and leaves unique names alone", () => {
+    writePluginSkill("memory", "view", "---\nname: view\ndescription: Open the Memory graph.\n---\n");
+    writePluginSkill("brain", "view", "---\nname: view\ndescription: Open the Brain graph.\n---\n");
+    writePluginSkill("memory", "store", "---\nname: store\ndescription: Save a fact.\n---\n");
+    const planned = planAllSkills(root, ["memory", "brain"]);
+    const memory = planned.find((p) => p.plugin === "memory")!.result.plans;
+    const brain = planned.find((p) => p.plugin === "brain")!.result.plans;
+    expect(memory.map((p) => p.name).sort()).toEqual(["memory-view", "store"]);
+    expect(brain.map((p) => p.name)).toEqual(["brain-view"]);
+    const memoryView = memory.find((p) => p.name === "memory-view")!;
+    expect(memoryView.target).toBe("skills/memory-view/SKILL.md");
+    expect(memoryView.renamedFrom).toBe("view");
+    expect(memory.find((p) => p.name === "store")!.renamedFrom).toBeUndefined();
+  });
+
+  it("does not depend on plugin order", () => {
+    writePluginSkill("memory", "view", "---\nname: view\ndescription: a\n---\n");
+    writePluginSkill("brain", "view", "---\nname: view\ndescription: b\n---\n");
+    const forward = planAllSkills(root, ["memory", "brain"]).flatMap((p) => p.result.plans.map((s) => s.name)).sort();
+    const backward = planAllSkills(root, ["brain", "memory"]).flatMap((p) => p.result.plans.map((s) => s.name)).sort();
+    expect(forward).toEqual(["brain-view", "memory-view"]);
+    expect(backward).toEqual(forward);
+  });
+
+  it("rewrites only the frontmatter name in the emitted copy", () => {
+    const text = "---\nname: view\ndescription: Open the graph named view.\n---\n\n# view\n\nRun `/view`.\n";
+    expect(renameSkillFrontmatter(text, "brain-view")).toBe(
+      "---\nname: brain-view\ndescription: Open the graph named view.\n---\n\n# view\n\nRun `/view`.\n",
+    );
   });
 });

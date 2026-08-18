@@ -27,6 +27,11 @@ export interface SkillPlan {
   name: string;
   /** The bucket the source came from (`engineering`, `knowledge`, …). */
   bucket: string;
+  /** Set when the flat name collided with another plugin's skill and the
+   *  plan was disambiguated to `<plugin>-<name>`: the source's frontmatter
+   *  `name:` (the original) must be rewritten in the emitted copy, because
+   *  opencode keys skills by frontmatter name, not by directory. */
+  renamedFrom?: string;
 }
 
 /** A validation error from the planner. */
@@ -243,5 +248,45 @@ export function planAllSkills(
   pluginsRoot: string,
   plugins: string[],
 ): { plugin: string; result: PlanResult }[] {
-  return plugins.map((plugin) => ({ plugin, result: planPluginSkills(pluginsRoot, plugin) }));
+  const planned = plugins.map((plugin) => ({ plugin, result: planPluginSkills(pluginsRoot, plugin) }));
+  disambiguateCollisions(planned);
+  return planned;
+}
+
+/**
+ * OpenCode's skill namespace is flat: Claude's `memory:view` and `brain:view`
+ * would both land as `view`, and the later one silently overwrote the earlier
+ * (the global installer only logged a "duplicate skipped" note). Every skill
+ * whose flat name is claimed by more than one plugin is renamed
+ * `<plugin>-<name>` — all parties, not just the loser, so the result does not
+ * depend on plugin order — and marked `renamedFrom` so the emitter rewrites
+ * the frontmatter name in a copy. Names claimed once are untouched.
+ */
+export function disambiguateCollisions(planned: { plugin: string; result: PlanResult }[]): void {
+  const claimants = new Map<string, Set<string>>();
+  for (const { plugin, result } of planned) {
+    for (const plan of result.plans) {
+      if (!claimants.has(plan.name)) claimants.set(plan.name, new Set());
+      claimants.get(plan.name)!.add(plugin);
+    }
+  }
+  for (const { plugin, result } of planned) {
+    for (const plan of result.plans) {
+      if ((claimants.get(plan.name)?.size ?? 0) < 2) continue;
+      const renamed = `${plugin}-${plan.name}`;
+      plan.renamedFrom = plan.name;
+      plan.name = renamed;
+      plan.target = `skills/${renamed}/SKILL.md`;
+    }
+    result.plans.sort((a, b) => a.target.localeCompare(b.target));
+  }
+}
+
+/** Rewrite the frontmatter `name:` of a source SKILL.md for a renamed plan. */
+export function renameSkillFrontmatter(text: string, renamed: string): string {
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return text;
+  const block = match[1]!;
+  const rewritten = block.replace(/^name:.*$/m, `name: ${renamed}`);
+  return text.replace(block, rewritten);
 }
