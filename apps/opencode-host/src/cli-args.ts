@@ -14,6 +14,7 @@ import {
   UnknownCommandError,
   type FlagSchema,
 } from "@reddb-io/shared/args.js";
+import { HOST_TARGETS, isHostTarget, type HostTarget } from "./semantic-authority.js";
 
 /** The command set. `generate` is the only verb, and the default one. */
 export type OpencodeHostCommand = "generate";
@@ -23,6 +24,11 @@ const FLAGS = {
   out: { kind: "value", aliases: ["o"], coerce: (raw: string) => raw },
   "out-dir": { kind: "value", aliases: ["d"], coerce: (raw: string) => raw },
   "plugins-root": { kind: "value", aliases: ["p"], coerce: (raw: string) => raw },
+  host: { kind: "value", coerce: (raw: string) => raw },
+  // Which stack answers "where is this symbol defined?". Defaults from the
+  // host table; `--no-native-lsp` is how a RedCode install with its LSP
+  // switched off asks for the navigator projection back.
+  "native-lsp": { kind: "boolean" },
   plugin: { kind: "value", type: "array", coerce: (raw: string) => raw },
   // Negation is the contract's (`--no-slice-2`); `--with-slice-2` stays as the
   // spelling earlier callers used.
@@ -42,6 +48,10 @@ export interface OpencodeHostArgs {
   /** Slice 2: write the dist tree under this directory. */
   outDir: string;
   pluginsRoot: string;
+  /** The OpenCode-compatible host the tree is emitted for. */
+  host: HostTarget;
+  /** `--native-lsp` / `--no-native-lsp`; absent, the host table decides. */
+  nativeLsp: boolean | undefined;
   showHelp: boolean;
   showVersion: boolean;
   /** `--json`: print the structured build info instead of the version line. */
@@ -99,12 +109,20 @@ export function parseOpencodeHostArgs(argv: readonly string[]): OpencodeHostArgs
   }
 
   const { values } = parsed;
+  const host = values.host ?? "opencode";
+  if (!isHostTarget(host)) {
+    throw new OpencodeHostUsageError(
+      `unsupported --host '${host}'; expected one of: ${HOST_TARGETS.join(", ")}`,
+    );
+  }
   return {
     command: routed.command,
     configPath: values.config ?? "./.red/config.yaml",
     outPath: values.out ?? "./opencode.json",
     outDir: values["out-dir"] ?? "./dist/opencode",
     pluginsRoot: values["plugins-root"] ?? "./plugins",
+    host,
+    nativeLsp: values["native-lsp"],
     showHelp: values.help ?? false,
     showVersion: values.version ?? false,
     versionJson: values.json ?? false,
@@ -123,7 +141,7 @@ Slice 1: opencode.json (provider block) at <out>
 Slice 2: dist tree at <out-dir>/<plugin>/{opencode.json, .opencode/...}
 
 Usage:
-  opencode-host [generate] [--config <path>] [--out <path>] [--out-dir <path>] [--plugins-root <path>] [--plugin <name>] [--copy] [--print] [--no-slice-2]
+  opencode-host [generate] [--config <path>] [--out <path>] [--out-dir <path>] [--plugins-root <path>] [--host <host>] [--plugin <name>] [--copy] [--print] [--no-slice-2]
   opencode-host --version [--json]
   opencode-host --help
 
@@ -132,6 +150,9 @@ Options:
   -o, --out <path>           Slice 1: path to write opencode.json (default: ./opencode.json)
   -d, --out-dir <path>       Slice 2: dist root (default: ./dist/opencode)
   -p, --plugins-root <path>  path to the plugins/ tree (default: ./plugins)
+      --host <host>          OpenCode-compatible host: opencode | redcode (default: opencode)
+      --native-lsp           the host answers navigation natively (default: redcode only)
+      --no-native-lsp        the host has no LSP of its own — publish navigator
       --plugin <name>        emit only this plugin (repeatable; Slice 2 only)
       --copy                 copy SKILL.md instead of symlinking
       --with-slice-2         emit the Slice 2 dist tree (default; kept for compatibility)
@@ -150,6 +171,9 @@ Notes:
   - The ADR 0067 strict opt-in gate applies: plugins.dev.enabled: true must be set.
   - Slice 1 (--out) is unaffected by --plugin/--no-slice-2; it is the standalone
     provider-block JSON file.
+  - A host with native LSP (redcode) omits the navigator MCP rather than
+    birthing a second language-server stack over the same tree. --no-native-lsp
+    puts it back.
   - Planner errors (bad name, missing frontmatter) are reported on stderr but
     do NOT fail the build. The events the generator can map are emitted.
 `;
