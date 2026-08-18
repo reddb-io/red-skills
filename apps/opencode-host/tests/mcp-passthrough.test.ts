@@ -68,18 +68,18 @@ describe("resolveScriptPath (Slice 3 search order)", () => {
 
 describe("resolveHomeScriptPath", () => {
   it("resolves a launcher installed under the user's home", () => {
-    writeFile("home/.red-skills/current/packaging/npm/bin/rsp.mjs", "console.log(1)");
+    writeFile("home/.red-skills/current/bin/rsp.mjs", "console.log(1)");
     const body =
-      'if [ -f "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" mcp; fi';
+      'if [ -f "$HOME/.red-skills/current/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/bin/rsp.mjs" mcp; fi';
 
     expect(resolveHomeScriptPath(body, join(root, "home"))).toBe(
-      join(root, "home/.red-skills/current/packaging/npm/bin/rsp.mjs"),
+      join(root, "home/.red-skills/current/bin/rsp.mjs"),
     );
   });
 
   it("keeps the mcp argument before a shell command separator", () => {
-    writeFile("home/.red-skills/current/packaging/npm/bin/rsp.mjs", "console.log(1)");
-    const launcher = join(root, "home/.red-skills/current/packaging/npm/bin/rsp.mjs");
+    writeFile("home/.red-skills/current/bin/rsp.mjs", "console.log(1)");
+    const launcher = join(root, "home/.red-skills/current/bin/rsp.mjs");
     const previousHome = process.env.HOME;
     process.env.HOME = join(root, "home");
     try {
@@ -87,11 +87,59 @@ describe("resolveHomeScriptPath", () => {
         command: "sh",
         args: [
           "-c",
-          'if [ -f "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" mcp; fi',
+          'if [ -f "$HOME/.red-skills/current/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/bin/rsp.mjs" mcp; fi',
         ],
       });
       expect(warnings).toEqual([]);
       expect(entry.command).toEqual(["node", launcher, "mcp"]);
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+});
+
+describe("rewriteServer prefers the tree it generates from", () => {
+  it("resolves against the plugin root before an explicit $HOME launcher elsewhere", () => {
+    // Both exist: the plugin's own launcher and a stale Codex marketplace
+    // cache the source chain names as a last resort. The emitted command must
+    // point at the plugin root — the cache is the fallback, not the answer.
+    writeFile("dev/hooks/redskilled-mcp.sh", "echo hi");
+    writeFile("home/.codex/.tmp/marketplaces/red-skills/plugins/dev/hooks/redskilled-mcp.sh", "echo stale");
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(root, "home");
+    try {
+      const { entry, warnings } = rewriteServer(root, "dev", "redskilled", {
+        command: "sh",
+        args: [
+          "-c",
+          'root="${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"; for launcher in "$root/hooks/redskilled-mcp.sh" "$HOME/.codex/.tmp/marketplaces/red-skills/plugins/dev/hooks/redskilled-mcp.sh"; do if [ -f "$launcher" ]; then exec bash "$launcher"; fi; done; exit 1',
+        ],
+      });
+      expect(warnings).toEqual([]);
+      expect(entry.command).toEqual(["bash", join(root, "dev/hooks/redskilled-mcp.sh")]);
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+
+  it("resolves a repo-root bundle ($root/dist/…) against the tree that owns plugins/", () => {
+    // In the materialised package set the rsp bundle sits beside plugins/, not
+    // inside the dev plugin; the plugin-root candidate misses and the tree
+    // root must be tried before any $HOME or Codex-cache fallback.
+    writeFile("tree/dist/rsp.bundle.min.mjs", "console.log(1)");
+    writeFile("tree/plugins/dev/.mcp.json", "{}");
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(root, "home");
+    try {
+      const { entry, warnings } = rewriteServer(join(root, "tree/plugins"), "dev", "rsp", {
+        command: "sh",
+        args: [
+          "-c",
+          'root="${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"; for bundle in "$PWD/dist/rsp.bundle.min.mjs" "$root/dist/rsp.bundle.min.mjs" "$HOME/.red-skills/current/bin/rsp.mjs"; do if [ -f "$bundle" ]; then exec node "$bundle" mcp; fi; done; exit 1',
+        ],
+      });
+      expect(warnings).toEqual([]);
+      expect(entry.command).toEqual(["node", join(root, "tree/dist/rsp.bundle.min.mjs"), "mcp"]);
     } finally {
       process.env.HOME = previousHome;
     }
@@ -188,7 +236,7 @@ describe("planPluginMcp against the real source tree", () => {
   it("keeps the installed RedSkills rsp launcher in the runtime fallback chain", () => {
     const raw = readMcpJson(REAL_PLUGINS, "dev")!;
     const body = raw.mcpServers!.rsp!.args![1]!;
-    expect(body).toContain('$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs');
+    expect(body).toContain('$HOME/.red-skills/current/bin/rsp.mjs');
   });
 
   it("plans the memory plugin's red-memory and red-ui MCPs", () => {
