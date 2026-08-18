@@ -196,6 +196,36 @@ export function validateCastleHistoryRecord(
   return record;
 }
 
+/**
+ * Trim a line-only lane at append time. A byte ceiling can be tested with one
+ * stat; a LINE ceiling cannot, so this reads the lane — which is why only lanes
+ * with a low append rate (`castle-history`, one row per terminal outcome) carry
+ * one. Keeping `targetRatio` of the ceiling amortizes the rewrite exactly the
+ * way the byte path does, and leaves room for the row about to be appended.
+ */
+async function trimToLineCeiling(
+  path: string,
+  policy: LaneRetentionPolicy,
+): Promise<void> {
+  const ceiling = policy.maxLines;
+  if (ceiling === undefined) return;
+  let raw = "";
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return;
+  }
+  if (raw === "") return;
+  const rows = parseRecords(raw);
+  if (rows.length + 1 <= ceiling) return;
+  const keepLast = Math.min(
+    ceiling - 1,
+    Math.floor(ceiling * (policy.targetRatio ?? 0.5)),
+  );
+  await trimLaneKeepLast(path, Math.max(0, keepLast));
+}
+
 async function appendToonlRecord<T extends Record<string, unknown>>(
   path: string,
   record: T,
@@ -203,6 +233,7 @@ async function appendToonlRecord<T extends Record<string, unknown>>(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const encoded = encodeToonlLines().push(toToonlRecord(record));
+  if (retentionPolicy !== undefined) await trimToLineCeiling(path, retentionPolicy);
   if (
     retentionPolicy?.maxBytes !== undefined &&
     await laneOverCeiling(path, Buffer.byteLength(encoded), retentionPolicy)
@@ -292,14 +323,21 @@ export async function appendCastleLaneRecord(
   return validated;
 }
 
+/**
+ * The engine's durable history. Its ceiling is line-only, and used to be
+ * enforced at BOOT alone — so a long-lived generation grew the ledger without
+ * bound between restarts (#3645). The registry policy now rides every append.
+ */
 export async function appendCastleHistoryRecord(
   path: string,
   record: CastleHistoryRecord,
+  options: { readonly retentionPolicy?: LaneRetentionPolicy } = {},
 ): Promise<CastleHistoryRecord> {
   const validated = validateCastleHistoryRecord(record);
   await appendToonlRecord(
     path,
     validated as unknown as Record<string, unknown>,
+    options.retentionPolicy ?? LANE_RETENTION_REGISTRY["castle-history"],
   );
   return validated;
 }
