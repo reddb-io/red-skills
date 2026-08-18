@@ -138,6 +138,10 @@ _Avoid_: main repo, root checkout
 A disposable, project-versioned workload admitted, budgeted, observed, and eventually reaped by **redskilled**. A Worker performs bounded work in an isolated **Worktree** and carries no durable project-control authority: Workers are cattle, while their outcomes and recoverable evidence survive in the control plane and the Issue tracker.
 _Avoid_: Project coordinator Worker, resident, daemon, durable Worker, pet process
 
+**Plugin MCP**:
+The one thin, stateless MCP adapter a RedSkills plugin ships (`rs_dev`, `rs_memory`, `rs_brain`), an ACP client of **redskilled** that publishes tool schemas and forwards every call; it holds no engine, store, GitHub client, or fallback, so a session or **Worker** may mount it without paying for a heavy process. The daemon carries the weight once per host; the adapter is what a host multiplies per session.
+_Avoid_: castle MCP, redskilled MCP (as the plugin adapter's name), resident MCP, heavy MCP, per-plugin daemon
+
 **Project control state**:
 The stateful per-project partition inside **redskilled** that understands the project's workflow policy, maintains queue consumption, and decides which disposable **Workers** to request. It is daemon state, not a separate project process, resident, or special Worker.
 _Avoid_: Project coordinator Worker, Castle resident, Demand producer, Project listener, project daemon
