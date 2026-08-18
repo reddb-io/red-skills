@@ -44,6 +44,11 @@ import {
 import { planEmit, writeEmit } from "./emit.js";
 import { listPluginDirs } from "./plugin-discovery.js";
 import { planPluginMcp, type McpPlan, type McpEntry } from "./mcp-passthrough.js";
+import {
+  applySemanticAuthority,
+  resolveSemanticAuthority,
+  type SemanticAuthority,
+} from "./semantic-authority.js";
 
 /** Collect MCP plans from every plugin for the standalone Slice 1
  *  `opencode.json` (the user wants one `mcp:` block that includes
@@ -52,11 +57,18 @@ import { planPluginMcp, type McpPlan, type McpEntry } from "./mcp-passthrough.js
 function collectMcpForStandalone(
   pluginsRoot: string,
   plugins: string[],
-): { mcps: McpPlan[]; warnings: string[] } {
+  authority: SemanticAuthority,
+): { mcps: McpPlan[]; warnings: string[]; deferred: string[] } {
   const mcps: McpPlan[] = [];
   const warnings: string[] = [];
+  const deferred: string[] = [];
   for (const p of plugins) {
-    for (const plan of planPluginMcp(pluginsRoot, p)) {
+    // A host with its own LSP never sees the navigator launcher: the whole
+    // point of the deferral is that no emitted entry can birth a second
+    // language-server stack over the tree the host already indexes.
+    const applied = applySemanticAuthority(planPluginMcp(pluginsRoot, p), authority);
+    for (const name of applied.deferred) deferred.push(name);
+    for (const plan of applied.plans) {
       mcps.push(plan);
       for (const w of plan.warnings) warnings.push(`[${p}] ${w}`);
     }
@@ -69,7 +81,7 @@ function collectMcpForStandalone(
     seen.add(m.name);
     return true;
   });
-  return { mcps: deduped, warnings };
+  return { mcps: deduped, warnings, deferred: [...new Set(deferred)] };
 }
 
 function mcpPlansToObject(plans: McpPlan[]): Record<string, McpEntry> {
@@ -156,8 +168,13 @@ function main(argv: ReadonlyArray<string>): void {
   // Discover plugins first so the standalone file can include every
   // MCP the user has installed. (Slice 2 also calls listPluginDirs
   // — the call is cheap, just a stat per directory.)
+  const semanticAuthority = resolveSemanticAuthority(args.host, args.nativeLsp);
   const discoveredForMcp = listPluginDirs(pluginsRootAbs);
-  const standaloneMcp = collectMcpForStandalone(pluginsRootAbs, discoveredForMcp.map((d) => d.name));
+  const standaloneMcp = collectMcpForStandalone(
+    pluginsRootAbs,
+    discoveredForMcp.map((d) => d.name),
+    semanticAuthority,
+  );
   const standaloneJson: Record<string, unknown> = { ...config };
   if (standaloneMcp.mcps.length > 0) {
     standaloneJson.mcp = mcpPlansToObject(standaloneMcp.mcps);
@@ -199,6 +216,14 @@ function main(argv: ReadonlyArray<string>): void {
     process.stderr.write(`opencode-host: mcp warning — ${w}\n`);
   }
 
+  // Say what was deferred and why: a missing MCP the operator never asked
+  // about reads as a broken install rather than a deliberate one.
+  if (standaloneMcp.deferred.length > 0) {
+    process.stdout.write(
+      `opencode-host: ${standaloneMcp.deferred.join(", ")} deferred to ${semanticAuthority.host} native LSP (--no-native-lsp to publish it anyway)\n`,
+    );
+  }
+
   if (!args.slice2) {
     process.stdout.write(
       `opencode-host: wrote ${args.outPath} (slice 1+3; provider=${active ?? "openrouter"} via precedence, model=${config.model}, mcps=${standaloneMcp.mcps.length})\n`,
@@ -224,6 +249,7 @@ function main(argv: ReadonlyArray<string>): void {
     plugins,
     configText,
     env: process.env,
+    semanticAuthority,
   });
 
   try {
@@ -236,6 +262,7 @@ function main(argv: ReadonlyArray<string>): void {
       env: process.env,
       copySkills: args.copySkills,
       version: buildVersion,
+      semanticAuthority,
     });
   } catch (err) {
     process.stderr.write(
