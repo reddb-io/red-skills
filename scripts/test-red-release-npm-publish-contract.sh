@@ -42,6 +42,7 @@ assert_before() {
 
 verify_line="$(line_of_step "Verify the tag matches the tree")"
 pack_line="$(line_of_step "Pack npm package + producer/consumer contract check")"
+release_bundle_line="$(line_of_step "Build release engine bundle" || true)"
 publish_line="$(line_of_step "Publish to npm")"
 smoke_line="$(line_of_step "Smoke published npm package from registry")"
 release_line="$(line_of_step "GitHub Release")"
@@ -55,6 +56,17 @@ assert_before "tag/tree verification" "$verify_line" "pack/contract check" "$pac
 assert_before "pack/contract check" "$pack_line" "publish" "$publish_line"
 assert_before "publish" "$publish_line" "registry smoke" "$smoke_line"
 assert_before "registry smoke" "$smoke_line" "GitHub release" "$release_line"
+
+# Every bundle packaging/npm/scripts/prepare.mjs stages must have a producer
+# step ahead of the pack: prepare skips a missing bundle with a warning, the
+# bin shim still ships, and the tarball boundary check then fails the publish
+# on a bundle nothing built (release.bundle.min.mjs, v3.19.1). Guard the one
+# that was missing by name and position.
+[ -n "$release_bundle_line" ] || fail "release workflow must build the release engine bundle (apps/release pnpm bundle)"
+assert_before "release engine bundle build" "$release_bundle_line" "pack/contract check" "$pack_line"
+grep -qF 'working-directory: apps/release' "$WORKFLOW" ||
+  fail "release engine bundle must be built from apps/release so pnpm bundle emits dist/release.bundle.min.mjs"
+pass "release engine bundle is built before the pack"
 
 # That the version surfaces agree with EACH OTHER is the version-train
 # invariant, run on every PR by the release engine's own gate. What this

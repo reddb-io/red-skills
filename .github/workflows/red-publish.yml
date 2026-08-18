@@ -628,6 +628,22 @@ jobs:
           set -euo pipefail
           pnpm bundle
 
+      # The release engine ships as dist/release.bundle.min.mjs behind the
+      # packaged `red-skills-release` bin. Every prior publish staged the bin
+      # and skipped the bundle ("release.bundle.min.mjs not built; skipping"),
+      # so the shim resolved nothing; the tarball boundary check now refuses a
+      # bin whose bundle is absent (#3957) and the v3.19.1 publish died on it.
+      - name: Build release engine bundle
+        if: steps.target.outputs.publish == 'true'
+        working-directory: apps/release
+        env:
+          RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
+          RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
+          RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
+        run: |
+          set -euo pipefail
+          pnpm bundle
+
       # The two companion surfaces that read the daemon are installed by hand
       # rather than resolved by a launcher, so a release is the ONLY place they
       # can come from (issue #3060). Both were complete in source and absent from
