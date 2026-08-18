@@ -22,6 +22,11 @@ import {
 import { planPluginHooks, type HookPlan } from "./hooks-to-events.js";
 import { planPluginMcp, type McpPlan, type McpEntry } from "./mcp-passthrough.js";
 import { planPluginStatusline, type StatuslinePlan } from "./statusline.js";
+import {
+  applySemanticAuthority,
+  resolveSemanticAuthority,
+  type SemanticAuthority,
+} from "./semantic-authority.js";
 
 /** A single plugin's planned output. */
 export interface PluginEmit {
@@ -30,12 +35,16 @@ export interface PluginEmit {
   skills: PlanResult;
   hooks: HookPlan[];
   mcp: McpPlan[];
+  /** MCP names left to the host's own LSP (ADR 0075; issue #3972). */
+  deferredMcp: string[];
   statusline: StatuslinePlan[];
 }
 
 /** Top-level emit plan for one or more plugins. */
 export interface EmitPlan {
   byPlugin: PluginEmit[];
+  /** Who owns semantic navigation for the host this plan targets. */
+  semanticAuthority: SemanticAuthority;
 }
 
 export interface EmitOptions {
@@ -52,6 +61,8 @@ export interface EmitOptions {
   copySkills?: boolean;
   /** Generator version string (printed in the install manifest). */
   version: string;
+  /** Who owns semantic navigation. Default: a bare opencode host (no native LSP). */
+  semanticAuthority?: SemanticAuthority;
 }
 
 /**
@@ -63,20 +74,28 @@ export function planEmit(input: {
   plugins: string[];
   configText: string;
   env: Readonly<Record<string, string | undefined>>;
+  /** Default: a bare opencode host, which has no LSP of its own. */
+  semanticAuthority?: SemanticAuthority;
 }): EmitPlan {
+  const semanticAuthority = input.semanticAuthority ?? resolveSemanticAuthority("opencode");
   const skillPlan = planAllSkills(input.pluginsRoot, input.plugins);
   const byPlugin: PluginEmit[] = input.plugins.map((plugin) => {
     const skills = skillPlan.find((s) => s.plugin === plugin)?.result ?? { plans: [], errors: [] };
     const hooks = planPluginHooks(input.pluginsRoot, plugin);
-    const mcp = planPluginMcp(input.pluginsRoot, plugin);
+    // A host that answers navigation natively never receives the navigator
+    // launcher, so nothing in the emitted tree can birth a second stack.
+    const { plans: mcp, deferred: deferredMcp } = applySemanticAuthority(
+      planPluginMcp(input.pluginsRoot, plugin),
+      semanticAuthority,
+    );
     const statusline = planPluginStatusline(input.pluginsRoot, plugin);
     const provider = buildProviderBlock({
       configText: input.configText,
       env: input.env,
     });
-    return { plugin, provider, skills, hooks, mcp, statusline };
+    return { plugin, provider, skills, hooks, mcp, deferredMcp, statusline };
   });
-  return { byPlugin };
+  return { byPlugin, semanticAuthority };
 }
 
 /**

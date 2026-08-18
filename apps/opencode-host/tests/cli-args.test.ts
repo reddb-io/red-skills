@@ -20,6 +20,8 @@ describe("parseOpencodeHostArgs", () => {
       outPath: "./opencode.json",
       outDir: "./dist/opencode",
       pluginsRoot: "./plugins",
+      host: "opencode",
+      nativeLsp: undefined,
       showHelp: false,
       showVersion: false,
       versionJson: false,
@@ -28,6 +30,18 @@ describe("parseOpencodeHostArgs", () => {
       pluginFilter: null,
       slice2: true,
     });
+  });
+
+  it("parses the host and the native-LSP override", () => {
+    expect(parseOpencodeHostArgs(["--host", "redcode"]).host).toBe("redcode");
+    expect(parseOpencodeHostArgs(["--host=redcode"]).host).toBe("redcode");
+    expect(parseOpencodeHostArgs(["--native-lsp"]).nativeLsp).toBe(true);
+    expect(parseOpencodeHostArgs(["--no-native-lsp"]).nativeLsp).toBe(false);
+  });
+
+  it("rejects a host it cannot emit for, naming the ones it can", () => {
+    expect(() => parseOpencodeHostArgs(["--host", "vscode"])).toThrow(OpencodeHostUsageError);
+    expect(() => parseOpencodeHostArgs(["--host", "vscode"])).toThrow(/opencode, redcode/);
   });
 
   it("routes the explicit `generate` command and still parses its flags", () => {
