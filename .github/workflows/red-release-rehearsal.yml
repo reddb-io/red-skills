@@ -1,0 +1,62 @@
+name: red-release-rehearsal
+
+# Prove the package set is installable BEFORE a tag depends on it.
+#
+# red-publish.yml runs the real producer chain (bundles → per-plugin and core
+# npm packages → tarball boundary check) and nobody runs the real consumer
+# (scripts/install.sh) against the result until after publish. v3.19.0..v3.19.2
+# each burnt a release on a fault this rehearsal catches in a pull request:
+# a bundle nothing built, a bundle demanded from a skills-only plugin, scripts
+# that lost their executable bit in the tarball, per-plugin packages the
+# OpenCode generator could not consume. scripts/rehearse-release-pack.sh runs
+# the same producers, packs at a rehearsal version, checks the boundaries, then
+# feeds the tarballs to install.sh through an npm shim and installs a fake
+# OpenCode host into a throwaway config home.
+
+on:
+  pull_request:
+    paths:
+      - scripts/rehearse-release-pack.sh
+      - scripts/install.sh
+      - scripts/install-opencode.sh
+      - scripts/install-pi.sh
+      - scripts/build-pi-packages.mjs
+      - scripts/generate-pi-manifests.mjs
+      - scripts/check-npm-tarball-boundaries.mjs
+      - scripts/bundle-app.mjs
+      - packaging/**
+      - plugins/*/.claude-plugin/**
+      - plugins/*/.mcp.json
+      - plugins/*/hooks/**
+      - plugins/*/scripts/**
+      - apps/*/package.json
+      - apps/opencode-host/**
+      - .github/workflows/red-publish.yml
+      - .github/workflows/red-release-rehearsal.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Install workspace dependencies
+        env:
+          # Same as the publish job: bundles and manifests only, no memory/brain
+          # runtime execution, so the SDK postinstall binary is not needed.
+          REDDB_SKIP_POSTINSTALL: "1"
+        run: pnpm install --frozen-lockfile
+
+      - name: Rehearse the release pack and install it
+        run: scripts/rehearse-release-pack.sh
