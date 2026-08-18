@@ -369,7 +369,9 @@ fi
 if [ -f "$PREGENERATED_TREE_MARKER" ]; then
   log "using release-generated dist tree under $OUT_DIR"
 else
-  GEN_ARGS=(--config "$CONFIG_PATH" --plugins-root "$PLUGINS_ROOT" --out-dir "$OUT_DIR")
+  # The host is passed through: a host with its own LSP (redcode) gets the
+  # navigator MCP deferred instead of a second language-server stack.
+  GEN_ARGS=(--config "$CONFIG_PATH" --plugins-root "$PLUGINS_ROOT" --out-dir "$OUT_DIR" --host "$HOST")
   [ "$COPY" = "true" ] && GEN_ARGS+=(--copy)
 
   log "generating dist tree under $OUT_DIR"
