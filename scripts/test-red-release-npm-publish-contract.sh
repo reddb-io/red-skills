@@ -292,6 +292,20 @@ else
 fi
 rm -rf "$contract_fixture"
 
+# The producer chain is rehearsed against the real consumer on pull requests:
+# a fault in the pack or in what install.sh needs from the package set must
+# fail a PR, not the next tag (v3.19.0..v3.19.2 each burnt a release on one).
+REHEARSAL=".github/workflows/red-release-rehearsal.yml"
+if grep -qF 'run: scripts/rehearse-release-pack.sh' "$REHEARSAL" &&
+   grep -qF 'pnpm pi:packages:build' scripts/rehearse-release-pack.sh &&
+   grep -qF 'node packaging/npm/scripts/prepare.mjs' scripts/rehearse-release-pack.sh &&
+   grep -qF 'scripts/check-npm-tarball-boundaries.mjs' scripts/rehearse-release-pack.sh &&
+   grep -qF 'bash scripts/install.sh' scripts/rehearse-release-pack.sh; then
+  pass "pull requests rehearse the release pack and install it through scripts/install.sh"
+else
+  fail "a pull-request rehearsal must pack the release the way the publish does and install it with scripts/install.sh"
+fi
+
 if grep -qF 'registry smoke returned' "$WORKFLOW" &&
    grep -qF '[ "$resolved" = "${version}" ]' "$WORKFLOW"; then
   pass "registry smoke verifies the reported release version"

@@ -145,6 +145,20 @@ jobs:
           # FIFO is a correctness rule, not just a retry preference. If tags
           # accumulate during fleet deferral, newest-first would publish an old
           # version second and move npm/latest plus vX backwards.
+          #
+          # RUNBOOK — an incomplete release that can never publish. Everything
+          # below `Check out the release tag` runs against the TAGGED tree, so a
+          # fault in scripts/ or packaging/ is fixed by a NEW tag, not by a
+          # retry of the broken one; the broken tag then sits at the head of
+          # this queue and refuses every newer tag ("cannot publish vX.Y.Z+1:
+          # oldest incomplete release is vX.Y.Z"). Reconcile its tail by hand,
+          # which is exactly what the `GitHub Release` step would have done:
+          #   git push --force origin <sha of vX.Y.Z>:refs/tags/vX
+          # `release_complete` then sees the Release the engine already cut plus
+          # a major ref that reaches it, and the next tag becomes the oldest
+          # pending. Nothing published under the abandoned tag; npm and the
+          # marketplaces skip straight to the next version. (v3.19.0 and
+          # v3.19.1 were reconciled this way.)
           # A stale incomplete release (its major line already moved past it, or
           # its major line predates the moving-ref scheme entirely) can never be
           # published — doing so would move npm/latest and vX backwards, which
