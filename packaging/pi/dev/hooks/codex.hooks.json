@@ -1,0 +1,63 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; ver=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.codex-plugin/plugin.json\" 2>/dev/null)\"; if [ -n \"$ver\" ]; then for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" dev \"$ver\" >/dev/null 2>&1 || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" code-nav \"$ver\" >/dev/null 2>&1 || true; break; }; done; fi; printf \"{}\"'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" prime <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; for f in \"$root/hooks/ensure-codex-statusline.mjs\" \"$root/dist/ensure-codex-statusline.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" </dev/null >/dev/null 2>&1 || true; break; }; done; printf \"{}\"'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev rsp-instructions --runner codex --hook <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" codex-pre-exec <\"$tmp\" || true; else exit 0; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -f \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" bash \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/command-guard.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" codex-post-exec <\"$tmp\" || true; else exit 0; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev path-brief --plugin-root \"$root\" <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}

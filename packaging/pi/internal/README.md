@@ -2,7 +2,7 @@
 
 reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.
 
-This package ships the **internal** plugin's skill tree for [pi](https://pi.dev) (the `@earendil-works/pi-coding-agent` harness). It carries the same `SKILL.md` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
+This package ships the **internal** plugin: its manifests, hooks, scripts and the skill tree, for [pi](https://pi.dev) (the `@earendil-works/pi-coding-agent` harness) and for the RedSkills universal installer, which materialises it for OpenCode, RedCode and local marketplace registrations. It carries the same `SKILL.md` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
 
 - `skills/maintainer/`
 

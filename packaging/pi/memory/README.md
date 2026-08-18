@@ -2,7 +2,7 @@
 
 reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.
 
-This package ships the **memory** plugin's skill tree for [pi](https://pi.dev) (the `@earendil-works/pi-coding-agent` harness). It carries the same `SKILL.md` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
+This package ships the **memory** plugin: its manifests, hooks, scripts and the skill tree, for [pi](https://pi.dev) (the `@earendil-works/pi-coding-agent` harness) and for the RedSkills universal installer, which materialises it for OpenCode, RedCode and local marketplace registrations. It carries the same `SKILL.md` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
 
 - `skills/core/`
 

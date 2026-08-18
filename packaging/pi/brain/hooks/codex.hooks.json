@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; (timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner codex <\"$tmp\" >/dev/null 2>&1; rm -f \"$tmp\") & printf \"{}\"'"
+          }
+        ]
+      }
+    ]
+  }
+}

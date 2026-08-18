@@ -1,0 +1,26 @@
+{
+  "name": "memory",
+  "version": "3.19.2",
+  "description": "reddb.io memory plugin — governed operational memory for code agents that lives on top of `dev`. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+  "dependencies": [
+    "dev"
+  ],
+  "hooks": "./hooks/claude.hooks.json",
+  "mcpServers": "./.mcp.json",
+  "skills": [
+    "./skills/core/init",
+    "./skills/core/store",
+    "./skills/core/recall",
+    "./skills/core/ingest",
+    "./skills/core/extract",
+    "./skills/core/skills-status",
+    "./skills/core/context-status",
+    "./skills/core/improve-skills",
+    "./skills/core/health",
+    "./skills/core/doctor",
+    "./skills/core/export",
+    "./skills/core/view",
+    "./skills/core/wiki-init",
+    "./skills/core/wiki"
+  ]
+}

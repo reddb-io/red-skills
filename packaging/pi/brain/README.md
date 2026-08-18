@@ -2,7 +2,7 @@
 
 reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.
 
-This package ships the **brain** plugin's skill tree for [pi](https://pi.dev) (the `@earendil-works/pi-coding-agent` harness). It carries the same `SKILL.md` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
+This package ships the **brain** plugin: its manifests, hooks, scripts and the skill tree, for [pi](https://pi.dev) (the `@earendil-works/pi-coding-agent` harness) and for the RedSkills universal installer, which materialises it for OpenCode, RedCode and local marketplace registrations. It carries the same `SKILL.md` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
 
 - `skills/core/`
 

@@ -1,0 +1,70 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; ver=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.claude-plugin/plugin.json\" 2>/dev/null)\"; if [ -n \"$ver\" ]; then for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" dev \"$ver\" >/dev/null 2>&1 || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" code-nav \"$ver\" >/dev/null 2>&1 || true; break; }; done; fi; printf \"{}\"'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" prime <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev rsp-instructions --runner claude --hook 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" claude-pre-exec <\"$tmp\" || true; else exit 0; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/skills/misc/branch-lock/scripts/branch-lock-hook.sh\"; if [ -f \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" bash \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/command-guard.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev route-model-tier --host claude <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" claude-post-exec <\"$tmp\" || true; else exit 0; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev path-brief --plugin-root \"$root\" <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}
