@@ -35,6 +35,11 @@ import {
 const PUBLISHED_BUCKETS = ["engineering", "knowledge", "productivity", "misc", "core", "maintainer"];
 const SKIP_BUCKETS = new Set(["in-progress", "deprecated"]);
 const PACKAGING_ROOT = "packaging/pi";
+// Top-level plugin entries that are NOT part of the published definition:
+// package.json and README.md are generated here, skills/ is staged per bucket,
+// dist/ is the built runtime staged separately, and .gitignore would make
+// npm-packlist drop the very dist/ the package exists to carry.
+const UNSTAGED_ROOT_ENTRIES = new Set(["package.json", "README.md", ".gitignore", "skills", "dist", "node_modules"]);
 
 function isPublishedBucket(name) {
   return PUBLISHED_BUCKETS.includes(name);
@@ -52,7 +57,25 @@ function deriveBucketList(pluginSkills) {
   return [...out].filter(isPublishedBucket);
 }
 
-function buildNpmPackageJson(claudePlugin) {
+/**
+ * The plugin's definition surface beyond skills: manifests (.claude-plugin,
+ * .codex-plugin, .gemini-plugin), hooks/, agents/, scripts/, .mcp.json, docs —
+ * everything the marketplaces serve from git. A package that carried only
+ * skills could feed Pi but not the OpenCode/RedCode generator or a local
+ * marketplace registration, so the npm-materialised installer (#3945) found
+ * "no plugins discovered" (v3.19.2). Sorted so the staged tree and `files`
+ * are deterministic.
+ */
+async function listDefinitionEntries(pluginRoot) {
+  const entries = await readdir(pluginRoot, { withFileTypes: true });
+  return entries
+    .filter((entry) => !UNSTAGED_ROOT_ENTRIES.has(entry.name))
+    .filter((entry) => entry.isDirectory() || entry.isFile())
+    .map((entry) => ({ name: entry.name, directory: entry.isDirectory() }))
+    .sort((left, right) => left.name.localeCompare(right.name, "en"));
+}
+
+function buildNpmPackageJson(claudePlugin, definitionEntries) {
   // Identical to buildPiPackage's shape except:
   // - drop the local-only "private": true so npm accepts the publish
   // - add publishConfig.access=public so scoped @reddb-io/* publishes publicly
@@ -71,7 +94,13 @@ function buildNpmPackageJson(claudePlugin) {
     ...publishable,
     ...(releaseVersion ? { version: releaseVersion } : {}),
     publishConfig: { access: "public" },
-    files: ["skills/**/*", "dist/**/*", "package.json", "README.md"],
+    files: [
+      "skills/**/*",
+      "dist/**/*",
+      ...definitionEntries.map((entry) => (entry.directory ? `${entry.name}/**/*` : entry.name)),
+      "package.json",
+      "README.md",
+    ],
   };
 }
 
@@ -84,7 +113,8 @@ async function stagePackage({ root, pluginDir, claudePlugin, packagingDir, misma
   // <root><root>/packaging/pi/<name>.
   const targetDir = join(packagingDir, pluginName);
 
-  const packageJson = buildNpmPackageJson(claudePlugin);
+  const definitionEntries = await listDefinitionEntries(pluginRoot);
+  const packageJson = buildNpmPackageJson(claudePlugin, definitionEntries);
   const buckets = deriveBucketList(claudePlugin.skills);
 
   if (buckets.length === 0) {
@@ -132,6 +162,32 @@ async function stagePackage({ root, pluginDir, claudePlugin, packagingDir, misma
     }
   }
 
+  // 2b. Stage the rest of the plugin definition (manifests, hooks, agents,
+  // scripts, .mcp.json, docs) so the package IS the plugin, not a skills excerpt.
+  for (const { name: entry, directory } of definitionEntries) {
+    const source = join(pluginRoot, entry);
+    const target = join(targetDir, entry);
+    if (directory) {
+      if (check) {
+        const drift = await diffDirs(source, target);
+        if (drift.length > 0) mismatches.push({ path: target, bytes: "", note: drift });
+      } else {
+        await rm(target, { recursive: true, force: true });
+        await mkdir(target, { recursive: true });
+        await cp(source, target, { recursive: true });
+      }
+    } else if (check) {
+      const stagedBytes = await readFile(target).catch(() => null);
+      const sourceBytes = await readFile(source);
+      if (stagedBytes === null || !sourceBytes.equals(stagedBytes)) {
+        mismatches.push({ path: target, bytes: "", note: [`${entry}: bytes differ`] });
+      }
+    } else {
+      await mkdir(targetDir, { recursive: true });
+      await cp(source, target);
+    }
+  }
+
   // 3. Stage the plugin's built runtime when the release build has produced it.
   // Local manifest checks run from source-only trees where dist/ is absent;
   // the publish-time tarball contract remains the authority that every release
@@ -175,7 +231,7 @@ function renderPackageReadme({ pluginName, packageJson, buckets }) {
 
 ${packageJson.description}
 
-This package ships the **${pluginName}** plugin's skill tree for [pi](https://pi.dev) (the \`@earendil-works/pi-coding-agent\` harness). It carries the same \`SKILL.md\` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
+This package ships the **${pluginName}** plugin: its manifests, hooks, scripts and the skill tree, for [pi](https://pi.dev) (the \`@earendil-works/pi-coding-agent\` harness) and for the RedSkills universal installer, which materialises it for OpenCode, RedCode and local marketplace registrations. It carries the same \`SKILL.md\` files the Claude Code and Codex marketplaces already expose, scoped to the published buckets only:
 
 ${bucketList}
 

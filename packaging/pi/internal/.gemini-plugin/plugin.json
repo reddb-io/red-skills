@@ -1,0 +1,40 @@
+{
+  "name": "internal",
+  "version": "3.19.2",
+  "description": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents",
+    "internal"
+  ],
+  "skills": [
+    "./skills/maintainer/"
+  ],
+  "interface": {
+    "displayName": "RedSkills Internal",
+    "shortDescription": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
+    "longDescription": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $bootstrap when this workspace needs it.",
+      "Use $create-plugin when this workspace needs it."
+    ],
+    "brandColor": "#D92D20"
+  }
+}

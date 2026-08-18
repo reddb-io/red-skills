@@ -1,0 +1,43 @@
+{
+  "name": "brain",
+  "version": "3.19.2",
+  "description": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents",
+    "brain"
+  ],
+  "skills": [
+    "./skills/core/"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "RedSkills Brain",
+    "shortDescription": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
+    "longDescription": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $capture when this workspace needs it.",
+      "Use $search when this workspace needs it.",
+      "Use $think when this workspace needs it.",
+      "Use $status when this workspace needs it."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

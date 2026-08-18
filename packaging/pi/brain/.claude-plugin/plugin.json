@@ -1,0 +1,14 @@
+{
+  "name": "brain",
+  "version": "3.19.2",
+  "description": "reddb.io brain plugin — project-local RedDB knowledge repository for freeform captures and graph connections.",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/claude.hooks.json",
+  "skills": [
+    "./skills/core/capture",
+    "./skills/core/search",
+    "./skills/core/think",
+    "./skills/core/status",
+    "./skills/core/view"
+  ]
+}

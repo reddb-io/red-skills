@@ -88,6 +88,12 @@ describe("Pi package builder", () => {
     await mkdir(join(root, "plugins/memory/.claude-plugin"), { recursive: true });
     await mkdir(join(root, "plugins/memory/skills/core/init"), { recursive: true });
     await mkdir(join(root, "dist"), { recursive: true });
+    // The definition surface beyond skills: hooks, .mcp.json, and a
+    // .gitignore that must NOT travel (it would hide dist/ from npm-packlist).
+    await mkdir(join(root, "plugins/dev/hooks"), { recursive: true });
+    await writeFile(join(root, "plugins/dev/hooks/claude.hooks.json"), '{"hooks":{}}\n', "utf8");
+    await writeFile(join(root, "plugins/dev/.mcp.json"), '{"mcpServers":{}}\n', "utf8");
+    await writeFile(join(root, "plugins/dev/.gitignore"), "dist/\n", "utf8");
 
     await writeJson(join(root, ".claude-plugin/marketplace.json"), {
       name: "red-skills",
@@ -162,8 +168,30 @@ description: Test init skill.
       name: "@reddb-io/red-skills-dev",
       version: "9.9.9",
       publishConfig: { access: "public" },
-      files: expect.arrayContaining(["skills/**/*", "dist/**/*", "package.json", "README.md"]),
+      files: expect.arrayContaining([
+        "skills/**/*",
+        "dist/**/*",
+        ".claude-plugin/**/*",
+        ".mcp.json",
+        "hooks/**/*",
+        "package.json",
+        "README.md",
+      ]),
     });
+    // The package IS the plugin: manifests, hooks and .mcp.json ride along so
+    // the OpenCode/RedCode generator and a local marketplace can consume it.
+    expect(await readFile(join(root, "packaging/pi/dev/.claude-plugin/plugin.json"), "utf8"))
+      .toContain('"name": "dev"');
+    expect(await readFile(join(root, "packaging/pi/dev/hooks/claude.hooks.json"), "utf8"))
+      .toBe('{"hooks":{}}\n');
+    expect(await readFile(join(root, "packaging/pi/dev/.mcp.json"), "utf8"))
+      .toBe('{"mcpServers":{}}\n');
+    expect(devPkg.files).not.toContain(".gitignore");
+    const gitignoreStaged = await readFile(join(root, "packaging/pi/dev/.gitignore"), "utf8").then(
+      () => true,
+      () => false,
+    );
+    expect(gitignoreStaged).toBe(false);
     // The build drops the local-only "private": true flag — the staged
     // package must be publishable. Verifying via negation: there is no
     // truthy `private` key.

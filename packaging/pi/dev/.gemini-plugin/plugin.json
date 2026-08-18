@@ -1,0 +1,47 @@
+{
+  "name": "dev",
+  "version": "3.19.2",
+  "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, /go dispatch, triage, tdd, diagnose, graph-aware codebase understanding, ...)",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents",
+    "github-issues",
+    "tdd"
+  ],
+  "skills": [
+    "./skills/engineering/",
+    "./skills/knowledge/",
+    "./skills/productivity/",
+    "./skills/misc/"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "RedSkills Dev",
+    "shortDescription": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, /go dispatch, triage, tdd, diagnose, graph-aware codebase understanding, ...)",
+    "longDescription": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, /go dispatch, triage, tdd, diagnose, graph-aware codebase understanding, ...)",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $afk when this workspace needs it.",
+      "Use $ask-red when this workspace needs it.",
+      "Use $guard-process-birth when this workspace needs it.",
+      "Use $guard-serialization when this workspace needs it."
+    ],
+    "brandColor": "#D92D20"
+  }
+}

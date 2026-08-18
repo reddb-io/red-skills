@@ -278,10 +278,40 @@ prepare_source() {
 
   rm -rf "$tmp"
   trap - RETURN
+  ensure_host_activation_config "$dest"
   rm -f "$current"
   ln -s "$dest" "$current"
   SOURCE_DIR="$current"
   log "current install -> $dest"
+}
+
+# The OpenCode/RedCode generator (opencode-host) reads `.red/config.yaml` for
+# its ADR 0067 opt-in gate and model table. A source checkout carries the
+# repository's own; the npm package set carries no repository config at all —
+# the source-archive install used to smuggle the repo's in, and moving to npm
+# (#3945) silently dropped it, so every host install died at "config not found".
+# This is the host-install activation config for the plugins the package set
+# ships, written once beside the materialised tree; it is NOT a repository
+# `.red/` (that stays /red-setup's alone) and never enables anything in a project.
+ensure_host_activation_config() {
+  local tree="$1"
+  local config="$tree/.red/config.yaml"
+  [[ -f "$config" ]] && return 0
+  mkdir -p "$tree/.red"
+  cat >"$config" <<'EOF_CONFIG'
+# Written by red-skills install.sh: activation flags for the host-install
+# generator (opencode-host) over the materialised package set. Not a
+# repository config — /red-setup owns those, and this file enables nothing
+# inside any project.
+plugins:
+  dev:
+    enabled: true
+  memory:
+    enabled: true
+  brain:
+    enabled: true
+EOF_CONFIG
+  log "wrote host activation config $config"
 }
 
 # The reference a host CLI registers the marketplace from. The GitHub source is
@@ -466,14 +496,17 @@ install_opencode_compatible() {
   fi
 
   if [[ "$DRY_RUN" != "true" ]]; then
-    [[ -x "$SOURCE_DIR/scripts/install-opencode.sh" ]] || die "source is missing executable scripts/install-opencode.sh"
+    [[ -f "$SOURCE_DIR/scripts/install-opencode.sh" ]] || die "source is missing scripts/install-opencode.sh"
     require_cmd node
     if [[ ! -f "$SOURCE_DIR/dist/opencode-host.bundle.min.mjs" ]]; then
       require_cmd pnpm
     fi
   fi
 
-  local args=("$SOURCE_DIR/scripts/install-opencode.sh" "--global" "--host" "$host")
+  # Run through bash rather than exec: the npm tarball keeps the executable
+  # bit only for `bin` entries, so a materialised scripts/*.sh arrives 0644
+  # (the v3.19.2 install died on the -x test with everything else in place).
+  local args=(bash "$SOURCE_DIR/scripts/install-opencode.sh" "--global" "--host" "$host")
   [[ "$OPENCODE_COPY" == "true" ]] && args+=("--copy")
   log "installing $label generated plugin surface from $SOURCE_DIR"
   run "${args[@]}"
@@ -489,11 +522,11 @@ install_pi() {
   fi
 
   if [[ "$DRY_RUN" != "true" ]]; then
-    [[ -x "$SOURCE_DIR/scripts/install-pi.sh" ]] || die "source is missing executable scripts/install-pi.sh"
+    [[ -f "$SOURCE_DIR/scripts/install-pi.sh" ]] || die "source is missing scripts/install-pi.sh"
     require_cmd node
   fi
 
-  local args=("$SOURCE_DIR/scripts/install-pi.sh")
+  local args=(bash "$SOURCE_DIR/scripts/install-pi.sh")
   # The universal installer points Pi at the composed, versioned runtime tree
   # so all hosts share one stable materialisation across re-runs. Direct Pi
   # installs may still use `npm:@reddb-io/red-skills-<plugin>`.
@@ -653,12 +686,12 @@ uninstall_hermes() {
 }
 
 opencode_source_dir_for_uninstall() {
-  if [[ -n "$SOURCE_DIR" && -x "$SOURCE_DIR/scripts/install-opencode.sh" ]] \
+  if [[ -n "$SOURCE_DIR" && -f "$SOURCE_DIR/scripts/install-opencode.sh" ]] \
     && grep -Fq -- '--uninstall' "$SOURCE_DIR/scripts/install-opencode.sh"; then
     printf '%s\n' "$SOURCE_DIR"
     return 0
   fi
-  if [[ -x "$INSTALL_ROOT/current/scripts/install-opencode.sh" ]] \
+  if [[ -f "$INSTALL_ROOT/current/scripts/install-opencode.sh" ]] \
     && grep -Fq -- '--uninstall' "$INSTALL_ROOT/current/scripts/install-opencode.sh"; then
     printf '%s\n' "$INSTALL_ROOT/current"
     return 0
@@ -686,10 +719,10 @@ uninstall_pi() {
   if source="$(opencode_source_dir_for_uninstall)"; then
     log "uninstalling Pi RedSkills packages via $source/scripts/install-pi.sh"
     if [[ -f "$manifest_user" ]]; then
-      run "$source/scripts/install-pi.sh" --uninstall --user
+      run bash "$source/scripts/install-pi.sh" --uninstall --user
     fi
     if [[ -n "$manifest_project" && -f "$manifest_project" ]]; then
-      ( cd "$PI_PROJECT_DIR" && run "$source/scripts/install-pi.sh" --uninstall --project "$PI_PROJECT_DIR" )
+      ( cd "$PI_PROJECT_DIR" && run bash "$source/scripts/install-pi.sh" --uninstall --project "$PI_PROJECT_DIR" )
     fi
     return 0
   fi
@@ -703,7 +736,7 @@ uninstall_opencode_compatible() {
   local source
   if source="$(opencode_source_dir_for_uninstall)"; then
     log "uninstalling $label RedSkills files via $source/scripts/install-opencode.sh"
-    run "$source/scripts/install-opencode.sh" --uninstall --global --host "$host"
+    run bash "$source/scripts/install-opencode.sh" --uninstall --global --host "$host"
     return 0
   fi
 

@@ -27,6 +27,13 @@
   "files": [
     "skills/**/*",
     "dist/**/*",
+    ".claude-plugin/**/*",
+    ".codex-plugin/**/*",
+    ".gemini-plugin/**/*",
+    ".mcp.json",
+    "agents/**/*",
+    "hooks/**/*",
+    "scripts/**/*",
     "package.json",
     "README.md"
   ]

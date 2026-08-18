@@ -37,7 +37,9 @@ test ! -e "$root/dist/internal.bundle.min.mjs"
 test ! -e "$root/apps"
 test ! -e "$root/packages"
 INSTALL_OPENCODE
-chmod +x "$core/scripts/install-opencode.sh"
+# The npm tarball keeps the executable bit only for `bin` entries; a
+# materialised scripts/install-opencode.sh arrives 0644 and must still run.
+chmod 0644 "$core/scripts/install-opencode.sh"
 
 # `internal` is skills-only: its package ships no runtime bundle, and the
 # installer must materialise it without demanding one.
