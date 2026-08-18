@@ -76,6 +76,13 @@ export const LANE_RETENTION_REGISTRY = {
     maxBytes: 2 * MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "redskilled-events": {
+    // The most history one daemon generation asks every successor to replay.
+    // Declared here rather than beside the writer because a ceiling only the
+    // writer knows is one the census cannot audit (#3645).
+    maxBytes: 4 * MIB,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
   "rsp-telemetry-spool": {
     maxBytes: 8 * MIB,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,

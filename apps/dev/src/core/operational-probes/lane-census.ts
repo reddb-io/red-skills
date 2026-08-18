@@ -6,6 +6,7 @@ import {
   LIVE_WORKER_LOG_WARNING_THRESHOLD_BYTES,
   laneTempOwnerPid,
   type LaneRetentionPolicy,
+  type LaneRetentionPolicyName,
 } from "@reddb-io/shared/lane-retention.js";
 import {
   castleStateDir,
@@ -17,10 +18,7 @@ import {
   stateDir,
   tmpDir,
 } from "@reddb-io/shared/red-paths.js";
-import {
-  DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES,
-  REDSKILLED_EVENT_LANE_FILE,
-} from "@reddb-io/redskilled/event-lane";
+import { REDSKILLED_EVENT_LANE_FILE } from "@reddb-io/redskilled/event-lane";
 import type {
   OperationalProbe,
   OperationalProbeContext,
@@ -161,7 +159,7 @@ function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistr
     host(
       "redskilled-events",
       join(hostRoot, REDSKILLED_EVENT_LANE_FILE),
-      { maxBytes: DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES },
+      LANE_RETENTION_REGISTRY["redskilled-events"],
     ),
     host("process-deaths", deathLaneFileIn(hostState), LANE_RETENTION_REGISTRY["process-deaths"]),
     host(
@@ -179,7 +177,32 @@ function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistr
       join(hostState, "github", "balance-history.toonl"),
       LANE_RETENTION_REGISTRY["github-balance-history"],
     ),
+    host(
+      "github-balance",
+      join(hostState, "github", "balance.toon"),
+      LANE_RETENTION_REGISTRY["github-balance"],
+    ),
   ];
+}
+
+/**
+ * Lane ids the census discovers per Worker workspace rather than statically —
+ * one file per live Worker, so they cannot be enumerated from roots alone.
+ */
+const WORKER_LANE_FILENAMES = {
+  "worker.log.toonl": "worker-log",
+  "liveness.toonl": "worker-liveness",
+} as const satisfies Readonly<Record<string, LaneRetentionPolicyName>>;
+
+/**
+ * Every lane id the census can emit. The retention invariant pins this against
+ * the registry in both directions, so a registered lane the census never
+ * enumerates is a policy nobody can observe. PURE.
+ */
+export function laneCensusLaneIds(): string[] {
+  const ids = new Set<string>(staticRegistrations("/project", "/host").map((lane) => lane.id));
+  for (const id of Object.values(WORKER_LANE_FILENAMES)) ids.add(id);
+  return [...ids].sort();
 }
 
 function absent(error: unknown): boolean {
@@ -274,13 +297,14 @@ export async function collectLaneCensusProbeInput(
   const registrations = staticRegistrations(projectRoot, hostRoot);
   for (const absolutePath of workerFiles) {
     const segments = slash(relative(workersRoot, absolutePath)).split("/");
-    if (segments.length !== 2 || segments[1] !== "worker.log.toonl") continue;
+    const id = WORKER_LANE_FILENAMES[segments.at(-1) as keyof typeof WORKER_LANE_FILENAMES];
+    if (id === undefined) continue;
     registrations.push(registration(
-      "worker-log",
+      id,
       "project",
       absolutePath,
       projectDisplay(projectRoot, absolutePath),
-      LANE_RETENTION_REGISTRY["worker-log"],
+      LANE_RETENTION_REGISTRY[id],
     ));
   }
 

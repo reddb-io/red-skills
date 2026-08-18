@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { decode, parseRecords } from "@reddb-io/toon";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -195,6 +196,48 @@ describe("castle lane writers", () => {
         merge_sha: "abc123",
       },
     ]);
+  });
+
+  it("caps a LINE-only lane on append and keeps the newest rows (#3645)", async () => {
+    const paths = createEnginePaths(redRoot);
+    const maxLines = 6;
+
+    for (let outcome = 1; outcome <= 12; outcome += 1) {
+      await appendCastleHistoryRecord(paths.castleHistory, {
+        ts: "2026-07-16T20:03:00.000Z",
+        epoch: 1784232180,
+        worker: "wAB12",
+        issue: 1900 + outcome,
+        event: "done",
+        duration_s: 12,
+        runner: "codex",
+      }, { retentionPolicy: { maxLines, targetRatio: 0.5 } });
+      const rows = parseRecords(await readFile(paths.castleHistory, "utf8"));
+      // Bounded after EVERY append, not only after the last one — a boot-time
+      // sweep would have let the ledger grow between restarts.
+      expect(rows.length).toBeLessThanOrEqual(maxLines);
+    }
+
+    const kept = parseRecords(await readFile(paths.castleHistory, "utf8"));
+    expect(kept.at(-1)?.issue).toBe(1912);
+    expect(kept.length).toBeLessThan(12);
+  });
+
+  it("bounds castle history by the registry's line ceiling with no policy passed", async () => {
+    const paths = createEnginePaths(redRoot);
+
+    await appendCastleHistoryRecord(paths.castleHistory, {
+      ts: "2026-07-16T20:03:00.000Z",
+      epoch: 1784232180,
+      worker: "wAB12",
+      issue: 1905,
+      event: "done",
+      duration_s: 12,
+      runner: "codex",
+    });
+
+    expect(LANE_RETENTION_REGISTRY["castle-history"].maxLines).toBe(10_000);
+    expect(parseRecords(await readFile(paths.castleHistory, "utf8"))).toHaveLength(1);
   });
 
   it("rejects records outside the published red.castle.lane.v1 family before writing", async () => {

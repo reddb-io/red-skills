@@ -134,6 +134,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "ADR 0137 forbids literal truecolor escapes across the dev statusline, VS Code dashboard, herdr panes, and the shared redskilled render; the painted surfaces span three apps and one package, but their ratchet lives in apps/dev",
   },
   {
+    name: "invariants:lane-retention",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "every registered TOONL lane must be enforced by a writer and observable by the census (#3645); the lanes span apps/dev, apps/redskilled, apps/rsp, packages/github, packages/red-castle and packages/shared, the suite lives in apps/dev",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/dev",
     script: "test:invariants",
