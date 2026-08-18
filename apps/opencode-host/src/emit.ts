@@ -11,11 +11,12 @@
  * All file IO is concentrated here so the planner modules stay pure
  * and the CLI is a thin caller.
  */
-import { mkdirSync, symlinkSync, writeFileSync, copyFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync, copyFileSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { buildProviderBlock, type OpencodeConfig } from "./provider-block.js";
 import {
   planAllSkills,
+  renameSkillFrontmatter,
   type PlanResult,
 } from "./skills-to-opencode.js";
 import { planPluginHooks, type HookPlan } from "./hooks-to-events.js";
@@ -105,7 +106,11 @@ export function writeEmit(plan: EmitPlan, options: EmitOptions): void {
     for (const sp of skills.plans) {
       const target = join(pluginRoot, ".opencode", sp.target);
       mkdirSync(dirname(target), { recursive: true });
-      if (options.copySkills) {
+      if (sp.renamedFrom) {
+        // A collision-renamed skill cannot be a symlink: opencode reads the
+        // name from the frontmatter, so the copy carries the new one.
+        writeFileSync(target, renameSkillFrontmatter(readFileSync(sp.source, "utf8"), sp.name), "utf8");
+      } else if (options.copySkills) {
         copyFileSync(sp.source, target);
       } else {
         const rel = relative(dirname(target), sp.source);
