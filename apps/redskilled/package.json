@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled",
-  "version": "3.19.2",
+  "version": "3.19.3",
   "private": true,
   "type": "module",
   "exports": {
