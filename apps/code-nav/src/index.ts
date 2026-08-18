@@ -29,6 +29,7 @@ import {
   type ServerSpec,
 } from "./config.js";
 import { LspSession, uriToRelative } from "./lsp.js";
+import { resolveWorkspaceRoot } from "./workspace-root.js";
 
 const posShape = {
   file: z.string().describe("Workspace-relative path to the source file."),
@@ -39,6 +40,10 @@ const posShape = {
 interface Navigator {
   server: McpServer;
   root: string;
+  /** Where the root came from; `cwd` means nothing announced a project. */
+  rootSource: string;
+  /** Set when the root fell back to a plugin installation directory. */
+  rootWarning?: string;
   languages: string[];
   dispose: () => void;
 }
@@ -49,7 +54,9 @@ interface Navigator {
  * path — the registry is the first thing a version answer must not depend on.
  */
 function createNavigator(): Navigator {
-  const root = process.env.CODE_NAV_ROOT ?? process.cwd();
+  // The opened project, not the plugin the launcher happens to live in.
+  const resolution = resolveWorkspaceRoot();
+  const root = resolution.root;
   const servers = loadServers();
   const extIndex = buildExtensionIndex(servers);
 
@@ -209,6 +216,8 @@ function createNavigator(): Navigator {
   return {
     server,
     root,
+    rootSource: resolution.source,
+    ...(resolution.warning === undefined ? {} : { rootWarning: resolution.warning }),
     languages: Object.keys(servers),
     dispose: () => {
       for (const s of sessions.values()) s.dispose();
@@ -251,8 +260,11 @@ async function serve(): Promise<void> {
   }
   const transport = new StdioServerTransport();
   await navigator.server.connect(transport);
+  if (navigator.rootWarning !== undefined) {
+    process.stderr.write(`navigator: ${navigator.rootWarning}\n`);
+  }
   process.stderr.write(
-    `navigator MCP ready (root=${navigator.root}, languages=${navigator.languages.join(",")})\n`,
+    `navigator MCP ready (root=${navigator.root}, root-source=${navigator.rootSource}, languages=${navigator.languages.join(",")})\n`,
   );
 }
 
