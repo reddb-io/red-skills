@@ -32,7 +32,7 @@ function fail(message) {
   throw new Error(message);
 }
 
-function verifySignature({ manifestPath, bundlePath, cosignBin }) {
+function verifySignature({ manifestPath, bundlePath, cosignBin, identityRegexp }) {
   if (!existsSync(bundlePath)) fail("signature bundle is missing");
   const result = spawnSync(
     cosignBin,
@@ -42,7 +42,7 @@ function verifySignature({ manifestPath, bundlePath, cosignBin }) {
       "--bundle",
       bundlePath,
       "--certificate-identity-regexp",
-      RELEASE_IDENTITY,
+      identityRegexp,
       "--certificate-oidc-issuer",
       GITHUB_ISSUER,
       manifestPath,
@@ -50,7 +50,13 @@ function verifySignature({ manifestPath, bundlePath, cosignBin }) {
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   if (result.error) fail(`signature verifier could not run: ${result.error.message}`);
-  if (result.status !== 0) fail("manifest signature is invalid");
+  if (result.status !== 0) {
+    // cosign's own reason is the only thing that separates "wrong signer",
+    // "tampered manifest", and "verifier could not reach its trust roots";
+    // swallowing it left the v3.19.0 release log with a bare "invalid".
+    const detail = `${result.stderr ?? ""}${result.stdout ?? ""}`.trim();
+    fail(`manifest signature is invalid${detail ? `: ${detail}` : ""}`);
+  }
 }
 
 function parseAndValidateManifest(manifestPath) {
@@ -119,7 +125,7 @@ function verifyArtifacts(manifest, manifestPath) {
 }
 
 function parseArgs(argv) {
-  const options = { cosignBin: "cosign" };
+  const options = { cosignBin: "cosign", identityRegexp: RELEASE_IDENTITY };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const value = argv[index + 1];
@@ -131,6 +137,12 @@ function parseArgs(argv) {
       index += 1;
     } else if (argument === "--cosign-bin" && value) {
       options.cosignBin = value;
+      index += 1;
+    } else if (argument === "--certificate-identity-regexp" && value) {
+      // Smoke/test override only: the release verifier default pins the
+      // red-publish workflow identity. A pull-request smoke signs under its
+      // own workflow ref and must say so explicitly to be accepted.
+      options.identityRegexp = value;
       index += 1;
     } else {
       fail(`unknown or incomplete argument: ${argument}`);

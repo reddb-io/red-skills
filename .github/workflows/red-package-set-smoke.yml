@@ -1,0 +1,118 @@
+name: red-package-set-smoke
+
+# Rehearse the release's package-set signing recipe BEFORE a tag depends on it.
+#
+# red-publish.yml signs the package-set manifest keylessly and then proves the
+# downloaded verifier works with the network gone. That step first ran for real
+# on v3.19.0 and failed, which blocked npm publish and broke every installer
+# that materialises the release packages. Nothing on a pull request had ever
+# exercised real cosign: the workspace contract test drives a fake. This
+# workflow signs a fixture manifest under its own OIDC identity and runs the
+# exact offline verifier the release runs, so a recipe regression fails the PR
+# instead of the release.
+
+on:
+  pull_request:
+    paths:
+      - scripts/build-package-set.mjs
+      - scripts/verify-package-set.mjs
+      - scripts/test-package-set-contract.sh
+      - .github/workflows/red-package-set-smoke.yml
+      - .github/workflows/red-publish.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    # Fork pull requests carry no OIDC token, so keyless signing cannot run there.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+
+      - name: Build and sign a fixture package set
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          printf 'alpha payload\n' >dist/alpha.bin
+          printf 'beta payload\n' >dist/beta.bin
+          cp scripts/verify-package-set.mjs dist/verify-package-set.mjs
+          node scripts/build-package-set.mjs \
+            --source-commit "$SOURCE_COMMIT" \
+            --out dist/package-set.manifest.json \
+            --asset dist/alpha.bin \
+            --asset dist/beta.bin \
+            --asset dist/verify-package-set.mjs
+          cosign version
+          cosign sign-blob \
+            --yes \
+            --bundle dist/package-set.manifest.sigstore.json \
+            dist/package-set.manifest.json
+          echo "--- bundle shape"
+          node -e 'const b=require("./dist/package-set.manifest.sigstore.json"); console.log(Object.keys(b))'
+          echo "--- sigstore cache after signing"
+          ls -laR "$HOME/.sigstore" 2>&1 | head -60 || true
+
+      - name: Offline verify (release recipe)
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
+        run: |
+          set -euo pipefail
+          echo "--- environment seen under sudo"
+          sudo --preserve-env=HOME env | grep -E '^(HOME|USER|PATH)=' || true
+          sudo --preserve-env=HOME unshare --net -- \
+            "$(command -v node)" scripts/verify-package-set.mjs \
+              --manifest dist/package-set.manifest.json \
+              --bundle dist/package-set.manifest.sigstore.json \
+              --cosign-bin "$(command -v cosign)" \
+              --certificate-identity-regexp "$IDENTITY"
+
+      - name: Diagnostics when the release recipe fails
+        if: failure()
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/red-package-set-smoke\.yml@refs/.+$
+        run: |
+          set +e
+          echo "=== A. same verifier, network on, no sudo"
+          node scripts/verify-package-set.mjs \
+            --manifest dist/package-set.manifest.json \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --cosign-bin "$(command -v cosign)" \
+            --certificate-identity-regexp "$IDENTITY"
+          echo "exit=$?"
+          echo "=== B. same verifier, network on, under sudo"
+          sudo --preserve-env=HOME "$(command -v node)" scripts/verify-package-set.mjs \
+            --manifest dist/package-set.manifest.json \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --cosign-bin "$(command -v cosign)" \
+            --certificate-identity-regexp "$IDENTITY"
+          echo "exit=$?"
+          echo "=== C. cosign directly, offline, no sudo, verbose"
+          cosign verify-blob --verbose --offline \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/package-set.manifest.json
+          echo "exit=$?"
+          echo "=== D. cosign directly, offline, netns, verbose"
+          sudo --preserve-env=HOME unshare --net -- "$(command -v cosign)" verify-blob --verbose --offline \
+            --bundle dist/package-set.manifest.sigstore.json \
+            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/package-set.manifest.json
+          echo "exit=$?"
+          echo "=== E. cert SAN"
+          node -e 'const b=require("./dist/package-set.manifest.sigstore.json"); process.stdout.write(Buffer.from(b.cert,"base64").toString())' | openssl x509 -noout -text | grep -A2 -i "subject alternative\|Issuer:" || true
