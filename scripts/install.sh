@@ -98,6 +98,16 @@ die() {
   exit 1
 }
 
+# plugin_has_runtime <plugin> <runtime plugins...>
+plugin_has_runtime() {
+  local plugin="$1" candidate
+  shift
+  for candidate in "$@"; do
+    [[ "$candidate" == "$plugin" ]] && return 0
+  done
+  return 1
+}
+
 quote_cmd() {
   local out="" arg
   for arg in "$@"; do
@@ -206,7 +216,11 @@ prepare_source() {
   mkdir -p "$versions_dir"
 
   local tmp core package_dir package_version plugin bundle resolved_version dest
+  # Every marketplace plugin is materialised; only the ones with a runtime app
+  # (apps/<plugin> in the repo) carry dist/<plugin>.bundle.min.mjs. `internal`
+  # is skills-only, so requiring its bundle refused every install (v3.19.1).
   local -a plugins=(dev memory brain internal)
+  local -a runtime_plugins=(dev memory brain)
   local -a specs=("@reddb-io/red-skills@$npm_version")
   for plugin in "${plugins[@]}"; do
     specs+=("@reddb-io/red-skills-$plugin@$npm_version")
@@ -234,7 +248,9 @@ prepare_source() {
     package_dir="$tmp/node_modules/@reddb-io/red-skills-$plugin"
     bundle="$package_dir/dist/$plugin.bundle.min.mjs"
     [[ -f "$package_dir/package.json" ]] || die "npm did not materialise @reddb-io/red-skills-$plugin"
-    [[ -f "$bundle" ]] || die "@reddb-io/red-skills-$plugin package is missing dist/$plugin.bundle.min.mjs"
+    if plugin_has_runtime "$plugin" "${runtime_plugins[@]}"; then
+      [[ -f "$bundle" ]] || die "@reddb-io/red-skills-$plugin package is missing dist/$plugin.bundle.min.mjs"
+    fi
     package_version="$(node -e 'process.stdout.write(require(process.argv[1]).version || "")' "$package_dir/package.json")"
     [[ "$package_version" == "$resolved_version" ]] \
       || die "npm resolved @reddb-io/red-skills-$plugin@$package_version, expected $resolved_version"
@@ -251,7 +267,9 @@ prepare_source() {
       package_dir="$tmp/node_modules/@reddb-io/red-skills-$plugin"
       bundle="$package_dir/dist/$plugin.bundle.min.mjs"
       cp -R "$package_dir" "$dest.tmp/plugins/$plugin"
-      cp "$bundle" "$dest.tmp/dist/$plugin.bundle.min.mjs"
+      if plugin_has_runtime "$plugin" "${runtime_plugins[@]}"; then
+        cp "$bundle" "$dest.tmp/dist/$plugin.bundle.min.mjs"
+      fi
     done
     mv "$dest.tmp" "$dest"
   else

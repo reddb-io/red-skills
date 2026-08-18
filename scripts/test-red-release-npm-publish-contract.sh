@@ -181,13 +181,19 @@ cp packaging/npm/package.json "$core_tree/package.json"
 tar -czf "$contract_fixture/core.tgz" -C "$contract_fixture/core-tree" package
 
 first_plugin=""
+skills_only_plugin=""
 while IFS= read -r plugin_json; do
   plugin="$(node -p "require('./${plugin_json}').name")"
   [ -n "$first_plugin" ] || first_plugin="$plugin"
   plugin_tree="$contract_fixture/plugin-$plugin/package"
   mkdir -p "$plugin_tree/skills/core/example" "$plugin_tree/dist"
   : > "$plugin_tree/skills/core/example/SKILL.md"
-  : > "$plugin_tree/dist/$plugin.bundle.min.mjs"
+  # Only a plugin with a runtime app carries a bundle; `internal` is skills-only.
+  if [ -f "apps/$plugin/package.json" ]; then
+    : > "$plugin_tree/dist/$plugin.bundle.min.mjs"
+  else
+    skills_only_plugin="$plugin"
+  fi
   if [ "$plugin" = "memory" ]; then
     : > "$plugin_tree/dist/memory-tokenizer.asset.cjs"
   fi
@@ -236,6 +242,27 @@ fi
 plugin_tree="$contract_fixture/plugin-$first_plugin/package"
 tar -czf "$plugin_tarballs/reddb-io-red-skills-$first_plugin-9.9.9.tgz" \
   -C "$contract_fixture/plugin-$first_plugin" package
+
+# A skills-only plugin (no apps/<name>) ships no runtime bundle: demanding one
+# refused the v3.19.1 publish, and a stray bundle riding it is refused too.
+[ -n "$skills_only_plugin" ] || fail "fixture expects at least one skills-only plugin (internal)"
+[ "$first_plugin" != "$skills_only_plugin" ] || fail "missing-bundle mutation must target a runtime plugin"
+stray_bundle_tree="$contract_fixture/stray-bundle/package"
+mkdir -p "$stray_bundle_tree/skills/core/example" "$stray_bundle_tree/dist"
+: > "$stray_bundle_tree/skills/core/example/SKILL.md"
+: > "$stray_bundle_tree/dist/$skills_only_plugin.bundle.min.mjs"
+tar -czf "$plugin_tarballs/reddb-io-red-skills-$skills_only_plugin-9.9.9.tgz" \
+  -C "$contract_fixture/stray-bundle" package
+if node scripts/check-npm-tarball-boundaries.mjs \
+  --root "$ROOT" \
+  --core "$contract_fixture/core.tgz" \
+  --plugins "$plugin_tarballs" >/dev/null 2>&1; then
+  fail "skills-only plugin tarball carrying a runtime bundle must fail the publish contract"
+else
+  pass "skills-only plugin tarball carrying a runtime bundle fails the publish contract"
+fi
+tar -czf "$plugin_tarballs/reddb-io-red-skills-$skills_only_plugin-9.9.9.tgz" \
+  -C "$contract_fixture/plugin-$skills_only_plugin" package
 
 bad_core_tree="$contract_fixture/bad-core/package"
 mkdir -p "$contract_fixture/bad-core"
