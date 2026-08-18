@@ -134,6 +134,10 @@ _Avoid_: suggesting `/ship` for new work (use `/go`, `/afk`, or requeue)
 The developer's main working clone of the repo, contrasted with an AFK **Worktree**.
 _Avoid_: main repo, root checkout
 
+**Working mode**:
+One of the four ways work enters RedSkills, and the fact every skill text must name rather than leave the reader to infer: **interactive** (a human drives a coder CLI in a fresh **Worktree**, iterates, and lands a PR), **spec-driven** (`/start` lands ADRs from a Worktree, `/to-spec` and `/to-tickets` publish **Tickets**, `/afk` hands the queue to **redskilled**), **ad-hoc** (`/go` mints one Ticket and hands it to redskilled at once), and **ADR-editing** (`/adr-editor` lands ADR changes from a fresh Worktree). Interactive and ADR-editing Worktrees stay under the client checkout's `.red/tmp/` because a human returns to review them; spec-driven and ad-hoc work is coordinated by redskilled and its **Workers** live in daemon-placed OS temporary storage, never in the checkout.
+_Avoid_: scenario, flow, lane (a lane is a label on a Ticket, not the way work entered), manual mode (interactive is the human's own coder session, not a fallback)
+
 **Worker**:
 A disposable, project-versioned workload admitted, budgeted, observed, and eventually reaped by **redskilled**. A Worker performs bounded work in an isolated **Worktree** and carries no durable project-control authority: Workers are cattle, while their outcomes and recoverable evidence survive in the control plane and the Issue tracker.
 _Avoid_: Project coordinator Worker, resident, daemon, durable Worker, pet process
