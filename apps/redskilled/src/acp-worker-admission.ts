@@ -36,9 +36,16 @@ import {
   type AcpSessionJournal,
 } from "./acp-session-journal.js";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
+import { workerModeEnv } from "@reddb-io/shared/working-mode.js";
 import { resolveAcpWorkerEndpoint, type RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
-import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
+import { mintHostWorkerId, type LaunchedWorker, type RedskilledWorkerSpec } from "./worker-launch.js";
+import {
+  materializeWorkerWorkspace,
+  releaseWorkerWorkspace,
+  workerWorkspaceRoot,
+  type MaterializedWorkerWorkspace,
+} from "./worker-workspace.js";
 import type { ActiveWorkflowWorker } from "./acp-worker-lifecycle.js";
 
 interface NativeWorkerSession {
@@ -49,6 +56,17 @@ interface NativeWorkerSession {
 interface NativeWorkerAdmissionOptions {
   readonly paths: RedskilledPaths;
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
+  /**
+   * The Workers this host already holds, so the minted id does not collide.
+   *
+   * The id is minted HERE rather than inside the launch, because the workspace
+   * is named after it and has to exist before the process that stands in it
+   * (ADR 0149 §3). Absent, the mint sees an empty live set — legal, since the id
+   * is the birth instant and a collision walks it forward.
+   */
+  readonly hostState?: () => { readonly workers: readonly { readonly worker_id: string }[] };
+  /** The host root Worker workspaces hang off. Defaults to the OS temporary root. */
+  readonly workspaceRoot?: string;
 }
 
 export async function admitNativeAcpWorker(
@@ -63,23 +81,37 @@ export async function admitNativeAcpWorker(
 ): Promise<ActiveWorkflowWorker> {
   const endpointId = randomBytes(6).toString("hex");
   const endpoint = resolveAcpWorkerEndpoint(options.paths, endpointId);
+  // The workspace is named after the id and has to exist before the process
+  // that stands in it, so the mint happens here rather than inside the launch.
+  const workerId = mintHostWorkerId((options.hostState?.().workers ?? []).map((worker) => worker.worker_id));
+  const workspace = await materializeWorkerWorkspace({
+    root: options.workspaceRoot ?? workerWorkspaceRoot(),
+    workerId,
+    projectWorkspacePath: session.project.workspacePath,
+  });
   const rendezvous = await bindWorkerRendezvous(endpoint);
-  let launched: LaunchedWorker;
-  try {
-    launched = options.startWorker(nativeWorkerSpec(session.project, endpoint, options.paths.runtimeDir));
-  } catch (error) {
+  // Every failure from here on releases the workspace: a Worker that never
+  // reached its rendezvous still cost a clone, and nothing else knows it exists.
+  const abandon = async (error: unknown): Promise<never> => {
     rendezvous.server.close();
     await removeAcpEndpoint(endpoint);
+    await releaseWorkerWorkspace(workspace).catch(() => undefined);
     throw error;
+  };
+  let launched: LaunchedWorker;
+  try {
+    launched = options.startWorker(
+      nativeWorkerSpec(session.project, workspace, endpoint, options.paths.runtimeDir, dispatch?.workerKind),
+    );
+  } catch (error) {
+    return await abandon(error);
   }
 
   let workerSocket: Socket;
   try {
     workerSocket = await withTimeout(rendezvous.connected, 10_000, "native ACP Worker rendezvous");
   } catch (error) {
-    rendezvous.server.close();
-    await removeAcpEndpoint(endpoint);
-    throw error;
+    return await abandon(error);
   }
   rendezvous.server.close();
 
@@ -139,7 +171,7 @@ export async function admitNativeAcpWorker(
         },
       };
     const downstreamSession = await connection.agent.request(methods.agent.session.new, {
-      cwd: session.project.workspacePath,
+      cwd: workspace.worktreePath,
       mcpServers: session.request.mcpServers as McpServer[],
       ...(session.request.additionalDirectories == null
         ? {}
@@ -156,11 +188,13 @@ export async function admitNativeAcpWorker(
     connection.close();
     workerSocket.destroy();
     await removeAcpEndpoint(endpoint);
+    await releaseWorkerWorkspace(workspace).catch(() => undefined);
     throw error;
   }
 
   return {
     workerId: launched.worker.worker_id,
+    workspace,
     downstreamSessionId,
     connection,
     socket: workerSocket,
@@ -175,17 +209,26 @@ export async function admitNativeAcpWorker(
 
 function nativeWorkerSpec(
   project: AcpProjectWorkspace,
+  workspace: MaterializedWorkerWorkspace,
   endpoint: string,
   runtimeDir: string,
+  workerKind: "afk" | "go" | "scout" | undefined,
 ): RedskilledWorkerSpec {
   const entry = process.argv[1];
   if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
   const childAgent = pinChildAgentExecutable(defaultChildAgentEndpoint());
   return {
+    worker_id: workspace.workerId,
     // The host's authority key must survive a repository rename. The current
     // GitHub full name remains display metadata on the public session.
     project_label: project.projectId,
-    workspace_path: project.workspacePath,
+    // The Worker stands in ITS OWN worktree in temporary storage (ADR 0149 §1);
+    // the Project workspace is what that worktree was forked from, never a cwd
+    // two Workers could share.
+    workspace_path: workspace.worktreePath,
+    // ADR 0150 §2: the run declares its Working mode, so a skill written for a
+    // human's checkout refuses inside a Worker instead of running there.
+    env: workerModeEnv(workerKind),
     command: process.execPath,
     args: [
       ...process.execArgv,

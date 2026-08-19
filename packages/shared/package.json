@@ -43,7 +43,8 @@
     "./self-update.js": "./self-update.ts",
     "./toon-migration.js": "./toon-migration.ts",
     "./worker-scope.js": "./worker-scope.ts",
-    "./worker-workspace.js": "./worker-workspace.ts"
+    "./worker-workspace.js": "./worker-workspace.ts",
+    "./working-mode.js": "./working-mode.ts"
   },
   "dependencies": {
     "@reddb-io/toon": "catalog:",

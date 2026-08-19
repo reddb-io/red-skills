@@ -34,12 +34,12 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { WORKING_MODES, type WorkingMode } from "@reddb-io/shared/working-mode.js";
 
-/** The four Working modes ADR 0150 §1 declares, in the ADR's own order. */
-export const WORKING_MODES = ["interactive", "spec-driven", "ad-hoc", "ADR-editing"] as const;
-
-/** One of the four ways work enters RedSkills. */
-export type WorkingMode = (typeof WORKING_MODES)[number];
+// The closed set lives in `@reddb-io/shared` because the daemon reads it too:
+// it exports the mode a Worker runs in as `RED_MODE`, and a marker that did not
+// spell a mode exactly the way a header declares it would never match.
+export { WORKING_MODES, type WorkingMode };
 
 /** The frontmatter key that carries the declaration. */
 export const WORKING_MODE_KEY = "working-mode";

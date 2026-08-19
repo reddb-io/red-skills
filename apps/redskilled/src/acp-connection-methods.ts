@@ -195,6 +195,7 @@ function goAdmission(deps: ConnectionMethodDeps, dialect: GoDialect) {
   return createGoWorkerAdmission({
     paths: deps.paths,
     startWorker: deps.startWorker,
+    hostState: deps.hostState,
     sessionJournal: deps.sessionJournal,
     sessions: deps.sessions,
     active: deps.active,
