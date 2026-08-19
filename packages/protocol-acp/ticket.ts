@@ -1,0 +1,87 @@
+// ticket — the Ticket handoff the daemon puts on a Worker's turn (issue #4020).
+//
+// ADR 0148's cut says WHETHER, WHEN AND WHERE a Worker exists is the daemon's;
+// what it then DOES with the turn is the body's. The handoff is where those two
+// meet, so it is wire: the daemon names the Ticket, the trunk, the labels and
+// the budget the operator declared, and `@reddb-io/worker`'s Ticket loop runs
+// the arc — claim, implement, gate, re-seed, publish, land — against it.
+//
+// Three things the handoff deliberately does NOT carry, and the reason each is
+// absent:
+//
+//   - **A credential, a remote or a Project.** Every write leaves the Worker as
+//     a request; naming the target here would make the Worker the chooser of
+//     where its work lands (ADR 0144 §3).
+//   - **A run mode the Worker picks.** `run_mode` is stated BY the daemon and
+//     checked against the lane the labels carry, which is the drift issue #3026
+//     was written about: a Ticket whose lane implies a mode the Worker does not
+//     hold must be refused before the claim, not after the push.
+//   - **A gate verdict.** The gate runs locally, inside the turn, because a
+//     verdict computed elsewhere cannot be what a re-seed reacts to (ADR 0129).
+
+/** One Ticket, as the daemon hands it to the Worker body for a turn. */
+export interface RedskillsTicketHandoff {
+  /** The Ticket number on the Issue tracker. */
+  readonly number: number;
+  /** The pull request title the landing request will carry. */
+  readonly title: string;
+  /** The Ticket's labels; the lane among them implies the required run mode. */
+  readonly labels: readonly string[];
+  /** The trunk the branch is measured and landed against. */
+  readonly base: string;
+  /** What the implementer is told to do on the first round. */
+  readonly handoff: string;
+  /** This Worker's host-scoped identity, as it appears in the claim marker. */
+  readonly worker_id: string;
+  /** The runner behind the child Agent, recorded on the claim. */
+  readonly runner?: string;
+  /** The mode this Worker holds, checked against the lane before the claim. */
+  readonly run_mode?: string;
+  /** How many times the implementer may be re-instructed IN PLACE. */
+  readonly reseed_budget?: number;
+  /** The operator's extra gate commands, run after feedback and only if it passed. */
+  readonly backpressure_commands?: readonly string[];
+}
+
+/**
+ * The Ticket a turn's `_meta` carries, or `undefined` when it carries none.
+ *
+ * A turn without a Ticket is not an error: the same Worker body serves ordinary
+ * prompt turns, and a parser that threw would make every one of them fail on
+ * the absence of something they never claimed to have.
+ */
+export function ticketHandoffFromMeta(meta: unknown): RedskillsTicketHandoff | undefined {
+  const candidate = (meta as { redskills?: { ticket?: unknown } } | undefined)?.redskills?.ticket;
+  if (candidate == null || typeof candidate !== "object") return undefined;
+  const ticket = candidate as Record<string, unknown>;
+  if (
+    typeof ticket.number !== "number" || !Number.isInteger(ticket.number) || ticket.number <= 0 ||
+    typeof ticket.title !== "string" || ticket.title === "" ||
+    typeof ticket.base !== "string" || ticket.base === "" ||
+    typeof ticket.handoff !== "string" || ticket.handoff === "" ||
+    typeof ticket.worker_id !== "string" || ticket.worker_id === "" ||
+    !isStringArray(ticket.labels)
+  ) {
+    return undefined;
+  }
+  return {
+    number: ticket.number,
+    title: ticket.title,
+    labels: ticket.labels,
+    base: ticket.base,
+    handoff: ticket.handoff,
+    worker_id: ticket.worker_id,
+    ...(typeof ticket.runner === "string" ? { runner: ticket.runner } : {}),
+    ...(typeof ticket.run_mode === "string" ? { run_mode: ticket.run_mode } : {}),
+    ...(typeof ticket.reseed_budget === "number" && Number.isFinite(ticket.reseed_budget)
+      ? { reseed_budget: Math.max(0, Math.trunc(ticket.reseed_budget)) }
+      : {}),
+    ...(isStringArray(ticket.backpressure_commands)
+      ? { backpressure_commands: ticket.backpressure_commands }
+      : {}),
+  };
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}

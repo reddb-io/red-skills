@@ -243,6 +243,11 @@
       "id": "apps/release/src/cli.ts#json-parse-file-read#3e7a30013c46",
       "classification": "external",
       "reason": "GitHub Actions event payloads (GITHUB_EVENT_PATH) are GitHub's own JSON format, read as-is"
+    },
+    {
+      "id": "packages/worker/src/acp/local-gate.ts#json-parse-file-read#90aad8e89373",
+      "classification": "external",
+      "reason": "package.json is ecosystem JSON; the Worker's local gate reads the workspace manifests to compute its validation cone."
     }
   ]
 }

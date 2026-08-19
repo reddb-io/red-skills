@@ -34,6 +34,26 @@ export {
   type WorkerPublisherOptions,
 } from "./publish-request.js";
 export {
+  runTicketLoop,
+  TICKET_LOOP_STAGES,
+  reseedHandoff,
+  type TicketGateRun,
+  type TicketImplementOutcome,
+  type TicketLoopDeps,
+  type TicketLoopRecord,
+  type TicketLoopResult,
+  type TicketLoopStage,
+  type TicketLoopTicket,
+} from "./ticket-loop.js";
+export {
+  runWorkerLocalGate,
+  readWorkspace,
+  workspaceGlobs,
+  changedFilesSince,
+  type WorkerLocalGateOptions,
+  type WorkerLocalGateResult,
+} from "./local-gate.js";
+export {
   createChildAcpSpinEpisode,
   type ChildAcpSpinEpisode,
   type ChildSpinObservation,
