@@ -149,7 +149,7 @@ describe("rewriteServer prefers the tree it generates from", () => {
 describe("rewriteServer (Claude/Codex → opencode)", () => {
   it("rewrites `sh -c '...${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs mcp'` to a node command array", () => {
     writeFile("memory/scripts/bootstrap.mjs", "console.log(1)");
-    const { entry, warnings } = rewriteServer(root, "memory", "red-memory", {
+    const { entry, warnings } = rewriteServer(root, "memory", "rs_memory", {
       command: "sh",
       args: [
         "-c",
@@ -191,7 +191,7 @@ describe("rewriteServer (Claude/Codex → opencode)", () => {
   });
 
   it("warns and falls back to a `sh -c` wrapper when no script path resolves", () => {
-    const { entry, warnings } = rewriteServer(root, "memory", "red-memory", {
+    const { entry, warnings } = rewriteServer(root, "memory", "rs_memory", {
       command: "sh",
       args: [
         "-c",
@@ -239,9 +239,10 @@ describe("planPluginMcp against the real source tree", () => {
     expect(body).toContain("$HOME/.codex/.tmp/marketplaces/red-skills");
   });
 
-  it("plans the memory plugin's red-memory MCP, with no default red-ui", () => {
+  // ADR 0147 §2 / #4027: the memory adapter ships as `rs_memory`.
+  it("plans the memory plugin's rs_memory MCP, with no default red-ui", () => {
     const plans = planPluginMcp(REAL_PLUGINS, "memory");
-    expect(plans.map((p) => p.name)).toEqual(["red-memory"]);
+    expect(plans.map((p) => p.name)).toEqual(["rs_memory"]);
     const redMemory = plans[0]!;
     expect(redMemory.entry.command[0]).toBe("node");
     expect(redMemory.entry.command[1]).toMatch(/bootstrap\.mjs$/);

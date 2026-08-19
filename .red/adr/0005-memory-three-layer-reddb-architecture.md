@@ -22,6 +22,36 @@ local-per-repo code-agent case* — not to compete as a hosted memory service.
 Each decision below was the result of a `/start` grilling session
 (2026-05-25/26) and chose against at least one viable alternative.
 
+## Amendment (2026-08-19, ADR 0152, issue #4027)
+
+**Decision 1 said "local-first per-repo"; the repo it meant is now the
+Project, and the process that opens it is the daemon.** Decision 1's positioning
+survives whole — no multi-tenancy, no `tenant`/auth axis, no hosted service —
+but two of its unstated assumptions did not: that a memory store belongs to a
+CHECKOUT, and that the process asking is standing in one.
+
+Neither holds since ADR 0149 put Workers in daemon-placed workspaces. A Worker
+has no repository checkout to open, so "the memory of the repo I am in" stopped
+naming one thing, and ADR 0144 §5 had already refused the client checkout as a
+daemon input.
+
+So, per ADR 0152:
+
+- The default root is `~/.red/memory/<project-id>`, keyed by the Project's
+  GitHub identity, which survives a clone, a move and a rename. One store per
+  Project per host, held by **redskilled**.
+- A repository may opt in through `plugins.memory.store: checkout` in its
+  `.red/config.yaml` to keep memory in its own `./.red/memory` — an operator who
+  wants their notes committable is entitled to that.
+- The daemon opens the checkout store only for the **interactive** and
+  **ADR-editing** modes (ADR 0150 §1). A caller exporting `RED_MODE` is a
+  Worker, and a Worker never reaches the human's checkout.
+- Decision 3's identity `(repo, session_id)` reads as `(Project, session_id)`.
+  What changed is which directory answers "repo", not that scope is per-Project.
+
+The MCP surface named in this ADR is now `rs_memory`, a thin adapter that
+publishes schemas and forwards (ADR 0147 rule 2); it holds no RedDB.
+
 ## Decisions
 
 ### 1. Positioning — local-first per-repo, not a hosted service

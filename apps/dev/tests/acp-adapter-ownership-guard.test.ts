@@ -47,6 +47,27 @@ const RS_BRAIN_FORBIDDEN = [
   { pattern: /@reddb-io\/sdk|\bBrainStore\b|withBrainRuntime/, owner: "a session-opened RedDB" },
 ] as const;
 
+/**
+ * `rs_memory`, the memory plugin's own MCP (#4027, ADR 0152).
+ *
+ * The daemon holds ONE store per Project at `~/.red/memory/<project-id>`, so
+ * the adapter publishes the core schemas and forwards; a RedDB, a graph store,
+ * a root resolution or a config read HERE would be the per-session,
+ * per-checkout store the daemon took over. The MCP ENTRY is swept alongside the
+ * tree because a bundle is exactly the transitive closure of its entry's
+ * imports — and the tokenizer ranks ride that closure, which is why the entry
+ * must reach neither `token-count` nor `js-tiktoken`.
+ */
+const RS_MEMORY_TREE = resolve(__dirname, "..", "..", "memory", "src", "rs-memory");
+const RS_MEMORY_ENTRY = resolve(__dirname, "..", "..", "memory", "src", "mcp-server.ts");
+
+const RS_MEMORY_FORBIDDEN = [
+  { pattern: /\bMemoryStore\b|graph-store|HistoricalMemoryStore/, owner: "a daemon-owned graph store" },
+  { pattern: /@reddb-io\/sdk|resolveStoreUri|readConfig|RED_MEMORY_URI/, owner: "a session-opened RedDB" },
+  { pattern: /mcp-server\/serve\.js|\.\.\/engine|\.\.\/operations|governed-write/, owner: "the memory tool body" },
+  { pattern: /js-tiktoken|token-count|countCl100kTokens/, owner: "the tokenizer, loaded only when tokenising" },
+] as const;
+
 const FORBIDDEN = [
   // Both spellings: the wire was `@reddb-io/red-castle/resident` before #4013
   // renamed the package, and a reintroduction would reach for the new name.
@@ -143,6 +164,28 @@ describe("ACP adapter ownership guard", () => {
         if (rule.pattern.test(source)) violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
       }
       for (const rule of RS_BRAIN_FORBIDDEN) {
+        if (rule.pattern.test(code(source))) {
+          violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+        }
+      }
+    }
+    expect(violations, violations.join("\n")).toEqual([]);
+  });
+
+  // Acceptance criterion of #4027: the memory plugin's adapter carries no store,
+  // and the tokenizer asset is not in the surface a session mounts.
+  it("keeps `rs_memory` a forwarder — no RedDB, no root resolution, no tokenizer", () => {
+    const swept = [RS_MEMORY_ENTRY, ...sourceFiles(RS_MEMORY_TREE)];
+    expect(swept.length, "swept no rs_memory source — a walker that reaches nothing is green by accident")
+      .toBeGreaterThan(1);
+
+    const violations: string[] = [];
+    for (const path of swept) {
+      const source = readFileSync(path, "utf8");
+      for (const rule of FORBIDDEN) {
+        if (rule.pattern.test(source)) violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+      }
+      for (const rule of RS_MEMORY_FORBIDDEN) {
         if (rule.pattern.test(code(source))) {
           violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
         }

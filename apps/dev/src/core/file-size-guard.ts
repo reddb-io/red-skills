@@ -55,7 +55,10 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/memory/src/extract-code.ts", lines: 938 },
   { path: "apps/memory/src/graph-store/store.ts", lines: 1090 },
   { path: "apps/memory/src/http-server.ts", lines: 1104 },
-  { path: "apps/memory/src/mcp-server/runtime.ts", lines: 853 },
+  // #4027 renamed `runtime.ts` to `serve.ts` and took the stdio shell out of
+  // it. Same debt, one number lower and still owed: the tool body is 19 tools
+  // in one switch, and splitting it by domain is its own slice.
+  { path: "apps/memory/src/mcp-server/serve.ts", lines: 819 },
   { path: "apps/memory/src/memory-events.ts", lines: 836 },
   { path: "apps/memory/src/operations/definitions-core.ts", lines: 1190 },
   { path: "apps/memory/src/operations/definitions-docs.ts", lines: 1235 },

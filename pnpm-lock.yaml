@@ -273,6 +273,12 @@ importers:
       '@reddb-io/github':
         specifier: workspace:*
         version: link:../../packages/github
+      '@reddb-io/protocol-acp':
+        specifier: workspace:*
+        version: link:../../packages/protocol-acp
+      '@reddb-io/redskilled':
+        specifier: workspace:*
+        version: link:../redskilled
       '@reddb-io/sdk':
         specifier: 1.23.1
         version: 1.23.1
@@ -617,6 +623,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 1.3.0
         version: 1.3.0(zod@4.4.3)
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

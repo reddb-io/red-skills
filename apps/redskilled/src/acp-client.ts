@@ -21,6 +21,8 @@ import {
   REDSKILLS_WIRE_MAJOR,
   type RedskilledBrainAnswer,
   type RedskilledBrainCall,
+  type RedskilledMemoryAnswer,
+  type RedskilledMemoryCall,
   type RedskilledGithubRequest,
 } from "@reddb-io/protocol-acp";
 import type { RedskilledGithubRequestAnswer } from "./github-request.js";
@@ -74,6 +76,15 @@ export interface RedskillsProjectAcpSession {
    * call — which is the whole point of the daemon holding it (ADR 0152).
    */
   brain(call: RedskilledBrainCall): Promise<RedskilledBrainAnswer>;
+  /**
+   * Forward one memory tool call to the store the daemon holds for this Project.
+   *
+   * The client names a tool, its arguments and its own Working mode. WHICH root
+   * that resolves to — the Project's own, or this checkout's when the repository
+   * opted in — is answered on the far side of this call, which is the whole
+   * point of the daemon holding it (ADR 0152).
+   */
+  memory(call: RedskilledMemoryCall): Promise<RedskilledMemoryAnswer>;
   prompt(text: string): Promise<RedskillsProjectPromptResult>;
   cancel(): Promise<void>;
   permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;
@@ -155,6 +166,12 @@ export async function connectRedskillsProjectAcp(
       return connection.agent.request<RedskilledBrainAnswer>(
         REDSKILLS_ACP_METHODS.brainCall,
         { tool: call.tool, arguments: call.arguments },
+      );
+    },
+    memory(call) {
+      return connection.agent.request<RedskilledMemoryAnswer>(
+        REDSKILLS_ACP_METHODS.memoryCall,
+        { tool: call.tool, arguments: call.arguments, ...(call.mode == null ? {} : { mode: call.mode }) },
       );
     },
     async prompt(text) {

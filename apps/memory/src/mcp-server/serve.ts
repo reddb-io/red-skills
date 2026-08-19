@@ -1,32 +1,17 @@
-#!/usr/bin/env node
 /**
- * memory MCP server.
+ * The memory tool BODY: what each `memory_*` tool does, and against which store.
  *
- * Speaks MCP over stdio and exposes the recall/graph surface to agents. Wraps a
- * per-project embedded RedDB connection and the recall engine; recall/search/
- * traverse/path/neighbors are the zero-token read paths, `ask` is the one
- * LLM-backed verb.
+ * This file used to be the whole MCP server — it resolved a root, opened a
+ * RedDB, published the schemas and served stdio, once per session. ADR 0152
+ * split that: the daemon holds one store per Project and runs the body below,
+ * while `rs_memory` publishes the surface and forwards (ADR 0147 rule 2).
  *
- * Store resolution (first match wins):
- *   RED_MEMORY_URI       — explicit RedDB URI (used by tests and advanced setups)
- *   MEMORY_ROOT / cwd    — read the `plugins.memory` block of `.red/config.yaml`
- *                          (legacy `.red/memory/config.json` as fallback);
- *                          requires graph mode
- *
- *   RED_MEMORY_PROJECT   — project tag stamped on stored nodes (defaults to the
- *                          config's project or the root dir name)
+ * So there is deliberately NO argv, NO stdio and NO process lifecycle here. A
+ * module the daemon imports may not claim a terminal or read a command line;
+ * everything this file does, it does to a store it was handed.
  */
-
 import { basename } from "node:path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
-import { parseFlags, routeCommand, type FlagSchema } from "@reddb-io/shared/args.js";
 import { type MemoryConfig, readConfig, resolveStoreUri } from "../config.js";
 import { diagnose } from "../doctor.js";
 import { runAutoCure } from "../auto-curation.js";
@@ -220,22 +205,48 @@ async function requireActiveSession(rootDir: string): Promise<string> {
 
 // ---------- server ----------
 
-const buildInfo = readBuildInfo("memory-mcp");
+/** The store one dispatch runs against, and the Project context around it. */
+export interface MemoryToolContext {
+  /** The open graph store the daemon holds for this Project. */
+  readonly store: MemoryStore;
+  /** Its RedDB URI — reopened read-only when a call asks `as_of` a git ref. */
+  readonly uri: string;
+  /** The store ROOT: where sessions, evidence artifacts and notes are written. */
+  readonly root: string;
+  /** The resolved memory config, when the root carries one. */
+  readonly config?: MemoryConfig | undefined;
+}
 
-async function main(): Promise<void> {
-  const { uri, project, root, config } = await resolveStore();
-  const store = await MemoryStore.open({ uri, project });
+/** What one tool call answers with, in the shape MCP renders. */
+export interface MemoryToolResult {
+  readonly content: Array<{ type: "text"; text: string }>;
+  readonly structuredContent?: Record<string, unknown>;
+  readonly isError?: boolean;
+}
 
-  const server = new Server(
-    { name: "memory", version: buildInfo.version },
-    { capabilities: { tools: {} } },
-  );
+/** Every tool the memory surface publishes, core and generated alike. */
+export function memoryToolDescriptors(): Array<{
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}> {
+  return TOOLS.map((tool) => ({ ...tool }));
+}
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const name = req.params.name;
-    const args = req.params.arguments ?? {};
+/**
+ * Serve one memory tool against one store.
+ *
+ * Errors are RETURNED rather than thrown, as `isError` results, because that is
+ * what an MCP caller can act on: a tool that rejects with a transport error
+ * tells the model the server broke, while a tool result naming the bad argument
+ * tells it what to send instead. The daemon forwards this shape unchanged.
+ */
+export async function serveMemoryTool(
+  context: MemoryToolContext,
+  name: string,
+  args: Readonly<Record<string, unknown>> = {},
+): Promise<MemoryToolResult> {
+  const { store, uri, root, config } = context;
     try {
       const operation = OPERATION_BY_TOOL_NAME.get(name);
       if (operation) {
@@ -501,54 +512,51 @@ async function main(): Promise<void> {
     } catch (error) {
       return toolError(name, error);
     }
-  });
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  const shutdown = async () => {
-    try {
-      await store.close();
-    } finally {
-      process.exit(0);
-    }
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
 }
 
-/** Resolve which RedDB store the server speaks to, and the project tag. */
-async function resolveStore(): Promise<{
+
+/**
+ * Resolve which RedDB store answers for one memory ROOT, and the project tag.
+ *
+ * The root is an ARGUMENT rather than an ambient read, because the daemon holds
+ * one store per Project and stands in none of them (ADR 0152): a resolver that
+ * reached for `process.cwd()` would answer for whichever directory the daemon
+ * happened to be started in, for every Project on the host.
+ */
+export async function resolveMemoryStoreTarget(root: string): Promise<{
   uri: string;
   project: string;
   root: string;
   config?: MemoryConfig;
 }> {
-  if (process.env.RED_MEMORY_URI) {
-    return {
-      uri: process.env.RED_MEMORY_URI,
-      project: process.env.RED_MEMORY_PROJECT ?? basename(process.cwd()),
-      root: process.env.MEMORY_ROOT ?? process.cwd(),
-    };
-  }
-  const root = process.env.MEMORY_ROOT ?? process.cwd();
   const config = await readConfig(root);
   if (!config) {
     throw new Error(
-      `memory is not initialized at ${root} — run \`memory init --mode graph\` first (or set RED_MEMORY_URI)`,
+      `memory is not initialized at ${root} — run \`memory init --mode graph\` first`,
     );
   }
   if (config.mode !== "graph") {
     throw new Error(
-      `the MCP server needs graph mode — ${root} is "${config.mode}". Re-run \`memory init --mode graph\``,
+      `the memory tool surface needs graph mode — ${root} is "${config.mode}". Re-run \`memory init --mode graph\``,
     );
   }
   applyConfiguredProviderEnv(config.provider);
   return {
     uri: resolveStoreUri(root, config),
-    project: process.env.RED_MEMORY_PROJECT ?? basename(root),
+    project: basename(root),
     root,
     config,
+  };
+}
+
+/** Open the store one memory root names, ready for {@link serveMemoryTool}. */
+export async function openMemoryToolContext(root: string): Promise<MemoryToolContext> {
+  const target = await resolveMemoryStoreTarget(root);
+  return {
+    store: await MemoryStore.open({ uri: target.uri, project: target.project }),
+    uri: target.uri,
+    root: target.root,
+    ...(target.config == null ? {} : { config: target.config }),
   };
 }
 
@@ -808,46 +816,4 @@ function describe(v: z.ZodTypeAny): Record<string, unknown> {
     return { type: "string", enum: (v as unknown as { options: string[] }).options };
   }
   return {};
-}
-
-/** The server's own flags — the same contract the `memory` CLI routes through. */
-const MCP_BINARY_FLAGS = {
-  version: { kind: "boolean", aliases: ["v"] },
-  help: { kind: "boolean", aliases: ["h"] },
-  json: { kind: "boolean" },
-} as const satisfies FlagSchema;
-
-/** Usage as a CONSTANT — the answer needs no store, no config and no stdio. */
-const MCP_USAGE = `Usage: memory-mcp [command] [flags]
-
-Commands:
-  serve (default)  speak MCP over stdio against this project's memory store
-  version          print the build stamp
-  help             print this usage
-
-Flags:
-  -v, --version    print the build stamp (--json for the build info)
-  -h, --help       print this usage
-`;
-
-const routedMcp = routeCommand<"serve" | "version" | "help">(process.argv.slice(2), {
-  commands: { serve: {}, version: {}, help: {} },
-  default: "serve",
-});
-const mcpFlags = parseFlags(routedMcp.args, MCP_BINARY_FLAGS).values;
-
-// Answered before the store opens and before stdio is claimed: "which build is
-// this?" and "what can it do?" are asked of a server that would not start, so
-// neither may need one (#2878, #2918).
-if (routedMcp.command === "help" || mcpFlags.help === true) {
-  process.stdout.write(MCP_USAGE);
-} else if (routedMcp.command === "version" || mcpFlags.version === true) {
-  process.stdout.write(
-    mcpFlags.json === true ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`,
-  );
-} else {
-  main().catch((err) => {
-    console.error("[memory-mcp] fatal:", err);
-    process.exit(1);
-  });
 }

@@ -72,8 +72,10 @@ describe("the dev MCP declaration carries neither rsp nor navigator (ADR 0147 §
 });
 
 describe("memory and brain declare no default red-ui", () => {
+  // #4027: the memory adapter is `rs_memory` (ADR 0147 §2), still the one
+  // server the plugin declares.
   it("leaves memory with its own local data server only", () => {
-    expect(declaredServers("memory")).toEqual(["red-memory"]);
+    expect(declaredServers("memory")).toEqual(["rs_memory"]);
   });
 
   // #4026: the brain adapter is `rs_brain` (ADR 0147 §2), still the one server

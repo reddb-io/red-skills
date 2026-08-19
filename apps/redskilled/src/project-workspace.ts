@@ -74,7 +74,7 @@ export async function ensureAcpProjectWorkspace(
   identity: AcpProjectIdentity,
   workspaceRoot: string,
 ): Promise<AcpProjectWorkspace> {
-  const projectDir = join(workspaceRoot, projectDirectory(identity.projectId));
+  const projectDir = join(workspaceRoot, projectDirectoryName(identity.projectId));
   const workspacePath = join(projectDir, "workspace");
   if (await exists(workspacePath)) return { ...identity, workspacePath };
 
@@ -140,7 +140,15 @@ async function readGithubRepository(
   return id === "" || fullName === "" ? undefined : { id, fullName };
 }
 
-function projectDirectory(projectId: string): string {
+/**
+ * The directory name a Project key gets on disk.
+ *
+ * Exported because the workspace root is no longer the only per-Project
+ * directory the daemon places: `~/.red/memory/<project-id>` is named the same
+ * way (ADR 0152), and two hand-kept spellings of one key would put a Project's
+ * memory beside its workspace under a different name.
+ */
+export function projectDirectoryName(projectId: string): string {
   const readable = projectId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project";
   const hash = createHash("sha256").update(projectId).digest("hex").slice(0, 8);
   return `${readable}-${hash}`;

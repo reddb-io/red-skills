@@ -28,6 +28,8 @@
     "@modelcontextprotocol/sdk": "catalog:",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
+    "@reddb-io/protocol-acp": "workspace:*",
+    "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/sdk": "1.23.1",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",
@@ -47,5 +49,8 @@
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "exports": {
+    "./mcp-server/serve.js": "./src/mcp-server/serve.ts"
   }
 }
