@@ -34,6 +34,7 @@
     "./supervision": "./src/supervision.ts",
     "./worker-display": "./src/worker-display.ts",
     "./worker-launch": "./src/worker-launch.ts",
+    "./worker-workspace": "./src/worker-workspace.ts",
     "./statusline-command": "./src/statusline-command.ts"
   },
   "description": "redskilled — the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
