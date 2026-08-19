@@ -350,6 +350,57 @@ const SURFACE: ReadonlyArray<{
       "Return the project-side statusline aggregate (project, repo counters, docs drift, drain, Worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
     schema: [],
   },
+  // ADR 0147 rule 1 (#4024): the verbs a shipped skill still names, promoted
+  // from the dying CLI into tools that RETURN their core's value.
+  {
+    name: "manager",
+    title: "Route work through the Manager",
+    description:
+      "MUTATING: take one operator intent into the Manager — intake, route an effort to a skill, attach an artifact, read effort status, or export/import the checkpoint — and return the effort record it acted on.",
+    schema: ["intent", "action", "effort", "skill", "artifact", "checkpoint", "path"],
+  },
+  {
+    name: "red_doctor",
+    title: "Diagnose this repository's RedSkills setup",
+    description:
+      "READ-ONLY: return every doctor finding for this repository — operational probes, host toolchain, lane and process census, executable acceptance, HUMAN-ONLY type declarations and disposable-lane hygiene — each paired with the route that repairs it. Applying a repair is the `/red-doctor` skill's own fix lane, never a side effect of the read.",
+    schema: ["checks"],
+  },
+  {
+    name: "audit_skills",
+    title: "Audit the shipped skills",
+    description:
+      "Return the ranked skill-audit scores for this repository's skill tree. Pass `mechanical_only` to score without the judge, which makes the read deterministic and free of agent cost.",
+    schema: ["mechanical_only", "runner"],
+  },
+  {
+    name: "install_type_labels",
+    title: "Install Wayfinder type labels",
+    description:
+      "MUTATING: create the Wayfinder ticket type labels on the tracker AND declare the HUMAN-ONLY ones in this project's configuration, in one act — the two are one protection with two halves, and installing only the labels leaves the repository looking protected while unblocked decision Tickets enter the autonomous queue (#3013).",
+    schema: ["labels", "repo", "dry_run"],
+  },
+  {
+    name: "codex_statusline",
+    title: "Inspect the Codex footer preference",
+    description:
+      "READ-ONLY: return the active Codex configuration's status-line inspection — the file read, the current preference, and the problem that keeps the RedSkills footer from rendering.",
+    schema: ["config"],
+  },
+  {
+    name: "codex_monitor_agent",
+    title: "Build the Codex monitor agent brief",
+    description:
+      "Return the read-only monitor brief a Codex sub-agent is spawned with: what to poll, how often, and the conditions under which it closes itself. It spawns nothing — the host's own spawn primitive does.",
+    schema: ["project_root", "mode", "interval_seconds"],
+  },
+  {
+    name: "reconcile_engine",
+    title: "Reconcile this project's engine delivery",
+    description:
+      "MUTATING: warm the published engine bundle into the stable cache path and re-point a standing registration at it in one operation, then return the version, the bundle path, and what happened to the registration.",
+    schema: ["version"],
+  },
 ];
 
 describe("aggregated rs_dev MCP tool surface", () => {

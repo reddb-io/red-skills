@@ -324,6 +324,24 @@ auto-resolve the repo and the time window, so no parameters are required.
 author's issue. `respond` requires `body` and `number`; pass `is_pr: true` when
 the comment is on a pull request.
 
+### Operator verbs — the surfaces a skill names by name
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `manager` | mutating | Take one operator intent into the Manager — intake, route an effort to a skill, attach an artifact, read effort status, or export/import the checkpoint — and return the effort record it acted on. |
+| `red_doctor` | read | Every doctor finding for this repository — operational probes, host toolchain, lane and process census, executable acceptance, HUMAN-ONLY type declarations, disposable-lane hygiene — each paired with the route that repairs it. Detection only; applying a repair stays with `/red-doctor`'s own fix lane. |
+| `audit_skills` | read | The ranked skill-audit scores for this repository's skill tree. Pass `mechanical_only` for a deterministic, agent-free score. |
+| `install_type_labels` | mutating | Create the Wayfinder ticket type labels AND declare the HUMAN-ONLY ones in `.red/config.yaml`, in one act — the two are one protection with two halves (#3013). |
+| `codex_statusline` | read | The active Codex configuration's status-line inspection: the file read, the current preference, and the problem keeping the RedSkills footer from rendering. |
+| `codex_monitor_agent` | read | The read-only brief a Codex monitor sub-agent is spawned with. It spawns nothing — the host's own spawn primitive does. |
+| `reconcile_engine` | mutating | Warm the published engine bundle into the stable cache path and re-point a standing registration at it in one operation. |
+
+These are the verbs ADR 0147 rule 1 promoted out of the dying `red-skills-dev`
+CLI: a command a shipped skill still names becomes a tool here, and a command no
+skill names dies with the bundle. Each returns its core's value — none of them
+renders a table and re-reads it. The pairing is declared in
+`apps/dev/src/core/skill-named-verb-tools.ts` and swept on every gate run.
+
 ## Refs
 
 - ADR 0120 — red-castle is the AFK MCP; CLI and skills are clients.

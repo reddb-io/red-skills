@@ -183,6 +183,13 @@ function deps(): CastleMcpDependencies {
       workers: [],
       queue: { ready_for_agent: 2, ready_for_human: 1, cache_age_s: null },
     })),
+    manager: vi.fn(async (input) => ({ effort: "e-1", acted: input })),
+    redDoctor: vi.fn(async () => ({ findings: [] })),
+    auditSkills: vi.fn(async () => ({ audited: 0, skills: [] })),
+    installTypeLabels: vi.fn(async () => ({ created: [], declared: [] })),
+    codexStatusline: vi.fn(async () => ({ status: "ok", problem: null })),
+    codexMonitorAgent: vi.fn(async () => ({ mode: "run", prompt: "poll status" })),
+    reconcileEngine: vi.fn(async () => ({ version: "3.21.0", registration: "renewed" })),
   };
 }
 
@@ -235,6 +242,13 @@ describe("redskilled MCP tools", () => {
       "triage",
       "respond",
       "statusline_aggregate",
+      "manager",
+      "red_doctor",
+      "audit_skills",
+      "install_type_labels",
+      "codex_statusline",
+      "codex_monitor_agent",
+      "reconcile_engine",
     ]);
   });
 
