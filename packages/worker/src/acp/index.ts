@@ -8,6 +8,32 @@ export { runAcpWorkerCommand } from "./command.js";
 export { runNativeAcpWorker } from "./native-worker.js";
 export { WorkflowChildAgent, type ChildAgentSessionOptions } from "./child-agent.js";
 export {
+  createWorkerTerminalHost,
+  DEFAULT_TERMINAL_OUTPUT_BYTE_LIMIT,
+  type WorkerTerminalHost,
+  type WorkerTerminalHostOptions,
+} from "./terminal-host.js";
+export {
+  evaluateWorkerTerminalRequest,
+  shellSegments,
+  workerTerminalDenialMessage,
+  workerTerminalDenialMeta,
+  WORKER_DENIED_TERMINAL_PROGRAMS,
+  type WorkerTerminalDecision,
+  type WorkerTerminalDenial,
+  type WorkerTerminalDenialReason,
+  type WorkerTerminalRequest,
+} from "./terminal-policy.js";
+export {
+  createWorkerPublisher,
+  readWorktreePublication,
+  WORKER_PUBLISH_METHOD,
+  type WorkerPublication,
+  type WorkerPublishOutcome,
+  type WorkerPublisher,
+  type WorkerPublisherOptions,
+} from "./publish-request.js";
+export {
   createChildAcpSpinEpisode,
   type ChildAcpSpinEpisode,
   type ChildSpinObservation,
