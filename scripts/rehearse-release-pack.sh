@@ -4,7 +4,7 @@
 #
 # red-publish.yml builds every bundle, stages the per-plugin and core npm
 # packages, packs them, checks the tarball boundaries, publishes, and only then
-# does anyone run scripts/install.sh against what came out. Four latent faults
+# does anyone install what came out. Four latent faults
 # rode that gap into v3.19.0..v3.19.2 (a release-engine bundle nothing built, a
 # runtime bundle demanded from a skills-only plugin, scripts that lost their
 # executable bit in the tarball, and per-plugin packages that were a skills
@@ -17,8 +17,9 @@
 #   2. stage and pack the per-plugin packages and the core package at a
 #      rehearsal version;
 #   3. run the tarball boundary check the publish runs;
-#   4. feed the tarballs to scripts/install.sh through an npm shim and install a
-#      fake OpenCode host into a throwaway XDG_CONFIG_HOME and install root;
+#   4. compose the tarballs into a host-installable tree through an npm shim,
+#      then wire a fake OpenCode host through scripts/install.sh --local-dev
+#      into a throwaway XDG_CONFIG_HOME;
 #   5. assert the host surface the generator wrote is complete.
 #
 # It leaves the checkout as it found it: packaging/ is regenerated with a
@@ -94,10 +95,12 @@ core_tarball="$(ls "$core_pack_dir"/reddb-io-red-skills-*.tgz | head -n1)"
 node scripts/check-npm-tarball-boundaries.mjs --root "$ROOT" --core "$core_tarball" --plugins "$plugin_pack_dir"
 pass "tarball boundaries hold for core and every plugin"
 
-# 4. The consumer: scripts/install.sh, exactly as a workstation runs it, with
-# npm answering from the tarballs just packed and a fake OpenCode on PATH so
-# the OpenCode host wiring runs for real into a throwaway config home.
-step "installing the packed set through scripts/install.sh (fake OpenCode host)"
+# 4. The consumer. Acquisition belongs to red-dev now (#3978), so the rehearsal
+# composes the package set the way any consumer must — npm installs the tarballs
+# just packed, and the plugin packages are laid beside the core as plugins/<p>
+# and dist/<p>.bundle.min.mjs — then drives scripts/install.sh's host wiring
+# over that tree with a fake OpenCode on PATH and a throwaway config home.
+step "composing the packed set, then wiring the OpenCode host through scripts/install.sh"
 shim="$work/bin"
 mkdir -p "$shim"
 real_npm="$(command -v npm)"
@@ -120,25 +123,51 @@ SHIM
 printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/opencode"
 chmod +x "$shim/npm" "$shim/opencode"
 
-install_root="$work/install-root"
+set_root="$work/package-set"
+node_modules="$work/materialised"
 xdg="$work/xdg"
-mkdir -p "$xdg"
-if ! XDG_CONFIG_HOME="$xdg" PATH="$shim:$PATH" \
-  bash scripts/install.sh --version "v$VERSION" --install-root "$install_root" --only opencode >"$work/install.log" 2>&1; then
-  cat "$work/install.log"
-  fail "scripts/install.sh could not install the packed set"
+mkdir -p "$xdg" "$node_modules" "$set_root/plugins" "$set_root/dist"
+
+specs=("@reddb-io/red-skills@$VERSION")
+for plugin in dev memory brain internal; do
+  specs+=("@reddb-io/red-skills-$plugin@$VERSION")
+done
+if ! PATH="$shim:$PATH" npm install "${specs[@]}" --prefix "$node_modules" \
+  --no-save --no-audit --no-fund --ignore-scripts --loglevel=error >"$work/materialise.log" 2>&1; then
+  cat "$work/materialise.log"
+  fail "npm could not materialise the packed set"
 fi
-pass "install.sh materialised the set and wired the OpenCode host"
+cp -R "$node_modules/node_modules/@reddb-io/red-skills/." "$set_root/"
+for plugin in dev memory brain internal; do
+  package="$node_modules/node_modules/@reddb-io/red-skills-$plugin"
+  [ -f "$package/package.json" ] || fail "packed set has no @reddb-io/red-skills-$plugin"
+  cp -R "$package" "$set_root/plugins/$plugin"
+  bundle="$package/dist/$plugin.bundle.min.mjs"
+  [ -f "$bundle" ] && cp "$bundle" "$set_root/dist/$plugin.bundle.min.mjs"
+done
+# The generator reads activation flags for the plugins the set ships; a package
+# set carries no repository config, and this one is not a project's .red/.
+mkdir -p "$set_root/.red"
+printf 'plugins:\n  dev:\n    enabled: true\n  memory:\n    enabled: true\n  brain:\n    enabled: true\n' \
+  >"$set_root/.red/config.yaml"
+pass "the packed set composes into a host-installable tree"
+
+if ! XDG_CONFIG_HOME="$xdg" PATH="$shim:$PATH" \
+  bash scripts/install.sh --local-dev --source-dir "$set_root" --only opencode >"$work/install.log" 2>&1; then
+  cat "$work/install.log"
+  fail "scripts/install.sh could not wire the OpenCode host over the packed set"
+fi
+pass "install.sh wired the OpenCode host over the composed set"
 
 # 5. The surface the generator wrote must be complete: skills from every
 # plugin, hook modules, an MCP block that points at the materialised tree.
 step "asserting the installed OpenCode surface"
 host="$xdg/opencode"
-current="$install_root/current"
+current="$set_root"
 [ -f "$current/plugins/dev/.claude-plugin/plugin.json" ] || fail "materialised dev plugin has no manifest"
 [ -f "$current/plugins/memory/scripts/bootstrap.mjs" ] || fail "materialised memory plugin has no scripts/bootstrap.mjs"
-[ -f "$current/dist/dev.bundle.min.mjs" ] || fail "materialised tree has no dev runtime bundle"
-[ ! -e "$current/dist/internal.bundle.min.mjs" ] || fail "skills-only internal plugin must not materialise a bundle"
+[ -f "$current/dist/dev.bundle.min.mjs" ] || fail "composed tree has no dev runtime bundle"
+[ ! -e "$current/dist/internal.bundle.min.mjs" ] || fail "skills-only internal plugin must not ship a bundle"
 for skill in afk store capture bootstrap; do
   [ -f "$host/skills/$skill/SKILL.md" ] || fail "OpenCode host is missing skill $skill"
 done
@@ -148,7 +177,7 @@ host_cfg="$host/opencode.json"
 [ -f "$host/opencode.jsonc" ] && host_cfg="$host/opencode.jsonc"
 [ -f "$host_cfg" ] || { ls -la "$host" >&2; fail "OpenCode host has no opencode.json(c)"; }
 grep -qF '"mcp"' "$host_cfg" || fail "$host_cfg carries no MCP block"
-grep -qF "$current/plugins/memory/scripts/bootstrap.mjs" "$host_cfg" || fail "$host_cfg does not point red-memory at the materialised tree"
+grep -qF "$current/plugins/memory/scripts/bootstrap.mjs" "$host_cfg" || fail "$host_cfg does not point red-memory at the composed tree"
 skills_installed="$(grep -c 'installed skill' "$work/install.log" || true)"
 pass "OpenCode host carries $skills_installed skills, hook modules, and an MCP block over $current"
 

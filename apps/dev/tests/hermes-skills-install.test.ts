@@ -88,7 +88,10 @@ describe("Hermes dev skills local distribution", () => {
     await createPackageSet(source);
     await mkdir(fakeBin, { recursive: true });
 
-    for (const command of ["hermes", "npm", "npx", "curl", "gh", "git"]) {
+    // red-dev and mise are forbidden alongside the network commands: the
+    // installer's default path hands the machine to them, and a fixture that
+    // let one resolve would converge the developer's real machine (#3978).
+    for (const command of ["hermes", "npm", "npx", "curl", "gh", "git", "red-dev", "mise"]) {
       await writeFile(join(fakeBin, command), `#!/bin/sh\necho forbidden-command:${command} >&2\nexit 97\n`, {
         mode: 0o755,
       });
@@ -101,6 +104,7 @@ describe("Hermes dev skills local distribution", () => {
     };
     const args = [
       installer,
+      "--local-dev",
       "--source-dir",
       source,
       "--install-root",
