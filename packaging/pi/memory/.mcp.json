@@ -6,13 +6,6 @@
         "-c",
         "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then for candidate in \"$PWD/plugins/memory\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/memory\" \"$HOME/.codex/plugins/cache/red-skills/memory\"/*; do if [ -f \"$candidate/.claude-plugin/plugin.json\" ]; then root=\"$candidate\"; break; fi; done; fi; if [ -z \"$root\" ] || [ ! -f \"$root/scripts/bootstrap.mjs\" ]; then printf 'red-memory: could not locate memory plugin root; install or rebuild the plugin first\\n' >&2; exit 1; fi; exec node \"$root/scripts/bootstrap.mjs\" mcp"
       ]
-    },
-    "red-ui": {
-      "command": "npx",
-      "args": ["-y", "@reddb-io/ui@latest", "mcp", "--stdio"],
-      "env": {
-        "RED_UI_APP_URL": "https://ui.reddb.io"
-      }
     }
   }
 }
