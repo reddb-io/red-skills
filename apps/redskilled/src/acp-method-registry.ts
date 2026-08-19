@@ -31,6 +31,7 @@ export interface RedskillsAcpMethodBinding {
 export type RedskillsAcpMethodDomainName =
   | "host"
   | "brain"
+  | "memory"
   | "project"
   | "github"
   | "budget"
@@ -162,6 +163,12 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
     domain: "brain",
     module: "apps/redskilled/src/acp-brain.ts",
     methods: ["brainCall"],
+    served: true,
+  },
+  {
+    domain: "memory",
+    module: "apps/redskilled/src/acp-memory.ts",
+    methods: ["memoryCall"],
     served: true,
   },
   {

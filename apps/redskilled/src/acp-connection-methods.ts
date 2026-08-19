@@ -29,6 +29,7 @@ import {
   type GoWorkerAdmission,
 } from "./acp-go-dispatch.js";
 import { hostStateMethodDomain } from "./acp-host-methods.js";
+import { memoryMethodDomain } from "./acp-memory.js";
 import { telemetryMethodDomain } from "./acp-telemetry.js";
 import {
   redskillsAcpMethodTable,
@@ -42,6 +43,7 @@ import {
 } from "./acp-worktree.js";
 import type { AcpSessionJournal } from "./acp-session-journal.js";
 import type { HostBrainStore } from "./brain-store.js";
+import type { ProjectMemoryStore } from "./memory-store.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
@@ -62,6 +64,12 @@ export interface ConnectionMethodDeps {
    * session, which is the cost the daemon took the store over to remove.
    */
   readonly brainStore: HostBrainStore;
+  /**
+   * The daemon's per-Project memory holder (ADR 0152). Passed in for the same
+   * reason the brain holder is: built at this depth it would be a store handle
+   * per session, which is the cost the daemon took the stores over to remove.
+   */
+  readonly memoryStore: ProjectMemoryStore;
   readonly sessionJournal: AcpSessionJournal;
   readonly sessions: Map<string, PublicSession>;
   readonly active: Map<string, ActiveWorkflowWorker>;
@@ -116,6 +124,7 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
     }),
     telemetryMethodDomain({ hostAdministration: deps.hostAdministration }),
     brainMethodDomain({ store: deps.brainStore }),
+    memoryMethodDomain({ store: deps.memoryStore, scopedProject: deps.scopedProject }),
   ]);
   return { v1: table(admitThroughV1(deps)), v2: table(admitThroughV2(deps)) };
 }

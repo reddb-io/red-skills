@@ -86,6 +86,7 @@ import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 export { runNativeAcpWorker } from "@reddb-io/worker/acp";
 import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
 import { createHostBrainStore, type HostBrainStore } from "./brain-store.js";
+import { createProjectMemoryStore, type ProjectMemoryStore } from "./memory-store.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
 
@@ -115,6 +116,14 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly clock?: () => string;
   /** The host's one brain holder (ADR 0152); injected only by a test. */
   readonly brainStore?: HostBrainStore;
+  /** The daemon's per-Project memory holder (ADR 0152); injected only by a test. */
+  readonly memoryStore?: ProjectMemoryStore;
+}
+
+/** The store handles every connection on this endpoint shares (ADR 0152). */
+interface StoreHolders {
+  readonly brainStore: HostBrainStore;
+  readonly memoryStore: ProjectMemoryStore;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -133,6 +142,7 @@ export async function startRedskillsAcpControlPlane(
   const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
   // Above the connection loop on purpose: every session shares this one handle.
   const brainStore = options.brainStore ?? createHostBrainStore();
+  const memoryStore = options.memoryStore ?? createProjectMemoryStore();
   const workspaceFor = (identity: AcpProjectIdentity): Promise<AcpProjectWorkspace> => {
     const held = projects.get(identity.projectId);
     if (held != null) return held;
@@ -152,7 +162,7 @@ export async function startRedskillsAcpControlPlane(
     socket.once("close", () => sockets.delete(socket));
     void servePublicConnection(
       socket,
-      { ...options, brainStore },
+      { ...options, brainStore, memoryStore },
       workspaceFor,
       projectControls,
       persistProjectControls,
@@ -171,13 +181,14 @@ export async function startRedskillsAcpControlPlane(
       await closeServer(server);
       await removeAcpEndpoint(paths.acpSocketPath);
       if (options.brainStore == null) await brainStore.close();
+      if (options.memoryStore == null) await memoryStore.close();
     },
   };
 }
 
 async function servePublicConnection(
   socket: Socket,
-  options: StartRedskillsAcpControlPlaneOptions & { readonly brainStore: HostBrainStore },
+  options: StartRedskillsAcpControlPlaneOptions & StoreHolders,
   workspaceFor: (identity: AcpProjectIdentity) => Promise<AcpProjectWorkspace>,
   projectControls: Map<string, ProjectControlState>,
   persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
@@ -233,6 +244,7 @@ async function servePublicConnection(
     githubGateway: options.githubGateway,
     hostAdministration: options.hostAdministration === true,
     brainStore: options.brainStore,
+    memoryStore: options.memoryStore,
     sessionJournal,
     sessions,
     active,
