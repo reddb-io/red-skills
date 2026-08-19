@@ -30,105 +30,105 @@ import { runners, type Runner } from "./runner-types.js";
 
 describe("engine runner registry", () => {
   it.each([
-    ["claude", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["claude", {}, { plugins: ["dev"], mcp: [], rsp: false }],
     [
       "claude",
       { "plugins.memory.enabled": "true" },
       {
         plugins: ["dev", "memory"],
-        mcp: ["navigator", "red-memory"],
+        mcp: ["red-memory"],
         rsp: false,
       },
     ],
     [
       "claude",
       { "plugins.brain.enabled": "true" },
-      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+      { plugins: ["dev", "brain"], mcp: ["brain"], rsp: false },
     ],
     [
       "claude",
       { "plugins.red-ui.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+      { plugins: ["dev"], mcp: ["red-ui"], rsp: false },
     ],
     [
       "claude",
       { "rsp.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+      { plugins: ["dev"], mcp: [], rsp: true },
     ],
-    ["codex", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["codex", {}, { plugins: ["dev"], mcp: [], rsp: false }],
     [
       "codex",
       { "plugins.memory.enabled": "true" },
       {
         plugins: ["dev", "memory"],
-        mcp: ["navigator", "red-memory"],
+        mcp: ["red-memory"],
         rsp: false,
       },
     ],
     [
       "codex",
       { "plugins.brain.enabled": "true" },
-      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+      { plugins: ["dev", "brain"], mcp: ["brain"], rsp: false },
     ],
     [
       "codex",
       { "plugins.red-ui.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+      { plugins: ["dev"], mcp: ["red-ui"], rsp: false },
     ],
     [
       "codex",
       { "rsp.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+      { plugins: ["dev"], mcp: [], rsp: true },
     ],
-    ["opencode", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["opencode", {}, { plugins: ["dev"], mcp: [], rsp: false }],
     [
       "opencode",
       { "plugins.memory.enabled": "true" },
       {
         plugins: ["dev", "memory"],
-        mcp: ["navigator", "red-memory"],
+        mcp: ["red-memory"],
         rsp: false,
       },
     ],
     [
       "opencode",
       { "plugins.brain.enabled": "true" },
-      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+      { plugins: ["dev", "brain"], mcp: ["brain"], rsp: false },
     ],
     [
       "opencode",
       { "plugins.red-ui.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+      { plugins: ["dev"], mcp: ["red-ui"], rsp: false },
     ],
     [
       "opencode",
       { "rsp.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+      { plugins: ["dev"], mcp: [], rsp: true },
     ],
-    ["pi", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["pi", {}, { plugins: ["dev"], mcp: [], rsp: false }],
     [
       "pi",
       { "plugins.memory.enabled": "true" },
       {
         plugins: ["dev", "memory"],
-        mcp: ["navigator", "red-memory"],
+        mcp: ["red-memory"],
         rsp: false,
       },
     ],
     [
       "pi",
       { "plugins.brain.enabled": "true" },
-      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+      { plugins: ["dev", "brain"], mcp: ["brain"], rsp: false },
     ],
     [
       "pi",
       { "plugins.red-ui.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+      { plugins: ["dev"], mcp: ["red-ui"], rsp: false },
     ],
     [
       "pi",
       { "rsp.enabled": "true" },
-      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+      { plugins: ["dev"], mcp: [], rsp: true },
     ],
   ] as const)(
     "projects the exact %s implementer constraint for one activation gate",
