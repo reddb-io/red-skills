@@ -156,6 +156,17 @@ export interface RedskilledProjectRegistrationRequest {
   readonly log_path?: string;
   /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
+  /**
+   * What to SAY to a Worker born for this project, when saying anything is the
+   * point (#4100).
+   *
+   * A registration's argv births a process; a prompt is what makes that process
+   * do the project's work. Opaque exactly as the argv is — the daemon expands
+   * its own facts (`{{work_item}}`, `{{worker_id}}`) into it and never reads a
+   * word. Absent means this project's Workers are born and not spoken to, which
+   * is the shape every registration had before this field and stays legal.
+   */
+  readonly prompt?: string;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
   /** Whether project policy declares this drain should remain recoverable. */
@@ -178,6 +189,8 @@ export interface RedskilledProjectRegistration {
   readonly log_path?: string;
   /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
+  /** What to say to a Worker born for this project; opaque, expanded at birth. */
+  readonly prompt?: string;
   readonly target: number;
   /** True only when the project explicitly declared a standing drain policy. */
   readonly standing?: boolean;
@@ -280,6 +293,15 @@ export function buildProjectRegistration(
   const env = requireLaunchEnv(request.env, projectLabel);
   const logPath = requireLaunchLogPath(request.log_path, projectLabel);
   const hooks = requireProjectHooks(request.hooks, projectLabel);
+  // Shape only, like every other project-authored string: present means a
+  // non-empty one, and an empty prompt is a client bug the daemon can see
+  // without reading a word of what a prompt says.
+  // Blank, not merely empty: a prompt of spaces is a Worker told nothing, and
+  // the daemon can see that without reading a word of what a prompt says.
+  const prompt = request.prompt === undefined
+    ? undefined
+    : requireText(request.prompt.trim(), `a prompt for project ${JSON.stringify(projectLabel)}`) &&
+      request.prompt;
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
@@ -328,6 +350,7 @@ export function buildProjectRegistration(
     env,
     ...(logPath == null ? {} : { log_path: logPath }),
     ...(hooks == null ? {} : { hooks }),
+    ...(prompt == null ? {} : { prompt }),
     target: request.target,
     ...(request.standing === true ? { standing: true } : {}),
     registered_at: new Date(nowMs).toISOString(),

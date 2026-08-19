@@ -18,7 +18,6 @@ import {
   type NewSessionRequest,
   type PromptRequest,
   type PromptResponse,
-  type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
@@ -35,7 +34,6 @@ import {
   requireSupportedV2Revision,
   socketStream,
   translateV1SessionUpdateToV2,
-  withTimeout,
 } from "@reddb-io/protocol-acp";
 import { bindAcpGithubReaderUpdates, bindAcpProjectGithubCustodyStatus, type AcpGithubUpdateObserver } from "./acp-github.js";
 import { connectionMethodTables } from "./acp-connection-methods.js";
@@ -48,6 +46,13 @@ import { isAcpRetakePrompt, notifyV1AcpRetakeEvidence, notifyV2AcpRetakeEvidence
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
+import { resolvePermission } from "./acp-permission.js";
+import {
+  demandTurnRunnerFor,
+  type DemandTurnRecord,
+  type DemandTurnRequest,
+  type DemandTurnResult,
+} from "./acp-demand-turn.js";
 import {
   bindProjectControl,
   createProjectControlStore,
@@ -96,6 +101,8 @@ export interface PublicSession {
 
 export interface RedskillsAcpControlPlane {
   readonly socketPath: string;
+  /** Run one turn for a Worker nobody is watching (#4100, `acp-demand-turn.ts`). */
+  runDemandTurn(request: DemandTurnRequest): Promise<DemandTurnResult>;
   close(): Promise<void>;
 }
 
@@ -116,6 +123,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly brainStore?: HostBrainStore;
   /** The daemon's per-Project memory holder (ADR 0152); injected only by a test. */
   readonly memoryStore?: ProjectMemoryStore;
+  /** Where an unattended turn's lifecycle goes when no client listens (#4100). */
+  readonly recordDemandTurn?: (record: DemandTurnRecord) => void;
 }
 
 /** The store handles every connection on this endpoint shares (ADR 0152). */
@@ -169,9 +178,10 @@ export async function startRedskillsAcpControlPlane(
   });
   await listen(server, paths.acpSocketPath);
 
-  let closed = false;
+  const runDemandTurn = demandTurnRunnerFor(options, sessionJournal);  let closed = false;
   return {
     socketPath: paths.acpSocketPath,
+    runDemandTurn,
     async close() {
       if (closed) return;
       closed = true;
@@ -614,84 +624,4 @@ export async function runRedskillsAcpAdapter(paths: RedskilledPaths): Promise<nu
     socket.once("error", reject);
   });
   return 0;
-}
-type PermissionDecision = Extract<
-  ReturnType<DurableAcpSessionJournal["recovery"]>["entries"][number],
-  { kind: "permission" }
->;
-
-async function resolvePermission(
-  journal: DurableAcpSessionJournal,
-  publicSessionId: string,
-  request: RequestPermissionRequest,
-  attached: () => boolean,
-  project: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>,
-): Promise<RequestPermissionResponse> {
-  const policyKey = permissionPolicyKey(request);
-  const granted = [...journal.recovery(publicSessionId).entries]
-    .reverse()
-    .find((entry): entry is PermissionDecision => entry.kind === "permission" &&
-      entry.policy_key === policyKey && entry.decision === "attached-approved" &&
-      entry.option_kind === "allow_always");
-  const preAuthorized = granted == null
-    ? undefined
-    : request.options.find((option) => option.optionId === granted.option_id && option.kind === "allow_always");
-  if (preAuthorized != null) {
-    await journal.permission(publicSessionId, request, policyKey, "policy-pre-authorized", preAuthorized.optionId);
-    return permissionAnswer(preAuthorized.optionId, "policy-pre-authorized");
-  }
-
-  if (attached()) {
-    try {
-      const response = await withTimeout(
-        project(request),
-        permissionDecisionTimeoutMs(),
-        "attached ACP permission decision",
-      );
-      const outcome = response.outcome;
-      const selected = outcome.outcome === "selected"
-        ? request.options.find((option) => option.optionId === outcome.optionId)
-        : undefined;
-      if (selected != null) {
-        const approved = selected.kind === "allow_once" || selected.kind === "allow_always";
-        const decision = approved ? "attached-approved" : "attached-denied";
-        await journal.permission(publicSessionId, request, policyKey, decision, selected.optionId);
-        return permissionAnswer(selected.optionId, decision, response._meta);
-      }
-    } catch {
-      // A disconnect or bounded timeout is an uncovered decision, never approval.
-    }
-  }
-
-  await journal.permission(publicSessionId, request, policyKey, "hitl-required");
-  return {
-    outcome: { outcome: "cancelled" },
-    _meta: { redskills: { permissionResolution: "hitl-required", durableHitl: true } },
-  };
-}
-
-function permissionAnswer(
-  optionId: string,
-  permissionResolution: "attached-approved" | "attached-denied" | "policy-pre-authorized",
-  meta?: RequestPermissionResponse["_meta"],
-): RequestPermissionResponse {
-  return {
-    outcome: { outcome: "selected", optionId },
-    _meta: {
-      ...(meta ?? {}),
-      redskills: {
-        ...((meta as { redskills?: object } | undefined)?.redskills ?? {}),
-        permissionResolution,
-      },
-    },
-  };
-}
-
-function permissionPolicyKey(request: RequestPermissionRequest): string {
-  return `${request.toolCall.kind ?? "other"}:${request.toolCall.title ?? "untitled"}`;
-}
-
-function permissionDecisionTimeoutMs(): number {
-  const configured = Number.parseInt(process.env.REDSKILLED_ACP_PERMISSION_TIMEOUT_MS ?? "30000", 10);
-  return Number.isFinite(configured) && configured >= 0 ? configured : 30_000;
 }

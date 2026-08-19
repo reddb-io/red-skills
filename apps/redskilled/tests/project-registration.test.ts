@@ -340,3 +340,46 @@ describe("redskilled project deregistration", () => {
     expect(daemon.hostState().registrations).toHaveLength(1);
   });
 });
+
+describe("a registration may say what to tell its Workers", () => {
+  it("carries an opaque prompt template", () => {
+    const registration = buildProjectRegistration(
+      {
+        project_label: "a/b",
+        selector: "is:issue",
+        argv: ["redskilled", "acp-worker"],
+        workspace_path: "/tmp/w",
+        prompt: "claim {{work_item}} and take it to a merged PR",
+        target: 1,
+      },
+      { now: "2026-08-19T20:00:00.000Z" },
+    );
+
+    expect(registration.prompt).toBe("claim {{work_item}} and take it to a merged PR");
+  });
+
+  it("refuses an empty prompt — shape, never meaning", () => {
+    expect(() =>
+      buildProjectRegistration(
+        {
+          project_label: "a/b",
+          selector: "is:issue",
+          argv: ["redskilled", "acp-worker"],
+          workspace_path: "/tmp/w",
+          prompt: "  ",
+          target: 1,
+        },
+        { now: "2026-08-19T20:00:00.000Z" },
+      )
+    ).toThrow(/prompt/);
+  });
+
+  it("stays absent for a project that says nothing — Workers born and not spoken to", () => {
+    const registration = buildProjectRegistration(
+      { project_label: "a/b", selector: "is:issue", argv: ["x"], workspace_path: "/tmp/w", target: 1 },
+      { now: "2026-08-19T20:00:00.000Z" },
+    );
+
+    expect(registration).not.toHaveProperty("prompt");
+  });
+});
