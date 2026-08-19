@@ -466,6 +466,7 @@ plugins:
       memory_ceiling: 8G
       validation_ceiling: 2
       idle_ms: 300000
+      evidence_ttl_ms: 2592000000
 ```
 
 Resolution is `serve` flag > environment > home config > derived default.
@@ -475,7 +476,12 @@ counterparts are `REDSKILLED_WORKER_CEILING` and `REDSKILLED_MEMORY_CEILING`.
 full-suite semaphore. When absent, its capacity is the tightest of half the
 available CPU count, the resolved memory ceiling in 2 GiB shares, and the
 Worker ceiling; every dimension retains a minimum capacity of one.
-`REDSKILLED_IDLE_MS` follows the same precedence for idle time. `host-state`
+`REDSKILLED_IDLE_MS` follows the same precedence for idle time.
+`evidence_ttl_ms` (or `REDSKILLED_EVIDENCE_TTL_MS`) is how long a dead Worker's
+evidence lane under `~/.red/tmp/workers/<id>/` survives — its log, the runner's
+session artifact and the daemon's verdict — and defaults to thirty days. `0`
+keeps nothing; a live Worker's lane is never pruned at any TTL. The daemon's own
+log stays in `~/.red/redskilled/`, which this TTL never touches. `host-state`
 reports the resolved `ceiling` and the `memory_source` / `worker_source` that won,
 so a restart or an auto-spawn from another project remains directly auditable.
 
