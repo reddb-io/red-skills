@@ -62,10 +62,19 @@ export interface DomainVocabularyAllowance {
   readonly reason: string;
 }
 
+/**
+ * How a swept file hides its history. `source` carries `//` and block comments;
+ * `prose` is Markdown, where the only comment is `<!-- … -->` and where a `//`
+ * strip would swallow everything after the first URL on a line.
+ */
+export type DomainVocabularyFileKind = "source" | "prose";
+
 export interface DomainVocabularyFile {
   /** Repo-relative path, `/`-separated. */
   readonly path: string;
   readonly sourceText: string;
+  /** Defaults to `source`, the shape every root carried before skills joined. */
+  readonly kind?: DomainVocabularyFileKind;
 }
 
 export interface DomainVocabularyFinding {
@@ -89,8 +98,38 @@ export const DOMAIN_VOCABULARY_ROOTS = [
   "packages/protocol-acp",
 ] as const;
 
+/**
+ * The SHIPPED skills, swept for the same four phrases (#4005 follow-up).
+ *
+ * Source was never where an operator learned the architecture — a skill is.
+ * `red-doctor` told a reader that "ADR 0143's one versioned Castle resident per
+ * canonical project owns engine state" long after the daemon absorbed it, and
+ * the liveness doc still credited a reaper to the Demand producer: both compiled
+ * nothing, passed every guard, and taught the wrong owner to every agent that
+ * read them. **A skill is source for the reader who has no source.**
+ *
+ * Generated mirrors (`packaging/pi/*\/skills`) are deliberately absent: they are
+ * projections of these trees, and reddening a projection teaches the next worker
+ * to edit the copy.
+ */
+export const DOMAIN_VOCABULARY_SKILL_ROOTS = [
+  "plugins/dev/skills",
+  "plugins/memory/skills",
+  "plugins/brain/skills",
+] as const;
+
 const SKIP_DIRS = new Set(["node_modules", "dist", "dist-bundle", "generated", ".turbo", "tests"]);
 const SOURCE_SUFFIXES = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+const PROSE_SUFFIXES = [".md"];
+
+/** Markdown's only comment. Prose describing a retirement is documentation. */
+function stripProseComments(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, (match) => match.replace(/[^\n]/g, " "));
+}
+
+function strippedText(file: DomainVocabularyFile): string {
+  return file.kind === "prose" ? stripProseComments(file.sourceText) : stripComments(file.sourceText);
+}
 
 /**
  * The four retired ownership phrases, in the order the Dev glossary retires them.
@@ -214,7 +253,7 @@ export function auditDomainVocabulary(
   const allowed = new Set(allowances.map((entry) => `${entry.path} ${entry.term}`));
   const findings: DomainVocabularyFinding[] = [];
   for (const file of files) {
-    const lines = stripComments(file.sourceText).split("\n");
+    const lines = strippedText(file).split("\n");
     for (const term of terms) {
       if (allowed.has(`${file.path} ${term.term}`)) continue;
       lines.forEach((text, index) => {
@@ -243,7 +282,7 @@ export function staleDomainVocabularyAllowances(
   terms: readonly RetiredOwnershipTerm[] = RETIRED_OWNERSHIP_TERMS,
   allowances: readonly DomainVocabularyAllowance[] = DOMAIN_VOCABULARY_ALLOWANCES,
 ): string[] {
-  const byPath = new Map(files.map((file) => [file.path, stripComments(file.sourceText)] as const));
+  const byPath = new Map(files.map((file) => [file.path, strippedText(file)] as const));
   const byTerm = new Map(terms.map((term) => [term.term, term] as const));
   const stale: string[] = [];
   for (const allowance of allowances) {
@@ -272,12 +311,18 @@ export function staleDomainVocabularyAllowances(
 export function readDomainVocabularyFiles(
   root: string,
   roots: readonly string[] = DOMAIN_VOCABULARY_ROOTS,
+  skillRoots: readonly string[] = DOMAIN_VOCABULARY_SKILL_ROOTS,
 ): DomainVocabularyFile[] {
   const files: DomainVocabularyFile[] = [];
   for (const sourceRoot of roots) {
     const absolute = join(root, sourceRoot);
     if (!isDirectory(absolute)) continue;
-    collect(root, absolute, files);
+    collect(root, absolute, files, "source");
+  }
+  for (const skillRoot of skillRoots) {
+    const absolute = join(root, skillRoot);
+    if (!isDirectory(absolute)) continue;
+    collect(root, absolute, files, "prose");
   }
   return files;
 }
@@ -290,19 +335,21 @@ function isDirectory(path: string): boolean {
   }
 }
 
-function collect(root: string, dir: string, out: DomainVocabularyFile[]): void {
+function collect(root: string, dir: string, out: DomainVocabularyFile[], kind: DomainVocabularyFileKind): void {
+  const suffixes = kind === "prose" ? PROSE_SUFFIXES : SOURCE_SUFFIXES;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) collect(root, path, out);
+      if (!SKIP_DIRS.has(entry.name)) collect(root, path, out, kind);
       continue;
     }
     if (!entry.isFile()) continue;
     if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".d.ts")) continue;
-    if (!SOURCE_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue;
+    if (!suffixes.some((suffix) => entry.name.endsWith(suffix))) continue;
     out.push({
       path: relative(root, path).split(sep).join("/"),
       sourceText: readFileSync(path, "utf8"),
+      kind,
     });
   }
 }
