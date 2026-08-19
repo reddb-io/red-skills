@@ -1,5 +1,6 @@
 ---
 name: wiki-init
+working-mode: interactive
 description: Bootstrap the LLM Wiki pattern in a repo — create `.red/wiki/` layout, write `.red/agents/wiki.md` schema, gitignore wiki artifacts, register a `### Wiki` entry under `## Agent skills` in CLAUDE.md/AGENTS.md. Run once per repo before using `/wiki`. Re-run only to reset.
 disable-model-invocation: true
 ---

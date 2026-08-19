@@ -1,5 +1,6 @@
 ---
 name: adr-editor
+working-mode: ADR-editing
 description: Proposal-driven reverse grill for the active `.red/adr/` collection. Ranks active ADR clusters, recommends where to start, confronts one cluster with current implementation evidence, and applies maintainer-approved dispositions through the full ADR verb set. Use to review, curate, reorganise, fix, or extend ADRs and to pay down accumulated decision debt.
 ---
 

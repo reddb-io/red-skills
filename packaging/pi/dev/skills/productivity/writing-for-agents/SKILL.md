@@ -1,5 +1,6 @@
 ---
 name: writing-for-agents
+working-mode: interactive
 description: Designs and revises documents that agents read, including skills, always-loaded instructions, and disclosed references. Use when creating or editing a SKILL.md, AGENTS.md, CLAUDE.md, agent-facing instructions, or documentation reached through a context pointer.
 ---
 
@@ -135,6 +136,7 @@ skill-name/
 ```md
 ---
 name: skill-name
+working-mode: interactive
 description: Brief description of capability. Use when [specific triggers].
 ---
 
@@ -153,6 +155,26 @@ description: Brief description of capability. Use when [specific triggers].
 
 </supporting-info>
 ```
+
+### Working mode requirement
+
+**Every SKILL.md header names the Working mode the skill serves** — one
+`working-mode:` key carrying exactly one of `interactive`, `spec-driven`,
+`ad-hoc`, `ADR-editing` (ADR 0150 §2). The mode says how the work the skill
+belongs to ENTERS RedSkills, which is what tells a reader where it runs:
+interactive and ADR-editing work stays in the human's checkout, spec-driven and
+ad-hoc work is coordinated by `redskilled` in daemon-placed storage.
+
+- **interactive** — a human drives a coder CLI in a fresh worktree and lands a PR.
+  The default for anything a person invokes to do work in their own session.
+- **spec-driven** — the `/start` → `/to-spec` → `/to-tickets` → `/afk` chain and
+  the skills whose whole subject is the Ticket queue that chain feeds.
+- **ad-hoc** — `/go`, which mints one Ticket and hands it to `redskilled` at once.
+- **ADR-editing** — `/adr-editor`, which lands ADR changes from a fresh worktree.
+
+Declaring none, two, or an unknown value fails the doc-contract guard
+(`apps/dev/tests/working-mode-guard.test.ts`); leave the mode to be inferred and
+every reader infers a different one.
 
 ### Description requirements
 

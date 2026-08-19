@@ -1,5 +1,6 @@
 ---
 name: status
+working-mode: interactive
 description: Report the project Brain store's health — whether Brain initialized in this workspace, the resolved connection string, and how many artifacts and connections are stored. Use when the user says "brain status", "is brain set up", "check brain", or wants to confirm Brain is live before capturing or searching.
 disable-model-invocation: true
 ---

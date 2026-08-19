@@ -1,5 +1,6 @@
 ---
 name: daily-review
+working-mode: spec-driven
 description: Generates a RedSkills operational review for a requested period. Default period is yesterday midnight to now (one day); pass `--period week` for a six-day window. Covers delivered work, local AFK workers, cycle times, and HITL/blocker challenges. Use when the user invokes `/daily-review`, `/weekly-review`, asks for daily or weekly delivery numbers, issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
 argument-hint: "[--period day|week] [--json] [--human]"
 disable-model-invocation: true

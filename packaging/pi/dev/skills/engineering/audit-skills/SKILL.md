@@ -1,5 +1,6 @@
 ---
 name: audit-skills
+working-mode: interactive
 description: Read-only skill-quality auditor. Scores every shipped SKILL.md against the RedSkills house style (mechanical checks + an LLM judge on the dev review engine), overlays best-effort telemetry, and prints a worst-first scorecard. Use when the user invokes `/audit-skills`, asks which skills are weakest, or wants a house-style quality pass. Never mutates.
 argument-hint: "[--mechanical-only] [--runner R] [--json] [--human]"
 disable-model-invocation: true

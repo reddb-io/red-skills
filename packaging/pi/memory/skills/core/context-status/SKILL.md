@@ -1,5 +1,6 @@
 ---
 name: context-status
+working-mode: interactive
 description: Report the project context stack posture without mutating anything. Use when checking whether agent rules, domain docs, ADRs, Memory graph/telemetry, and LLM Wiki are ready before a large task or self-improvement loop.
 ---
 

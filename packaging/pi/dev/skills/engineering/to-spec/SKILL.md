@@ -1,5 +1,6 @@
 ---
 name: to-spec
+working-mode: spec-driven
 description: Turn the current conversation context into a Spec and publish it to the project issue tracker. Use when user wants to create a Spec from the current context.
 argument-hint: "[--tags a,b]"
 ---

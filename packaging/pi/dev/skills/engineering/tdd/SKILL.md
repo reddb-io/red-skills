@@ -1,5 +1,6 @@
 ---
 name: tdd
+working-mode: interactive
 description: Test-driven development with a red → green loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green", wants integration tests, or asks for test-first development.
 ---
 

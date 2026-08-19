@@ -1,5 +1,6 @@
 ---
 name: guard-process-birth
+working-mode: interactive
 description: Keeps Worker process birth behind the host-scoped redskilled daemon. Use when changing per-project runtime source under apps/dev/src.
 paths:
   - "apps/dev/src/**/*.ts"
