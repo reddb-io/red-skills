@@ -76,8 +76,10 @@ describe("memory and brain declare no default red-ui", () => {
     expect(declaredServers("memory")).toEqual(["red-memory"]);
   });
 
+  // #4026: the brain adapter is `rs_brain` (ADR 0147 §2), still the one server
+  // the plugin declares.
   it("leaves brain with its own local data server only", () => {
-    expect(declaredServers("brain")).toEqual(["brain"]);
+    expect(declaredServers("brain")).toEqual(["rs_brain"]);
   });
 
   it("keeps the viewer out of both declarations, opt-in or not", () => {

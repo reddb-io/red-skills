@@ -57,9 +57,18 @@ afterEach(async () => {
 });
 
 describe("Brain config", () => {
-  it("uses the initial directory when no .red ancestor exists", async () => {
+  // ADR 0152: brain is the USER's, so a directory that carries no store of its
+  // own resolves to the host root rather than minting a per-checkout brain.
+  it("uses the host root when no directory on the path carries a brain", async () => {
     const root = await tempRootWithoutRedAncestor();
-    await expect(findBrainRoot(root)).resolves.toBe(root);
+    const env = { HOME: root };
+    await expect(findBrainRoot(root, { env })).resolves.toBe(join(root, ".red"));
+  });
+
+  it("keeps a checkout that already carries a brain store", async () => {
+    const root = await tempRootWithoutRedAncestor();
+    await mkdir(join(root, ".red", "brain"), { recursive: true });
+    await expect(findBrainRoot(root, { env: { HOME: "/nonexistent-home" } })).resolves.toBe(root);
   });
 
   it("uses an ancestor umbrella brain instead of a child repo .red directory", async () => {
@@ -117,14 +126,16 @@ describe("Brain config", () => {
     await expect(findBrainRoot(tetisRepo)).resolves.toBe(tetis);
   });
 
-  it("falls back to the nearest .red ancestor when no brain root exists", async () => {
+  // A bare `.red` is not a brain (ADR 0152): the walk-up honours a checkout that
+  // HOLDS a store, and anything else is the user's host brain.
+  it("prefers the host root over a .red ancestor that carries no brain", async () => {
     const root = await tempRoot();
     const repo = join(root, "service");
     const start = join(repo, "src");
     await mkdir(join(repo, ".red"), { recursive: true });
     await mkdir(start, { recursive: true });
 
-    await expect(findBrainRoot(start)).resolves.toBe(repo);
+    await expect(findBrainRoot(start, { env: { HOME: root } })).resolves.toBe(join(root, ".red"));
   });
 
   it("lets an environment root override walk-up brain resolution", async () => {

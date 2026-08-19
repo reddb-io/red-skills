@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const DEFAULT_CONNECTION_STRING = "file://./.red/brain/brain.rdb";
@@ -32,18 +33,36 @@ export async function findBrainRoot(
   const configRoot = await findConfiguredBrainRoot(startDir);
   if (configRoot) return configRoot;
 
+  // **Brain is the USER's, not a project's** (ADR 0152). A second repository is
+  // not a second brain, so the default root is host-scoped and every checkout
+  // reaches the same store. An explicit `RED_BRAIN_ROOT` or a
+  // `plugins.brain.rootDir` in config still wins above — both are read before
+  // this line — and a checkout that ALREADY holds a store keeps it, because
+  // silently pointing an existing brain at an empty one loses a user's notes.
+  const existing = findExistingProjectBrainRoot(startDir);
+  if (existing) return existing;
+  return hostBrainRoot(options.env ?? process.env);
+}
+
+/** `~/.red/brain`'s owning directory, honouring HOME on every platform. */
+export function hostBrainRoot(env: Record<string, string | undefined> = process.env): string {
+  const home = env["HOME"] ?? env["USERPROFILE"] ?? homedir();
+  return join(home, ".red");
+}
+
+/** A checkout that already carries a brain store, walking up from `startDir`. */
+function findExistingProjectBrainRoot(startDir: string): string | null {
   let current = resolve(startDir);
-  let fallbackRedRoot: string | null = null;
   while (true) {
     const redDir = join(current, ".red");
-    if (existsSync(redDir)) {
-      fallbackRedRoot ??= current;
-      if (existsSync(join(redDir, "brain")) || existsSync(join(redDir, BRAIN_ROOT_MARKER))) {
-        return current;
-      }
+    if (
+      existsSync(redDir) &&
+      (existsSync(join(redDir, "brain")) || existsSync(join(redDir, BRAIN_ROOT_MARKER)))
+    ) {
+      return current;
     }
     const parent = dirname(current);
-    if (parent === current) return fallbackRedRoot ?? resolve(startDir);
+    if (parent === current) return null;
     current = parent;
   }
 }
