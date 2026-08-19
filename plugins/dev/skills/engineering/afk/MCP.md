@@ -56,7 +56,7 @@ behavior change. Falling back FIRST is what turns a one-line cure into a
 forensic investigation.
 Resolve the runtime through [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md):
 the canonical ADR 0091 npm direct-run form
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`, which works on
+`npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev …`, which works on
 every installation; an installed shim on `PATH` is only a warm-cache
 optimization for the same command.
 

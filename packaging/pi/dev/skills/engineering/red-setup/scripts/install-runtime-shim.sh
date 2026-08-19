@@ -71,7 +71,7 @@ Expected one of:
 - a warmed bundle under ~/.cache/red-skills/bundles/dev-*.bundle.min.mjs
 
 Fallback:
-  npx -y -p @reddb-io/red-skills@<version> red-skills-dev "$@"
+  npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev "$@"
 
 Run /red-setup in a repo with plugins.dev.enabled: true, then restart the
 agent session so the plugin SessionStart hook can warm the runtime cache, or use

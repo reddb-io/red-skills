@@ -47,14 +47,14 @@ its own host runner (`codex` from Codex, `claude` from Claude Code). Resolve the
 runtime through the shared contract in
 [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): the canonical
 form is the ADR 0091 npm direct-run
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev ...`, which works on
+`npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev ...`, which works on
 every installation; an installed `red-skills-dev` shim on `PATH` is only a
 warm-cache optimization for the same command.
 
 Run the bundle, not the source:
 
 ```bash
-RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> red-skills-dev <command> [params]
+RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev <command> [params]
 ```
 
 `afk.mjs` is a dedicated forwarder to the `dev` bundle. Every argument reaches

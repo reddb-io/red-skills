@@ -15,7 +15,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 The skill ships a single committed runtime bundle. Invoke it as:
 
 ```
-RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> red-skills-dev <command> [params]
+RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev <command> [params]
 ```
 
 The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host runner (`codex` from Codex, `claude` from Claude Code). Do not infer a different runner from binaries on `PATH`; use `--runner` only when the user explicitly pinned one.

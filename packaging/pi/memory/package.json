@@ -19,6 +19,9 @@
       "./skills/core/"
     ]
   },
+  "bin": {
+    "red-skills-memory": "bin/red-skills-memory.mjs"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -29,6 +32,7 @@
     ".codex-plugin/**/*",
     ".gemini-plugin/**/*",
     ".mcp.json",
+    "bin/**/*",
     "docs/**/*",
     "hooks/**/*",
     "scripts/**/*",

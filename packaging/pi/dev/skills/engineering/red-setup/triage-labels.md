@@ -120,7 +120,7 @@ When the last `req:N` blocker of a dependent carrying one of these labels closes
 **The label and the declaration are ONE protection with two halves — install them in one act, never one without the other** (issue #3013). A repo carrying `wayfinder:grilling` with no matching `hitl_types` entry LOOKS protected while every unblocked decision Ticket goes into the autonomous queue, which is worse than carrying neither half. So type labels are installed with the installer, not with bare `gh label create`:
 
 ```bash
-RSD="npx -y -p @reddb-io/red-skills@<version> red-skills-dev"
+RSD="npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev"
 
 $RSD install-type-labels                                   # the shipped /wayfinder vocabulary
 $RSD install-type-labels decision:grilling decision:sketch  # a repo's own names

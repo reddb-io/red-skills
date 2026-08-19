@@ -46,7 +46,7 @@ When it reports `degraded: true`, treat the census as failed and read its named
 The **no-MCP fallback** renders the same dashboard from the project root — for a headless cron or a host that never loaded the `redskilled` server:
 
 ```bash
-RED_AFK_RUNNER=<runner> npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor
+RED_AFK_RUNNER=<runner> npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev monitor
 ```
 
 The command has **two modes**, auto-selected by stdout type:
@@ -175,7 +175,7 @@ supervisor under Codex:
    single worker, `--mode fleet` for a supervisor, so the read-only rules stay
    identical across launches):
    ```bash
-   RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
+   RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
    presentation consumer only: it periodically reads redskilled `status` with

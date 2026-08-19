@@ -31,7 +31,7 @@ shared contract in [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.
 warm-cache optimization):
 
 ```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123
+npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev retake 123
 ```
 
 The runtime accepts `123` and `#123`; quote `'#123'` when a shell would read it
@@ -92,7 +92,7 @@ post the guidance as an auditable `directive` comment, drop `ready-for-human`
 and every `blocked:*` label, add `ready-for-agent`. CLI fallback:
 
 ```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
+npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
 ```
 
 ### Adopt-branch landing — validate and land hand-done work
@@ -101,7 +101,7 @@ The same `requeue` tool with `adoptBranch` set routes the branch through the
 no-agent landing lane. CLI fallback:
 
 ```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
+npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
 ```
 
 After the requeue transition, the branch routes through the **no-agent landing
@@ -117,7 +117,7 @@ structured output.
 
 ### `--apply` — safe local setup only
 
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123 --apply` runs only the safe local `git`
+`npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev retake 123 --apply` runs only the safe local `git`
 operations
 the diagnosis selected: create a missing manual worktree under
 `.red/tmp/worktrees/manual/<slug>`, recreate it from a matching branch, or fetch

@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 Start or continue an effort — anything that is not a lifecycle operation IS the intent:
 
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev manager <intent>`
+Run: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev manager <intent>`
 
 After the runtime starts the effort, **route it via `/ask-red`**: classify the
 intent and follow the returned route. Do NOT re-implement ask-red's classifier —
@@ -22,23 +22,23 @@ invoke `/ask-red` and consume its answer.
 
 Record the ask-red route in the effort:
 
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev manager route <effort-id> <skill>`
+Run: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev manager route <effort-id> <skill>`
 
 **For session-bound skills** (`to-spec`, `to-tickets`, `start`, `research`):
 run the skill **inline in this session** as a subroutine. When the skill
 produces an artifact (e.g., a GitHub issue URL from `/to-spec`), capture it:
 
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev manager artifact <effort-id> <url-or-ref>`
+Run: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev manager artifact <effort-id> <url-or-ref>`
 
 Render the brief for an effort (the most recently started one by default):
 
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev manager status [effort-id]`
+Run: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev manager status [effort-id]`
 
 Carry the portfolio to another host — export on the source, import on the
 destination:
 
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev manager checkpoint export [path]`
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev manager checkpoint import <path>`
+Run: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev manager checkpoint export [path]`
+Run: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev manager checkpoint import <path>`
 
 Dev-checkout equivalent: `node plugins/dev/skills/engineering/afk/bin/afk.mjs manager <intent>`
 

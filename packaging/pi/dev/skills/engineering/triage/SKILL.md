@@ -15,7 +15,7 @@ when a decided state transition lands on an issue, apply it through the
 ready-for-agent|needs-info|ready-for-human|wontfix, summon?, repo?}` — which is
 gated by the per-repo trust policy. The tool surface and host prefix rule live
 in [`../afk/MCP.md`](../afk/MCP.md). When the MCP is unreachable, name that and
-fall back to the `npx -y -p @reddb-io/red-skills@<version> red-skills-dev triage` CLI — same engine, same
+fall back to the `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev triage` CLI — same engine, same
 cores. Body
 edits that carry content (agent briefs, triage notes) remain issue-body edits.
 

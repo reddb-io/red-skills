@@ -298,9 +298,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 }
 
 import { createLogger } from "@reddb-io/shared/log.js";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 const __log = createLogger({ serviceName: "afk" });
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   main().then((code) => process.exit(code)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     __log.error({ err: error }, message);

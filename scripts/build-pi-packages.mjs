@@ -82,6 +82,10 @@ function buildNpmPackageJson(claudePlugin, definitionEntries) {
   // - tighten files to just skills + package.json (no source tree leakage)
   const base = buildPiPackage(claudePlugin);
   const { private: _private, ...publishable } = base;
+  // A plugin whose tree ships a bin/ shim (e.g. plugins/dev/bin/) gets a
+  // matching bin entry so `npx -y -p @reddb-io/red-skills-<name> <bin>` works
+  // from the published package (ADR 0146: bundles live in the plugin package).
+  const hasBinDir = definitionEntries.some((entry) => entry.name === "bin" && entry.directory);
   // During a release, RED_BUILD_VERSION (the resolved NEXT) is the source of
   // truth for the published Pi version. At Pi-build time the committed plugin
   // manifests still carry the PREVIOUS release's version — red-release.yml runs
@@ -92,6 +96,7 @@ function buildNpmPackageJson(claudePlugin, definitionEntries) {
   const releaseVersion = process.env.RED_BUILD_VERSION?.replace(/^v/, "").trim();
   return {
     ...publishable,
+    ...(hasBinDir ? { bin: { [`red-skills-${claudePlugin.name}`]: `bin/red-skills-${claudePlugin.name}.mjs` } } : {}),
     ...(releaseVersion ? { version: releaseVersion } : {}),
     publishConfig: { access: "public" },
     files: [

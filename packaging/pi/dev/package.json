@@ -21,6 +21,9 @@
       "./skills/misc/"
     ]
   },
+  "bin": {
+    "red-skills-dev": "bin/red-skills-dev.mjs"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -32,6 +35,7 @@
     ".gemini-plugin/**/*",
     ".mcp.json",
     "agents/**/*",
+    "bin/**/*",
     "hooks/**/*",
     "scripts/**/*",
     "package.json",

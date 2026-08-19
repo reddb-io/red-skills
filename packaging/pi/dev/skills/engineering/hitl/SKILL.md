@@ -129,7 +129,7 @@ guidance is the maintainer's answer. It performs the whole transition
 atomically: archives the active `## Current blocker` into `## Resolved
 blockers`, posts the guidance as the auditable Directive comment, removes
 `ready-for-human` and every stale `blocked:*` label, adds `ready-for-agent`.
-CLI fallback: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue N --guidance "..."`.
+CLI fallback: `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev requeue N --guidance "..."`.
 
 If non-delegable — the `hitl_resolve` tool (MUTATING),
 `{issue, decision: "park", rationale}` with the next pending decision as the

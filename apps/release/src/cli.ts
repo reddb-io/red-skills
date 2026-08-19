@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { createGithubClient, type GithubClient } from "@reddb-io/github";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
@@ -185,7 +186,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   try {
     process.exitCode = await runMain();
   } catch (error) {

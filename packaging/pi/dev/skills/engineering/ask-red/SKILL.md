@@ -74,7 +74,7 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   daemon refused at birth still gets one. Reconstructing the Ticket's *work*
   state instead — PRs, branches, worktrees, blocker — stays with `/retake`.
 - **A superseded-engine warning** -> run the exact
-  `npx -y -p @reddb-io/red-skills@<version> red-skills-dev reconcile-engine`
+  `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev reconcile-engine`
   command printed by the warning, then retry the dispatch. The
   command warms that published dev bundle and re-points a standing registration
   in one operation; no separate plugin name, version lookup, or re-registration

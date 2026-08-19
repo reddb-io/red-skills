@@ -12,7 +12,7 @@ skill that leads with the bare form breaks on exactly the hosts that need it
 most. Always write and run:
 
 ```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand> [args]
+npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev <subcommand> [args]
 ```
 
 Resolve `<version>` from the installed plugin (the statusline `vX.Y.Z`, or the
@@ -32,7 +32,7 @@ The valid dev CLI subcommands for these skills are explicit: `run`, `fleet`,
 The skill-specific subcommand always rides the canonical form:
 
 ```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand> [--json]
+npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev <subcommand> [--json]
 ```
 
 When developing inside the red-skills source checkout, this repo-local path is

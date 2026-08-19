@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { decode } from "@reddb-io/toon";
 import { writeTwoAxisBenchmarkReport, type TwoAxisBenchmarkReport } from "./two-axis-benchmark.js";
 import {
@@ -87,7 +89,7 @@ function isTwoAxisBenchmarkReport(value: unknown): value is TwoAxisBenchmarkRepo
     Array.isArray(value.filters);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   main().then((code) => process.exit(code), (err) => {
     process.stderr.write(`rsp two-axis benchmark: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);

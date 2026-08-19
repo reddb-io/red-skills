@@ -18,6 +18,9 @@
       "./skills/core/"
     ]
   },
+  "bin": {
+    "red-skills-brain": "bin/red-skills-brain.mjs"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -28,6 +31,7 @@
     ".codex-plugin/**/*",
     ".gemini-plugin/**/*",
     ".mcp.json",
+    "bin/**/*",
     "hooks/**/*",
     "scripts/**/*",
     "package.json",

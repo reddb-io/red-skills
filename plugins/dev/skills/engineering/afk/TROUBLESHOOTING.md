@@ -13,7 +13,7 @@ not empty.
 
 1. Read the queue with the redskilled `queue_status` tool, and the live workers with
    `monitor` — both are read tools, free to call. No-MCP fallback:
-   `npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor --once`.
+   `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev monitor --once`.
 2. Compare `ready-for-agent` with open non-Spec issues in the issue tracker.
 3. Census the gates by label family: `blocked:dependency`, `needs-triage`,
    `ready-for-human`, `type:spec`, and any unsupported `blocked:*` label.
@@ -277,7 +277,7 @@ supervisor.
 
 ### Confirm
 
-1. Run `npx -y -p @reddb-io/red-skills@<version> red-skills-dev fleet status` and read the supervisor health, target,
+1. Run `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev fleet status` and read the supervisor health, target,
    slot counts, and live worker list.
 2. Check `.red/tmp/supervisors/default/state.toon` for `slot_pids`. A relaunched
    supervisor uses this map to adopt live detached workers into their original
@@ -292,7 +292,7 @@ supervisor.
 
 ### Recover
 
-1. Prefer `npx -y -p @reddb-io/red-skills@<version> red-skills-dev fleet stop` for a clean stop; it writes the
+1. Prefer `npx -y -p @reddb-io/red-skills-dev@<version> red-skills-dev fleet stop` for a clean stop; it writes the
    stop file, waits for the supervisor, then sweeps detached orphan workers.
 2. If the supervisor died unexpectedly, let the `fleet` command or the
    watchdog relaunch it. The relaunch should report why it respawned, including

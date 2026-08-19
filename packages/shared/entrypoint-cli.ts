@@ -31,7 +31,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BundleFetchError,
@@ -542,6 +542,9 @@ async function main(): Promise<void> {
 
 // Only execute when invoked directly (`node red-fetch.mjs …` / `node afk.mjs …`),
 // never when imported (e.g. the unit test importing `parseEntrypoint`).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `resolve` + `fileURLToPath` keep this check working on Windows, where
+// process.argv[1] is a backslash path but import.meta.url is a file:// URL
+// (the raw string compare `file://${process.argv[1]}` never matches there).
+if (resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   void main();
 }
