@@ -23,6 +23,7 @@
     "./kill-tree.js": "./kill-tree.ts",
     "./lane-retention.js": "./lane-retention.ts",
     "./log.js": "./log.ts",
+    "./optional-mcp.js": "./optional-mcp.ts",
     "./outcome-event.js": "./outcome-event.ts",
     "./plugin-gate.js": "./plugin-gate.ts",
     "./project-identity-resolve.js": "./project-identity-resolve.ts",
