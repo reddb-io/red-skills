@@ -172,7 +172,12 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
     methods: ["worktreeAdd", "worktreeList"],
     served: true,
   },
-  { domain: "telemetry", module: "acp-telemetry.ts", methods: ["metrics"], served: true },
+  {
+    domain: "telemetry",
+    module: "apps/redskilled/src/acp-telemetry.ts",
+    methods: ["metrics"],
+    served: true,
+  },
   {
     domain: "worker",
     module: "packages/worker/src/acp/budget-grace.ts",
