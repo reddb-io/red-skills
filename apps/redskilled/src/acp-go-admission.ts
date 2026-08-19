@@ -30,6 +30,12 @@ import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 export interface GoWorkerAdmissionDeps {
   readonly paths: RedskilledPaths;
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
+  /**
+   * The Workers this host already holds. An ad-hoc dispatch mints its id from
+   * the same live set every other birth does, because two Workers born inside
+   * one millisecond would otherwise be handed one workspace directory.
+   */
+  readonly hostState: () => { readonly workers: readonly { readonly worker_id: string }[] };
   readonly sessionJournal: AcpSessionJournal;
   /** This connection's public sessions; a dispatch mints one of its own. */
   readonly sessions: Map<string, PublicSession>;
@@ -66,7 +72,7 @@ export function createGoWorkerAdmission(deps: GoWorkerAdmissionDeps) {
     let worker: ActiveWorkflowWorker;
     try {
       worker = await admitNativeAcpWorker(
-        { paths: deps.paths, startWorker: deps.startWorker },
+        { paths: deps.paths, startWorker: deps.startWorker, hostState: deps.hostState },
         deps.sessionJournal,
         session,
         sessionId,
