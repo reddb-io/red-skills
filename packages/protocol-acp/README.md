@@ -45,6 +45,7 @@ it encodes what an authority permits.
 | `transport.ts` | Binding, connecting, streaming and tearing down the local ACP endpoint on both platforms. |
 | `methods.ts` | The `_redskills/*` registry and the params shape shared by the methods that take none. |
 | `go-dispatch.ts` | The `go_dispatch` params, answer, published schema and params validator. |
+| `worktree.ts` | The `worktree_add` / `worktree_list` params, answers, published schemas, params validator and refusal vocabulary. |
 
 ## Ownership guard
 

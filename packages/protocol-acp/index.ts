@@ -8,3 +8,4 @@ export * from "./compat.js";
 export * from "./go-dispatch.js";
 export * from "./methods.js";
 export * from "./transport.js";
+export * from "./worktree.js";

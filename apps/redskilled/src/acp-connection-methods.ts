@@ -33,8 +33,14 @@ import {
   type RedskillsAcpMethodTable,
 } from "./acp-method-registry.js";
 import type { ActiveWorkflowWorker } from "./acp-worker-lifecycle.js";
+import {
+  worktreeMethodDomain,
+  type RedskilledRegisteredCheckout,
+  type RedskilledWorkerWorktree,
+} from "./acp-worktree.js";
 import type { AcpSessionJournal } from "./acp-session-journal.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
+import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
 import { projectControlMethodDomain, type ProjectControlOperation } from "./project-control.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
@@ -52,6 +58,8 @@ export interface ConnectionMethodDeps {
   readonly scopedState: () => unknown;
   /** The Project this connection bound. Throws when none has. */
   readonly scopedProject: () => AcpProjectWorkspace;
+  /** The daemon's own state, read for the registration a worktree stands on. */
+  readonly hostState: () => RedskilledHostState;
   readonly mutateProjectControl: (operation: ProjectControlOperation) => Promise<unknown>;
   readonly readProjectStatus: () => Promise<unknown>;
   /** Observe the reader the first GitHub read resolves, to stream its updates. */
@@ -91,8 +99,47 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
       tracker: createAcpGithubGoTicketTracker(deps.githubGateway, deps.scopedProject),
       admit,
     }),
+    worktreeMethodDomain({
+      registeredCheckout: () => registeredCheckout(deps),
+      workerWorktrees: () => workerWorktrees(deps),
+    }),
   ]);
   return { v1: table(admitThroughV1(deps)), v2: table(admitThroughV2(deps)) };
+}
+
+/**
+ * The registration this connection's checkout stands on, or nothing.
+ *
+ * Absence is an ordinary answer here rather than a throw, because it is the
+ * one the worktree domain turns into its typed `checkout-not-registered`
+ * refusal — a caller told "no registration" can register, while a caller told
+ * "internal error" cannot.
+ */
+function registeredCheckout(deps: ConnectionMethodDeps): RedskilledRegisteredCheckout | undefined {
+  const project = deps.scopedProject();
+  const registration = deps.hostState().registrations
+    ?.find((entry) => entry.project_label === project.projectLabel);
+  if (registration == null) return undefined;
+  return {
+    project_label: project.projectLabel,
+    checkout_root: project.checkoutRoot,
+    ...(registration.trunk == null ? {} : { trunk: registration.trunk }),
+  };
+}
+
+/**
+ * This Project's Worker worktrees, as the daemon knows them.
+ *
+ * `workspace_path` is carried verbatim — the daemon stores what it was given
+ * and interprets nothing, so the inventory reports the execution root the
+ * Worker was born with rather than a path composed from a layout the daemon
+ * would have had to learn.
+ */
+function workerWorktrees(deps: ConnectionMethodDeps): readonly RedskilledWorkerWorktree[] {
+  const project = deps.scopedProject();
+  return deps.hostState().workers
+    .filter((worker) => worker.project_label === project.projectLabel)
+    .map((worker) => ({ worker_id: worker.worker_id, path: worker.workspace_path }));
 }
 
 type GoAdmit = (

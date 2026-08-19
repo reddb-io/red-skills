@@ -10,7 +10,8 @@
     "./compat.js": "./compat.ts",
     "./go-dispatch.js": "./go-dispatch.ts",
     "./methods.js": "./methods.ts",
-    "./transport.js": "./transport.ts"
+    "./transport.js": "./transport.ts",
+    "./worktree.js": "./worktree.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

@@ -6,6 +6,7 @@
   "exports": {
     "./acp-client": "./src/acp-client.ts",
     "./acp-agent-catalog": "./src/acp-agent-catalog.ts",
+    "./acp-worktree": "./src/acp-worktree.ts",
     "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
     "./daemon": "./src/daemon.ts",

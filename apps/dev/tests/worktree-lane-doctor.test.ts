@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  interactiveWorktreeDirectory,
+  REDSKILLED_INTERACTIVE_WORKTREE_LANE,
+} from "@reddb-io/redskilled/acp-worktree";
+import {
   auditWorktreeLanes,
   parseWorktreePorcelain,
   REGISTERED_WORKTREE_LANES,
@@ -73,5 +77,30 @@ describe("auditWorktreeLanes — every worktree lives in a lane we own", () => {
       { path: "/repo", branch: "refs/heads/main" },
       { path: "/repo/.red/tmp/worktrees/manual/slug" },
     ]);
+  });
+});
+
+// The daemon creates the interactive worktree now (ADR 0150 §4, issue #4021),
+// and it creates it in the human's own checkout — the one place the dev command
+// proxy and this doctor both govern. So the lane it writes into is pinned HERE
+// rather than trusted: a daemon that started landing worktrees in a lane nobody
+// registered would be refused by the proxy in a human's checkout, at the moment
+// they asked for a worktree, with nothing in the gate having said so.
+describe("the daemon's interactive lane is a lane this repo registers", () => {
+  it("lands worktree_add in a registered lane under .red/tmp/", () => {
+    expect(REGISTERED_WORKTREE_LANES).toContain(REDSKILLED_INTERACTIVE_WORKTREE_LANE);
+    expect(interactiveWorktreeDirectory("4021-worktree-add")).toBe(
+      ".red/tmp/worktrees/manual/4021-worktree-add",
+    );
+  });
+
+  it("is judged registered by the doctor that reads git's own inventory", () => {
+    const report = auditWorktreeLanes(ROOT, [
+      { path: ROOT },
+      { path: `${ROOT}/${interactiveWorktreeDirectory("4021-worktree-add")}` },
+    ]);
+
+    expect(report.verdict).toBe("ok");
+    expect(report.findings).toEqual([]);
   });
 });

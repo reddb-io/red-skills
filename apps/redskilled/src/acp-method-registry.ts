@@ -28,7 +28,14 @@ export interface RedskillsAcpMethodBinding {
 }
 
 /** Every `_redskills/*` domain the daemon knows, control-plane served or not. */
-export type RedskillsAcpMethodDomainName = "host" | "project" | "github" | "budget" | "go" | "worker";
+export type RedskillsAcpMethodDomainName =
+  | "host"
+  | "project"
+  | "github"
+  | "budget"
+  | "go"
+  | "worktree"
+  | "worker";
 
 /** One domain's contribution: its bindings and what `initialize` advertises. */
 export interface RedskillsAcpMethodDomain {
@@ -136,6 +143,12 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
   },
   { domain: "budget", module: "acp-budget.ts", methods: ["projectBudget", "hostBudgets"], served: true },
   { domain: "go", module: "acp-go-dispatch.ts", methods: ["goDispatch"], served: true },
+  {
+    domain: "worktree",
+    module: "acp-worktree.ts",
+    methods: ["worktreeAdd", "worktreeList"],
+    served: true,
+  },
   {
     domain: "worker",
     module: "acp-worker-budget-grace.ts",
