@@ -8,6 +8,8 @@ plugins:
     lock:
       primary-branch: true       # primary-checkout branch-switch guard
     afk:
+      trust-gate:
+        allowlist: filipeforattini
       setup:
         - pnpm install --frozen-lockfile
       # Local AFK validation reproves workspace types and repo invariants inside
