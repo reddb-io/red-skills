@@ -11,6 +11,7 @@
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./canonical-invocation.js": "./canonical-invocation.ts",
     "./channel.js": "./channel.ts",
+    "./credential-free-env.js": "./credential-free-env.ts",
     "./death-attribution.js": "./death-attribution.ts",
     "./death-presence.js": "./death-presence.ts",
     "./death-record.js": "./death-record.ts",
