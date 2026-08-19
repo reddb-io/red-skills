@@ -9,6 +9,7 @@ export * from "./endpoint.js";
 export * from "./github-write.js";
 export * from "./go-dispatch.js";
 export * from "./methods.js";
+export * from "./publication.js";
 export * from "./session-recovery.js";
 export * from "./transport.js";
 export * from "./worktree.js";
