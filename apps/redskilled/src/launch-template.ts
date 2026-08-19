@@ -53,7 +53,7 @@
  * frozen: a fifth entry would have to be a fact the daemon owns, and there is no
  * runner, model or effort among those.
  */
-export const REDSKILLED_LAUNCH_FACTS = ["worker_id", "slot", "workspace_path", "log_path"] as const;
+export const REDSKILLED_LAUNCH_FACTS = ["worker_id", "slot", "workspace_path", "log_path", "work_item"] as const;
 
 export type RedskilledLaunchFactName = (typeof REDSKILLED_LAUNCH_FACTS)[number];
 
@@ -63,6 +63,17 @@ export interface RedskilledLaunchFacts {
   readonly slot: number;
   readonly workspace_path: string;
   readonly log_path?: string | undefined;
+  /**
+   * The queue identifier THIS birth is for (#4099), when the demand loop chose
+   * one from what the last poll kept (#4098).
+   *
+   * Opaque like every other project-authored string: the daemon writes it into
+   * the argv and never asks what it names. Absent is a legal state — an ordinary
+   * workflow Worker is born for no queue item — but a template that NAMES it
+   * while a birth has none fails closed, because a Worker started with a blank
+   * where its work should be is one nobody meant to start.
+   */
+  readonly work_item?: string | undefined;
 }
 
 /**
@@ -148,6 +159,15 @@ export function expandLaunchTemplate(
           // "undefined": a client that mentioned it and did not supply it wants
           // an empty value, not a filename spelled after a JavaScript keyword.
           return facts.log_path ?? "";
+        case "work_item":
+          // Deliberately NOT the log path's rule. A blank log path is a Worker
+          // that says nothing; a blank work item is a Worker that would claim
+          // whatever it found, or nothing at all, and either way the operator
+          // asked for one specific thing.
+          if (facts.work_item == null || facts.work_item === "") {
+            throw new RedskilledLaunchFactError("work_item", where);
+          }
+          return facts.work_item;
         default:
           throw new RedskilledLaunchFactError(name, where);
       }

@@ -972,14 +972,25 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           birthHealth[projectLabel] = resetBirthHealth();
         }
       }
-      const planCurrentDemand = () =>
-        planHostDemand({
+      // Read inside the closure, never above it: the planner runs again after a
+      // fresh poll, and a list captured before that poll would hand out items
+      // the daemon has since replaced.
+      const planCurrentDemand = () => {
+        const queueItems = new Map(
+          (lastQueue?.projects ?? [])
+            .filter((project) => project.items != null)
+            .map((project) => [project.project_label, project.items!] as const),
+        );
+        return planHostDemand({
           projects: [...registrations.values()].map((registration) => ({
             project_label: registration.project_label,
             selector: registration.selector,
             argv: registration.argv,
             workspace_path: registration.workspace_path,
             target: registration.target,
+            ...(queueItems.get(registration.project_label) == null
+              ? {}
+              : { items: queueItems.get(registration.project_label) }),
           })),
           queue: Object.fromEntries((lastQueue?.projects ?? []).map((project) => [project.project_label, project.depth])),
           live,
@@ -987,6 +998,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           backoffUntilMs: demandBackoffUntilMs,
           birthHealth,
         });
+      };
       let plan = planCurrentDemand();
       if (plan.births.length > 0) {
         await pollQueueDiscovery();
@@ -1012,7 +1024,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             ...(registration?.env == null ? {} : { env: registration.env }),
             ...(registration?.log_path == null ? {} : { log_path: registration.log_path }),
           },
-          { worker_id: workerId, slot: birth.index, workspace_path: birth.workspace_path },
+          {
+            worker_id: workerId,
+            slot: birth.index,
+            workspace_path: birth.workspace_path,
+            ...(birth.work_item == null ? {} : { work_item: birth.work_item }),
+          },
           { project_label: birth.project_label },
         );
         try {
