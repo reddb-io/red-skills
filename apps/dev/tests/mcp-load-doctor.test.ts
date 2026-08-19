@@ -9,7 +9,7 @@ import {
   type McpLoadFacts,
 } from "../src/core/mcp-load-doctor.js";
 
-const DEV_SERVERS = ["navigator", "redskilled", "rsp"] as const;
+const DEV_SERVERS = ["navigator", "rs_dev", "rsp"] as const;
 
 function facts(overrides: Partial<McpLoadFacts> = {}): McpLoadFacts {
   return {
@@ -23,7 +23,7 @@ function facts(overrides: Partial<McpLoadFacts> = {}): McpLoadFacts {
 
 describe("sessionServerSlug", () => {
   it("reads the server out of a host-prefixed tool name", () => {
-    expect(sessionServerSlug("mcp__plugin_dev_redskilled__project_status")).toBe("plugin_dev_redskilled");
+    expect(sessionServerSlug("mcp__plugin_dev_rs_dev__project_status")).toBe("plugin_dev_rs_dev");
     expect(sessionServerSlug("mcp__plugin_dev_navigator")).toBe("plugin_dev_navigator");
   });
 
@@ -57,7 +57,7 @@ describe("auditMcpLoad", () => {
     const report = auditMcpLoad([
       facts({
         sessionServers: [
-          "mcp__plugin_dev_redskilled__project_status",
+          "mcp__plugin_dev_rs_dev__project_status",
           "mcp__plugin_dev_navigator__hover",
           "mcp__plugin_dev_rsp__rsp_status",
         ],
@@ -65,7 +65,7 @@ describe("auditMcpLoad", () => {
     ]);
 
     expect(report.findings).toEqual([]);
-    expect(report.rows[0]?.loaded).toEqual(["navigator", "redskilled", "rsp"]);
+    expect(report.rows[0]?.loaded).toEqual(["navigator", "rs_dev", "rsp"]);
   });
 
   // The observed incident: the plugin was installed mid-session, so the
@@ -78,7 +78,7 @@ describe("auditMcpLoad", () => {
     const [finding] = report.findings;
     expect(finding?.kind).toBe("declared-unloaded");
     expect(finding?.verdict).toBe("error");
-    expect(finding?.missing).toEqual(["navigator", "redskilled", "rsp"]);
+    expect(finding?.missing).toEqual(["navigator", "rs_dev", "rsp"]);
     expect(finding?.remediation).toBe(MCP_RELOAD_CURE);
     expect(finding?.remediation).toContain("/reload-plugins");
     expect(finding?.remediation).toContain("restart the session");
@@ -86,7 +86,7 @@ describe("auditMcpLoad", () => {
   });
 
   it("warns rather than reds when only some declared servers loaded", () => {
-    const report = auditMcpLoad([facts({ sessionServers: ["redskilled"] })]);
+    const report = auditMcpLoad([facts({ sessionServers: ["rs_dev"] })]);
 
     expect(report.findings).toHaveLength(1);
     expect(report.findings[0]).toMatchObject({

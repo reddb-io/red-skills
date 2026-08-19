@@ -6,7 +6,7 @@
 //
 // This shipped in `plugins/dev/.mcp.json` with THREE servers and three different
 // resolution strategies: `navigator` carried the installed-marketplace fallback
-// and worked; `redskilled` and `rsp`, declared three lines away, did not and failed
+// and worked; the daemon client and `rsp`, declared three lines away, did not and failed
 // in every repo but this one. The difference was invisible because each server's
 // chain reads plausibly on its own. Two of the three left with ADR 0147 §4; the
 // contract outlives them, because the next server declared here inherits it.
@@ -74,7 +74,7 @@ describe("every MCP server resolves from a directory that is not this repo (#318
       unreachable,
       `these servers start only from this repo, and the host reports the miss as a broken transport:\n` +
         `${unreachable.join("\n")}\n\n` +
-        `Add the installed-marketplace path to the candidate loop, the way \`redskilled\` already does.`,
+        `Add the installed-marketplace path to the candidate loop, the way \`rs_dev\` already does.`,
     ).toEqual([]);
   });
 
@@ -84,13 +84,13 @@ describe("every MCP server resolves from a directory that is not this repo (#318
     // one sibling standing; the comparison holds as the set changes because it
     // reads the file rather than a list somebody remembered to update.
     const dev = (await declarations()).filter((d) => d.file === "plugins/dev/.mcp.json");
-    expect(dev.map((d) => d.server).sort()).toEqual(["redskilled"]);
+    expect(dev.map((d) => d.server).sort()).toEqual(["rs_dev"]);
     for (const server of dev) {
       expect(HOME_ANCHORED.test(server.script), `${server.server} lost its $HOME-anchored candidate`).toBe(true);
     }
   });
 
-  it("forwards host project-directory variables through the redskilled npm launcher", async () => {
+  it("forwards host project-directory variables through the rs_dev npm launcher", async () => {
     const launcher = await readFile(join(ROOT, "plugins/dev/hooks/redskilled-mcp.sh"), "utf8");
     expect(launcher).toContain("RED_SKILLS_PROJECT_ROOT");
     expect(launcher).toContain("CLAUDE_PROJECT_DIR");
