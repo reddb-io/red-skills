@@ -296,12 +296,9 @@ export function buildProjectRegistration(
   // Shape only, like every other project-authored string: present means a
   // non-empty one, and an empty prompt is a client bug the daemon can see
   // without reading a word of what a prompt says.
-  // Blank, not merely empty: a prompt of spaces is a Worker told nothing, and
-  // the daemon can see that without reading a word of what a prompt says.
-  const prompt = request.prompt === undefined
-    ? undefined
-    : requireText(request.prompt.trim(), `a prompt for project ${JSON.stringify(projectLabel)}`) &&
-      request.prompt;
+  // Blank, not merely empty: a prompt of spaces is a Worker told nothing.
+  if (request.prompt !== undefined) requireText(request.prompt.trim(), `a prompt for ${projectLabel}`);
+  const prompt = request.prompt;
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
