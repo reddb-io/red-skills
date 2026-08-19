@@ -144,7 +144,7 @@ _Avoid_: Project coordinator Worker, resident, daemon, durable Worker, pet proce
 
 **Plugin MCP**:
 The one thin, stateless MCP adapter a RedSkills plugin ships (`rs_dev`, `rs_memory`, `rs_brain`), an ACP client of **redskilled** that publishes tool schemas and forwards every call; it holds no engine, store, GitHub client, or fallback, so a session or **Worker** may mount it without paying for a heavy process. The daemon carries the weight once per host; the adapter is what a host multiplies per session.
-_Avoid_: castle MCP, redskilled MCP (as the plugin adapter's name), resident MCP, heavy MCP, per-plugin daemon
+_Avoid_: castle MCP, "redskilled MCP" (as the plugin adapter's name), resident MCP, heavy MCP, per-plugin daemon
 
 **Project control state**:
 The stateful per-project partition inside **redskilled** that understands the project's workflow policy, maintains queue consumption, and decides which disposable **Workers** to request. It is daemon state, not a separate project process, resident, or special Worker.
@@ -654,11 +654,11 @@ How many Workers a project registers for when nobody says — **one**. It is mac
 _Avoid_: concurrency, parallelism (both describe the effect, not the declared number), "the fleet size" (the Fleet is extinct)
 
 **Front door (`drain`)**:
-The redskilled MCP's one entry verb for the common intent — "make this project drain": daemon reachable, project registered at the requested target, queue flowing. **Ensure semantics with a difference report**: calling it is never an error; an unchanged state answers with a report, a different target resizes, a lapsed registration is re-created, and the response always states what changed versus what already stood. The one refusal it keeps is a **runner** change, the single genuinely destructive switch. Specialized verbs remain for surgical use; the front door is where an agent starts without knowing the choreography.
+The `rs_dev` MCP's one entry verb for the common intent — "make this project drain": daemon reachable, project registered at the requested target, queue flowing. **Ensure semantics with a difference report**: calling it is never an error; an unchanged state answers with a report, a different target resizes, a lapsed registration is re-created, and the response always states what changed versus what already stood. The one refusal it keeps is a **runner** change, the single genuinely destructive switch. Specialized verbs remain for surgical use; the front door is where an agent starts without knowing the choreography.
 _Avoid_: wrapper tool, macro verb, "the happy-path helper"
 
 **Situational help**:
-The redskilled MCP's `help` tool: it reads the host's real state — daemon, registration, queue, workers, last refusal — and answers "you are HERE; the next step is THIS verb with THESE args", followed by a short intent map of the surface. **The one live source of choreography**: MCP prompts and skills point at it rather than restating it, because two sources of operating instructions drift and the drifted one is always the one somebody follows.
+The `rs_dev` MCP's `help` tool: it reads the host's real state — daemon, registration, queue, workers, last refusal — and answers "you are HERE; the next step is THIS verb with THESE args", followed by a short intent map of the surface. **The one live source of choreography**: MCP prompts and skills point at it rather than restating it, because two sources of operating instructions drift and the drifted one is always the one somebody follows.
 _Avoid_: manual tool, docs tool, static usage dump
 
 **Repair (structured)**:

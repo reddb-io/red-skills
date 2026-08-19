@@ -1,6 +1,6 @@
-# The `redskilled` MCP — RedSkills' complete project interface
+# The `rs_dev` MCP — RedSkills' complete project interface
 
-**The `redskilled` MCP is the one canonical interface to every project execution
+**The `rs_dev` MCP is the one canonical interface to every project execution
 capability, and every other surface is a client of it.** `/afk`, `/go`, the
 `red-skills-dev` CLI, and any future command-center UI all drive the same tools
 over the same value-returning cores (ADR 0120, public name amended by ADR 0142).
@@ -30,7 +30,7 @@ The server is registered as `redskilled` in `plugins/dev/.mcp.json`, so a host t
 loaded the `dev` plugin already has it. **Hosts prefix MCP tool names — call the
 tool your host actually exposes, not the bare name.** Claude Code and Codex
 surface plugin MCP tools as `mcp__<server-slug>__<tool>` (for example
-`mcp__plugin_dev_redskilled__status` under Claude Code); the slug is derived
+`mcp__plugin_dev_rs_dev__status` under Claude Code); the slug is derived
 from the server name, so it never contains a colon — codex rejects `:` in server
 names. Resolve the exact identifier with a tool search for the bare name in the
 table below before the first call, then reuse it for the rest of the session.

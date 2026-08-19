@@ -212,7 +212,7 @@ verb from you.
 **A dead Worker still gets a dossier.** A Worker refused at birth produced no agent rounds, so the daemon's refusal line and the death evidence *are* the content. Never report "nothing to debug" when the answer is "it never started, here is why".
 
 1. **Resolve the issue to Worker(s) — tool surface first, lanes second.** Ask the
-   `redskilled` MCP before touching a file:
+   `rs_dev` MCP before touching a file:
 
    - `status { scope: "worker", live_only: false }` — the Worker vitals records.
      Each record's `number` is the issue it holds, so the resolution is a filter

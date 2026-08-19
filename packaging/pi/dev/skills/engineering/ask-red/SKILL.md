@@ -67,7 +67,7 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **"What is the Worker on issue N doing, or why did it never start?"** ->
   `/redskilled <n>` (or `/redskilled #<n>`). The numeric argument selects the
   same skill's read-only debug entry: it resolves the issue to its Worker(s)
-  through the redskilled MCP and the documented lane fallback, then writes a
+  through the `rs_dev` MCP and the documented lane fallback, then writes a
   self-serve dossier — fiche, event sequence, log excerpts with full paths, and
   a diagnosis naming the operator's next commands — to
   `.red/tmp/diagnostics/redskilled-debug-<n>-<timestamp>.md`. A Worker the
@@ -79,7 +79,7 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   command warms that published dev bundle and re-points a standing registration
   in one operation; no separate plugin name, version lookup, or re-registration
   is required.
-- **Operating project execution** -> the `redskilled` MCP, not a shell command.
+- **Operating project execution** -> the `rs_dev` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
   from live host state; it is the sole runtime source of execution choreography
   (ADR 0134). The stdio MCP and the `project` CLI namespace exposed by
@@ -161,7 +161,7 @@ ACP credential-budget observations (Project clients receive only their bound
 profile; explicit host administration receives all configured profiles and
 pools; warning and density policy stays daemon-owned) -> `/redskilled` and
 `apps/redskilled/src/acp-budget.ts`;
-`redskilled` MCP (the canonical project interface; start with its situational
+`rs_dev` MCP (the canonical project interface; start with its situational
 `help` tool, while `status {scope: worker | project | host}` provides scoped
 read-only diagnostics, and a visible project `birth_latch` routes through its
 structured `project_reset` repair) ->
@@ -283,7 +283,7 @@ through `/memory:view`, `memory docs reference-graph`, and
    the Release standard interview and the confirmed top-level `release.*` block;
    runtime release behavior belongs to the release engine, not the router.
 - Execution-daemon operation is a host route, not a feature-work one:
-  diagnose through the redskilled MCP's read-only `status {scope: host}` first; no
+  diagnose through the `rs_dev` MCP's read-only `status {scope: host}` first; no
   redskilled tool provisions or reclaims the host.
   `/redskilled` owns provisioning, host policy, status, and lifecycle;
   `/red-doctor` (check 24) reports whether the host is provisioned. The daemon's
@@ -308,7 +308,7 @@ through `/memory:view`, `memory docs reference-graph`, and
   Accepted proposals accumulate behind one full-text/diff preview and one
   destructive-batch confirmation; all eleven ADR operations remain available.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
-  `runner_detect` on the `redskilled` MCP answer which backend a host resolves to.
+  `runner_detect` on the `rs_dev` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
 - `/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`, and

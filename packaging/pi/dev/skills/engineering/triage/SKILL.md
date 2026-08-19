@@ -8,10 +8,10 @@ description: Triage issues through a state machine driven by triage roles. Use w
 
 **Triage owns the gate from raw report to agentable issue.** Route each invocation to exactly one flow; never start a second without a fresh request.
 
-**Analysis is yours; the applied transition belongs to the `redskilled` MCP.** Reading the
+**Analysis is yours; the applied transition belongs to the `rs_dev` MCP.** Reading the
 queue, the issue thread, and the codebase happens over `gh` and the repo, but
 when a decided state transition lands on an issue, apply it through the
-`redskilled` MCP with the `triage` tool (MUTATING) — `{issue, decision:
+`rs_dev` MCP with the `triage` tool (MUTATING) — `{issue, decision:
 ready-for-agent|needs-info|ready-for-human|wontfix, summon?, repo?}` — which is
 gated by the per-repo trust policy. The tool surface and host prefix rule live
 in [`../afk/MCP.md`](../afk/MCP.md). When the MCP is unreachable, name that and
