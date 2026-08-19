@@ -32,7 +32,7 @@ if [ -n "$plugin_json" ]; then
 fi
 
 if [ -n "$ver" ]; then
-  npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp
+  npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp "$@"
   status=$?
   if [ "$status" -eq 0 ]; then
     exit 0
@@ -46,7 +46,7 @@ repo="$PWD"
 if [ -f "$repo/pnpm-workspace.yaml" ] && \
    [ -f "$repo/apps/dev/package.json" ] && \
    [ -f "$repo/dist/redskilled-mcp.bundle.min.mjs" ]; then
-  exec node "$repo/dist/redskilled-mcp.bundle.min.mjs"
+  exec node "$repo/dist/redskilled-mcp.bundle.min.mjs" "$@"
 fi
 
 printf 'redskilled: could not locate the redskilled-mcp bundle\n' >&2
