@@ -82,3 +82,57 @@ describe("an unregistered drain is a dead end that announces itself", () => {
     expect(projectIsRegistered(hostState(false), project)).toBe(false);
   });
 });
+
+describe("a drain registers the project it drains", () => {
+  const bind = (registered: boolean, registerProject?: (request: Readonly<Record<string, unknown>>) => unknown) =>
+    bindProjectControl({
+      scopedProject: () => project,
+      projectControls: new Map<string, ProjectControlState>(),
+      persistProjectControls: async () => {},
+      hostState: () => hostState(registered),
+      clock: () => "2026-08-19T20:00:00.000Z",
+      readGithubCustody: async () => null,
+      ...(registerProject == null ? {} : { registerProject }),
+    });
+
+  it("registers the work the caller carried, under the project it is bound to", async () => {
+    const registered: Array<Readonly<Record<string, unknown>>> = [];
+
+    await bind(true, (request) => registered.push(request)).mutateProjectControl("drain", {
+      target: 2,
+      registration: { selector: "is:issue label:ready-for-agent", argv: ["redskilled", "acp-worker"], target: 2 },
+    });
+
+    expect(registered).toEqual([
+      expect.objectContaining({
+        project_label: "reddb-io/red-skills",
+        selector: "is:issue label:ready-for-agent",
+        target: 2,
+      }),
+    ]);
+  });
+
+  it("names the project itself, so a caller cannot register work under another one", async () => {
+    const registered: Array<Readonly<Record<string, unknown>>> = [];
+
+    await bind(true, (request) => registered.push(request)).mutateProjectControl("drain", {
+      registration: { project_label: "someone/else", selector: "is:issue", argv: ["x"], target: 1 },
+    });
+
+    expect(registered[0]).toMatchObject({ project_label: "reddb-io/red-skills" });
+  });
+
+  it("refuses when the endpoint was handed no registration path, rather than recording a drain nothing polls", async () => {
+    await expect(bind(false).mutateProjectControl("drain", { registration: { selector: "is:issue" } }))
+      .rejects.toThrow(/cannot register a project/);
+  });
+
+  it("leaves a drain that carries no work exactly as it was", async () => {
+    const registered: unknown[] = [];
+
+    const answer = await bind(false, (request) => registered.push(request)).mutateProjectControl("drain", {});
+
+    expect(registered).toEqual([]);
+    expect(answer).toMatchObject({ drain_intent: "draining", warning: UNREGISTERED_DRAIN_WARNING });
+  });
+});

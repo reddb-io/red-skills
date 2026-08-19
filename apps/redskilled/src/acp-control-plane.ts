@@ -47,6 +47,7 @@ import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import { resolvePermission } from "./acp-permission.js";
+import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
   demandTurnRunnerFor,
   type DemandTurnRecord,
@@ -131,6 +132,15 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly memoryStore?: ProjectMemoryStore;
   /** Where an unattended turn's lifecycle goes when no client listens (#4100). */
   readonly recordDemandTurn?: (record: DemandTurnRecord) => void;
+  /**
+   * Register a project with the demand loop, on its own behalf (#4101).
+   *
+   * The daemon's own registration path, handed in rather than reached for: the
+   * control plane must not learn a second way to write the record the lifecycle
+   * owns. Absent means this endpoint cannot register — legal in a test, and the
+   * drain then answers exactly as it did before registrations reached it.
+   */
+  readonly registerProject?: (request: RedskilledProjectRegistrationRequest) => unknown;
 }
 
 /** The store handles every connection on this endpoint shares (ADR 0152). */
@@ -252,6 +262,9 @@ async function servePublicConnection(
     hostState: options.hostState,
     clock: () => options.clock?.() ?? new Date().toISOString(),
     readGithubCustody: bindAcpProjectGithubCustodyStatus(options.githubGateway, scopedProject),
+    ...(options.registerProject == null
+      ? {}
+      : { registerProject: (request) => options.registerProject!(request as never) }),
   });
 
   const { v1: v1Methods, v2: v2Methods } = connectionMethodTables({

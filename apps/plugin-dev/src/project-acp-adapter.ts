@@ -19,7 +19,7 @@ const CONTROL_TOOL = new Map<string, "drain" | "stop" | "status">([
  * recognise, so the whole thing became "run this prompt in a Worker" and came
  * back as narration with no answer in it.
  */
-const CONTROL_ARGUMENTS = new Set(["target", "runner", "scope"]);
+const CONTROL_ARGUMENTS = new Set(["target", "runner", "scope", "registration"]);
 
 /** Project MCP calls are projections; the adapter never executes a workflow. */
 export async function invokeProjectMcp(
@@ -77,12 +77,19 @@ export function invokeRedcodeProject(
 function controlRequest(input: Readonly<Record<string, unknown>>): {
   target?: number;
   runner?: string;
+  registration?: Readonly<Record<string, unknown>>;
 } {
   const target = input.target;
   const runner = input.runner;
+  // The work a drain carries (#4101): authored here, where an Issue and a ready
+  // label mean something, and opaque from the socket onward.
+  const registration = input.registration;
   return {
     ...(typeof target === "number" && Number.isInteger(target) && target >= 0 ? { target } : {}),
     ...(typeof runner === "string" && runner.length > 0 ? { runner } : {}),
+    ...(registration != null && typeof registration === "object" && !Array.isArray(registration)
+      ? { registration: registration as Readonly<Record<string, unknown>> }
+      : {}),
   };
 }
 

@@ -35,6 +35,8 @@ export type RedskillsProjectControlOperation = "drain" | "stop" | "status";
 export interface RedskillsProjectControlRequest {
   readonly target?: number;
   readonly runner?: string;
+  /** The work this drain carries, authored by the project (#4101). */
+  readonly registration?: Readonly<Record<string, unknown>>;
 }
 
 export interface RedskillsProjectControlSnapshot {
@@ -166,6 +168,7 @@ export async function connectRedskillsProjectAcp(
     const outcome = await connection.agent.request<unknown>(PROJECT_CONTROL_METHOD[operation], {
       ...(request.target == null ? {} : { target: request.target }),
       ...(request.runner == null ? {} : { runner: request.runner }),
+      ...(request.registration == null ? {} : { registration: request.registration }),
     });
     if (!isProjectControl(outcome)) throw new Error("redskilled returned an invalid Project control outcome");
     if (operation === "status" && !isProjectStatus(outcome)) {
