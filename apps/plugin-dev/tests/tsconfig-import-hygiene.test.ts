@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "..", "..", "..");
 const BASE_CONFIG = join(ROOT, "tsconfig.base.json");
-const DEV_ROOT = join(ROOT, "apps", "dev");
+const DEV_ROOT = join(ROOT, "apps", "plugin-dev");
 const OPTED_OUT_CONFIGS = [
-  "benchmarks/memory/tsconfig.json",
   "apps/plugin-brain/tsconfig.json",
   "apps/plugin-memory/tsconfig.json",
   "apps/rsp/tsconfig.json",
+  "benchmarks/memory/tsconfig.json",
   "packages/worker/tsconfig.json",
 ];
 const RATCHETED_CONFIGS = ["apps/plugin-dev/tsconfig.json"];
@@ -146,7 +146,13 @@ describe("workspace TypeScript import hygiene", () => {
     expect(base.compilerOptions?.noUnusedLocals).toBe(true);
 
     const configs = (
-      await Promise.all([listTsConfigs(join(ROOT, "apps")), listTsConfigs(join(ROOT, "packages"))])
+      await Promise.all([
+        listTsConfigs(join(ROOT, "apps")),
+        // ADR 0153 moved benchmarks out of `apps/`; a root the sweep does not
+        // walk is a package that silently stops answering to the shared base.
+        listTsConfigs(join(ROOT, "benchmarks")),
+        listTsConfigs(join(ROOT, "packages")),
+      ])
     ).flat();
 
     for (const path of configs) {

@@ -192,7 +192,9 @@ while IFS= read -r plugin_json; do
   # check-npm-tarball-boundaries.mjs asks. `internal` is skills-only, and since
   # #4031 `apps/plugin-dev` exists without emitting `dev.bundle.min.mjs`, so the mere
   # presence of the app directory stopped being the answer.
-  if [ -f "apps/$plugin/package.json" ] && node -e '
+  plugin_manifest="apps/$plugin/package.json"
+  [ -f "$plugin_manifest" ] || plugin_manifest="apps/plugin-$plugin/package.json"
+  if [ -f "$plugin_manifest" ] && node -e '
     const fs = require("node:fs");
     const [manifest, name] = process.argv.slice(1);
     const scripts = JSON.parse(fs.readFileSync(manifest, "utf8")).scripts ?? {};
@@ -200,7 +202,7 @@ while IFS= read -r plugin_json; do
       (c) => typeof c === "string" && c.includes(`${name}.bundle.min.mjs`),
     );
     process.exit(emits ? 0 : 1);
-  ' "apps/$plugin/package.json" "$plugin"; then
+  ' "$plugin_manifest" "$plugin"; then
     : > "$plugin_tree/dist/$plugin.bundle.min.mjs"
   else
     skills_only_plugin="$plugin"

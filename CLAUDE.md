@@ -27,18 +27,18 @@ red-skills/                         ← repo root + marketplace
 │       ├── memory/CONTEXT.md       ← `memory` plugin glossary
 │       └── brain/CONTEXT.md        ← `brain` plugin glossary
 ├── apps/                           ← runtime implementations (ADR 0034, relocated to root by ADR 0060)
-│   ├── dev/                        ← `dev` runtime implementation
-│   ├── memory/                     ← `memory` runtime implementation
-│   ├── brain/                      ← `brain` runtime implementation
-│   ├── code-nav/                   ← code navigation runtime implementation
+│   ├── plugin-dev/                 ← `dev` runtime implementation
+│   ├── plugin-memory/              ← `memory` runtime implementation
+│   ├── plugin-brain/               ← `brain` runtime implementation
+│   ├── mcp-navigator/              ← code navigation runtime implementation
 │   ├── redskilled/                 ← host-scoped execution daemon: exactly one singleton per machine behind a unix socket (ADR 0130)
-│   ├── opencode-host/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
-│   ├── herdr-plugin-red-skills/    ← vendored herdr plugin that READS `redskilled` (ADR 0131); `.upstream` records the absorbed SHA
-│   ├── vscode-extension-red-skills/ ← VS Code extension reading the same daemon
+│   ├── host-opencode/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
+│   ├── herdr-plugin-redskilled/    ← vendored herdr plugin that READS `redskilled` (ADR 0131); `.upstream` records the absorbed SHA
+│   ├── vscode-extension-redskilled/ ← VS Code extension reading the same daemon
 │   ├── rsp/                        ← token-efficient command wrappers and the elision store
-│   ├── red-browser/                ← CDP-driven browser surface
-│   ├── afk-container/              ← containerised AFK runner image
-│   └── benchmark-memory/, benchmark-code-understanding/
+│   ├── mcp-browser/                ← CDP-driven browser surface
+│   ├── worker-container/           ← containerised Worker runner image
+│   (benchmarks live at the repo root in `benchmarks/`, ADR 0153)
 ├── packages/                       ← code shared by multiple runtimes
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
 │   ├── build-info/                 ← shared build metadata helpers

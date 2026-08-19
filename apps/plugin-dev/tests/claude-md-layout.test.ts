@@ -59,8 +59,10 @@ describe("CLAUDE.md layout block", () => {
 
   it("does not name the pre-#3011 herdr path", () => {
     // The specific drift this test was written for; kept as a named case so a
-    // revert is refused by name rather than by a generic existence check.
+    // revert is refused by name rather than by a generic existence check. ADR
+    // 0153 renamed the directory `herdr-plugin-red-skills` →
+    // `herdr-plugin-redskilled`; the bare `herdr-plugin/` drift stays refused.
     expect(markdown).not.toContain("herdr-plugin/ ");
-    expect(markdown).toContain("herdr-plugin-red-skills/");
+    expect(markdown).toContain("herdr-plugin-redskilled/");
   });
 });

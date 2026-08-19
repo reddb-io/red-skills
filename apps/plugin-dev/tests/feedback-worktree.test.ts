@@ -440,8 +440,8 @@ describe("makeFeedbackWorktree — already-materialised checkout token (#2339)",
   function makeFixture(): { root: string; dir: string; cleanup: () => void } {
     const base = mkdtempSync(join(tmpdir(), "red-gate-"));
     const root = join(base, "repo");
-    mkdirSync(join(root, "apps", "dev"), { recursive: true });
-    writeFileSync(join(root, "apps", "dev", "package.json"), JSON.stringify({ name: "dev" }));
+    mkdirSync(join(root, "apps", "plugin-dev"), { recursive: true });
+    writeFileSync(join(root, "apps", "plugin-dev", "package.json"), JSON.stringify({ name: "dev" }));
     const dir = join(base, "rebase-wt");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");

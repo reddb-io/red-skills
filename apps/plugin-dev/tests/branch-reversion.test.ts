@@ -222,10 +222,13 @@ describe("detectBranchReversion", () => {
     const finding = detectBranchReversion(diff, forkPoint, afterForkBasePatch, "", "origin/main");
 
     expect(finding.blocked).toBe(true);
+    // HISTORICAL paths: this case reads the real be56bfc05 diff out of git, and
+    // that commit predates ADR 0153's rename. A tree that already happened does
+    // not move because the directory did.
     expect(finding.revertingFiles).toEqual(expect.arrayContaining([
       "apps/redskilled/src/demand-loop.ts",
-      "apps/plugin-dev/src/runtime/feedback-worktree.ts",
-      "apps/plugin-dev/src/core/worktree-setup-doctor.ts",
+      "apps/dev/src/runtime/feedback-worktree.ts",
+      "apps/dev/src/core/worktree-setup-doctor.ts",
     ]));
     expect(finding.testFileLineDeltas).toContainEqual({
       file: "apps/redskilled/tests/birth-latch.test.ts",

@@ -75,8 +75,8 @@ test("the install-time build hook materializes the entry on both platforms", () 
 
 test("the README documents the install that needs no checkout", () => {
   const readme = readFileSync(join(ROOT, "README.md"), "utf8");
-  assert.match(readme, /herdr plugin install reddb-io\/red-skills\/apps\/herdr-plugin-red-skills/);
-  assert.match(readme, /herdr plugin link apps\/herdr-plugin-red-skills/);
+  assert.match(readme, /herdr plugin install reddb-io\/red-skills\/apps\/herdr-plugin-redskilled/);
+  assert.match(readme, /herdr plugin link apps\/herdr-plugin-redskilled/);
 });
 
 // ---------------------------------------------------------------------------
