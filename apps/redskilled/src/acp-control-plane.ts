@@ -114,6 +114,10 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly githubGateway?: RedskilledGithubGatewayRegistration;
   /** Explicit endpoint authority; ordinary public/project ACP stays false. */
   readonly hostAdministration?: boolean;
+  /** Where a dead Worker's evidence is kept; this operator's lane by default. */
+  readonly evidenceRoot?: string;
+  /** How long an expired evidence lane survives (ADR 0149 §2). Host policy. */
+  readonly evidenceTtlMs?: number;
   /** Daemon clock used to date status projections. */
   readonly clock?: () => string;
 }
