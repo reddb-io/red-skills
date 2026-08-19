@@ -47,7 +47,7 @@ Attribution is preserved in [NOTICE](./NOTICE).
 
 **Installing and using it**
 
-- [Install](#install) — the universal installer
+- [Install](#install) — the mise/red-dev bootstrap
 - [Quick Start](#quick-start) — bootstrap a repo and move work
 - [Host Support](#host-support) — which agent host gets which surface
 
@@ -390,65 +390,60 @@ session:
 Codex and Gemini have the same marketplace flow through their own CLIs — the
 exact commands live in [docs/INSTALL.md](./docs/INSTALL.md).
 
-For every other host, and for machine-wide installs and upgrades, use the
-universal installer:
+For every other host, and for machine-wide installs and upgrades, RedSkills is
+acquired and wired by **red-dev**, which [mise](https://mise.jdx.dev) installs
+and pins:
+
+```bash
+mise use --global red-dev@1
+red-dev install
+```
+
+`red-dev install` converges the machine toward its manifest — RedSkills wiring
+for every detected host CLI included — and owns the tree it installs from, so a
+later `red-dev update` advances it.
+
+| Host | What the bootstrap wires |
+| --- | --- |
+| Claude Code | The RedSkills marketplace, plus `dev`, `memory`, and `brain`. |
+| Codex CLI | The RedSkills marketplace, plus `dev`, `memory`, and `brain`. |
+| Gemini CLI | A generated, self-contained `dev` extension from the local package set. |
+| Hermes | The complete `dev` skills tree in Hermes' user-global skills directory. |
+| OpenCode | Generated OpenCode plugin modules, skills, MCP config, provider config, and TUI attention config. |
+| RedCode | The same generated host surface independently under `~/.config/redcode/`. |
+| Pi | One Pi package per plugin via `pi install`, exposing the same skill buckets through the standard agent skills protocol. |
+
+The old one-liner still resolves, and now hands over to exactly that bootstrap
+rather than installing a second copy of RedSkills beside it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
 ```
 
-The installer resolves the latest GitHub Release, stores it under
-`~/.red-skills/versions/<tag>`, updates `~/.red-skills/current`, detects which
-supported CLIs are present (`claude`, `codex`, `opencode`, `redcode`, `pi`), then installs
-the right surface for each host:
-
-| Host | What the installer does |
-| --- | --- |
-| Claude Code | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
-| Codex CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
-| Gemini CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
-| OpenCode | Generates and installs OpenCode plugin modules, skills, MCP config, provider config, and TUI attention config. |
-| RedCode | Installs the same generated host surface independently under `~/.config/redcode/`. |
-| Pi | Registers one Pi package per plugin via `pi install`, exposes the same skill buckets through the standard agent skills protocol. |
-
-OpenCode installs use the published `opencode-host.bundle.min.mjs` asset when
-available, so normal installs need `node` but do not need a local workspace
-build. If that asset is unavailable for a pinned older release, the installer
-falls back to building from source with `pnpm`.
-
-Useful options:
+It checks the platform, installs the pinned `red-dev@1` through mise when it is
+missing, verifies the entry point answers, and runs `red-dev install`. It
+acquires no packages, registers no marketplace, writes no version tree and keeps
+no cache. A machine that still carries the retired `~/.red-skills` tree is told
+how to retire it:
 
 ```bash
-# inspect without writing
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --dry-run
-
-# install only one host
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --only opencode
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --only redcode
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --only pi
-
-# pin a release
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --version v3.1.2
-
-# force plugin reinstall where the host supports removal
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --force
-
-# uninstall from every detected host
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --uninstall
-
-# uninstall and remove the ~/.red-skills release cache
+# unwire the detected hosts, then remove the retired standalone tree
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --uninstall --purge
-
-# offline/dev: register the marketplace from the downloaded snapshot instead of
-# GitHub. That machine then stays on that snapshot until you re-run the installer.
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --local-marketplace
 ```
 
-The Claude and Codex marketplaces are registered from the GitHub source, so
-`/plugin marketplace update red-skills` pulls origin and sees every future
-release — no re-install needed. Re-running the one-liner on a machine that still
-carries an older directory-sourced registration replaces it; `/red-doctor`
-reports the registered source and `--fix` repoints it. See
+**Developing against a checkout?** `--local-dev` wires the detected hosts from a
+checkout you already have. It is explicitly not a production installation: it
+tracks no release, updates nothing, and registers the checkout — never the
+GitHub repository — as the marketplace source.
+
+```bash
+scripts/install.sh --local-dev --source-dir "$PWD" --only claude
+```
+
+A marketplace registered by red-dev points at the tree red-dev manages, and
+nothing here ever repoints it: `/red-doctor` check 26 reports each host's
+registered source read-only and proposes the bootstrap, never a re-registration
+of its own. See
 [How Updates Reach a Machine](./docs/INSTALL.md#how-updates-reach-a-machine).
 
 After installing, restart any already-open CLI sessions so they reload plugin

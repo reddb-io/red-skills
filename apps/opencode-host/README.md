@@ -69,21 +69,21 @@ version (never verbose), and a flag the schema does not declare fails with exit
 2 and a message naming it. The accepted surface is declared in
 `src/cli-args.ts`.
 
-## Universal install (recommended)
+## Bootstrap install (recommended)
 
-For normal user installs, use the root universal installer. It resolves the
-latest RedSkills release, detects `opencode` and `redcode` alongside Claude Code
-and Codex, and invokes the adapter for every host present:
+For normal user installs, RedSkills is acquired and wired by red-dev, which mise
+installs and pins. It detects `opencode` and `redcode` alongside Claude Code and
+Codex, and invokes this adapter for every host present:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
+mise use --global red-dev@1
+red-dev install
 ```
 
 That path installs OpenCode under `~/.config/opencode/`, RedCode under
-`~/.config/redcode/`, and also keeps
-Claude/Codex marketplace installs in sync when those CLIs are present. It uses
-the published `opencode-host.bundle.min.mjs` release asset when available, so
-normal installs need `node` but do not need a local workspace build.
+`~/.config/redcode/`, and also keeps Claude/Codex marketplace installs in sync
+when those CLIs are present. The root `scripts/install.sh` one-liner still
+resolves and hands over to the same bootstrap; it installs nothing of its own.
 
 ## Adapter install script
 
