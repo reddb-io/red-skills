@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { decode, encode } from "@reddb-io/toon";
 import { tokenToAnsiBackground } from "@reddb-io/brand-tokens";
-import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { LIVENESS_LANE_FILENAME } from "@reddb-io/worker";
 import {
   statuslineCommand,
   resolveRoot,

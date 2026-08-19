@@ -56,7 +56,7 @@ if (view === "down") {
       "worktree: .red/tmp/workers/w-2f91a/2931/worktree",
       "gate: pnpm -C apps/dev test:invariants",
       "WARN  toon-json-guard: 1 new JSON file I/O site, see .red/contracts/",
-      "gate: vitest packages/red-castle — 412 passed",
+      "gate: vitest packages/worker — 412 passed",
       "ERROR push refused: non-fast-forward on origin/main",
       "landing: rebased onto origin/main, retrying",
       "ok: PR #2952 opened",

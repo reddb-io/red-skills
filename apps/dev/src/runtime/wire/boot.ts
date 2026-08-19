@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
-import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
+import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/worker/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
 import { readDevBundleCacheState } from "../../core/bundle-version.js";

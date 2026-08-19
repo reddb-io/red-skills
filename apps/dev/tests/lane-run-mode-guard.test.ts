@@ -15,7 +15,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CASTLE_SELECTION_LABELS } from "@reddb-io/red-castle/engine";
+import { DEFAULT_CASTLE_SELECTION_LABELS } from "@reddb-io/worker/engine";
 import {
   LANE_RUN_MODE_CONTRACT,
   laneRunModeRefusal,

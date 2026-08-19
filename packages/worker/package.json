@@ -1,7 +1,7 @@
 {
-  "name": "@reddb-io/red-castle",
+  "name": "@reddb-io/worker",
   "version": "3.20.0",
-  "description": "reddb.io fork of sandcastle — CLI/library for orchestrating AI agents in isolated sandbox environments. Consumed as TypeScript source by the RedSkills dev plugin.",
+  "description": "The Worker body: agent and sandbox providers, worktree materialisation, gate runner and turn loop, running inside one admitted Worker process. Vendored from sandcastle (ADR 0101) and consumed as TypeScript source.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -39,7 +39,7 @@
   "packageManager": "pnpm@11.5.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/reddb-io/red-castle"
+    "url": "https://github.com/reddb-io/red-skills"
   },
   "license": "MIT",
   "dependencies": {

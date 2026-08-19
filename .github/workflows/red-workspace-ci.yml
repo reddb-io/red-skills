@@ -131,8 +131,8 @@ jobs:
       - name: Test changeset validation contract
         run: scripts/test-validate-changesets.sh
 
-      - name: Test red-castle vendor contract
-        run: scripts/test-red-castle-vendor-contract.sh
+      - name: Test worker vendor contract
+        run: scripts/test-worker-vendor-contract.sh
 
       - name: Test hitl-card merge token contract
         run: scripts/test-red-hitl-card-merge-token-contract.sh
@@ -216,7 +216,7 @@ jobs:
         if: needs.scope.outputs.run_typecheck == 'true'
         run: pnpm lint
 
-      - name: Typecheck workspace (apps + packages, excludes red-castle)
+      - name: Typecheck workspace (apps + packages, excludes the vendored worker package)
         if: needs.scope.outputs.run_typecheck == 'true'
         run: pnpm typecheck
 

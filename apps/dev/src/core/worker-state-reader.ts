@@ -25,7 +25,7 @@ import {
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
   type SandboxTag,
-} from "@reddb-io/red-castle";
+} from "@reddb-io/worker";
 
 export type WorkerLivenessVerdict = "active" | "quiet-but-live" | "dead";
 

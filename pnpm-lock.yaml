@@ -196,9 +196,6 @@ importers:
       '@reddb-io/protocol-acp':
         specifier: workspace:*
         version: link:../../packages/protocol-acp
-      '@reddb-io/red-castle':
-        specifier: workspace:*
-        version: link:../../packages/red-castle
       '@reddb-io/redskilled':
         specifier: workspace:*
         version: link:../redskilled
@@ -211,6 +208,9 @@ importers:
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.26.2
+      '@reddb-io/worker':
+        specifier: workspace:*
+        version: link:../../packages/worker
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -360,9 +360,6 @@ importers:
       '@reddb-io/protocol-acp':
         specifier: workspace:*
         version: link:../../packages/protocol-acp
-      '@reddb-io/red-castle':
-        specifier: workspace:*
-        version: link:../../packages/red-castle
       '@reddb-io/redskilled-render':
         specifier: workspace:*
         version: link:../../packages/redskilled-render
@@ -372,6 +369,9 @@ importers:
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.26.2
+      '@reddb-io/worker':
+        specifier: workspace:*
+        version: link:../../packages/worker
       tuiuiu.js:
         specifier: 1.0.75
         version: 1.0.75
@@ -437,9 +437,6 @@ importers:
       '@reddb-io/github':
         specifier: workspace:*
         version: link:../../packages/github
-      '@reddb-io/red-castle':
-        specifier: workspace:*
-        version: link:../../packages/red-castle
       '@reddb-io/sdk':
         specifier: 1.23.1
         version: 1.23.1
@@ -449,6 +446,9 @@ importers:
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.26.2
+      '@reddb-io/worker':
+        specifier: workspace:*
+        version: link:../../packages/worker
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
@@ -585,7 +585,42 @@ importers:
         specifier: 'catalog:'
         version: 5.9.3
 
-  packages/red-castle:
+  packages/redskilled-render:
+    dependencies:
+      '@reddb-io/brand-tokens':
+        specifier: workspace:*
+        version: link:../brand-tokens
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.26.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/shared:
+    dependencies:
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.26.2
+      cli-args-parser:
+        specifier: ^1.0.6
+        version: 1.0.6
+    devDependencies:
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@25.9.5)
+
+  packages/worker:
     dependencies:
       '@clack/prompts':
         specifier: ^1.1.0
@@ -639,41 +674,6 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@25.9.5)(tsx@4.23.1)(yaml@2.9.0)
-
-  packages/redskilled-render:
-    dependencies:
-      '@reddb-io/brand-tokens':
-        specifier: workspace:*
-        version: link:../brand-tokens
-      '@reddb-io/shared':
-        specifier: workspace:*
-        version: link:../shared
-      '@reddb-io/toon':
-        specifier: 'catalog:'
-        version: 0.26.2
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.20.1
-      typescript:
-        specifier: 'catalog:'
-        version: 5.9.3
-      vitest:
-        specifier: 'catalog:'
-        version: 2.1.9(@types/node@22.20.1)
-
-  packages/shared:
-    dependencies:
-      '@reddb-io/toon':
-        specifier: 'catalog:'
-        version: 0.26.2
-      cli-args-parser:
-        specifier: ^1.0.6
-        version: 1.0.6
-    devDependencies:
-      vitest:
-        specifier: 'catalog:'
-        version: 2.1.9(@types/node@25.9.5)
 
 packages:
 

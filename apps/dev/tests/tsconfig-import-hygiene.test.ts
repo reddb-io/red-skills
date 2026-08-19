@@ -11,7 +11,7 @@ const OPTED_OUT_CONFIGS = [
   "apps/brain/tsconfig.json",
   "apps/memory/tsconfig.json",
   "apps/rsp/tsconfig.json",
-  "packages/red-castle/tsconfig.json",
+  "packages/worker/tsconfig.json",
 ];
 const RATCHETED_CONFIGS = ["apps/dev/tsconfig.json"];
 const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {

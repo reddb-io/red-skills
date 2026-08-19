@@ -8,7 +8,7 @@ import type {
   CastleLaneRecord,
   LaneEvent,
   LaneFollower,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 
 /** The single subscribable resource that streams castle lane events. */

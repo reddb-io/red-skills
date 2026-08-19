@@ -109,7 +109,7 @@ import {
 } from "../triage-labels.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { markTerminalState, recoveryOrdinalFor } from "./types.js";
-import { recordIssueHeal } from "@reddb-io/red-castle/engine";
+import { recordIssueHeal } from "@reddb-io/worker/engine";
 import { editIssueLifecycleLabels, routeRecovery } from "./recovery.js";
 import { emitFailure as emitFailureEnvelope } from "./terminal-envelope.js";
 import { blockerForFailure } from "./failure-blocker.js";

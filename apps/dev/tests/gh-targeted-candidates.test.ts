@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { selectCastleIssues } from "@reddb-io/red-castle/engine";
+import { selectCastleIssues } from "@reddb-io/worker/engine";
 import {
   resolveDispatchCandidatePool,
   resolveDispatchCandidates,

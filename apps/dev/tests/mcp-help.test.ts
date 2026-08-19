@@ -47,7 +47,7 @@ vi.mock("../src/runtime/gh.js", async (importOriginal) => {
 import {
   createCastleMcpTools,
   type CastleMcpDependencies,
-} from "@reddb-io/red-castle/mcp-server";
+} from "@reddb-io/worker/mcp-server";
 import { auditConfigLoad, readValidationMoments } from "../src/core/config.js";
 import { describeValidationMoments } from "../src/core/validation-moments.js";
 

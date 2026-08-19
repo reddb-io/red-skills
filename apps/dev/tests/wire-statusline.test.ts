@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createCastleLaneWriters } from "@reddb-io/red-castle/engine";
+import { createCastleLaneWriters } from "@reddb-io/worker/engine";
 import { spawn } from "node:child_process";
 import {
   afkPaths,

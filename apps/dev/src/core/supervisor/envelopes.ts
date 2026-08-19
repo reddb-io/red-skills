@@ -5,7 +5,7 @@ import { dispose } from "../disposition.js";
 import { workerIdentity } from "../host-identity.js";
 import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
 import { isRefused, parkOrHuman, planTransition, type StateTransition } from "../state-transition.js";
-import { recordIssueHeal } from "@reddb-io/red-castle/engine";
+import { recordIssueHeal } from "@reddb-io/worker/engine";
 import type { WorkerBudgetBreach, WorkerUsage } from "../worker-budget.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 

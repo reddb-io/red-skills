@@ -22,7 +22,7 @@ describe("redskilled MCP lightweight proxy boundary", () => {
 
     for (const forbidden of [
       "./castle-resident.js",
-      "@reddb-io/red-castle/engine",
+      "@reddb-io/worker/engine",
       "./mcp-adapter.js",
       "./resident-cron.js",
       "./resident-self-update.js",

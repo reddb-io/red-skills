@@ -1,8 +1,8 @@
 import { isGithubQuotaText } from "@reddb-io/shared/github-quota.js";
-import { isRunnerExhausted as isAiRunnerExhausted } from "@reddb-io/red-castle/engine";
+import { isRunnerExhausted as isAiRunnerExhausted } from "@reddb-io/worker/engine";
 
-export { claudeSpawnArgs, codexSpawnArgs, specialUserRequestBlock } from "@reddb-io/red-castle/engine";
-export type { SpawnArgsInput, SpawnInvocation } from "@reddb-io/red-castle/engine";
+export { claudeSpawnArgs, codexSpawnArgs, specialUserRequestBlock } from "@reddb-io/worker/engine";
+export type { SpawnArgsInput, SpawnInvocation } from "@reddb-io/worker/engine";
 
 /**
  * True when `text` carries a quota-exhaustion signal — the seam that maps a

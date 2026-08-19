@@ -1,7 +1,7 @@
 // AFK execution backend public surface. Implementation lives in ./execution/ modules.
 
-export type { AgentStreamEvent } from "@reddb-io/red-castle";
-export { BLOCKED_SIGNAL, COMPLETION_SIGNALS, DONE_SIGNAL } from "@reddb-io/red-castle/engine";
+export type { AgentStreamEvent } from "@reddb-io/worker";
+export { BLOCKED_SIGNAL, COMPLETION_SIGNALS, DONE_SIGNAL } from "@reddb-io/worker/engine";
 export type { AgentOutput } from "./agent-output.js";
 export { CODEX_EFFORTS, CLAUDE_EFFORTS, MINIMAX_EFFORTS } from "./runner-spec.js";
 export {

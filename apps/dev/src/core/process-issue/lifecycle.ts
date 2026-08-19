@@ -82,7 +82,7 @@ import {
   envelopeStatusFor,
   type WorkerOutcome,
 } from "../worker-outcome.js";
-import type { SpinPattern } from "@reddb-io/red-castle/engine";
+import type { SpinPattern } from "@reddb-io/worker/engine";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";

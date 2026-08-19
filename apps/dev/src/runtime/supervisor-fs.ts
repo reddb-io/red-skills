@@ -31,7 +31,7 @@ import {
   parseLivenessRecords,
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
-} from "@reddb-io/red-castle";
+} from "@reddb-io/worker";
 
 /** Every attempt dir (`workers/{wid}/{issue}-a{n}`) for a worker, absolute
  * paths. Mirrors iter_dirs_for_worker. Missing worker dir → []. */

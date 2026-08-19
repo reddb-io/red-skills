@@ -17,7 +17,7 @@ import {
   CASTLE_LANE_FILENAMES,
   castleStateSnapshotPath,
   createEnginePaths,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import {
   IDENTITY_FILENAME,
   writeIdentitySync,

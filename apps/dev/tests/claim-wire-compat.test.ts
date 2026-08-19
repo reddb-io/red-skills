@@ -7,7 +7,7 @@
 // diverges from the pinned wire format.
 
 import { describe, expect, it } from "vitest";
-import { CLAIM_WIRE_FIXTURES } from "@reddb-io/red-castle/engine";
+import { CLAIM_WIRE_FIXTURES } from "@reddb-io/worker/engine";
 import { CLAIM_MARKER_VERSION, parseClaimRecords, renderClaimComment } from "../src/core/claim.js";
 
 describe("claim wire compatibility through the shim", () => {
@@ -18,7 +18,7 @@ describe("claim wire compatibility through the shim", () => {
   });
 
   it("re-exports the single engine implementation, not a fork", async () => {
-    const engine = await import("@reddb-io/red-castle/engine");
+    const engine = await import("@reddb-io/worker/engine");
     expect(parseClaimRecords).toBe(engine.parseClaimRecords);
     expect(renderClaimComment).toBe(engine.renderClaimComment);
     expect(CLAIM_MARKER_VERSION).toBe(engine.CLAIM_MARKER_VERSION);

@@ -6,8 +6,8 @@ import {
   writeCastleStateSnapshot,
   type CastleLaneKind,
   type CastleStateSnapshot,
-} from "@reddb-io/red-castle/engine";
-import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+} from "@reddb-io/worker/engine";
+import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/worker";
 import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
 import type { RedskilledMechanicalHealStamp } from "@reddb-io/redskilled/protocol";
 import { workerStatePath } from "./state.js";

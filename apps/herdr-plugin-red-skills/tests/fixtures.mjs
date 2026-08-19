@@ -85,7 +85,7 @@ export function statuslinePayload(overrides = {}) {
           used_fraction: 0.44,
           enforceable: true,
         },
-        log: { last_line: "gate: vitest packages/red-castle …", published_at: "2026-07-31T11:59:50.000Z", source: "heartbeat" },
+        log: { last_line: "gate: vitest packages/worker …", published_at: "2026-07-31T11:59:50.000Z", source: "heartbeat" },
       },
       {
         worker_id: "w-idle",

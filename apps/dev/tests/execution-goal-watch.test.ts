@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { LivenessVerdict, RunResult } from "@reddb-io/red-castle";
+import type { LivenessVerdict, RunResult } from "@reddb-io/worker";
 import {
   runAgent,
   startGoalWatch,

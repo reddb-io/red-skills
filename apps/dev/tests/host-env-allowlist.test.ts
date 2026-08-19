@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { pickAllowedEnv } from "@reddb-io/red-castle/sandboxes/no-sandbox";
+import { pickAllowedEnv } from "@reddb-io/worker/sandboxes/no-sandbox";
 import { AFK_HOST_ENV_ALLOWLIST, resolveHostEnvAllowlist } from "../src/core/host-env-allowlist.js";
 import { buildLineRedactor } from "../src/runtime/outbound-redaction.js";
 

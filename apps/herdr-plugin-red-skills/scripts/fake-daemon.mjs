@@ -69,7 +69,7 @@ const CHATTER = [
   "claim: #%n gate-hardening: the ratchet only ever shrinks",
   "worktree: .red/tmp/workers/%w/%n/worktree",
   "gate: pnpm -C apps/dev test:invariants",
-  "gate: vitest packages/red-castle — 412 passed",
+  "gate: vitest packages/worker — 412 passed",
   "WARN  toon-json-guard: 1 new JSON file I/O site",
   "landing: rebased onto origin/main, retrying",
   "ERROR push refused: non-fast-forward on origin/main",

@@ -146,9 +146,9 @@ release:
     - { path: packages/cdp-driver/package.json, format: npm }
     - { path: packages/github/package.json, format: npm }
     - { path: packages/protocol-acp/package.json, format: npm }
-    - { path: packages/red-castle/package.json, format: npm }
     - { path: packages/redskilled-render/package.json, format: npm }
     - { path: packages/shared/package.json, format: npm }
+    - { path: packages/worker/package.json, format: npm }
     - { path: plugins/brain/package.json, format: npm }
     - { path: plugins/dev/package.json, format: npm }
     - { path: plugins/internal/package.json, format: npm }

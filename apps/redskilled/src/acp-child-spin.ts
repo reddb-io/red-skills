@@ -6,7 +6,7 @@ import {
   SPIN_THRESHOLDS,
   type NormalizedRunnerStreamEvent,
   type SpinPattern,
-} from "@reddb-io/red-castle/engine/spin-evaluator";
+} from "@reddb-io/worker/engine/spin-evaluator";
 
 export type ChildSpinObservation =
   | { readonly kind: "detected"; readonly pattern: SpinPattern }

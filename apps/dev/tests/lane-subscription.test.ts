@@ -13,7 +13,7 @@ import {
   createLaneFollower,
   listCastleLaneFiles,
   type EnginePaths,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   LANE_EVENTS_RESOURCE_URI,

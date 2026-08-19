@@ -6,5 +6,5 @@ export {
   runnerSupportsModel,
   runnerSupportsStructuredOutput,
   toAgentRunner,
-} from "@reddb-io/red-castle/engine";
-export type { RunnerSpec } from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
+export type { RunnerSpec } from "@reddb-io/worker/engine";

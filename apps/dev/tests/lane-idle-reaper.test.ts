@@ -6,7 +6,7 @@ import {
   type LaneIdleInfo,
   type LaneIdleReaperOptions,
 } from "../src/core/lane-idle-reaper.js";
-import type { LivenessVerdict } from "@reddb-io/red-castle";
+import type { LivenessVerdict } from "@reddb-io/worker";
 
 /** A manual scheduler: captures the periodic fn so the test pumps ticks
  * synchronously (the lane reaper's poll body is synchronous — statSync / ps). */

@@ -27,6 +27,13 @@ Portions of this repository — the engineering skills under plugins/dev/skills/
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+The `@reddb-io/worker` package (packages/worker) is reddb.io's vendored fork of
+mattpocock/sandcastle, originally licensed under the MIT License. The full
+attribution travels with the source in packages/worker/NOTICE and
+packages/worker/LICENSE; the reviewed upstream SHA is in packages/worker/.upstream.
+The package was named `@reddb-io/red-castle` under packages/red-castle before
+ADR 0148 renamed it — the rename moved the code, never the attribution.
+
 The `memory` plugin (plugins/memory) is original reddb.io work absorbed from the
 red-memory project, licensed under Apache-2.0. The RedDB engine that the memory
 plugin communicates with over stdio remains AGPL-3.0 and is not vendored here.

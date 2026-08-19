@@ -18,7 +18,7 @@ import {
   readCastleMonitorFleetState,
   readCastleMonitorHistoryEvents,
   readCastleMonitorWorkers,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
 import * as fsx from "../fs.js";

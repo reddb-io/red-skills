@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
-import { projectImplementerEnvironment } from "@reddb-io/red-castle/engine";
+import { projectImplementerEnvironment } from "@reddb-io/worker/engine";
 import { pluginMcpDeclaration } from "@reddb-io/shared/optional-mcp.js";
 import {
   IMPLEMENTER_PLUGIN_NAMES,

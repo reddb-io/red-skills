@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { runners } from "@reddb-io/red-castle/engine";
+import { runners } from "@reddb-io/worker/engine";
 
 import { AFK_MODEL_TIERS, CONFIG_DEFAULTS, loadConfig, resolveTaskRoute, resolveTier } from "../src/core/config.js";
 

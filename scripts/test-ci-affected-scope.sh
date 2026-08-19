@@ -87,7 +87,7 @@ done
 
 whole="$(scope_of 'pnpm-lock.yaml')"
 assert_field "$whole" "s.testPackages.includes('apps/dev')" "true" "whole-workspace mode lists every tested package (apps/dev)"
-assert_field "$whole" "s.testPackages.includes('packages/red-castle')" "true" "whole-workspace mode lists every tested package (red-castle)"
+assert_field "$whole" "s.testPackages.includes('packages/worker')" "true" "whole-workspace mode lists every tested package (packages/worker)"
 
 empty="$(scope_of '')"
 assert_field "$empty" "s.mode" "whole-workspace" "an empty changed-file set falls back to the whole workspace"
@@ -187,12 +187,12 @@ need(/contains\(needs\.\*\.result, 'failure'\)/.test(aggregate)
   'test fails when any dependency failed or was cancelled');
 
 // These suites are intentionally not merge gates. RSP is disabled in this
-// repository, and the redskilled/red-castle suites are too expensive for the
+// repository, and the redskilled/worker suites are too expensive for the
 // shared package lane.
 need(!/^\s{2}rsp:/m.test(text), 'red-workspace-ci does not define an rsp job');
 const packages = jobBody('test-packages');
 need(!/pnpm -C apps\/redskilled test/.test(packages), 'test-packages does not run apps/redskilled tests');
-need(!/pnpm -C packages\/red-castle test/.test(packages), 'test-packages does not run packages/red-castle tests');
+need(!/pnpm -C packages\/worker test/.test(packages), 'test-packages does not run packages/worker tests');
 NODE
 
 benchmark_trigger="$(sed -n '1,/^jobs:/p' .github/workflows/red-rsp-benchmark-ci.yml)"

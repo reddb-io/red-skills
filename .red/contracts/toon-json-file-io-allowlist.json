@@ -185,19 +185,19 @@
       "moveKey": "cc6bf6647434"
     },
     {
-      "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#8975f393e830",
+      "id": "packages/worker/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#0b3629bc442c",
       "classification": "external",
-      "reason": "Castle workflow helper writes JSON interop artifacts.",
+      "reason": "Vendored workflow helper writes JSON interop artifacts.",
       "moveKey": "1afaf3436c0a"
     },
     {
-      "id": "packages/red-castle/src/WorktreeLock.ts#json-parse-file-read#231944fa112d",
+      "id": "packages/worker/src/WorktreeLock.ts#json-parse-file-read#42055acbce71",
       "classification": "external",
-      "reason": "Vendored upstream red-castle; its WorktreeLock JSON format is owned by upstream and kept JSON to avoid divergence on cherry-pick sync.",
+      "reason": "Vendored upstream sandcastle; its WorktreeLock JSON format is owned by upstream and kept JSON to avoid divergence on cherry-pick sync.",
       "moveKey": "24cdd7f5b667"
     },
     {
-      "id": "packages/red-castle/tsup.config.ts#json-parse-file-read#3ec8644e7f1e",
+      "id": "packages/worker/tsup.config.ts#json-parse-file-read#dca3248131cf",
       "classification": "external",
       "reason": "package.json is ecosystem JSON.",
       "moveKey": "76cb79829ea3"

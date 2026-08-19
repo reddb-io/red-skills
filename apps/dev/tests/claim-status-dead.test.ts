@@ -3,7 +3,7 @@ import {
   createCastleMcpTools,
   type CastleMcpDependencies,
   type ClaimIssueInput,
-} from "@reddb-io/red-castle/mcp-server";
+} from "@reddb-io/worker/mcp-server";
 import {
   parseClaimRecords,
   renderClaimComment,

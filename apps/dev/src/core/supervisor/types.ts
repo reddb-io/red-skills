@@ -1,7 +1,7 @@
-import type { LivenessVerdict } from "@reddb-io/red-castle";
+import type { LivenessVerdict } from "@reddb-io/worker";
 import type {
   CastleLaneRecord,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import type { ProcessSnapshotEntry } from "../reaper-signal.js";
 import type { RecoveryEnv } from "../recovery.js";
 import type { WakeSource } from "../event-wake.js";
@@ -379,7 +379,7 @@ export interface SupervisorDeps {
    * heal of the same issue in the window quarantines instead of retrying, so
    * an issue that keeps killing workers surfaces as a signal (#2526).
    */
-  healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
+  healLedger?: import("@reddb-io/worker/engine").HealLedgerStore;
   /**
    * Optional crashloop circuit breaker (ADR 0122 amendment, #2527). Consulted
    * on every boot-sweep halt: N consecutive identical boot-death signatures

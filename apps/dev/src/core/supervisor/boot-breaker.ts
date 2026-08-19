@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
-import type { EnginePaths } from "@reddb-io/red-castle/engine";
+import type { EnginePaths } from "@reddb-io/worker/engine";
 import type { BootHaltError } from "../boot.js";
 
 /** Consecutive identical boot-death signatures that trip the breaker (ADR 0122

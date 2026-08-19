@@ -142,7 +142,7 @@ const ADR_0130_SOURCES: readonly ExtinctSource[] = [
     id: "fleet-mcp-tools",
     noun: "fleet",
     what: "the `fleet_*` MCP tool domain",
-    replacement: "the `project_*` tools that took its slot (`packages/red-castle/src/mcp/project.ts`)",
+    replacement: "the `project_*` tools that took its slot (`packages/worker/src/mcp/project.ts`)",
     pattern: /\bcreateFleetTools\b|\bmcp\/fleet(?:\.js)?["']|\bfleet_(?:create|edit|register|list|stop|status)\b/,
   },
   {

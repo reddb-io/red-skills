@@ -7,7 +7,7 @@ import {
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { createFileBootBreakerStore, isBreakerOpen } from "../core/supervisor/boot-breaker.js";
-import { createEnginePaths } from "@reddb-io/red-castle/engine";
+import { createEnginePaths } from "@reddb-io/worker/engine";
 import { join } from "node:path";
 import { loadConfig } from "../core/config.js";
 import {

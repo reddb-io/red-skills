@@ -8,7 +8,7 @@ import {
   createSingletonLeaseStore,
   singletonLeasePath,
   type SingletonEventLane,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createWebhookWakeSource,

@@ -21,7 +21,7 @@ import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
 import { getConfig, loadConfig, readHitlTypeLabels, readSetupCommands, readValidationResourceBudget, resolveTier } from "../../core/config.js";
 import { LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
-import { createFsIssueLeaseStore } from "@reddb-io/red-castle/engine";
+import { createFsIssueLeaseStore } from "@reddb-io/worker/engine";
 import { readFile } from "node:fs/promises";
 import { claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../../runtime/lock.js";

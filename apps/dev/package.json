@@ -24,7 +24,7 @@
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
     "@reddb-io/protocol-acp": "workspace:*",
-    "@reddb-io/red-castle": "workspace:*",
+    "@reddb-io/worker": "workspace:*",
     "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*",

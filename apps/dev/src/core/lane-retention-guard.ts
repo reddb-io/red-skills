@@ -60,13 +60,13 @@ export const LANE_WRITER_ENFORCEMENT: readonly LaneWriterEnforcement[] = [
   },
   {
     lane: "castle-singleton-events",
-    writers: ["packages/red-castle/src/engine/singleton-event-lane.ts"],
+    writers: ["packages/worker/src/engine/singleton-event-lane.ts"],
     why: "singleton arbitration rows are byte-bounded so one contested boot cannot fill the state tier",
   },
   {
     lane: "castle-history",
     writers: [
-      "packages/red-castle/src/engine/lane-writers.ts",
+      "packages/worker/src/engine/lane-writers.ts",
       "apps/dev/src/core/history.ts",
     ],
     why: "the durable ledger is LINE-bounded on every append; boot's trim is a sweep, never the enforcement point",
@@ -94,8 +94,8 @@ export const LANE_WRITER_ENFORCEMENT: readonly LaneWriterEnforcement[] = [
   {
     lane: "worker-liveness",
     writers: [
-      "packages/red-castle/src/LivenessLane.ts",
-      "packages/red-castle/src/engine/lane-writers.ts",
+      "packages/worker/src/LivenessLane.ts",
+      "packages/worker/src/engine/lane-writers.ts",
     ],
     why: "the liveness anchor is byte-bounded on every heartbeat so a long-lived Worker cannot outgrow its own proof of life",
   },

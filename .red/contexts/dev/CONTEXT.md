@@ -578,7 +578,7 @@ _Avoid_: jq (for TOON/TOONL files), the toon CLI, local tq build, sibling toon c
 
 **Release watcher**:
 The automation that observes upstream `github:reddb-io/toon` releases and opens the RedSkills auto-bump PR for the toon toolchain. It updates the pnpm catalog version and every derived or guard-checked `tq`/`@reddb-io/toon` pin site together; the catalog remains the single version truth, and the watcher PR is the normal route for routine upstream releases.
-_Avoid_: manual version sweep, toon bump script, red-castle repinner
+_Avoid_: manual version sweep, toon bump script, vendored-package repinner
 
 **Release standard**:
 The formalized release flow `/red-setup` provisions for a consumer repository (decided and being designed): changesets accumulate on the trunk, a **Version-PR** consumes them, its merge triggers the tag, and the tag publishes a Release carrying generated human notes plus a **Release manifest**. One product version rides the whole workspace (single train); the scheme is semver or calendar (`YYYY.M.MICRO`, deliberately semver-parseable). The interview lives in `/red-setup` after the validation moments; the engine ships as its own binary, pinned in thin generated workflows, with a vendored single-file mode for restricted CI.
@@ -605,7 +605,7 @@ A changeset's declared bump type (`major`/`minor`/`patch`) read as change classi
 _Avoid_: bump type (implies it always bumps), severity
 
 **Vendored source package**:
-A workspace package whose source tree is committed directly in this monorepo while preserving an upstream marker for provenance. `packages/red-castle` is the canonical example after ADR 0101: `.upstream` tracks the reviewed sandcastle upstream SHA, while the archived `reddb-io/red-castle` repo no longer supplies a live submodule pin.
+A workspace package whose source tree is committed directly in this monorepo while preserving an upstream marker for provenance. `packages/worker` (`@reddb-io/worker`) is the canonical example after ADR 0101: `.upstream` tracks the reviewed sandcastle upstream SHA, `NOTICE` carries the MIT attribution, and no archived repo supplies a live submodule pin. ADR 0148 renamed the package from `packages/red-castle` — the rename moved the code, never the lineage.
 _Avoid_: submodule, pointer bump, two-repo flow
 
 **Declared optimization**:
@@ -728,7 +728,7 @@ _Avoid_: gate stage (the gate is the semaphore, not the schedule), "the feedback
 - A **Worker** measures into the **Phase duration model** as it leaves each phase and estimates from it; **redskilled** stores the estimate and the **Shared render** prints it, neither reading what it means.
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
 - The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
-- The **Release watcher** observes toon releases, updates the catalog, and lets the consuming workspace lockfile choose the exact red-castle-resolved toon version.
+- The **Release watcher** observes toon releases, updates the catalog, and lets the consuming workspace lockfile choose the exact catalog-resolved toon version.
 - A **Vendored source package** keeps source local to RedSkills while using an explicit upstream marker for provenance.
 
 ## Example dialogue

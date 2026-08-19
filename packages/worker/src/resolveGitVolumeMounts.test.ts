@@ -38,7 +38,7 @@ describe("resolveGitMounts", () => {
   it("walks up to the nearest .git directory for vendored packages", async () => {
     const repoDir = await makeTempDir();
     const gitDir = join(repoDir, ".git");
-    const packageDir = join(repoDir, "packages", "red-castle");
+    const packageDir = join(repoDir, "packages", "worker");
     await mkdir(gitDir);
     await mkdir(packageDir, { recursive: true });
 

@@ -18,7 +18,7 @@
 // mechanism (auto-concede, quarantine, heal ledger) makes the incident class
 // reappear, and each test pins exactly how.
 
-import { runCastleWorkerDrain, type HealLedgerState, type HealLedgerStore } from "@reddb-io/red-castle/engine";
+import { runCastleWorkerDrain, type HealLedgerState, type HealLedgerStore } from "@reddb-io/worker/engine";
 import { describe, expect, it, vi } from "vitest";
 import { BootHaltError } from "../src/core/boot.js";
 import { NOW, makeDeps, options, runBoot } from "./boot.helpers.js";

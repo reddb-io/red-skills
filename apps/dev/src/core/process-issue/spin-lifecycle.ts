@@ -1,4 +1,4 @@
-import type { SpinPattern } from "@reddb-io/red-castle/engine";
+import type { SpinPattern } from "@reddb-io/worker/engine";
 import { decideVerdict, type EnvironmentLedger } from "../verdict.js";
 import {
   isSpinOutcome,
