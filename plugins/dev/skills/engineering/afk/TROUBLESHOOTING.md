@@ -11,7 +11,7 @@ not empty.
 
 ### Confirm
 
-1. Read the queue with the redskilled `queue_status` tool, and the live workers with
+1. Read the queue with the rs_dev `queue_status` tool, and the live workers with
    `monitor` — both are read tools, free to call. No-MCP fallback:
    `npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor --once`.
 2. Compare `ready-for-agent` with open non-Spec issues in the issue tracker.

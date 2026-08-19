@@ -66,3 +66,14 @@ old MCP name fails CI.
 - `redskilled` names both the host service and its complete project-facing MCP,
   while `red-castle` remains visible only where substrate or state ownership is
   the fact being described.
+
+## Amendment — 2026-08-19 (ADR 0147 rule 2, issue #4023)
+
+Superseded on the MCP name alone. The dev plugin's MCP is now `rs_dev`: one
+Plugin MCP per plugin, named `rs_<plugin>`, so a host that does not namespace a
+server by its plugin still shows which plugin published a tool. `redskilled`
+keeps everything else this record decided — it is the daemon, the binary and the
+host service; it is no longer the name of a server a session mounts.
+
+- Host-prefixed tools are `mcp__plugin_dev_rs_dev__<tool>`.
+- Prompts are `rs_dev:<intent>`.

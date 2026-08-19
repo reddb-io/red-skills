@@ -32,7 +32,7 @@ At approval time, read the repo's declared `plugins.dev.afk.validation` schedule
 
 Scout mode is read-only and report-producing, so this Task+DoD gate does not apply to `/go --scout`.
 
-## Dispatch through the `redskilled` MCP
+## Dispatch through the `rs_dev` MCP
 
 **`/go` and `/afk` are two clients of one interface.** After approval, dispatch
 the demand with the `worker_dispatch` tool — `{demand, runner?, mode?}`, where
@@ -133,7 +133,7 @@ Follow it from those handles, never from the launcher's stdout: `status {scope: 
 - ✅ **Do** pass the demand/question as ONE quoted argument.
 - ✅ **Do** get Task+DoD approval before standard `/go`, then pass the approved DoD with `--dod`.
 - ✅ **Do** use `--scout` when you want an audit, investigation, or read-only analysis — not a code change.
-- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same Worker / monitor / heartbeat / envelope path, driven through the same `redskilled` MCP tools, distinguished by Worker kind and mode gates.
+- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same Worker / monitor / heartbeat / envelope path, driven through the same `rs_dev` MCP tools, distinguished by Worker kind and mode gates.
 - ✅ **Do** run it whether or not a fleet is up — `/go` is a self-sufficient front door.
 - ❌ Do **not** add `ready-for-agent` to the minted issue — lane isolation breaks.
 - ❌ Do **not** hand-mint the issue or hand-spawn a worker — call `go`, which does the lane + namespace + origin wiring as one unit.

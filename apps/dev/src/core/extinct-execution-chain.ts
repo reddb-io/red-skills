@@ -214,7 +214,6 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
       "apps/dev/src/core/retake.ts": 2,
       "apps/dev/src/mcp-server.ts": 2,
       "apps/dev/src/runtime/published-entry.ts": 2,
-      "packages/worker/src/extinct-nouns.ts": 1,
       "packages/shared/canonical-invocation.ts": 1,
     },
   ),
@@ -323,7 +322,6 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
       "packages/worker/src/PromptResolver.ts": 1,
       "packages/worker/src/RecoveryMessage.ts": 2,
       "packages/worker/src/WorktreeManager.ts": 3,
-      "packages/worker/src/cli.ts": 3,
       "packages/worker/src/createSandbox.ts": 1,
       "packages/worker/src/createWorktree.ts": 3,
       "packages/worker/src/engine/tracker/github/adapter.ts": 8,
@@ -339,10 +337,9 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
   ),
   ...crossing(
     "castle-resident-naming",
-    "the retired resident's status schema still ships in the package's MCP contracts; it clears when those schemas move to `rs_dev`",
+    "the daemon's incident store still accepts the retired authority as a resource kind; the `rs_dev` contracts that carried its status schema cleared with issue #4023",
     {
       "apps/redskilled/src/resource-incidents.ts": 1,
-      "packages/worker/src/mcp/contracts.ts": 4,
     },
   ),
 ];

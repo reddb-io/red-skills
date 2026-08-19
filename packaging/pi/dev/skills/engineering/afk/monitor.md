@@ -4,7 +4,7 @@ This file serves the `afk monitor` branch: the readonly aggregated dashboard
 across all live workers, the native-task mirror and its self-cancel teardown, and
 the Codex monitor agent. Reached from *When To Use* (`/afk monitor`).
 
-## Observability reads come from the `redskilled` MCP
+## Observability reads come from the `rs_dev` MCP
 
 **Every observability verb is a read tool — free to call, and never a reason to
 touch a mutating one.** The tools return structured TOON; the bundle's `monitor`
@@ -35,7 +35,7 @@ When it reports `degraded: true`, treat the census as failed and read its named
 
 ## Dashboard
 
-`/afk monitor` is the readonly aggregated view across all live workers. **Call the redskilled `status` tool with `scope: worker` for the data — do not reinvent the rendering in inline bash.** The bundle's `monitor` command renders the same truth for a human terminal and is the no-MCP fallback. Either way it:
+`/afk monitor` is the readonly aggregated view across all live workers. **Call the rs_dev `status` tool with `scope: worker` for the data — do not reinvent the rendering in inline bash.** The bundle's `monitor` command renders the same truth for a human terminal and is the no-MCP fallback. Either way it:
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
 2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field), paired with `pid_start_time` when the platform exposes a stable process-start token. Attempts whose PID identity is dead or mismatched are flagged `stale`/`gone`; PID-live but agent-lane-quiet workers render `[quiet]` and are still counted as running.
@@ -178,7 +178,7 @@ supervisor under Codex:
    RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
-   presentation consumer only: it periodically reads redskilled `status` with
+   presentation consumer only: it periodically reads rs_dev `status` with
    `scope: worker`, reports concise progress in the Codex
    UI, and exits once no supervisor or live workers remain. Its prompt carries
    the `/dev:afk monitor --once` CLI form as the no-MCP fallback.

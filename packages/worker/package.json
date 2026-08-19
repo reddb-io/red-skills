@@ -8,7 +8,6 @@
   "exports": {
     ".": "./src/index.ts",
     "./acp": "./src/acp/index.ts",
-    "./mcp-server": "./src/mcp-server.ts",
     "./engine": "./src/engine/index.ts",
     "./engine/spin-evaluator": "./src/engine/spin-evaluator.ts",
     "./engine/contracts": "./src/engine/contracts/index.ts",
@@ -46,7 +45,6 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",
     "@clack/prompts": "^1.1.0",
-    "@effect/cli": "^0.74.0",
     "@effect/platform": "^0.95.0",
     "@effect/platform-node": "^0.105.0",
     "@reddb-io/github": "workspace:*",

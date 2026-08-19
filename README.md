@@ -168,7 +168,7 @@ Three properties follow, and they are the ones worth trusting:
 
 ### The MCP is the interface
 
-The `redskilled` MCP server is the canonical **complete** interface to every
+The `rs_dev` MCP server is the canonical **complete** interface to every
 execution capability — project registration and status, worker dispatch, runner
 steering, the gate, landing and cascade, claims, the worktree pool, hygiene,
 observability, and the queue ([ADR 0120](./.red/adr/0120-red-castle-is-the-afk-mcp.md),

@@ -60,7 +60,7 @@ const HOOK_MANIFESTS = [
 
 describe("the dev MCP declaration carries neither rsp nor navigator (ADR 0147 §4)", () => {
   it("declares the daemon client and nothing else", () => {
-    expect(declaredServers("dev")).toEqual(["redskilled"]);
+    expect(declaredServers("dev")).toEqual(["rs_dev"]);
   });
 
   it("names rsp and navigator nowhere in the file", () => {

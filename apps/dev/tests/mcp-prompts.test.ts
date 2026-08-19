@@ -8,7 +8,7 @@ import { createRedskilledMcpServer } from "../src/mcp-server.js";
 const THIN_PROMPT_MAX_CHARS = 160;
 const PROMPT_NAMES = ["drain", "diagnose", "configure", "stop"];
 
-describe("redskilled MCP intent prompts", () => {
+describe("rs_dev MCP intent prompts", () => {
   const close: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
@@ -17,7 +17,7 @@ describe("redskilled MCP intent prompts", () => {
 
   it("lists four thin doors that delegate only to help", async () => {
     const server = createRedskilledMcpServer();
-    const client = new Client({ name: "redskilled-prompt-test", version: "1" });
+    const client = new Client({ name: "rs-dev-prompt-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -49,7 +49,7 @@ describe("redskilled MCP intent prompts", () => {
   });
 
   it.each([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"])(
-    "projects the redskilled prompts through the %s host manifest",
+    "projects the rs_dev prompts through the %s host manifest",
     async (manifestPath) => {
       const pluginRoot = resolve(import.meta.dirname, "../../../plugins/dev");
       const manifest = JSON.parse(
@@ -60,13 +60,14 @@ describe("redskilled MCP intent prompts", () => {
       ) as { mcpServers?: Record<string, unknown> };
 
       expect(manifest.mcpServers).toBe("./.mcp.json");
-      expect(mcp.mcpServers).toHaveProperty("redskilled");
+      expect(mcp.mcpServers).toHaveProperty("rs_dev");
       expect(mcp.mcpServers).not.toHaveProperty("castle");
-      expect(PROMPT_NAMES.map((name) => `redskilled:${name}`)).toEqual([
-        "redskilled:drain",
-        "redskilled:diagnose",
-        "redskilled:configure",
-        "redskilled:stop",
+      expect(mcp.mcpServers).not.toHaveProperty("redskilled");
+      expect(PROMPT_NAMES.map((name) => `rs_dev:${name}`)).toEqual([
+        "rs_dev:drain",
+        "rs_dev:diagnose",
+        "rs_dev:configure",
+        "rs_dev:stop",
       ]);
     },
   );

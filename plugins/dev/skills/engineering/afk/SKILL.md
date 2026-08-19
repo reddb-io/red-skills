@@ -12,9 +12,9 @@ operandi; `/go` is the ad-hoc-only exception. Drain the agent-ready backlog by
 letting the runtime select issues, create isolated worktrees, run the inner
 agent, validate, land, close, and clean up.
 
-## Operate project execution through the `redskilled` MCP
+## Operate project execution through the `rs_dev` MCP
 
-**The `redskilled` MCP is the interface; `/afk` is one of its clients.** Every
+**The `rs_dev` MCP is the interface; `/afk` is one of its clients.** Every
 execution capability this skill needs — queue, dispatch, runners, gate,
 landing, claim, worktrees, hygiene, observability — is an MCP tool returning
 structured TOON. Drive those tools; do not shell out to reimplement what a tool
@@ -135,7 +135,7 @@ composite action, or local bundle invocation.
 
 Read the focused reference before touching that concern:
 
-- The `redskilled` MCP tool surface, host prefixing, mutation modes, and the CLI
+- The `rs_dev` MCP tool surface, host prefixing, mutation modes, and the CLI
   fallback rule: [`MCP.md`](./MCP.md).
 - Runtime, sandcastle substrate, CLI forwarding, bootstrap, hard preconditions,
   issue selection, lifecycle, failure labels, per-issue loop, merge/close,
@@ -167,7 +167,7 @@ Read the focused reference before touching that concern:
 
 ## Load-Bearing Rules
 
-- The `redskilled` MCP is the canonical project interface (ADR 0120, naming
+- The `rs_dev` MCP is the canonical project interface (ADR 0120, naming
   amended by ADR 0142). `/afk` is a
   client of it, so a capability missing from the tools is a gap to file against
   the MCP, never a reason to hand-roll the operation in shell.

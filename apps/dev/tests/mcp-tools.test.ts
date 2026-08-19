@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCastleMcpTools,
   type CastleMcpDependencies,
-} from "./mcp-server.js";
+} from "../src/mcp-tools/index.js";
 
 function deps(): CastleMcpDependencies {
   return {
