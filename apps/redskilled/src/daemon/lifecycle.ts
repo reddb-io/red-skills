@@ -34,15 +34,15 @@ import {
   describeBirthLatches,
   emptyDemandTick,
   planHostDemand,
-  foldWorkerDeath,
-  EMPTY_BIRTH_HEALTH,
   resetBirthHealth,
   REDSKILLED_SHORT_LIFE_MS,
   type RedskilledBirthHealth,
+  type RedskilledWorkerBirthOutcome,
   REDSKILLED_DEMAND_BACKOFF_MS,
   type RedskilledDemandGrant,
   type RedskilledDemandTick,
 } from "../demand-loop.js";
+import { foldProjectBirthHealth, workerTerminalOutcome } from "./birth-outcome.js";
 import { buildRedskilledStopReport, type RedskilledDaemonStopped, type RedskilledStopReason } from "../daemon-stop.js";
 import {
   buildHostState,
@@ -1275,38 +1275,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       return;
     }
     const death = await resolveUnitDeath(worker, unitExitFacts, { detail: ended, facts: { exitCode: code, signal } });
-    const refusal = worker.log_path == null
-      ? null
-      : bootRefusalFromLog(await readLogTail(worker.log_path).catch(() => null));
+    // One bounded tail read answers both questions a death asks of a log: whether
+    // boot refused, and whether the Worker reached a terminal outcome before it
+    // ended. A Worker that published a line on its heartbeat already told us the
+    // second without any read at all.
+    const tail = worker.log_path == null ? null : await readLogTail(worker.log_path).catch(() => null);
+    const refusal = bootRefusalFromLog(tail);
+    const reported = tail ?? logLines.get(worker.worker_id)?.line ?? null;
     forgetWorker(worker.worker_id);
-    record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, { ...death.facts, refusal });
+    record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, {
+      ...death.facts, refusal, birthOutcome: workerTerminalOutcome({ exitCode: code, signal, tail: reported }),
+    });
     armIdleTimer();
-  }
-
-  /**
-   * Fold one death into its project's birth health.
-   *
-   * An unreadable lifetime is treated as long, never as short: the breaker
-   * exists to stop a loop it can prove, and halting a project on a clock it
-   * could not parse would be the same silent overreach in the other direction.
-   */
-  function foldBirthHealth(projectLabel: string, lifetimeMs: number): void {
-    if (!Number.isFinite(lifetimeMs) || lifetimeMs < 0) {
-      birthHealth[projectLabel] = EMPTY_BIRTH_HEALTH;
-      return;
-    }
-    const before = birthHealth[projectLabel] ?? EMPTY_BIRTH_HEALTH;
-    const after = foldWorkerDeath(before, lifetimeMs, Date.parse(clock()));
-    birthHealth[projectLabel] = after;
-    if (after.haltUntilMs != null && before.haltUntilMs == null) {
-      // Said once, when the breaker opens rather than on every death after it:
-      // a loop that logs per cycle is the second thing filling a disk.
-      process.stderr.write(
-        `redskilled: project ${JSON.stringify(projectLabel)} lost ${after.shortLifeStreak} Workers in a row ` +
-          `inside ${REDSKILLED_SHORT_LIFE_MS}ms of birth; not asking for another until ` +
-          `${new Date(after.haltUntilMs).toISOString()}\n`,
-      );
-    }
   }
 
   /** Clear one project's birth breaker after project-scoped reach permits it. */
@@ -1644,6 +1624,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     detail: string | null,
     facts: Omit<RecordWorkerEventInput, "kind" | "worker" | "ts" | "detail"> & {
       readonly refusal?: string | null;
+      /** What this Worker reported before ending; absent when the caller saw nothing. */
+      readonly birthOutcome?: RedskilledWorkerBirthOutcome;
     } = {},
   ): void {
     // A stopped daemon is no longer authoritative; its successor re-derives state.
@@ -1669,9 +1651,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       );
       // Every death reaches here, which is why the breaker folds here rather
       // than at the five call sites that end a Worker. What it reads is a
-      // lifetime, never a cause: the daemon is not owed a reason (rule 3), and
-      // a Worker dead in seconds is spent whatever the reason was.
-      foldBirthHealth(worker.project_label, Date.parse(ts) - Date.parse(worker.started_at));
+      // lifetime and an outcome class — never a cause (rule 3): a Worker dead in
+      // seconds is spent whatever the reason was UNLESS it reported that it was
+      // finished, which is the one thing a spent birth never does.
+      foldProjectBirthHealth({
+        health: birthHealth, projectLabel: worker.project_label, nowMs: Date.parse(ts),
+        lifetimeMs: Date.parse(ts) - Date.parse(worker.started_at),
+        outcome: facts.birthOutcome ?? "unreported",
+        announce: (line) => process.stderr.write(line),
+      });
     }
     void eventLane
       .recordWorker(input)
