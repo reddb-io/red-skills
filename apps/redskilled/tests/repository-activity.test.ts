@@ -390,7 +390,6 @@ describe("the daemon serves the counts it polled", () => {
     const daemon = await startRedskilledDaemon({
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
-      idleMs: 60_000,
       sampleMs: 0,
       clock: () => NOW,
       repositoryActivity: {

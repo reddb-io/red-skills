@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { redskilledHomeDir, REDSKILLED_HOME_MODE } from "@reddb-io/shared/redskilled-home.js";
-import { runProvision } from "../src/cli.js";
+import { runProvision } from "../src/provision-command.js";
 import { socketAnswers } from "../src/daemon.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";

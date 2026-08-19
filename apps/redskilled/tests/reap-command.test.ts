@@ -52,7 +52,6 @@ describe("redskilled reap --report", () => {
     const signalled: number[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       orphanReaperMs: 0,
       unitInventory: () => ["red-worker-acme-wHELD.service"],
       orphanCensus: () => [

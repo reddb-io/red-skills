@@ -69,7 +69,6 @@ describe("the daemon's live metrics", () => {
 
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -96,7 +95,6 @@ describe("the daemon's live metrics", () => {
     let minutes = 0;
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -146,7 +144,6 @@ describe("the daemon's live metrics", () => {
     });
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,

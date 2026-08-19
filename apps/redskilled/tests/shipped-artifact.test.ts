@@ -113,8 +113,6 @@ describe("redskilled ships as a bundled artifact", () => {
           join(root, "redskilled.lease.toon"),
           "--events",
           join(root, "redskilled.events.toonl"),
-          "--idle-ms",
-          "60000",
         ],
         {
           stdio: ["ignore", "pipe", "pipe"],

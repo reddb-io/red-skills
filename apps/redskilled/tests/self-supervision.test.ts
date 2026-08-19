@@ -27,9 +27,11 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ensureRedskilledDaemon,
+  RedskilledNotProvisionedError,
   REDSKILLED_BUNDLE_ASSET,
   type RedskilledClientConfig,
 } from "../src/client.js";
+import { birthRedskilledDaemon } from "../src/daemon-birth.js";
 import { socketAnswers, startRedskilledDaemon } from "../src/daemon.js";
 import { RedskilledDaemonEntryError } from "../src/daemon-entry.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
@@ -102,7 +104,6 @@ async function host(): Promise<Host> {
     config: {
       entryLookup: { callerEntry, execArgv: [], env: {}, listDir: () => [] },
       readyTimeoutMs: 30_000,
-      idleMs: 60_000,
       env: { ...process.env, REDSKILLED_SESSION: `test:${root}` },
     },
   };
@@ -159,7 +160,6 @@ describe("the user unit that supervises the daemon", () => {
     const plan = planRedskilledUnit(paths, {
       env: { HOME: paths.runtimeDir },
       ...(config.entryLookup == null ? {} : { entryLookup: config.entryLookup }),
-      idleMs: 60_000,
     });
 
     // The ExecStart is the published bundle serving THIS session — the same argv
@@ -239,7 +239,7 @@ describe("the user unit that supervises the daemon", () => {
     const path = repointRedskilledUnitForReplacement(
       { command: process.execPath, args: [publishedBundle] },
       paths,
-      { env, idleMs: 60_000, run: reload.run },
+      { env, run: reload.run },
     );
 
     expect(path).toBe(redskilledReplacementDropInPath(env));
@@ -343,7 +343,6 @@ describe("the user unit that supervises the daemon", () => {
     const plan = planRedskilledUnit(paths, {
       env: { HOME: paths.runtimeDir },
       ...(config.entryLookup == null ? {} : { entryLookup: config.entryLookup }),
-      idleMs: 60_000,
     });
     started.push(paths.socketPath);
 
@@ -403,7 +402,7 @@ describe("the user unit that supervises the daemon", () => {
         installed: () => true,
         start: async () => {
           supervisorStarts += 1;
-          await startRedskilledDaemon({ paths, idleMs: 60_000 });
+          await startRedskilledDaemon({ paths });
         },
       },
     });
@@ -434,11 +433,15 @@ describe("a host with no unit installed", () => {
     expect(probe.calls).toEqual([]);
   });
 
-  it("still gets a daemon, through auto-spawn", async () => {
+  it("is provisioned directly, and its clients still fail closed until it is", async () => {
     const { paths, config, launchLog } = await host();
     expect(existsSync(redskilledUnitPath({ HOME: paths.runtimeDir }))).toBe(false);
 
-    const outcome = await ensureRedskilledDaemon(paths, config);
+    // Nothing on the machine, so a client says so rather than becoming the daemon.
+    await expect(ensureRedskilledDaemon(paths, config)).rejects.toBeInstanceOf(RedskilledNotProvisionedError);
+    expect(launches(launchLog)).toEqual([]);
+
+    const outcome = await birthRedskilledDaemon(paths, config);
     started.push(paths.socketPath);
 
     expect(outcome).toBe("spawned");

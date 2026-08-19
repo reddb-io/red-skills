@@ -75,7 +75,7 @@ describe("a project's Worker is born by the daemon", () => {
   it("reads the host-wide diagnostics without mutating the host", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("dev-birth-host-diagnostics-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const port = createRedskilledBirthPort({
@@ -112,7 +112,7 @@ describe("a project's Worker is born by the daemon", () => {
   it("runs in the workspace the project named and appears in host state under its label", async () => {
     const paths = await sessionPaths();
     const workspace = await gitWorkspace("dev-birth-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const port = createRedskilledBirthPort({ root: workspace, projectLabel: "acme/widgets", paths });
@@ -146,7 +146,7 @@ describe("a project's Worker is born by the daemon", () => {
   it("reports the Worker's death to the project with the exit status the host witnessed", async () => {
     const paths = await sessionPaths();
     const workspace = await gitWorkspace("dev-birth-death-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const port = createRedskilledBirthPort({ root: workspace, projectLabel: "acme/widgets", paths });
@@ -174,7 +174,7 @@ describe("a project's Worker is born by the daemon", () => {
   it("drains each host event exactly once, so a death is never counted twice", async () => {
     const paths = await sessionPaths();
     const workspace = await gitWorkspace("dev-birth-drain-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const port = createRedskilledBirthPort({ root: workspace, projectLabel: "acme/widgets", paths });
@@ -226,7 +226,6 @@ describe("a project's registration outlives the session that made it", () => {
     let ms = Date.parse("2026-07-31T12:00:00.000Z");
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => new Date(ms).toISOString(),
     });
     running.push(daemon);
@@ -259,7 +258,6 @@ describe("a project's registration outlives the session that made it", () => {
     const workspace = await scratch("dev-birth-registration-refusal-");
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => "2026-08-03T13:26:08.361Z",
     });
     running.push(daemon);

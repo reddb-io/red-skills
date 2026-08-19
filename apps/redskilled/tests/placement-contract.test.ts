@@ -90,7 +90,6 @@ describe.each(DRIVERS)("%s placement shared lifecycle", (driver) => {
     let stops = 0;
     const daemon = await startRedskilledDaemon({
       paths: daemonPaths,
-      idleMs: 60_000,
       ceiling: UNBOUNDED_HOST_CEILING,
       livenessGraceMs: 0,
       liveness: (worker) => alive.has(worker.worker_id),

@@ -228,7 +228,6 @@ describe("the line the Worker publishes", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -263,7 +262,6 @@ describe("the line the Worker publishes", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -287,7 +285,6 @@ describe("the line the Worker publishes", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -349,7 +346,6 @@ describe("a restart with no information", () => {
 
     const first = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -363,7 +359,6 @@ describe("a restart with no information", () => {
 
     const second = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,

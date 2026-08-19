@@ -264,7 +264,6 @@ describe("stamped orphan teardown", () => {
     const mutations = { census: 0, adopt: 0, kill: 0 };
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       unitInventory: () => [],
       orphanReaperMs: 0,
       orphanCensus: async () => {
@@ -308,7 +307,6 @@ describe("stamped orphan teardown", () => {
     const reports: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       unitInventory: () => [],
       orphanReaperMs: 0,
       orphanCensus: async () => [processRow()],
@@ -341,7 +339,6 @@ describe("stamped orphan teardown", () => {
     const killed: number[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       unitInventory: () => [],
       orphanReaperMs: 0,
       orphanCensus: async () => [processRow()],
@@ -370,7 +367,6 @@ describe("stamped orphan teardown", () => {
     let snapshot: RedskilledProcessCensusRow[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       unitInventory: () => [],
       orphanReaperMs: 0,
       orphanCensus: async () => snapshot,
@@ -414,7 +410,6 @@ describe("stamped orphan teardown", () => {
     const signalled: number[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       unitInventory: () => [],
       orphanReaperMs: 0,
       orphanReaperMode: "report",

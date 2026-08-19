@@ -104,7 +104,6 @@ describe("whatever registers a project reaches the tracker for it", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
       launch: (options) => {
         launched.push(options);
@@ -143,7 +142,6 @@ describe("whatever registers a project reaches the tracker for it", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
       queueDiscovery: { ...queueDiscovery, intervalMs: 0 },
     });
@@ -174,7 +172,6 @@ describe("whatever registers a project reaches the tracker for it", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       queueDiscovery: {
         ...resolveServeQueueDiscovery({ "queue-endpoint": tracker.url }, { [REDSKILLED_HOST_TOKEN_ENV]: "t" }),
         intervalMs: 0,
@@ -211,7 +208,6 @@ describe("whatever registers a project reaches the tracker for it", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
       queueDiscovery: {
         ...resolveServeQueueDiscovery({ "queue-endpoint": url }, { [REDSKILLED_HOST_TOKEN_ENV]: "t" }),
@@ -239,7 +235,6 @@ describe("a daemon that polls no tracker says so", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
     });
     running.push(daemon);
@@ -275,7 +270,6 @@ describe("a daemon that polls no tracker says so", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
     });
     running.push(daemon);

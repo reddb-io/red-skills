@@ -74,7 +74,6 @@ async function twoProjectDaemon(): Promise<{ daemon: RedskilledDaemon; paths: Re
   const paths = await sessionPaths();
   const daemon = await startRedskilledDaemon({
     paths,
-    idleMs: 60_000,
     sampleMs: 0,
     ceiling: UNBOUNDED_HOST_CEILING,
     stopWorker: () => true,
@@ -323,7 +322,6 @@ describe("the statusline payload", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => {
         throw new Error("host stop probe failed");
@@ -349,7 +347,7 @@ describe("the statusline payload", () => {
 
   it("holds no private source: a malformed answer throws instead of being patched up", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, sampleMs: 0 });
+    const daemon = await startRedskilledDaemon({ paths, sampleMs: 0 });
     running.push(daemon);
 
     expect(isRedskilledStatuslinePayload({ version: 1, workers: [], projects: [] })).toBe(false);

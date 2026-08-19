@@ -92,7 +92,6 @@ describe("the local statusline mode, invoked inside a registered project", () =>
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -129,7 +128,6 @@ describe("the local statusline mode, invoked inside a registered project", () =>
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,

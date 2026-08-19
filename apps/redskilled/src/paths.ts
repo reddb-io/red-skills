@@ -56,7 +56,6 @@ export interface RedskilledPaths {
   readonly runtimeDir: string;
   readonly socketPath: string;
   readonly acpSocketPath: string;
-  readonly lockPath: string;
   readonly leasePath: string;
   /** The daemon's append-only structured log, which it rehydrates from. */
   readonly eventLanePath: string;
@@ -152,7 +151,6 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     acpSocketPath: platform === "win32"
       ? windowsNamedPipe(`redskilled-${sessionKeyHash}-acp`)
       : join(runtimeDir, REDSKILLED_ACP_SOCKET_FILE),
-    lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
     eventLanePath: join(redskilledHomeDir(homeDir), REDSKILLED_EVENT_LANE_FILE),
     // A registration is host intent, not a socket artifact. Keeping it beside

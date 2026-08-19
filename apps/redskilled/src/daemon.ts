@@ -15,11 +15,11 @@
  * fact the moment the process dies, and both together still permit the second
  * daemon that voids the host budget.
  *
- * **Idle exit never runs while a Worker is believed alive** (ADR 0130 rule 7).
- * The rule is written into the timer rather than into a caller's discipline: on
- * every fire the daemon re-reads its own Worker set and rearms instead of
- * exiting if it is non-empty. Leaving by boredom would abandon a budget nobody
- * else is tracking.
+ * **The daemon never leaves by boredom** (ADR 0150 §4). It holds no idle timer
+ * and no idle-exit path at all: the OS service `provision` installs is what
+ * starts it, and it stays up until an operator, a signal or a replacement takes
+ * the session. Leaving by boredom would abandon a budget nobody else is tracking
+ * and hand the next client's bundle the choice of which daemon runs (ADR 0143).
  *
  * **A restart costs no work, and no accounting.** Workers are init-system units,
  * so a starting daemon does not find an empty world — it replays its own

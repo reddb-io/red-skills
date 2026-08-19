@@ -83,7 +83,6 @@ describe("a Worker that exits before its first write", () => {
     const launched: { exit?: (code: number) => void } = {};
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => "2026-08-03T16:47:09.000Z",
       launch: earlyExitLaunch(launched),
       unitInventory: () => [],
@@ -112,7 +111,6 @@ describe("a Worker that exits before its first write", () => {
     const launched: { exit?: (code: number) => void } = {};
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => "2026-08-03T16:47:09.000Z",
       launch: earlyExitLaunch(launched),
       unitInventory: () => [],
@@ -163,7 +161,6 @@ describe("a Worker that exits before its first write", () => {
     const launched: { exit?: (code: number) => void } = {};
     const first = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => "2026-08-03T16:47:09.000Z",
       launch: earlyExitLaunch(launched),
       unitInventory: () => [],
@@ -176,7 +173,6 @@ describe("a Worker that exits before its first write", () => {
 
     const successor = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => "2026-08-03T16:48:00.000Z",
       unitInventory: () => [],
     });
@@ -196,7 +192,6 @@ describe("a Worker that exits before its first write", () => {
     let now = "2026-08-03T16:40:00.000Z";
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => now,
       launch: earlyExitLaunch(launched),
       unitInventory: () => [],
@@ -231,7 +226,6 @@ describe("a Worker that exits before its first write", () => {
     await daemon.stop();
     const successor = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       clock: () => now,
       unitInventory: () => [],
     });

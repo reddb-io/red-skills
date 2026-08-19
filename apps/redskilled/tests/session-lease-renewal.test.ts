@@ -37,7 +37,7 @@ async function sessionPaths(): Promise<RedskilledPaths> {
 describe("the redskilled session lease is renewed while the daemon serves", () => {
   it("advances renewed_at past acquired_at on its own tick", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, leaseRenewMs: 20 });
+    const daemon = await startRedskilledDaemon({ paths, leaseRenewMs: 20 });
     running.push(daemon);
 
     const acquired = await readRedskilledLeaseFile(paths.leasePath);
@@ -71,7 +71,7 @@ describe("the redskilled session lease is renewed while the daemon serves", () =
 
   it("leaves the renewer unarmed when the window is zero, and still serves", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, leaseRenewMs: 0 });
+    const daemon = await startRedskilledDaemon({ paths, leaseRenewMs: 0 });
     running.push(daemon);
 
     await new Promise((r) => setTimeout(r, 60));

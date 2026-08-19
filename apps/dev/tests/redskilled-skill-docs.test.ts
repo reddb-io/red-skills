@@ -40,7 +40,10 @@ describe("redskilled operator skill (#3249)", () => {
     expect(skill).toContain("worker_ceiling");
     expect(skill).toContain("memory_ceiling");
     expect(skill).toContain("validation_ceiling");
-    expect(skill).toContain("idle_ms");
+    // The idle knob is gone, and the skill has to say so: an operator copying an
+    // old host config would otherwise set a key nothing reads (ADR 0150 §4).
+    expect(skill).not.toContain("idle_ms");
+    expect(skill).toContain("the daemon is always on");
     expect(skill).toContain("serve flag > environment > home config > derived default");
     expect(skill).toContain("home-config");
     expect(skill).toContain("restart, never an evacuation");

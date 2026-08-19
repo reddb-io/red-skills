@@ -19,7 +19,6 @@ import {
   type RedskilledHostCeiling,
   type RedskilledHostSettingSource,
 } from "./admission.js";
-import { DEFAULT_REDSKILLED_IDLE_MS } from "./daemon.js";
 import {
   REDSKILLED_PUBLIC_HOST_EVENT_KINDS,
   type RedskilledPublicHostEventKind,
@@ -33,7 +32,6 @@ import type {
   RedskilledGithubCredentialProfiles,
 } from "./github-credential-profiles.js";
 
-export const REDSKILLED_IDLE_MS_ENV = "REDSKILLED_IDLE_MS";
 export const REDSKILLED_EVIDENCE_TTL_MS_ENV = "REDSKILLED_EVIDENCE_TTL_MS";
 export const REDSKILLED_HOST_CONFIG_PATH = ".red/config.yaml";
 
@@ -41,7 +39,6 @@ export interface RedskilledHostConfig {
   readonly workerCeiling?: string;
   readonly memoryCeiling?: string;
   readonly validationCeiling?: string;
-  readonly idleMs?: string;
   /** How long a dead Worker's evidence lane survives (ADR 0149 §2). */
   readonly evidenceTtlMs?: string;
   /** Operator-scoped programs fired for public Worker lifecycle changes. */
@@ -66,14 +63,11 @@ export interface RedskilledHostSettingFlags {
   readonly workerCeiling?: string;
   readonly memoryCeiling?: string;
   readonly validationCeiling?: string;
-  readonly idleMs?: number;
   readonly evidenceTtlMs?: number;
 }
 
 export interface RedskilledHostSettings {
   readonly ceiling: RedskilledHostCeiling;
-  readonly idleMs: number;
-  readonly idleMsSource: RedskilledHostSettingSource;
   /** How long a dead Worker's evidence lane survives, and who said so. */
   readonly evidenceTtlMs: number;
   readonly evidenceTtlMsSource: RedskilledHostSettingSource;
@@ -142,7 +136,6 @@ export async function readRedskilledHostConfig(
       ...scalarAt(redskilled, "worker_ceiling", "workerCeiling"),
       ...scalarAt(redskilled, "memory_ceiling", "memoryCeiling"),
       ...scalarAt(redskilled, "validation_ceiling", "validationCeiling"),
-      ...scalarAt(redskilled, "idle_ms", "idleMs"),
       ...scalarAt(redskilled, "evidence_ttl_ms", "evidenceTtlMs"),
       ...hooksAt(redskilled),
       ...notificationsAt(redskilled),
@@ -265,11 +258,10 @@ function optionalScalar(value: unknown, profile: string, field: string): string 
  * caller remembering to forward it by hand.
  */
 export function redskilledDaemonPolicy(settings: RedskilledHostSettings): {
-  readonly idleMs: number;
   readonly ceiling: RedskilledHostCeiling;
   readonly evidenceTtlMs: number;
 } {
-  return { idleMs: settings.idleMs, ceiling: settings.ceiling, evidenceTtlMs: settings.evidenceTtlMs };
+  return { ceiling: settings.ceiling, evidenceTtlMs: settings.evidenceTtlMs };
 }
 
 /** Resolve every daemon-owned setting under one explicit precedence table. */
@@ -288,23 +280,11 @@ export function resolveRedskilledHostSettings(input: {
     ...(input.availableParallelism == null ? {} : { availableParallelism: input.availableParallelism }),
   });
   const evidence = resolveEvidenceTtl(input.flags, env, config);
-  const idle = select(input.flags?.idleMs == null ? undefined : String(input.flags.idleMs), env[REDSKILLED_IDLE_MS_ENV], config.idleMs);
-  if (idle == null) {
-    return { ceiling, idleMs: DEFAULT_REDSKILLED_IDLE_MS, idleMsSource: "derived-default", ...evidence };
-  }
-  const parsed = Number(idle.value);
-  if (Number.isSafeInteger(parsed) && parsed > 0) {
-    return { ceiling, idleMs: parsed, idleMsSource: idle.source, ...evidence };
-  }
-  warn(
-    `redskilled: ${describeSource(idle.source)} idle_ms=${JSON.stringify(idle.value)} is not a positive integer; ` +
-      `using the default ${DEFAULT_REDSKILLED_IDLE_MS}ms instead.`,
-  );
-  return { ceiling, idleMs: DEFAULT_REDSKILLED_IDLE_MS, idleMsSource: "derived-default", ...evidence };
+  return { ceiling, ...evidence };
 }
 
 /**
- * How long dead Workers' evidence survives, under the same precedence as idle.
+ * How long dead Workers' evidence survives, under the same precedence as the ceiling.
  *
  * **Zero is a legal answer, so the bound is `>= 0` and not `> 0`.** An operator
  * who sets `evidence_ttl_ms: 0` is saying "keep nothing", and rejecting it as a

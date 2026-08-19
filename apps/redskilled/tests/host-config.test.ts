@@ -10,7 +10,6 @@ import {
   setHostCeilingWarningSink,
 } from "../src/admission.js";
 import {
-  REDSKILLED_IDLE_MS_ENV,
   RedskilledGithubProfileConfigError,
   readRedskilledHostConfig,
   resolveRedskilledHostEventSinks,
@@ -83,7 +82,6 @@ describe("the daemon-owned host config", () => {
       "      worker_ceiling: 6",
       "      memory_ceiling: 8G",
       "      validation_ceiling: 3",
-      "      idle_ms: 61000",
       "      hooks:",
       "        worker-birth:",
       "          argv: [/usr/local/bin/redwall, refresh]",
@@ -99,7 +97,6 @@ describe("the daemon-owned host config", () => {
       workerCeiling: "6",
       memoryCeiling: "8G",
       validationCeiling: "3",
-      idleMs: "61000",
       hooks: {
         "worker-birth": {
           argv: ["/usr/local/bin/redwall", "refresh"],
@@ -233,25 +230,6 @@ describe("host setting precedence", () => {
     } finally {
       setHostCeilingWarningSink(previous);
     }
-  });
-
-  it("resolves idle time with the same precedence", () => {
-    expect(resolveRedskilledHostSettings({
-      flags: { idleMs: 40_000 },
-      env: { [REDSKILLED_IDLE_MS_ENV]: "50000" },
-      config: { idleMs: "60000" },
-      totalMemoryBytes: TOTAL,
-    })).toMatchObject({ idleMs: 40_000, idleMsSource: "flag" });
-    expect(resolveRedskilledHostSettings({
-      env: { [REDSKILLED_IDLE_MS_ENV]: "50000" },
-      config: { idleMs: "60000" },
-      totalMemoryBytes: TOTAL,
-    })).toMatchObject({ idleMs: 50_000, idleMsSource: "environment" });
-    expect(resolveRedskilledHostSettings({
-      env: {},
-      config: { idleMs: "60000" },
-      totalMemoryBytes: TOTAL,
-    })).toMatchObject({ idleMs: 60_000, idleMsSource: "home-config" });
   });
 
   it("resolves the evidence TTL with the same precedence, and lets an operator ask for zero", () => {

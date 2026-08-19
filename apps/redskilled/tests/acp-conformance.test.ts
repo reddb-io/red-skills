@@ -335,7 +335,6 @@ async function launchDaemon(): Promise<{
     "--lease", paths.leasePath,
     "--events", paths.eventLanePath,
     "--machine-claim", paths.machineClaimPath,
-    "--idle-ms", "60000",
   ], env, ["ignore", "ignore", "pipe"]);
   await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
   return { root, env, paths, daemon };

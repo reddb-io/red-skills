@@ -15,11 +15,10 @@
 //      the new process re-adopts it;
 //   4. the daemon never reports a version it is not running — the published
 //      answer travels beside the running one, never inside it;
-//   5. the check is REACHABLE from BOTH sides — a quiet host's daemon leaves at
-//      its idle window, long before the check interval, so the boundary it leaves
-//      through is where it asks (#2968); and a daemon holding a registration
-//      never reaches that boundary at all, so its looks are the boot one and the
-//      interval, both of which must fire and be seen to have fired (#2975);
+//   5. the check is REACHABLE at all — the daemon is always on (ADR 0150 §4), so
+//      there is no idle boundary left to ask at and the boot look and the
+//      interval are the WHOLE upgrade path, both of which must fire and be seen
+//      to have fired (#2975);
 //   6. the daemon SAYS which happened — `checks` beside `hold_reason`, so "the
 //      timer never fired" is never again investigated as "it fired and held".
 import { spawn, type ChildProcess } from "node:child_process";
@@ -279,7 +278,6 @@ describe("a published major the daemon will not adopt", () => {
     const { paths, env } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => ({ version: PUBLISHED_VERSION, newest: "2.0.0" }),
@@ -304,7 +302,6 @@ describe("a published major the daemon will not adopt", () => {
     const { paths, env } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => ({ version: RUNNING_VERSION, newest: RUNNING_VERSION }),
@@ -324,7 +321,6 @@ describe("a published major the daemon will not adopt", () => {
     const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => {
@@ -445,7 +441,6 @@ describe("a daemon that has observed a newer published version", () => {
     const lane = createRedskilledEventLane(paths.eventLanePath);
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       supervised: false,
@@ -476,7 +471,6 @@ describe("a daemon that has observed a newer published version", () => {
     const { paths, env } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => PUBLISHED_VERSION,
@@ -502,7 +496,6 @@ describe("a daemon that has observed a newer published version", () => {
     const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => {
@@ -527,7 +520,6 @@ describe("a daemon that has observed a newer published version", () => {
     const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => "3.0.0",
@@ -550,7 +542,6 @@ describe("a daemon that has observed a newer published version", () => {
     const repoints: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       supervised: true,
@@ -590,7 +581,6 @@ describe("an unsupervised daemon replaces itself", () => {
 
     const first = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       liveness: (view) => alive(view.pid),
@@ -630,7 +620,6 @@ describe("an unsupervised daemon replaces itself", () => {
 
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       replaceCheckMs: 0,
       daemonVersion: PUBLISHED_VERSION,
       liveness: (view) => alive(view.pid),
@@ -642,182 +631,14 @@ describe("an unsupervised daemon replaces itself", () => {
   });
 });
 
-// The idle window is five minutes and the check interval is fifteen, so a daemon
-// on a quiet host exits three times over before its first tick: shipped as it
-// was, self-replacement could not fire there once (#2968). The cure is a check at
-// the boundary the idle exit creates — the instant when nothing is waiting on
-// this socket and the alternative on the table was going away entirely.
-describe("the idle boundary, the only check a quiet host ever reaches", () => {
-  it("replaces itself on the way out, on an interval that would never have fired", async () => {
-    const { paths, env, publishedBundle } = await session();
-    const spawns: string[][] = [];
-    let probes = 0;
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      // The SHIPPED interval, orders of magnitude past this idle window: whatever
-      // replaces this daemon was decided at the boundary, by nothing else.
-      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
-      daemonVersion: RUNNING_VERSION,
-      publishedVersion: async () => {
-        probes += 1;
-        return PUBLISHED_VERSION;
-      },
-      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
-    });
-    running.push(daemon);
-
-    await daemon.closed;
-    expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
-
-    // One read, at the boundary, and the successor runs the published version.
-    expect(probes).toBe(1);
-    // The successor may run the stable-home copy of the published bundle —
-    // same bytes, the directory nothing prunes — so the pin is the VERSIONED
-    // basename, which both locations share and no other version can wear.
-    expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
-    expect(daemon.hostState().upgrade.replacement).toBe("in-progress");
-    // It let go first, so the successor can take the session.
-    expect(await socketAnswers(paths.socketPath)).toBe(false);
-  });
-
-  it("exits as it always did when it is current, having asked exactly once", async () => {
-    const { paths, env } = await session();
-    const spawns: string[] = [];
-    let probes = 0;
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
-      daemonVersion: RUNNING_VERSION,
-      publishedVersion: async () => {
-        probes += 1;
-        return RUNNING_VERSION;
-      },
-      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry) => spawns.push(entry.command) },
-    });
-    running.push(daemon);
-
-    await daemon.closed;
-
-    // The read is spent once, on the way out — never per tick.
-    expect(probes).toBe(1);
-    expect(spawns).toEqual([]);
-    expect(await socketAnswers(paths.socketPath)).toBe(false);
-  });
-
-  it("asks nothing at all on a local build, which no release supersedes", async () => {
-    const { paths, env } = await session();
-    let probes = 0;
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
-      daemonVersion: "0.0.0-dev",
-      publishedVersion: async () => {
-        probes += 1;
-        return "9.9.9";
-      },
-      replacementIO: { env, exit: recordExit },
-    });
-    running.push(daemon);
-
-    await daemon.closed;
-
-    // A source checkout is not a point on the published lane, so the read would
-    // decide nothing and is not spent.
-    expect(probes).toBe(0);
-    expect(await socketAnswers(paths.socketPath)).toBe(false);
-  });
-
-  it("spends no read while Workers hold it — the boundary is an exit, not a tick", async () => {
-    const { paths, env } = await session();
-    let probes = 0;
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
-      daemonVersion: RUNNING_VERSION,
-      liveness: () => true,
-      publishedVersion: async () => {
-        probes += 1;
-        return RUNNING_VERSION;
-      },
-      replacementIO: { env, exit: recordExit },
-    });
-    running.push(daemon);
-    daemon.trackWorker({
-      worker_id: "w-holder",
-      project_label: "acme/widgets",
-      pid: process.pid,
-      started_at: "2026-07-30T00:00:00.000Z",
-      workspace_path: "/tmp/workspace",
-      isolated: false,
-      warnings: [],
-    });
-
-    expect(daemon.evaluateIdle()).toBe("held-by-workers");
-    await new Promise((r) => setTimeout(r, 120));
-
-    expect(probes).toBe(0);
-    expect(await socketAnswers(paths.socketPath)).toBe(true);
-  });
-
-  it("loses the upgrade and not the exit when the published bundle is unreachable", async () => {
-    const { paths } = await session();
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
-      daemonVersion: RUNNING_VERSION,
-      publishedVersion: async () => "3.0.0",
-      // No cache, no dispatch: the successor cannot be found at all.
-      replacementIO: {
-        env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty"), RED_SKILLS_NO_PINNED_DISPATCH: "1" },
-      },
-    });
-    running.push(daemon);
-
-    // The daemon was leaving either way; the failed handover does not strand it.
-    await daemon.closed;
-    expect(await socketAnswers(paths.socketPath)).toBe(false);
-  });
-
-  it("leaves on time when the registry never answers, rather than hanging on the read", async () => {
-    const { paths } = await session();
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
-      publishedProbeTimeoutMs: 50,
-      daemonVersion: RUNNING_VERSION,
-      // A read that resolves never — the shipped one has no timeout of its own.
-      publishedVersion: () => new Promise(() => undefined),
-      // And a host that holds no bundle either, so the read running out of time
-      // is genuinely the whole answer rather than the cache being consulted.
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") }, exit: recordExit },
-    });
-    running.push(daemon);
-
-    await daemon.closed;
-
-    // Unresolved stays unresolved: an unanswered read is never a match.
-    expect(daemon.hostState().upgrade.published_unknown).toBe(1);
-    expect(daemon.hostState().upgrade.running_version).toBe(RUNNING_VERSION);
-    expect(await socketAnswers(paths.socketPath)).toBe(false);
-  });
-});
-
-// The other half of the same reachability question, and the half that matters
-// more: a daemon holding a registration NEVER goes idle — the registration is
-// what keeps it alive, by design (ADR 0130 Amendment 4) — so the boundary check
-// #2968 added is unreachable on exactly the hosts with work to do. Its looks are
-// the boot one and the interval, and both have to fire, replace, and be seen to
-// have fired: a daemon reporting no published version says the same thing whether
-// its check held or never ran, and that ambiguity is what #2975 was diagnosed
-// through by hand.
-describe("the working daemon, which reaches no idle boundary at all", () => {
-  /** A standing registration, which is what makes the idle path unreachable. */
+// The daemon is always on (ADR 0150 §4), so the boot look and the interval are
+// the WHOLE upgrade path — there is no idle boundary left to ask at, which is
+// what #2968 once leaned on. Both looks have to fire, replace, and be seen to
+// have fired: a daemon reporting no published version says the same thing
+// whether its check held or never ran, and that ambiguity is what #2975 was
+// diagnosed through by hand.
+describe("the working daemon, whose timer is the whole of the ask", () => {
+  /** A standing registration — a host with work to do, which never leaves. */
   function hold(daemon: RedskilledDaemon, workspace: string): void {
     daemon.registerProject({
       project_label: "acme/widgets",
@@ -835,7 +656,6 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
       paths,
       // Orders of magnitude past the interval: whatever fires here is not an idle
       // exit, and the boot look is off so it is not that either.
-      idleMs: 600_000,
       replaceCheckMs: 25,
       replaceBootCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
@@ -845,9 +665,9 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     running.push(daemon);
     hold(daemon, paths.runtimeDir);
 
-    // The registration holds it awake, which is the whole reason the idle check
-    // cannot be what upgrades this daemon.
-    expect(daemon.evaluateIdle()).toBe("held-by-registrations");
+    // The daemon is always on (ADR 0150 §4), so the replacement timer is the
+    // whole of the upgrade path — there is no idle boundary to fall back on.
+    expect(daemon.hostState().registrations ?? []).toHaveLength(1);
     expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
 
     // The successor may run the stable-home copy of the published bundle —
@@ -870,7 +690,6 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     const spawns: string[][] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       // The SHIPPED interval, which cannot fire inside this test: the look that
       // does is the boot one, and without it this daemon would serve a published
       // release past for fifteen minutes with `checks: 0`.
@@ -895,7 +714,6 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     let probes = 0;
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
       replaceBootCheckMs: 20,
       // Born BY a replacement seconds ago: the version question was just asked.
@@ -923,7 +741,6 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     const spawns: string[][] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: 25,
       replaceBootCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
@@ -947,7 +764,6 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     let probes = 0;
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: 25,
       replaceBootCheckMs: 15,
       daemonVersion: "0.0.0-dev",
@@ -982,7 +798,6 @@ describe("a check that held and a check that never fired", () => {
     const { paths, env } = await session();
     const silent = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       // Armed, and nowhere near due: this daemon has never looked.
       replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
       replaceBootCheckMs: 0,
@@ -1011,7 +826,6 @@ describe("a check that held and a check that never fired", () => {
     const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => {
@@ -1040,7 +854,6 @@ describe("a read the registry never answers", () => {
     const spawns: string[][] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: 0,
       publishedProbeTimeoutMs: 20,
       daemonVersion: RUNNING_VERSION,
@@ -1063,7 +876,6 @@ describe("a read the registry never answers", () => {
     const spawns: string[][] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => PUBLISHED_VERSION,
@@ -1083,7 +895,6 @@ describe("a read the registry never answers", () => {
     const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 600_000,
       replaceCheckMs: 0,
       publishedProbeTimeoutMs: 20,
       daemonVersion: RUNNING_VERSION,

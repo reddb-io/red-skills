@@ -134,14 +134,16 @@ export interface RedskilledServeTarget {
 /**
  * The `serve` argv for one session — ONE builder, for every way a daemon starts.
  *
- * A client spawn, a supervisor unit and a self-replacement all hand the daemon
- * the same flags, because ADR 0130 rule 7 makes them one behaviour with an
- * optional supervisor rather than separate start modes. A second copy of this
- * list is how a flag added to one start path goes missing from the others.
+ * The supervisor unit, `provision` and a self-replacement all hand the daemon the
+ * same flags. A second copy of this list is how a flag added to one start path
+ * goes missing from the others.
+ *
+ * **There is no idle-exit flag to add** (ADR 0150 §4): the daemon is always on,
+ * so a serve argv carries nothing that could make it leave by boredom.
  */
 export function redskilledServeArgv(
   target: RedskilledServeTarget,
-  options: { readonly idleMs?: number; readonly daemonVersion?: string } = {},
+  options: { readonly daemonVersion?: string } = {},
 ): string[] {
   const argv = [
     "serve",
@@ -158,7 +160,6 @@ export function redskilledServeArgv(
     "--machine-claim",
     target.machineClaimPath,
   ];
-  if (options.idleMs != null) argv.push("--idle-ms", String(options.idleMs));
   if (options.daemonVersion != null) argv.push("--daemon-version", options.daemonVersion);
   return argv;
 }

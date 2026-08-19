@@ -134,7 +134,6 @@ describe("the memory floor", () => {
     const stopped: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       // Unarmed: this test drives the tick itself, so nothing races it.
       sampleMs: 0,
       budgetGraceMs: 0,
@@ -161,7 +160,6 @@ describe("the memory floor", () => {
     const stopped: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 0,
       signalWorkerForBudgetGrace: () => true,
@@ -190,7 +188,6 @@ describe("the memory floor", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 0,
       signalWorkerForBudgetGrace: () => true,
@@ -218,7 +215,6 @@ describe("the memory floor", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 0,
       signalWorkerForBudgetGrace: () => true,
@@ -256,7 +252,6 @@ describe("the memory floor", () => {
     let stops = 0;
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => {
         stops += 1;
@@ -280,7 +275,6 @@ describe("the memory floor", () => {
     const sampledSets: number[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => true,
       treeSampler: (workers) => {
@@ -447,7 +441,6 @@ describe("the CPU reading — what RSS alone cannot tell apart", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       clock: () => "2026-07-30T12:00:00.000Z",
       stopWorker: () => true,
@@ -475,7 +468,6 @@ describe("the CPU reading — what RSS alone cannot tell apart", () => {
     ];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => true,
       treeSampler: () => readings.shift() ?? { rss: {}, cpu_seconds: {} },

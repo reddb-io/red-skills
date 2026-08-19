@@ -23,12 +23,12 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderRedskilledDashboard } from "@reddb-io/redskilled-render";
 import {
-  ensureRedskilledDaemon,
   publishRedskilledWorkerLogLine,
   readRedskilledHostState,
   startRedskilledWorker,
   type RedskilledClientConfig,
 } from "../src/client.js";
+import { birthRedskilledDaemon } from "../src/daemon-birth.js";
 import { socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { createRedskilledEventLane, readRedskilledEvents } from "../src/event-lane.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
@@ -154,7 +154,6 @@ describe("a launch client that dies is not a Worker that died", () => {
     const launcher: TestUnitLauncher = {};
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       launch: unitBackedLaunch(launcher),
       liveness: () => false,
       unitExitFacts: () => ({
@@ -209,7 +208,6 @@ describe("a launch client that dies is not a Worker that died", () => {
     // The unit is active throughout; only the process beside it is killed.
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       launch: unitBackedLaunch(launcher),
       liveness: (worker) => worker.unit != null,
       unitInventory: () => [],
@@ -245,7 +243,6 @@ describe("a launch client that dies is not a Worker that died", () => {
     const launcher: { exitLaunchClient?: (signal: NodeJS.Signals) => void } = {};
     const first = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       launch: unitBackedLaunch(launcher),
       liveness: (worker) => worker.unit != null,
       unitInventory: () => [],
@@ -259,7 +256,6 @@ describe("a launch client that dies is not a Worker that died", () => {
 
     const second = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: (worker) => worker.unit != null,
       unitInventory: () => [],
       unitMainPid: () => 137_873,
@@ -288,7 +284,6 @@ describe("a launch client that dies is not a Worker that died", () => {
 
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       // A watch gap is not a death: the host's active-unit census is the
       // independent liveness anchor that still sees this Worker.
       liveness: () => false,
@@ -318,7 +313,6 @@ describe("a launch client that dies is not a Worker that died", () => {
     const launcher: { exitLaunchClient?: (signal: NodeJS.Signals) => void } = {};
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       // An unisolated Worker: no unit, so nothing stands between the daemon and it.
       launch: (options) => {
         const launched = unitBackedLaunch(launcher)(options);
@@ -346,7 +340,6 @@ describe("a Worker the lane cannot attribute", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: () => true,
       // The host is running a Worker whose birth nobody wrote — the residue the
       // false death left behind on the machine that reported this bug.
@@ -392,7 +385,6 @@ describe("a Worker the lane cannot attribute", () => {
 
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: () => true,
       unitInventory: () => ["red-worker-reddb-io-red-skills-wwtvc.service"],
       unitMainPid: () => 137_873,
@@ -425,7 +417,6 @@ describe("a Worker the lane cannot attribute", () => {
 
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: () => true,
       unitInventory: () => [],
     });
@@ -451,7 +442,6 @@ describe("a real predecessor and a real successor", () => {
       serverCommand: process.execPath,
       serverArgs: ["--import", tsxLoader, cliEntry],
       readyTimeoutMs: 30_000,
-      idleMs: 120_000,
       env: {
         ...process.env,
         REDSKILLED_SESSION: `test:${root}`,
@@ -462,7 +452,7 @@ describe("a real predecessor and a real successor", () => {
       },
     };
 
-    expect(await ensureRedskilledDaemon(paths, config)).toBe("spawned");
+    expect(await birthRedskilledDaemon(paths, config)).toBe("spawned");
     sockets.push(paths.socketPath);
     const predecessor = await readRedskilledHostState(paths, config);
 
@@ -492,7 +482,7 @@ describe("a real predecessor and a real successor", () => {
     // The Worker outlived it — the half of the contract that already worked.
     expect(pidLiveness(started.worker), "the Worker did not survive its daemon").toBe(true);
 
-    expect(await ensureRedskilledDaemon(paths, config)).toBe("spawned");
+    expect(await birthRedskilledDaemon(paths, config)).toBe("spawned");
     const successor = await readRedskilledHostState(paths, config);
     expect(successor.pid).not.toBe(predecessor.pid);
 

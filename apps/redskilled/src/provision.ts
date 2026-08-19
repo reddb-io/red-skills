@@ -39,18 +39,10 @@ import {
 } from "./daemon-entry.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
+import { REDSKILLED_PROVISION_FIX } from "./provision-fix.js";
 
-/**
- * The canonical fix, in one string, so every surface prints the same sentence.
- *
- * The direct form is spelled as the ADR 0091 npm direct-run invocation rather
- * than a bare `redskilled`, because this line is printed exactly when the host
- * has no working daemon — and therefore no reason to have a shim for one on
- * PATH. A hint that names its own precondition is the #2961 dead end (#3071).
- */
-export const REDSKILLED_PROVISION_FIX =
-  "run `/red-setup` (Section E3 — execution daemon), or " +
-  `\`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` directly`;
+/** The canonical fix, authored once in `provision-fix.ts`. */
+export { REDSKILLED_PROVISION_FIX } from "./provision-fix.js";
 
 /** What a provisioning run did to the home. `created` and `tightened` are never both true. */
 export interface RedskilledHomeReceipt {
@@ -73,7 +65,6 @@ plugins:
       # worker_ceiling: 6
       # memory_ceiling: 8G
       # validation_ceiling: 2
-      # idle_ms: 300000
       # hooks:
       #   worker-birth:
       #     argv: [/usr/local/bin/redwall, refresh]

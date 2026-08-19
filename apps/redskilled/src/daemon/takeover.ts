@@ -13,7 +13,6 @@ export interface ReplaceWithViableSuccessorInput {
   readonly decision: Extract<RedskilledReplacementDecision, { act: "replace" }>;
   readonly io: RedskilledReplacementIO;
   readonly paths: RedskilledPaths;
-  readonly idleMs?: number;
   readonly incumbentVersion: string;
   readonly incumbentPid: number;
   readonly clock: () => string;
@@ -27,11 +26,8 @@ export interface ReplaceWithViableSuccessorInput {
 export async function replaceWithViableSuccessor(
   input: ReplaceWithViableSuccessorInput,
 ): Promise<boolean> {
-  const prepared = prepareRedskilledReplacement(input.decision, input.io, input.paths, input.idleMs);
-  const options = {
-    ...(input.idleMs == null ? {} : { idleMs: input.idleMs }),
-    io: input.io,
-  };
+  const prepared = prepareRedskilledReplacement(input.decision, input.io, input.paths);
+  const options = { io: input.io };
   let successor;
   try {
     successor = await stageRedskilledReplacementSuccessor(prepared, input.paths, options);

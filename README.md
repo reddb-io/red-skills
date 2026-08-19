@@ -181,9 +181,10 @@ announced before use.
 
 ### Provisioning
 
-A daemon starts on first use, so the floor is auto-spawn and supervision is
-optional. One command establishes both halves and prints the audit; it is what
-`/red-setup` runs:
+The daemon is always on: `provision` installs it as an OS service and starts it
+through that service, and **no client ever starts one** — a client that finds no
+daemon fails closed and prints this command (ADR 0150 §4). One command
+establishes the machine and prints the audit; it is what `/red-setup` runs:
 
 ```bash
 # The npm direct-run form is canonical (ADR 0091): it pins the version and works
@@ -193,7 +194,7 @@ RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
 
 $RS provision                  # start the daemon, print the audit
 $RS provision --check          # the read-only half — creates nothing, starts nothing
-$RS provision --install-unit   # also write the optional supervising user unit
+$RS provision --no-unit        # skip the OS service; keep the host's own arrangement
 $RS statusline global          # every project's Workers, each showing its owner
 $RS stop                       # stop the daemon; print what survives it
 ```

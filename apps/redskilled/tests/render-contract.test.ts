@@ -64,7 +64,6 @@ async function liveDaemon(): Promise<{ daemon: RedskilledDaemon; paths: Redskill
   const paths = await sessionPaths();
   const daemon = await startRedskilledDaemon({
     paths,
-    idleMs: 60_000,
     sampleMs: 0,
     ceiling: UNBOUNDED_HOST_CEILING,
     stopWorker: () => true,

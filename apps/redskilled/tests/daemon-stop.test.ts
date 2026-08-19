@@ -13,11 +13,11 @@ import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { runStop } from "../src/cli.js";
 import {
-  ensureRedskilledDaemon,
   readRedskilledHostState,
   startRedskilledWorker,
   stopRedskilledDaemon,
 } from "../src/client.js";
+import { birthRedskilledDaemon } from "../src/daemon-birth.js";
 import { socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import {
   buildRedskilledNotRunningStop,
@@ -96,7 +96,6 @@ function clientConfig(paths: RedskilledPaths) {
     serverCommand: process.execPath,
     serverArgs: ["--import", tsxLoader, cliEntry],
     readyTimeoutMs: 20_000,
-    idleMs: 60_000,
     env: {
       ...process.env,
       REDSKILLED_SESSION: `test:${paths.runtimeDir}`,
@@ -173,7 +172,7 @@ describe("redskilled stop report", () => {
 
   it("says a daemon holding nothing leaves nothing behind", () => {
     const report = buildRedskilledStopReport({
-      reason: "idle",
+      reason: "requested",
       socketPath: "/run/redskilled.sock",
       daemonVersion: "3.0.2",
       pid: 99,
@@ -198,7 +197,8 @@ describe("redskilled stop", () => {
   it("returns only after the daemon process exits and releases the lease while its Worker survives", async () => {
     const paths = await sessionPaths();
     const config = clientConfig(paths);
-    await ensureRedskilledDaemon(paths, config);
+    // Provisioning is the one route to a daemon now; a client only ever finds one.
+    await birthRedskilledDaemon(paths, config);
     const state = await readRedskilledHostState(paths, config);
     spawnedPids.push(state.pid);
     const worker = await startRedskilledWorker(paths, {
@@ -226,7 +226,7 @@ describe("redskilled stop", () => {
 
   it("shuts the daemon down and reports what it was holding", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, daemonVersion: "3.0.2" });
+    const daemon = await startRedskilledDaemon({ paths, daemonVersion: "3.0.2" });
     running.push(daemon);
     daemon.trackWorker(WORKER);
 
@@ -243,7 +243,7 @@ describe("redskilled stop", () => {
 
   it("records the stop on the host event lane, with the operator's words", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, daemonVersion: "3.0.2" });
+    const daemon = await startRedskilledDaemon({ paths, daemonVersion: "3.0.2" });
     running.push(daemon);
     daemon.trackWorker(WORKER);
 
@@ -261,7 +261,7 @@ describe("redskilled stop", () => {
 
   it("leaves the replay untouched, so the successor still adopts the survivors", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
     daemon.trackWorker(WORKER);
 
@@ -273,15 +273,9 @@ describe("redskilled stop", () => {
     expect(rehydrateWorkers(events).map((worker) => worker.worker_id)).toEqual(["w-1"]);
   });
 
-  it("names an idle exit and a signal as themselves, not as a request", async () => {
-    const idlePaths = await sessionPaths();
-    const idle = await startRedskilledDaemon({ paths: idlePaths, idleMs: 20 });
-    running.push(idle);
-    await idle.closed;
-    expect(lastRedskilledDaemonStop(await readRedskilledEvents(idlePaths.eventLanePath))?.reason).toBe("idle");
-
+  it("names a signal as itself, not as a request", async () => {
     const signalPaths = await sessionPaths();
-    const signalled = await startRedskilledDaemon({ paths: signalPaths, idleMs: 60_000 });
+    const signalled = await startRedskilledDaemon({ paths: signalPaths });
     running.push(signalled);
     await signalled.stop({ reason: "signal", signal: "SIGTERM" });
     const stop = lastRedskilledDaemonStop(await readRedskilledEvents(signalPaths.eventLanePath));
@@ -291,7 +285,7 @@ describe("redskilled stop", () => {
 
   it("writes the departure once, however many callers ask at once", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     await Promise.all([daemon.stop(), daemon.stop(), daemon.stop()]);
@@ -333,7 +327,7 @@ describe("redskilled stop", () => {
 
   it("reports what it can see WITHOUT stopping anything", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
     daemon.trackWorker(WORKER);
 
@@ -347,7 +341,7 @@ describe("redskilled stop", () => {
 describe("redskilled stop command", () => {
   it("prints the report and exits zero", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
     daemon.trackWorker(WORKER);
     let printed = "";
