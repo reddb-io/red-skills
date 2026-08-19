@@ -1,5 +1,6 @@
 ---
 name: wait-what
+working-mode: interactive
 description: Stop and re-pitch the last reply when it did not land. Use only when the user invokes this skill.
 disable-model-invocation: true
 ---

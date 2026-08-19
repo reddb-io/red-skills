@@ -1,5 +1,6 @@
 ---
 name: ground-truth
+working-mode: interactive
 description: Adversarial self-verification discipline — never report a state-changing action as successful until you re-derive the claim from a fresh red-browser ground-truth snapshot. Runs inside /verify, /code-review, and the frontend skills. Use when about to assert a form submit, write, navigation, fix, or review verdict succeeded.
 ---
 

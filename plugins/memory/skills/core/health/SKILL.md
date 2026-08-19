@@ -1,5 +1,6 @@
 ---
 name: health
+working-mode: interactive
 description: Report Memory plugin operational health. Use before memory self-improvement, CI checks, or large agent runs to verify initialization, graph mode, freshness, Skill telemetry, ranked proposal candidates, and pending proposal files without mutating anything.
 ---
 

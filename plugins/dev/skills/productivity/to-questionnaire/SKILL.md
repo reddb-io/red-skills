@@ -1,5 +1,6 @@
 ---
 name: to-questionnaire
+working-mode: interactive
 description: Turn knowledge the user cannot supply into a Markdown questionnaire for the person who can. Use only when the user invokes this skill.
 disable-model-invocation: true
 ---

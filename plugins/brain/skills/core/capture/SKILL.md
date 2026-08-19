@@ -1,5 +1,6 @@
 ---
 name: capture
+working-mode: interactive
 description: Save a durable human or project knowledge artifact into the Brain store. Use when the user says "capture", "save", "dump", "remember this", or any phrasing that sends personal context, ideas, decisions, or long-lived knowledge to Brain. Routes to Brain, not Memory.
 ---
 

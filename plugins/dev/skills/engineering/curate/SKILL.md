@@ -1,5 +1,6 @@
 ---
 name: curate
+working-mode: interactive
 description: Interactive Skill curator. Reads `memory curate skills --json`, groups Curatable-skill candidates by category (`stale`, `abandoned`, `frequently-failing`, `archive`), asks for explicit approval, archives the approved set recoverably with the approving category recorded in the manifest, and reverses any archive with `/curate --restore <name>`. With `--background`, files a single `ready-for-human` Issue listing candidates and never mutates a Skill file.
 argument-hint: "[--restore <skill-name>] [--background] (no arg = interactive curation flow)"
 disable-model-invocation: true

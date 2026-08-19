@@ -1,5 +1,6 @@
 ---
 name: think
+working-mode: interactive
 description: Synthesize a cited answer from the project Brain — deterministic over captured artifacts with confidence and evidence gaps stated. Use when the user asks what Brain knows, how ideas connect, what supports or contradicts something, or what changed. Routes to Brain, not Memory.
 ---
 

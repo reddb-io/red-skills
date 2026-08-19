@@ -1,5 +1,6 @@
 ---
 name: redskilled
+working-mode: interactive
 description: Operates the per-machine redskilled daemon through its published status, provisioning, policy, and lifecycle surfaces, and writes a self-serve debug dossier for the Worker(s) that touched one issue. Use when the operator needs to inspect, provision, configure, restart, or confirm the host-scoped execution daemon, or needs to know what the Worker on issue N is doing, where it stalled, or why it never started.
 argument-hint: "nothing to operate the daemon, or an issue number (3351 / #3351) to debug its Worker"
 disable-model-invocation: true

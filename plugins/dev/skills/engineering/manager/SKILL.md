@@ -1,5 +1,6 @@
 ---
 name: manager
+working-mode: spec-driven
 description: Operator liaison that carries one effort from raw intent through the existing owner workflows. `$dev:manager <intent>` starts an effort and persists it in the operator-scoped portfolio; `status` renders its brief; `checkpoint export`/`import` carries the portfolio to another host. Use when the user invokes `/manager`, asks to start or continue an effort, asks where an effort stands, or wants to move a portfolio between hosts.
 argument-hint: "<intent> | status [effort-id] | checkpoint export|import [path]"
 disable-model-invocation: true

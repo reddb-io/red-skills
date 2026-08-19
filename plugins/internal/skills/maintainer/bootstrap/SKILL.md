@@ -1,5 +1,6 @@
 ---
 name: bootstrap
+working-mode: interactive
 description: Placeholder maintainer-only internal skill. Use to confirm the internal plugin installed and that the current repo explicitly opted in with plugins.internal.enabled.
 disable-model-invocation: true
 ---

@@ -1,5 +1,6 @@
 ---
 name: red-gains
+working-mode: interactive
 description: Shows the detailed rsp usage-gains report from the shared RedDB telemetry store. Use when the user invokes `/red-gains`, asks whether rsp is paying for itself, wants token-savings trends, latency percentiles, throughput heatmaps, degradation history, or which wrapped command saves the most tokens.
 argument-hint: "[--since 28d]"
 disable-model-invocation: true

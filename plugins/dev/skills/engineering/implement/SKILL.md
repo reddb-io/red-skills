@@ -1,5 +1,6 @@
 ---
 name: implement
+working-mode: interactive
 description: "Implement a Spec or set of issues interactively — guided, human-driven counterpart to the autonomous /afk fleet."
 disable-model-invocation: true
 ---

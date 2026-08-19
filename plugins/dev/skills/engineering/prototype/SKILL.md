@@ -1,5 +1,6 @@
 ---
 name: prototype
+working-mode: interactive
 description: "Prototype — throwaway code that answers one design question before committing to it. Use when the question is about state or logic behaviour (→ interactive terminal explorer) or about how something should look (→ several UI variations on one route, toggled by a URL param)."
 ---
 

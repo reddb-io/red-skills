@@ -1,5 +1,6 @@
 ---
 name: improve-skills
+working-mode: interactive
 description: Generate approval-gated Skill improvement proposals from Memory Skill telemetry. Use when repeated failures suggest a skill should be patched, but direct self-modification would be unsafe.
 disable-model-invocation: true
 ---
