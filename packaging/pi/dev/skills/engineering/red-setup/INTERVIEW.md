@@ -177,13 +177,13 @@ set up. An installed `redskilled` shim on `PATH` is a warm-cache optimization,
 never a precondition — instructing an operator to run the binary that only
 exists after the thing it installs is the dead end #2961 closed.
 
-That one command starts the daemon through the ordinary client path and prints the audit as TOON. **It is idempotent**: a second run creates nothing and rewrites nothing, so run it on every setup pass rather than only when something already looks wrong. Three flags matter:
+That one command installs the always-on OS service, starts the daemon through it, and prints the audit as TOON (ADR 0150 §4). **It is idempotent**: a second run creates nothing and rewrites nothing, so run it on every setup pass rather than only when something already looks wrong. Three flags matter:
 
 - `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --check` — the read-only half. Reports without creating anything or starting anything; this is the shape `/red-doctor` consumes.
 - `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --workspace <target>` — states the workspace target outright instead of reading this repo's config. Run it with `host` at the moment the user selects the `host` preset.
-- `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --install-unit` — writes the optional supervising unit (below). Off unless the user asks for it.
+- `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --no-unit` — skips the OS service, leaving whatever arrangement the host already has. Only when the user asks for it.
 
-**The state home is created only when a lane reads it.** The daemon never resolves `~/.red/redskilled/`; the only reader is a workspace lane rooted inside it (`plugins.dev.workspace.target: host`, or a custom parent under the home). On the default `local` preset the command creates no state directory, reports `needed: false` with the declaration that decided it, and the machine is fully provisioned — **do not treat an absent `~/.red/redskilled/` as a defect** (#2958). The daemon separately reads machine policy from `~/.red/config.yaml`. When provisioning creates that file it writes only the initial template and never overwrites operator settings. Machine policy belongs under `plugins.dev.redskilled`; repository files carrying those keys warn and are ignored. Resolution is `serve` flag > environment > home config > derived default, and `host-state.ceiling` reports which source won. Provisioning is therefore never on the critical path of "have a daemon": auto-spawn already is.
+**The state home is created only when a lane reads it.** The daemon never resolves `~/.red/redskilled/`; the only reader is a workspace lane rooted inside it (`plugins.dev.workspace.target: host`, or a custom parent under the home). On the default `local` preset the command creates no state directory, reports `needed: false` with the declaration that decided it, and the machine is fully provisioned — **do not treat an absent `~/.red/redskilled/` as a defect** (#2958). The daemon separately reads machine policy from `~/.red/config.yaml`. When provisioning creates that file it writes only the initial template and never overwrites operator settings. Machine policy belongs under `plugins.dev.redskilled`; repository files carrying those keys warn and are ignored. Resolution is `serve` flag > environment > home config > derived default, and `host-state.ceiling` reports which source won. **Provisioning IS the critical path of "have a daemon"**: no client ever starts one, so a machine that has not been provisioned has clients that fail closed with this command as the repair.
 
 Verify afterwards:
 
@@ -196,17 +196,14 @@ $RS host-state             # the machine's Workers, from the daemon itself
 
 A `verdict: missing` names which of the four checks failed — `home`, `daemon-entry`, `reach`, `supervisor-unit` — and prints the exact command for each. A `home` finding appears only when a declared target actually reads the home; absent-and-unneeded is reported as `ok`. A `daemon-entry` finding means no published bundle was found on this host; it names every path probed, and re-running `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` after the bundle is warmed is the cure. Do not work around it by pointing the daemon at a caller's own entry — a stale caller mints a staler daemon and the skew widens (#2736, #2677).
 
-**Optional supervising unit (default NO).** Auto-spawn already starts the daemon on first use; the user unit only adds `Restart=always` over the identical binary, socket and contract (ADR 0130 rule 7). Offer it, defaulting to no, and only on a Linux host with a `systemd --user` session. On a yes:
+**The supervising unit is installed by default.** Provisioning writes `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/redskilled.service` **only when absent** — an existing unit is the operator's configuration and is never rewritten — and the unit carries `Restart=always` and no idle timer, because ADR 0150 §4 makes the daemon always on. Tell the user the two commands that activate it across logins; do not run them for them:
 
-1. Run `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --install-unit`. It writes `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/redskilled.service` **only when absent** — an existing unit is the operator's configuration and is never rewritten.
-2. Tell the user the two commands that activate it; do not run them for them:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now redskilled.service
+```
 
-   ```bash
-   systemctl --user daemon-reload
-   systemctl --user enable --now redskilled.service
-   ```
-
-An absent unit is never a defect — `/red-doctor` reports it as `ok` with a stated absence, because auto-spawn is the supported start path either way.
+On a host with no `systemd --user` session there is no unit to write, and provisioning starts the daemon directly instead — that is the one place a process is launched outside the service manager, and it is the provisioner doing it, never a client.
 
 **Section F — RedSkills statusline (optional).**
 
