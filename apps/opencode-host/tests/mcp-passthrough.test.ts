@@ -248,8 +248,9 @@ describe("planPluginMcp against the real source tree", () => {
     expect(redMemory.entry.command[2]).toBe("mcp");
   });
 
-  it("plans the brain plugin's brain MCP, with no default red-ui", () => {
-    expect(planPluginMcp(REAL_PLUGINS, "brain").map((p) => p.name)).toEqual(["brain"]);
+  // ADR 0147 §2 / #4026: the brain adapter ships as `rs_brain`.
+  it("plans the brain plugin's rs_brain MCP, with no default red-ui", () => {
+    expect(planPluginMcp(REAL_PLUGINS, "brain").map((p) => p.name)).toEqual(["rs_brain"]);
   });
 
   it("returns an empty list when the plugin has no .mcp.json", () => {
