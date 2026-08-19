@@ -233,6 +233,7 @@ async function servePublicConnection(
     active,
     scopedState,
     scopedProject,
+    hostState: options.hostState,
     mutateProjectControl,
     readProjectStatus: () => readProjectStatus(scopedProject()),
     onGithubReader: (reader) => {
