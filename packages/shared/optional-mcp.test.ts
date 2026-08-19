@@ -6,7 +6,7 @@ import {
 } from "./optional-mcp.js";
 
 /** What memory's `.mcp.json` ships on its own. */
-const MEMORY_DECLARED = { "red-memory": { command: "sh", args: ["-c", "…"] } };
+const MEMORY_DECLARED = { rs_memory: { command: "sh", args: ["-c", "…"] } };
 const BRAIN_DECLARED = { brain: { command: "sh", args: ["-c", "…"] } };
 
 const OPTED_IN = { "plugins.red-ui.enabled": "true" };
@@ -14,12 +14,12 @@ const OPTED_IN = { "plugins.red-ui.enabled": "true" };
 describe("red-ui is composed from config, never shipped enabled (ADR 0147 §4)", () => {
   it("adds nothing to memory when the project never asked", () => {
     expect(optedInMcpServers("memory", {})).toEqual({});
-    expect(Object.keys(pluginMcpDeclaration("memory", MEMORY_DECLARED, {}))).toEqual(["red-memory"]);
+    expect(Object.keys(pluginMcpDeclaration("memory", MEMORY_DECLARED, {}))).toEqual(["rs_memory"]);
   });
 
   it("adds the viewer to the memory declaration when the project opts in", () => {
     const declaration = pluginMcpDeclaration("memory", MEMORY_DECLARED, OPTED_IN);
-    expect(Object.keys(declaration).sort()).toEqual(["red-memory", "red-ui"]);
+    expect(Object.keys(declaration).sort()).toEqual(["red-ui", "rs_memory"]);
     expect(declaration["red-ui"]).toEqual({
       command: "npx",
       args: ["-y", "@reddb-io/ui@latest", "mcp", "--stdio"],
