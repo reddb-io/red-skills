@@ -10,7 +10,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
-import { socketAnswers } from "./daemon.js";
+// The module, not the barrel (#4064): the barrel re-exports the lifecycle.
+import { socketAnswers } from "./daemon/socket.js";
 import {
   createRedskilledMachineClaimStore,
   currentMachineOwner,

@@ -14,7 +14,8 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { socketAnswers } from "./daemon.js";
+// The module, not the barrel (#4064): the barrel re-exports the lifecycle.
+import { socketAnswers } from "./daemon/socket.js";
 import { startThroughInstalledSupervisor } from "./client-rendezvous.js";
 import { redskilledServeArgv, type ResolvedRedskilledEntry } from "./daemon-entry.js";
 import { requireRedskilledEntryWithFetch } from "./entry-fetch.js";

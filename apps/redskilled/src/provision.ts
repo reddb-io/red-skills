@@ -29,7 +29,8 @@ import {
   workspaceReadsRedskilledHome,
   WORKSPACE_TARGET_CONFIG_KEY,
 } from "@reddb-io/shared/worker-workspace.js";
-import { socketAnswers } from "./daemon.js";
+// The module, not the barrel (#4064): the barrel re-exports the lifecycle.
+import { socketAnswers } from "./daemon/socket.js";
 import {
   isResolvedRedskilledEntry,
   resolveRedskilledEntry,

@@ -6,7 +6,10 @@
  * and verifies the same socket, lease, and process boundary as a normal stop.
  */
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
-import { socketAnswers } from "./daemon.js";
+// The module, not the barrel: `./daemon.js` re-exports the lifecycle and with it
+// the ACP control plane, whose MCP client SDK bundles an ajv the dev bundle
+// contract forbids (#4064).
+import { socketAnswers } from "./daemon/socket.js";
 import { buildRedskilledUnreachableStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
 import type { RedskilledPaths } from "./paths.js";
 import { readRedskilledLeaseFile } from "./session-lease.js";
