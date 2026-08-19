@@ -86,7 +86,8 @@ describe("the host-native local ACP authority transport", () => {
       // #4029 / ADR 0151: the daemon says which version it serves, so a launcher
       // can ask instead of resolving a bundle from its own cache — the shape
       // that let one machine hold three versions at once.
-      expect(first.initialized._meta?.redskills?.servedVersion).toBe("9.9.9");
+      const handshake = first.initialized as { _meta?: { redskills?: { servedVersion?: string } } };
+      expect(handshake._meta?.redskills?.servedVersion).toBe("9.9.9");
       await exerciseWorkflow(first.connection, root, "first turn");
       await closeStdioProjection(first);
 
@@ -158,7 +159,7 @@ function launchTestWorker(
 async function openStdioProjection(env: NodeJS.ProcessEnv, label: string): Promise<{
   child: ChildProcess;
   connection: ReturnType<ReturnType<typeof client>["connect"]>;
-  initialized: { readonly _meta?: { readonly redskills?: { readonly servedVersion?: string } } };
+  initialized: Awaited<ReturnType<ReturnType<ReturnType<typeof client>["connect"]>["agent"]["request"]>>;
 }> {
   const child = spawn(process.execPath, [
     "--import", tsxLoader,
