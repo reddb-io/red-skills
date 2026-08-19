@@ -42,6 +42,9 @@ function projectSession() {
         age_ms: 1_000,
         freshness: "fresh",
         detail: "the Project queue is drained",
+        // A drained queue is one the daemon actually polls, which it does only
+        // for a registration.
+        registered: true,
       },
       workers: {
         total: 0,

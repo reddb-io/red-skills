@@ -44,6 +44,8 @@ export interface ProjectStatusContext {
     readonly age_ms: number | null;
     readonly freshness: ProjectStatusFreshness;
     readonly detail: string;
+    /** Whether a registration — the thing the demand loop polls — is held. */
+    readonly registered: boolean;
   };
   readonly workers: {
     readonly total: number;
@@ -146,6 +148,15 @@ export function projectStatusSnapshot(
       : "fresh";
   const depth = poll?.outcome === "counted" ? poll.depth : null;
   const posture = intent?.outcome ?? (depth == null ? "unknown" : depth === 0 ? "queue-drained" : "queued");
+  // **A drain that cannot drain has to say so.** Drain intent lives on the
+  // control record; the demand loop births only for a REGISTRATION, which names
+  // the work query and the argv a Worker is launched with. A project that is
+  // `draining` with no registration therefore polls nothing and births nothing
+  // — and reported that as "the daemon has not observed this Project queue",
+  // which reads like a freshness lag that will clear on its own. It never
+  // clears: nothing is going to observe it.
+  const drainIntent = (projectControls.get(project.projectId)?.drainIntent) ?? "inactive";
+  const unregisteredDrain = registration == null && drainIntent === "draining";
   const health = host.request_health;
 
   const context: ProjectStatusContext = {
@@ -160,7 +171,10 @@ export function projectStatusSnapshot(
       observed_at: poll?.at ?? null,
       age_ms: ageMs,
       freshness,
-      detail: intent?.detail ?? poll?.detail ?? "the daemon has not observed this Project queue",
+      detail: unregisteredDrain
+        ? UNREGISTERED_DRAIN_WARNING
+        : intent?.detail ?? poll?.detail ?? "the daemon has not observed this Project queue",
+      registered: registration != null,
     },
     workers: {
       total: workers.length,
@@ -529,6 +543,21 @@ export function projectControlRequest(value: unknown): ProjectControlRequest {
  * persistence, so they belong beside the record they operate on rather than in
  * the connection assembler — which is a wiring file, not a control surface.
  */
+/**
+ * What a `drain` answers when nothing will act on it.
+ *
+ * Stated once, so the status projection and the control answer cannot drift
+ * into two different accounts of one dead end.
+ */
+export const UNREGISTERED_DRAIN_WARNING =
+  "this Project holds no registration, so the daemon polls no queue and births no Worker for it;" +
+  " the drain intent is recorded and nothing acts on it";
+
+/** Whether the daemon holds the registration its demand loop would poll. PURE. */
+export function projectIsRegistered(host: RedskilledHostState, project: AcpProjectWorkspace): boolean {
+  return (host.registrations ?? []).some((entry) => entry.project_label === project.projectLabel);
+}
+
 export function bindProjectControl(deps: {
   readonly scopedProject: () => AcpProjectWorkspace;
   readonly projectControls: Map<string, ProjectControlState>;
@@ -538,14 +567,22 @@ export function bindProjectControl(deps: {
   readonly readGithubCustody: () => Promise<unknown>;
 }) {
   return {
-    mutateProjectControl: (operation: ProjectControlOperation, request: ProjectControlRequest = {}) =>
-      applyProjectControl(
-        deps.scopedProject(),
+    mutateProjectControl: async (operation: ProjectControlOperation, request: ProjectControlRequest = {}) => {
+      const project = deps.scopedProject();
+      const answer = await applyProjectControl(
+        project,
         operation,
         deps.projectControls,
         deps.persistProjectControls,
         request,
-      ),
+      );
+      // Told at the moment of asking, not only to whoever thinks to read status
+      // afterwards: a caller who ran `drain` and got a clean answer has every
+      // reason to believe Workers are coming.
+      return operation === "drain" && !projectIsRegistered(deps.hostState(), project)
+        ? { ...answer, warning: UNREGISTERED_DRAIN_WARNING }
+        : answer;
+    },
     readProjectStatus: async (project: AcpProjectWorkspace) => {
       const control = projectStatusSnapshot(project, deps.projectControls, deps.hostState(), deps.clock());
       const mergeCustody = await deps.readGithubCustody();
