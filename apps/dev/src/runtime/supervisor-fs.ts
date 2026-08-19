@@ -15,7 +15,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseRecords } from "@reddb-io/toon";
-import type { IterDirInfo, SweepWork } from "../core/supervisor.js";
 import { buildRef } from "../core/remote-branch.js";
 import {
   parseReapableWorkerWorktreePath,
@@ -32,6 +31,51 @@ import {
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
 } from "@reddb-io/worker";
+
+/**
+ * The slot's current iteration, resolved from the filesystem.
+ *
+ * **Declared here now that the supervisor state machine is gone** (ADR 0148):
+ * the shape used to live in `core/supervisor/types.ts` beside the tick that
+ * consumed it, and that tick was the project-side control half the daemon took
+ * over. What survives is the READ — a reaper, a doctor and a monitor still ask
+ * this module what a worker directory holds — so the shape belongs to the reader
+ * rather than to the loop that no longer runs.
+ */
+export interface IterDirInfo {
+  path: string;
+  /** .current.number, or null when the worker died before claiming. */
+  issue: number | null;
+  workerId: string;
+  /** Live attempt branch (`afk/{worker}/{issue}-{slug}`), when recoverable. */
+  branch?: string;
+  /** Tail of afk.log for the no-sentinel envelope's log section. */
+  logTail: string;
+  /** Extracted agent notes for the envelope's notes section, if any. */
+  notes: string;
+  /** Worker lifetime in seconds for the envelope duration, or 0 when unknown. */
+  durationS: number;
+  /** Real attempt number for this iteration, parsed from the `<issue>-a{n}` iter
+   * dir, or 1 when it cannot be derived. */
+  attempt: number;
+  /** Reported spend for this attempt (WorkerVitals `current.cost_usd`), when the
+   * runner reports cost. Undefined means unmeasured, not zero. */
+  costUsd?: number;
+}
+
+/** One worker's claimed iter dirs for the trip sweep. */
+export interface SweepWorker {
+  workerId: string;
+  /** (iterDir, issue) pairs; issue is null when the worker died pre-claim. */
+  pairs: { dir: string; issue: number | null }[];
+}
+
+/** The worker IDs + claimed work that occupied a parked slot. */
+export interface SweepWork {
+  workers: SweepWorker[];
+  /** Log path quoted in the discard envelope body. */
+  supervisorLogPath: string;
+}
 
 /** Every attempt dir (`workers/{wid}/{issue}-a{n}`) for a worker, absolute
  * paths. Mirrors iter_dirs_for_worker. Missing worker dir → []. */

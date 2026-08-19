@@ -36,7 +36,6 @@
 // run then flows through the existing no-sentinel terminal policy (envelope +
 // label rotation + worktree teardown).
 
-import { SUPERVISOR_DEFAULTS, validateStallThresholds } from "./supervisor.js";
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
 import type { LivenessVerdict } from "@reddb-io/worker";
 
@@ -44,6 +43,41 @@ import type { LivenessVerdict } from "@reddb-io/worker";
  * the fleet passive stall detector's poll cadence so the solo reaper observes a
  * stall on the same schedule the supervisor would. */
 export const DEFAULT_STALL_POLL_S = 30;
+
+/**
+ * The stall knobs' defaults, declared HERE now that the supervisor is gone.
+ *
+ * They used to be three fields of `SUPERVISOR_DEFAULTS`, and the reaper read them
+ * from there so solo and fleet could never disagree about what 600 meant. ADR
+ * 0148 deleted the project-side supervisor, so the table that held them went with
+ * it; the numbers did not change, because the env vars an operator has already
+ * set are the contract, not the module that used to spell their fallbacks.
+ */
+const STALL_DEFAULTS = {
+  /** RED_AFK_STALL_THRESHOLD_S — soft stall threshold (seconds). */
+  stallThresholdS: 600,
+  /** RED_AFK_STALL_KILL_THRESHOLD_S — hard-reap threshold (seconds). */
+  stallKillThresholdS: 1800,
+  /** RED_AFK_ISSUE_WALL_CLOCK_MAX_S — per-issue wall-clock ceiling (seconds). */
+  issueWallClockMaxS: 2700,
+} as const;
+
+/**
+ * The hard-reap threshold must be strictly greater than the stall threshold: a
+ * worker can never become a reap candidate before it is even flagged stalled.
+ * Throws, so a `<=` config fails at resolution rather than arming a reaper that
+ * would kill on its first observation.
+ */
+export function validateStallThresholds(config: {
+  stallThresholdS: number;
+  stallKillThresholdS: number;
+}): void {
+  if (config.stallKillThresholdS <= config.stallThresholdS) {
+    throw new Error(
+      `RED_AFK_STALL_KILL_THRESHOLD_S (${config.stallKillThresholdS}) must be > RED_AFK_STALL_THRESHOLD_S (${config.stallThresholdS})`,
+    );
+  }
+}
 
 /** The resolved solo-path stall thresholds + poll cadence. */
 export interface LaneIdleStallConfig {
@@ -60,10 +94,10 @@ export interface LaneIdleStallConfig {
 
 /**
  * Resolve the solo lane-idle reaper's stall knobs from an env bag, mirroring the
- * `${VAR:-default}` ladder and `/^[0-9]+$/` typo-safety of `resolveSupervisorConfig`,
- * and reusing the fleet defaults (600 / 1800) so the env vars stay CONSISTENT
- * across solo and fleet. Validates the invariant the supervisor enforces at boot
- * (`validateStallThresholds`): the kill threshold MUST be strictly greater than
+ * `${VAR:-default}` ladder and `/^[0-9]+$/` typo-safety the retired supervisor
+ * config used, over the same defaults (600 / 1800) so an operator's env vars mean
+ * what they always meant. Validates the boot invariant
+ * ({@link validateStallThresholds}): the kill threshold MUST be strictly greater than
  * the soft threshold — a `<=` config FAILS FAST here (throws) so the solo run can
  * never arm a reaper that would reap before it even flags stalled. A non-positive
  * / non-numeric poll value floors back to {@link DEFAULT_STALL_POLL_S} so a typo
@@ -77,16 +111,16 @@ export function resolveLaneIdleStallConfig(
     if (raw !== undefined && /^[0-9]+$/.test(raw)) return Number(raw);
     return fallback;
   };
-  const stallThresholdS = num("RED_AFK_STALL_THRESHOLD_S", SUPERVISOR_DEFAULTS.stallThresholdS);
-  const stallKillThresholdS = num("RED_AFK_STALL_KILL_THRESHOLD_S", SUPERVISOR_DEFAULTS.stallKillThresholdS);
-  // Boot invariant (parity with the supervisor): kill > soft, or fail fast.
+  const stallThresholdS = num("RED_AFK_STALL_THRESHOLD_S", STALL_DEFAULTS.stallThresholdS);
+  const stallKillThresholdS = num("RED_AFK_STALL_KILL_THRESHOLD_S", STALL_DEFAULTS.stallKillThresholdS);
+  // Boot invariant: kill > soft, or fail fast.
   validateStallThresholds({ stallThresholdS, stallKillThresholdS });
   // 0 matches /^[0-9]+$/ but would busy-spin, so floor it back to the default.
   const stallPollS = num("RED_AFK_STALL_POLL_S", DEFAULT_STALL_POLL_S) || DEFAULT_STALL_POLL_S;
   // 0 would reap every attempt the moment it claims — floor back to the default.
   const issueWallClockMaxS =
-    num("RED_AFK_ISSUE_WALL_CLOCK_MAX_S", SUPERVISOR_DEFAULTS.issueWallClockMaxS) ||
-    SUPERVISOR_DEFAULTS.issueWallClockMaxS;
+    num("RED_AFK_ISSUE_WALL_CLOCK_MAX_S", STALL_DEFAULTS.issueWallClockMaxS) ||
+    STALL_DEFAULTS.issueWallClockMaxS;
   return { stallThresholdS, stallKillThresholdS, stallPollS, issueWallClockMaxS };
 }
 

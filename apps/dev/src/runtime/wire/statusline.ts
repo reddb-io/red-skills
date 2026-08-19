@@ -23,7 +23,6 @@ import {
   type CastleStateSnapshot,
   type EnginePaths,
 } from "@reddb-io/worker/engine";
-import { createFileBootBreakerStore, isBreakerOpen } from "../../core/supervisor/boot-breaker.js";
 import {
   readAllWorkerStates,
   currentObservableWorkerRecords,
@@ -189,30 +188,13 @@ export async function collectStatuslineFleet(
   nowS: number = Math.floor(Date.now() / 1000),
 ): Promise<FleetInput | undefined> {
   const paths = afkPaths(ctx.root);
-  // Crashloop breaker (#2527): an OPEN breaker means the supervisor is
-  // deliberately dead — the liveness gates below would hide exactly the fleets
-  // that most need a loud statusline, so the breaker token renders regardless.
-  let breaker: { count: number } | undefined;
-  try {
-    const ledger = await createFileBootBreakerStore(createEnginePaths(join(ctx.root, ".red"))).read();
-    if (isBreakerOpen(ledger)) breaker = { count: ledger!.count };
-  } catch {
-    breaker = undefined;
-  }
+  // The crashloop breaker (#2527) used to be read here and rendered whatever the
+  // liveness gates said, because an OPEN breaker meant the project's own
+  // supervisor was deliberately dead. ADR 0148 deleted that supervisor, so
+  // nothing in this checkout opens or writes that ledger any more: the daemon
+  // owns the birth breaker (`project-birth-breaker`) and reports it over ACP.
   const state = await readFleetState(paths.fleetStatePath);
-  if (!state) {
-    return breaker ? { runner: "?", busy: 0, total: 0, queue: 0, breaker } : undefined;
-  }
-  const breakerFallback = (): FleetInput | undefined =>
-    breaker
-      ? {
-          runner: state.runner,
-          busy: 0,
-          total: state.slotsTotal,
-          queue: state.readyForAgent,
-          breaker,
-        }
-      : undefined;
+  if (!state) return undefined;
   // ONE anchor decides identity, liveness AND freshness (ADR 0128 §5), and the
   // verdict travels into the render so a stale read is drawn as stale, never as
   // current (ADR 0128 §6).
@@ -222,8 +204,6 @@ export async function collectStatuslineFleet(
     nowS,
   });
   if (!supervisor.alive || supervisor.heartbeat.stale) {
-    const fallback = breakerFallback();
-    if (fallback) return fallback;
     // The lane still HAS a snapshot; what it lacks is a live writer. The chip
     // carries that verdict so a consumer reads "fleet, but stale" instead of
     // "no fleet" — and the compact line, which cannot qualify a number without
@@ -250,7 +230,6 @@ export async function collectStatuslineFleet(
     total: state.slotsTotal,
     queue: state.readyForAgent,
     parked: state.slotsParked,
-    breaker,
     degraded: state.slotsBusy > 0 && freshWorkers === 0,
     churnDeaths: state.churnDeaths,
     churnRespawns: state.churnRespawns,

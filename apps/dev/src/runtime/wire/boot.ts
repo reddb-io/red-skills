@@ -25,7 +25,6 @@ import {
   type ClaimHygieneIssueInput,
   type HostPrerequisiteProbeInput,
 } from "../../core/operational-probes.js";
-import { resolveSupervisorConfig } from "../../core/supervisor.js";
 import { historyTrim } from "../../core/history.js";
 import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
 import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
@@ -40,6 +39,9 @@ import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { collectDocsSweepInput, landDocsSweep } from "./docs.js";
+
+/** Heartbeat staleness ceiling for the fleet-truth probe, in seconds. */
+const HEARTBEAT_STALE_S = 300;
 
 export async function collectBootOptions(
   ctx: RepoContext,
@@ -329,14 +331,19 @@ export async function collectPrecheckFacts(
   // undefined here, so the probe records `version-unknown` rather than matching
   // the running bundle against a substituted local value.
   const latestBundleVersion = published.version ?? undefined;
-  const supervisorCfg = resolveSupervisorConfig();
+  // How long a heartbeat may go unwritten before the fleet-truth probe calls the
+  // lane stale. It was `resolveSupervisorConfig().supervisorStaleS`, one field of
+  // the project-side supervisor config ADR 0148 deleted; the number is the same
+  // 300 s the `RED_AFK_SUPERVISOR_STALE_S` default always spelled, kept as a
+  // constant because the probe reads a lane the daemon writes now and there is no
+  // longer a local loop whose cadence it has to agree with.
   const fleetTruth = await collectFleetTruthProbeInput(
     {
       supervisorPidPath: paths.supervisorPidPath,
       fleetStatePath: paths.fleetStatePath,
     },
     {
-      heartbeatStaleMs: supervisorCfg.supervisorStaleS * 1000,
+      heartbeatStaleMs: HEARTBEAT_STALE_S * 1000,
       latestBundleVersion,
     },
   );
