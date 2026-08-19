@@ -68,8 +68,18 @@ export interface ShippedBinaryName {
  * invoked bare on purpose, and adding it here would be a rule the repo does not
  * hold.
  */
+/**
+ * The dev CLI's bin-map name, as ONE literal.
+ *
+ * ADR 0147 rule 1 deletes the binary, and the two sweeps that outlive it — this
+ * one, and the skill-named-verb ratchet that turns each verb it still carries
+ * into an `rs_dev` tool — must agree on the token they are looking for. Spelling
+ * it twice would let one sweep keep watching a name the other stopped using.
+ */
+export const DEV_CLI_BINARY = "red-skills-dev";
+
 export const SHIPPED_BINARIES: readonly ShippedBinaryName[] = [
-  { name: "red-skills-dev" },
+  { name: DEV_CLI_BINARY },
   { name: "red-skills-memory" },
   { name: "red-skills-brain" },
   { name: "red-skills-redskilled" },

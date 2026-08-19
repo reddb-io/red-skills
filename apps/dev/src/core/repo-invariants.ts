@@ -80,6 +80,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every wait loop in the engine must declare its subject, deadline and escalation (#3024); the loops span apps/dev and packages/worker, the suite lives in apps/dev",
   },
   {
+    name: "invariants:skill-named-verbs",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "every verb a shipped skill still names must have an `rs_dev` tool of the same core, and every command no skill names must be recorded for deletion (ADR 0147 rule 1, #4024); the skill tree lives in plugins/, the tool surface in apps/dev",
+  },
+  {
     name: "invariants:bare-invocations",
     scope: "apps/dev",
     script: "test:invariants",

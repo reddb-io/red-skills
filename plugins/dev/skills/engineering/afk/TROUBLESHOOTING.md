@@ -277,7 +277,7 @@ supervisor.
 
 ### Confirm
 
-1. Run `npx -y -p @reddb-io/red-skills@<version> red-skills-dev fleet status` and read the supervisor health, target,
+1. Call the `rs_dev` MCP's `status {scope: project}` and read the registration, target,
    slot counts, and live worker list.
 2. Check `.red/tmp/supervisors/default/state.toon` for `slot_pids`. A relaunched
    supervisor uses this map to adopt live detached workers into their original
@@ -292,8 +292,8 @@ supervisor.
 
 ### Recover
 
-1. Prefer `npx -y -p @reddb-io/red-skills@<version> red-skills-dev fleet stop` for a clean stop; it writes the
-   stop file, waits for the supervisor, then sweeps detached orphan workers.
+1. Prefer the `rs_dev` MCP's `project_stop` for a clean stop; it gives the
+   registration back, waits for the workers it attributed, then sweeps detached orphans.
 2. If the supervisor died unexpectedly, let the `fleet` command or the
    watchdog relaunch it. The relaunch should report why it respawned, including
    ready work stranded and live workers versus target.

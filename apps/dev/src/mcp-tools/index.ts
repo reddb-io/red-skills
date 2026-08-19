@@ -15,6 +15,10 @@ import {
   type ObservabilityDependencies,
 } from "./observability.js";
 import {
+  createOperatorTools,
+  type OperatorDependencies,
+} from "./operator.js";
+import {
   createReviewTools,
   type ReviewDependencies,
 } from "./review.js";
@@ -99,6 +103,15 @@ export type {
   TriageToolInput,
   RespondToolInput,
 } from "./review.js";
+export type {
+  ManagerToolInput,
+  RedDoctorToolInput,
+  AuditSkillsToolInput,
+  InstallTypeLabelsToolInput,
+  CodexStatuslineToolInput,
+  CodexMonitorAgentToolInput,
+  ReconcileEngineToolInput,
+} from "./operator.js";
 
 /**
  * The host adapter implements every capability domain at once, so the
@@ -123,6 +136,7 @@ export interface CastleMcpDependencies
     WorktreeDependencies,
     WaitDependencies,
     ReviewDependencies,
+    OperatorDependencies,
     StatuslineDependencies {}
 
 /**
@@ -161,6 +175,7 @@ export function createCastleMcpTools(
     ...createWaitTools(deps),
     ...createReviewTools(deps),
     ...createStatuslineTools(deps),
+    ...createOperatorTools(deps),
   ];
   publishedTools = applyDangerPosture(applyOutputContracts(tools), posture);
   return publishedTools;
