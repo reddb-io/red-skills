@@ -1,7 +1,7 @@
 ---
 name: red-statusline
 working-mode: interactive
-description: Install or inspect the RedSkills statusline for the active host. RedSkills has one shared `statusline` producer in the dev bundle; Claude Code wires it through `.claude/settings.json` as a command-backed statusLine, while Codex configures the built-in `tui.status_line` footer and the dev plugin's SessionStart self-heal hook. Preserves existing config unless replacement is explicitly requested.
+description: Install or inspect the RedSkills statusline for the active host. RedSkills renders one statusline from the `redskilled` daemon; Claude Code wires it through `.claude/settings.json` as a command-backed statusLine, while Codex configures the built-in `tui.status_line` footer and the dev plugin's SessionStart self-heal hook. Preserves existing config unless replacement is explicitly requested.
 disable-model-invocation: true
 ---
 
@@ -39,7 +39,7 @@ disable-model-invocation: true
 
 ## 5. Report The Worker Modes
 
-**Keep one host producer.** The dev bundle renders the local bedrock, performs one bounded local socket read, and appends the daemon's finished Worker tail. Configure only that dev command in Claude Code; running a second daemon CLI beneath it duplicates the daemon document (#3559). Use `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` only for direct inspection: `global` names every project's owner, and `--verbose` adds the last line each Worker published.
+**Keep one host renderer.** the daemon statusline renderer renders the local bedrock, performs one bounded local socket read, and appends the daemon's finished Worker tail. The dev CLI that used to do this was deleted in #4031 — ADR 0147 §1 leaves `redskilled` as the execution chain's only shipped binary. Configure only that dev command in Claude Code; running a second daemon CLI beneath it duplicates the daemon document (#3559). Use `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` only for direct inspection: `global` names every project's owner, and `--verbose` adds the last line each Worker published.
 
 **State the mode and the declared defaults, do not guess them.** Read `plugins.dev.statusline.*` from `.red/config.yaml` and report what it declares; the keys are in [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
 
@@ -68,7 +68,7 @@ Tell the user which host branch you used, what changed or why nothing changed, a
 
 The statusline has two client architectures — read [HOST-NOTES.md](HOST-NOTES.md#two-client-architecture) for the boundary rule before touching either path. In brief:
 
-- **Command-backed host (`statusLine`)** — the dev bundle composes stdin/local-git bedrock with one daemon-fed tail over a bounded local socket read (ADR 0141). Keep it cached-bundle-first and invoke it once.
+- **Command-backed host (`statusLine`)** — the daemon statusline renderer composes stdin/local-git bedrock with one daemon-fed tail over a bounded local socket read (ADR 0141). Keep it cached-bundle-first and invoke it once.
 - **Agents and UIs** — consume structured project data through the `dev:afk` MCP tool `statusline_aggregate`, while daemon-backed host surfaces expose structured host state. They do not carry Claude's stdin-only model, context, or subscription-window facts.
 
 When diagnosing a blank statusline, rule out the stale session first — a `statusLine` written during the running session reaches the host only at the next start — then probe the `statusLine` command directly (step 5 of the Claude Code recipe in HOST-NOTES.md). The MCP path is NOT in scope either way.

@@ -30,7 +30,7 @@ The terminal header has its own independent 3 s redraw tick — see *Live Header
 
 ## Solo-run stall protection (issue #363)
 
-**There is exactly one stall authority: the `red-castle` liveness lane + evaluator.** ADR 0103 removed the attempt-progress guard — the commit-anchored wall-clock cap, the hard cap, and the edit-loop-stall abort are gone, and `runAgent` no longer arms anything of the sort. A busy-but-unproductive agent is no longer killed on a commit deadline; a genuinely *silent* one still is, by the layer below (solo) and by the Demand producer's reaper, both reading the same `LivenessVerdict`. Worker vitals (loc, tokens, tool/text/reasoning counters) ride an independent ~20s sampler and are unaffected by the removal.
+**There is exactly one stall authority: the Worker's liveness lane + evaluator** (`@reddb-io/worker`, renamed from red-castle by ADR 0153). ADR 0103 removed the attempt-progress guard — the commit-anchored wall-clock cap, the hard cap, and the edit-loop-stall abort are gone, and `runAgent` no longer arms anything of the sort. A busy-but-unproductive agent is no longer killed on a commit deadline; a genuinely *silent* one still is, by the layer below (solo) and by the Demand producer's reaper, both reading the same `LivenessVerdict`. Worker vitals (loc, tokens, tool/text/reasoning counters) ride an independent ~20s sampler and are unaffected by the removal.
 
 The solo `/afk run` worker's in-process layer is armed only under no-sandbox isolation (under docker/podman its busy-predicate inspects the HOST process tree, which cannot see an agent inside a container, so it stands down and only the per-iteration idle timeout + max-iterations apply):
 
