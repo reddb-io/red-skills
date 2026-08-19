@@ -1,3 +1,3 @@
 interface:
   display_name: "Afk"
-  short_description: "Autonomous loop that drains the ready-for-agent queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a Spec, hammer specific issues, or otherwise let agents grind through the backlog."
+  short_description: "Autonomous loop that drains the ready-for-agent queue on the issue tracker. Registers the project with the redskilled daemon at a runner and a target width, arms the drain, and observes; the daemon admits each Worker, which claims an issue, works it in its own workspace, validates, lands, and closes. Use when the user wants to run AFK execution, drain a Spec, hammer specific issues, or otherwise let agents grind through the backlog."

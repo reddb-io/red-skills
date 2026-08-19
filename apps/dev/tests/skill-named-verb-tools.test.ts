@@ -24,41 +24,39 @@ const toolForVerb = new Map(SKILL_NAMED_VERB_TOOLS.map((entry) => [entry.verb, e
 
 /**
  * ADR 0147 rule 1: a command some skill still names becomes a tool of the plugin's
- * MCP, and a command no skill names dies with the bundle. The ratchet holds BOTH
- * halves — the mapping is only trustworthy while the sweep that produced it still
- * finds the same verbs.
+ * MCP, and a command no skill names dies with the bundle. #4030 finished the
+ * migration, so the sweep now proves the ZERO state — no shipped skill names the
+ * deleted binary — while the ledger it produced keeps every promoted tool published.
  */
 describe("skill-named verbs have rs_dev tools of the same core", () => {
   it("sweeps a non-empty shipped skill tree", () => {
     // A walker that reaches nothing is green for the wrong reason, which is the
-    // failure mode that makes a ratchet decorative.
+    // failure mode that makes a ratchet decorative. The tree must be real; what
+    // it must NOT contain is the next assertion.
     expect(skillMarkdownFiles(ROOT).length).toBeGreaterThan(20);
-    expect(namedVerbs.length).toBeGreaterThan(0);
   });
 
-  it("gives every verb a shipped skill names an rs_dev tool", () => {
-    const orphans = namedSites
-      .filter((site) => !toolForVerb.has(site.verb))
-      .map((site) => `${site.path}:${site.line} names \`${site.verb}\`, which no rs_dev tool answers`);
+  it("finds no shipped skill still naming the deleted binary", () => {
+    const survivors = namedSites.map(
+      (site) => `${site.path}:${site.line} runs the deleted CLI with \`${site.verb}\``,
+    );
 
     expect(
-      orphans,
-      "ADR 0147 rule 1: a verb a shipped skill still names must become an `rs_dev` tool of the same core, " +
-        "or the skill must stop naming it. Declare the pairing in " +
+      survivors,
+      "ADR 0147 rule 1 deletes the dev CLI rather than deprecating it (#4030). Name the `rs_dev` tool that " +
+        "carries the same core — the pairing is declared in " +
         "apps/dev/src/core/skill-named-verb-tools.ts (SKILL_NAMED_VERB_TOOLS).",
     ).toEqual([]);
+    expect(namedVerbs).toEqual([]);
   });
 
-  it("publishes every declared tool on the composed rs_dev surface", () => {
+  it("publishes every promoted tool on the composed rs_dev surface", () => {
+    // The ledger is what keeps a promoted core from quietly leaving the surface
+    // now that no skill text points at it any more.
     for (const entry of SKILL_NAMED_VERB_TOOLS) {
       expect(publishedTools, `\`${entry.verb}\` maps to \`${entry.tool}\``).toContain(entry.tool);
     }
-  });
-
-  it("declares no pairing for a verb the skills stopped naming", () => {
-    // A mapping nobody needs is a tool nobody asked for: when the last mention
-    // leaves the docs, the entry leaves with it.
-    expect([...toolForVerb.keys()].sort()).toEqual(namedVerbs);
+    expect(toolForVerb.size).toBeGreaterThan(10);
   });
 
   it("states why each pairing is the same core", () => {

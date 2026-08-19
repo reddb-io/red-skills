@@ -158,6 +158,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every shipped SKILL.md must declare exactly one of ADR 0150's four Working modes (#4012); the skills span every plugin, but their ratchet lives in apps/dev",
   },
   {
+    name: "invariants:working-mode-doc-contract",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "a skill that names a Plugin MCP tool must name one the surface publishes, and the two thin entrances must name no client boot phase (ADR 0147 rule 2, ADR 0150 §3, #4030); the skills span every plugin and the tool surface lives in apps/dev",
+  },
+  {
     name: "invariants:domain-vocabulary",
     scope: "apps/dev",
     script: "test:invariants",

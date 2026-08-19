@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   CANONICAL_INVOCATION_PREFIX,
   DOC_SWEEP_ROOTS,
+  EXECUTION_CHAIN_ENTRYPOINTS,
   SHIPPED_BINARIES,
   describeBareInvocations,
+  describeRetiredInstructions,
   findBareInvocations,
+  findRetiredInstructions,
+  instructableEntrypoints,
+  scanRetiredInstructions,
   scanSweptDocuments,
   sweptDocuments,
 } from "../src/core/bare-invocation-guard.js";
@@ -39,11 +44,11 @@ describe("bare shipped-binary invocation guard (#3071)", () => {
   it("flags a bare binary downstream of a pipe", () => {
     const sites = findBareInvocations(
       "fixture.md",
-      ["```bash", `printf '%s\\n' "$tracked" | red-skills-dev monitor --mirror-plan`, "```"].join("\n"),
+      ["```bash", `printf '%s\\n' "$root" | red-skills-redskilled host-state --stdin`, "```"].join("\n"),
     );
 
     expect(sites).toHaveLength(1);
-    expect(sites[0]).toMatchObject({ binary: "red-skills-dev", kind: "fenced" });
+    expect(sites[0]).toMatchObject({ binary: "red-skills-redskilled", kind: "fenced" });
   });
 
   it("accepts the canonical npx form", () => {
@@ -52,7 +57,7 @@ describe("bare shipped-binary invocation guard (#3071)", () => {
       `${CANONICAL_INVOCATION_PREFIX}<version> red-skills-redskilled provision --install-unit`,
       "```",
       "",
-      `Or inline: \`${CANONICAL_INVOCATION_PREFIX}<version> red-skills-dev dashboard\`.`,
+      `Or inline: \`${CANONICAL_INVOCATION_PREFIX}<version> red-skills-redskilled host-state\`.`,
     ].join("\n");
 
     expect(findBareInvocations("fixture.md", canonical)).toEqual([]);
@@ -117,5 +122,73 @@ describe("bare shipped-binary invocation guard (#3071)", () => {
     const sites = scanSweptDocuments(REPO_ROOT, DOC_SWEEP_ROOTS);
 
     expect(sites, describeBareInvocations(sites)).toEqual([]);
+  });
+});
+
+describe("retired execution-chain entrypoints (ADR 0147 rule 1, #4030)", () => {
+  it("leaves the daemon as the only instructable binary of the chain", () => {
+    expect(instructableEntrypoints()).toEqual(["redskilled", "red-skills-redskilled"]);
+  });
+
+  it("names the route that replaces each retired entrypoint", () => {
+    for (const entry of EXECUTION_CHAIN_ENTRYPOINTS.filter((candidate) => !candidate.instructable)) {
+      expect(entry.replacement.length, `\`${entry.token}\` names its replacement`).toBeGreaterThan(20);
+    }
+  });
+
+  it("refuses the retired CLI even behind the canonical prefix", () => {
+    const sites = findRetiredInstructions(
+      "fixture.md",
+      ["```bash", `${CANONICAL_INVOCATION_PREFIX}<version> red-skills-dev dashboard --json`, "```"].join("\n"),
+    );
+
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({ kind: "fenced", entrypoint: { token: "red-skills-dev" } });
+    expect(describeRetiredInstructions(sites)).toContain("rs_dev");
+  });
+
+  it("refuses the forwarder and the bundle it reaches, at any path", () => {
+    const sites = findRetiredInstructions(
+      "fixture.md",
+      [
+        "```bash",
+        "node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard",
+        "node dist/dev.bundle.min.mjs run --once",
+        "```",
+      ].join("\n"),
+    );
+
+    expect(sites.map((site) => site.entrypoint.token)).toEqual(["afk.mjs", ".bundle.min.mjs"]);
+  });
+
+  it("refuses a retired command in an inline prose span", () => {
+    const sites = findRetiredInstructions("fixture.md", "Fall back to `red-skills-dev retake 123`.");
+
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({ kind: "inline" });
+  });
+
+  it("accepts the retired NAME with nothing after it — a name is not an instruction", () => {
+    const prose = [
+      "Install the plugin package `@reddb-io/red-skills-dev`.",
+      "Check the shim with `command -v red-skills-dev`.",
+      "The bundle ships as `dist/dev.bundle.min.mjs`.",
+    ].join("\n");
+
+    expect(findRetiredInstructions("fixture.md", prose)).toEqual([]);
+  });
+
+  it("accepts the surviving daemon command", () => {
+    const command = ["```bash", `${CANONICAL_INVOCATION_PREFIX}<version> red-skills-redskilled provision`, "```"].join(
+      "\n",
+    );
+
+    expect(findRetiredInstructions("fixture.md", command)).toEqual([]);
+  });
+
+  it("no swept surface instructs a retired entrypoint", () => {
+    const sites = scanRetiredInstructions(REPO_ROOT, DOC_SWEEP_ROOTS);
+
+    expect(sites, describeRetiredInstructions(sites)).toEqual([]);
   });
 });

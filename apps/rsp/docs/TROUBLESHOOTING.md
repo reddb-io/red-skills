@@ -54,7 +54,7 @@ A command that should be rewritten by the rsp pre-exec hook runs raw, produces n
 Run the three-command split before changing hooks or config:
 
 ```bash
-printf '%s\n' '{"tool_name":"Bash","tool_input":{"command":"git status --short"}}' | node dist/dev.bundle.min.mjs hook pre-tool-use
+printf '%s\n' '{"tool_name":"Bash","tool_input":{"command":"git status --short"}}' | node dist/rsp.bundle.min.mjs hook claude-pre-exec
 cd ../second-redskills-enabled-repo && git status --short
 RSP_DEBUG=1 git status --short
 ```

@@ -4,10 +4,9 @@ A self-sufficient Docker image that drains `ready-for-agent` issues from GitHub
 repositories, one ephemeral run at a time, through the **existing AFK engine**.
 
 The container reimplements nothing. It picks a runner, picks the queue head, clones
-the target repo into a temp directory, and hands the issue to
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev run --issues <N> --runner <R> --once`
-— the same engine path the local fleet and the Actions lane drive. Claim comment, heartbeat, validation gate
-and pull request all come from that engine.
+the target repo into a temp directory, and hands the issue to the same Worker body
+the local daemon and the Actions lane drive — one issue, one run, `--once`. Claim
+comment, heartbeat, validation gate and pull request all come from that engine.
 
 ## Stateless by construction
 

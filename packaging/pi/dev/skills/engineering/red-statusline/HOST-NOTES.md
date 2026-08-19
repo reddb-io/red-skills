@@ -38,7 +38,7 @@ Install or inspect the RedSkills statusline for this repository. The shared prod
   The **`/afk monitor` dashboard keeps its fuller per-worker row** (title, `[live]`/`[quiet]`, `wait`, `log`) — it is a full dashboard, not a compact statusline — but its vitals tokens are the same `tls`/`rsn`/`txt` vocabulary as the statusline.
 
   The same per-worker fields arrive as structured data from rs_dev `statusline_aggregate` and `status { scope: worker }`, so an agent decodes the tokens by reading the fields instead of the legend.
-  For an on-demand human decode table — the no-MCP fallback — run `npx -y -p @reddb-io/red-skills@<version> red-skills-dev statusline --legend` or the same binary's `monitor --legend`. The legend prints `token / name / gloss` rows and exits without rendering the live statusline or monitor surface.
+  The legend itself — `token / name / gloss` rows — is carried in this document and in `statusline_aggregate`'s own field names, so a human decode never needs a separate render of the live surface.
 - **Codex — single line.** The `tui.status_line` footer is single-line only, so the plain producer stays ONE aggregate line (project · model · context · usage · repo counts · the AFK block). The multi-line layout is Claude-Code-only.
 
 The AFK rows are quiet when no worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
@@ -160,13 +160,8 @@ is a personal host preference, not repo state. There is no command hook, so the
 shared RedSkills `statusline` producer cannot be injected into the footer yet.
 
 Codex has a native `/statusline` command for picking and reordering these
-footer items and persisting them to `config.toml`. The dev bundle also exposes
-an explicit inspector/fixer:
-
-```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline --fix
-```
+footer items and persisting them to `config.toml`. The rs_dev MCP also publishes
+an explicit inspector, the `codex_statusline` read tool.
 
 The inspector reports the active `tui.status_line`, flags a missing
 `task-progress` widget, prints the recommended order, and reminds the operator

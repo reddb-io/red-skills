@@ -1,9 +1,10 @@
 # The `rs_dev` MCP — RedSkills' complete project interface
 
 **The `rs_dev` MCP is the one canonical interface to every project execution
-capability, and every other surface is a client of it.** `/afk`, `/go`, the
-`red-skills-dev` CLI, and any future command-center UI all drive the same tools
-over the same value-returning cores (ADR 0120, public name amended by ADR 0142).
+capability, and every other surface is a client of it.** `/afk`, `/go` and any
+future command-center UI all drive the same tools over the same value-returning
+cores (ADR 0120, public name amended by ADR 0142, sole client surface by
+ADR 0147 rule 1 — there is no second implementation to age beside it).
 The name identifies the operator-facing system boundary; `red-castle` remains
 the execution substrate and its `Castle*` contracts remain internal. This file
 is the client contract; the skills that reference it never restate the tool list.
@@ -49,16 +50,14 @@ load-lifecycle gap wearing the exact shape of an outage. `/red-doctor` names the
 same cure from its check 27 when it is told what the session sees
 (`--session-mcp`).
 
-**Only once the reload is ruled out: say the MCP is unreachable and fall back to
-the `red-skills-dev` CLI — never hand-roll the operation.** The CLI is the same
-engine behind the same cores, so the fallback is a transport change, not a
-behavior change. Falling back FIRST is what turns a one-line cure into a
-forensic investigation.
-Resolve the runtime through [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md):
-the canonical ADR 0091 npm direct-run form
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`, which works on
-every installation; an installed shim on `PATH` is only a warm-cache
-optimization for the same command.
+**Only once the reload is ruled out: say the MCP is unreachable — and stop.**
+ADR 0147 rule 1 deleted the second implementation rather than deprecating it,
+because a documented fallback is a second engine that ages at its own pace: that
+is how one machine came to run three versions of the same verbs. An unreachable
+tool surface means the daemon is down or this project is not registered, and both
+repairs live in [`../redskilled/SKILL.md`](../redskilled/SKILL.md). Never
+hand-roll the operation in shell — falling back FIRST is what turns a one-line
+cure into a forensic investigation.
 
 ## Mutation modes are binding
 
@@ -336,9 +335,9 @@ the comment is on a pull request.
 | `codex_monitor_agent` | read | The read-only brief a Codex monitor sub-agent is spawned with. It spawns nothing — the host's own spawn primitive does. |
 | `reconcile_engine` | mutating | Warm the published engine bundle into the stable cache path and re-point a standing registration at it in one operation. |
 
-These are the verbs ADR 0147 rule 1 promoted out of the dying `red-skills-dev`
-CLI: a command a shipped skill still names becomes a tool here, and a command no
-skill names dies with the bundle. Each returns its core's value — none of them
+These are the verbs ADR 0147 rule 1 promoted out of the dying dev CLI: a command
+a shipped skill still named became a tool here, and a command no skill named died
+with the bundle. Each returns its core's value — none of them
 renders a table and re-reads it. The pairing is declared in
 `apps/dev/src/core/skill-named-verb-tools.ts` and swept on every gate run.
 

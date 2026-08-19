@@ -2,6 +2,17 @@ export const DEVELOPMENT_WORKFLOW_HEADING = "Development workflow";
 
 export const DEVELOPMENT_WORKFLOW_BLOCK = `## ${DEVELOPMENT_WORKFLOW_HEADING}
 
+**Work enters RedSkills exactly four ways, and every skill names which one it serves** (ADR 0150 §1, declared as \`working-mode:\` in each SKILL.md header). The mode decides where the work RUNS, so a reader who cannot tell the mode cannot tell whose checkout is at stake:
+
+| Working mode | Entrance | Where the work runs |
+| --- | --- | --- |
+| **interactive** | a human drives a coder CLI | a fresh Worktree under this checkout's \`.red/tmp/worktrees/manual\` |
+| **spec-driven** | \`/start\` → \`/to-spec\` → \`/to-tickets\` → \`/afk\` | Worker workspaces the \`redskilled\` daemon places |
+| **ad-hoc** | \`/go "<demand>"\` | one Worker workspace the daemon places |
+| **ADR-editing** | \`/adr-editor\` | a fresh Worktree under this checkout's manual lane |
+
+Interactive and ADR-editing Worktrees stay under this checkout because a human returns to them; spec-driven and ad-hoc work is coordinated by the daemon, which is always on and is the only thing that births a Worker — a client that finds no daemon fails closed rather than spawning one.
+
 - One-off concrete work goes through \`/go "<demand>"\` (ADR 0081): it mints a disposable \`lane:go\` issue, works in a castle worker under the shared \`.red/tmp/workers/\` root with \`current.kind=go\`, runs the shared gate, and brings back a PR. Route the structured backlog through \`/afk\`; put a parked issue back in the queue with \`/retake\`.
 - When working by hand instead (e.g. a slice the maintainer decided to land manually), work in an isolated worktree under \`.red/tmp/worktrees/manual/<slug>\`; do not create sibling worktrees outside the repo.
 - Create task branches with \`git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> origin/main\`, not with \`git checkout -b\` or \`git switch -c\` in the primary checkout.

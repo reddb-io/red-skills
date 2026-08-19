@@ -744,10 +744,8 @@ Full guide: [Actions lane](./plugins/dev/skills/engineering/afk/actions-lane.md)
 
 [`apps/afk-container/`](./apps/afk-container/README.md) is the same drain in a
 self-sufficient Docker image: it picks a runner, picks the queue head, clones the
-target repo into a temp directory, and hands the issue to
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev run --issues <N> --runner <R> --once`
-— the same engine path the
-local daemon and the Actions lane drive. Claim comment, heartbeat, validation
+target repo into a temp directory, and hands the issue to the same Worker body
+the local daemon and the Actions lane drive. Claim comment, heartbeat, validation
 gate and pull request all come from that engine; the container reimplements
 nothing.
 
@@ -898,9 +896,11 @@ npm package (ADR 0091) — one tarball carrying the `dev`, `memory`, `brain`,
 Session-start launchers resolve the version-pinned package through the same
 `npx` command on Codex and Claude; neither host owns a binary-download path.
 Integrity is npm's own tarball shasum — no GitHub-release download and no
-client-side signature step. The canonical dispatch form is
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>`; a bare
-shim invocation resolves against whatever else is installed. The Memory/Brain
+client-side signature step. The canonical form is
+`npx -y -p @reddb-io/red-skills@<version> <binary> <subcommand>`; a bare shim
+invocation resolves against whatever else is installed. Of the execution chain,
+`redskilled` is the only binary a doc instructs — a workflow verb is an `rs_dev`
+tool (ADR 0147 rule 1). The Memory/Brain
 native `red` engine binary is the one per-platform artifact that cannot ride in
 the tarball; those plugins resolve it separately at runtime.
 

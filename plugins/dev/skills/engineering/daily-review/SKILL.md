@@ -15,22 +15,15 @@ Call the read tool matching the requested period — `daily_review` (default) or
 `weekly_review`, both `{}` — and present the structured TOON report; the tool
 surface and host prefix rule live in [`../afk/MCP.md`](../afk/MCP.md).
 
-When the MCP is unreachable, name that and fall back to the `red-skills-dev`
-CLI — same engine, same cores (see
-[`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run
-shim and output-format rules):
-
-| Period flag | Subcommand |
+| Period flag | Tool |
 | --- | --- |
-| `--period day` (default) | `npx -y -p @reddb-io/red-skills@<version> red-skills-dev daily-review [--json]` |
-| `--period week` | `npx -y -p @reddb-io/red-skills@<version> red-skills-dev weekly-review [--json]` |
+| `--period day` (default) | `daily_review` |
+| `--period week` | `weekly_review` |
 
-Dev-checkout equivalent:
-
-| Period flag | Command |
-| --- | --- |
-| `--period day` (default) | `node plugins/dev/skills/engineering/afk/bin/afk.mjs daily-review [--json]` |
-| `--period week` | `node plugins/dev/skills/engineering/afk/bin/afk.mjs weekly-review [--json]` |
+When the MCP is unreachable, name that and repair it — the daemon or the plugin
+load, per [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md), which
+also carries the output-format rules. ADR 0147 rule 1 left no second
+implementation of this report to fall back to.
 
 </what-to-do>
 

@@ -18,24 +18,19 @@ the label claims `ready-for-human`, but the truth is in the worktree.
 
 ## 1. Diagnose — Reconstruct The State
 
-**Drive the `rs_dev` MCP; the CLI is the fallback transport.** The diagnosis is
+**Drive the `rs_dev` MCP — it is the only transport.** The diagnosis is
 the `retake` tool — `{issue, repo?, prLimit?}` — which returns the full
 reconstruction (tracker state, PRs, branches, worktrees, recommendation) as a
 structured value. The tool surface, host tool-name prefix rule, and mutation
 contract live in [`../afk/MCP.md`](../afk/MCP.md); do not restate them here.
 
-When the MCP is unreachable, name that and fall back to the `red-skills-dev`
-CLI — the same engine over the same cores. Resolve the runtime through the
-shared contract in [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md)
-(canonical ADR 0091 npm direct-run; an installed shim on `PATH` is only a
-warm-cache optimization):
+When the MCP is unreachable, name that and repair it — the daemon or the plugin
+load, per the shared contract in
+[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md). ADR 0147 rule 1
+left no second implementation of this report to fall back to.
 
-```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123
-```
-
-The runtime accepts `123` and `#123`; quote `'#123'` when a shell would read it
-as a comment. Add `--json` when another tool or agent consumes the state.
+`issue` accepts `123` and `#123`. The answer is structured TOON: read the fields
+rather than re-parsing a rendered report.
 
 The report answers six questions, in this order:
 
@@ -89,20 +84,12 @@ Pick by verdict, never by label alone:
 The `requeue` tool (MUTATING) — `{issue, guidance}` — executes one atomic
 transition: archive the active `## Current blocker` into `## Resolved blockers`,
 post the guidance as an auditable `directive` comment, drop `ready-for-human`
-and every `blocked:*` label, add `ready-for-agent`. CLI fallback:
-
-```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
-```
+and every `blocked:*` label, add `ready-for-agent`.
 
 ### Adopt-branch landing — validate and land hand-done work
 
 The same `requeue` tool with `adoptBranch` set routes the branch through the
-no-agent landing lane. CLI fallback:
-
-```bash
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
-```
+no-agent landing lane.
 
 After the requeue transition, the branch routes through the **no-agent landing
 lane** (ADR 0055). The shared feedback gate validates it with no agent re-run;
@@ -111,14 +98,11 @@ green lands it through `doLanding` and closes the issue; red parks it back to
 branch with no commits versus base exits 0 with a note. An adopted branch and an
 AFK branch pass the same gate authority.
 
-`--guidance` is required in both modes — it records the human decision. Use
-`--dry-run` to print the planned transition without mutating, and `--json` for
-structured output.
+`guidance` is required in both modes — it records the human decision.
 
-### `--apply` — safe local setup only
+### `apply` — safe local setup only
 
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123 --apply` runs only the safe local `git`
-operations
+`retake` with `apply` set runs only the safe local `git` operations
 the diagnosis selected: create a missing manual worktree under
 `.red/tmp/worktrees/manual/<slug>`, recreate it from a matching branch, or fetch
 a PR head branch into a fresh worktree. It then prints the next `cd`, `requeue`,

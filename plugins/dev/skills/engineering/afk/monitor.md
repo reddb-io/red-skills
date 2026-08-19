@@ -43,16 +43,16 @@ When it reports `degraded: true`, treat the census as failed and read its named
 4. Renders WorkerVitals activity counters (`tools:<n> reason:<n> text:<n> wait:<n>`) so a quiet but pid-live worker can show useful progress signals.
 5. Renders the 48h sparkline header (next subsection) on every refresh.
 
-The **no-MCP fallback** renders the same dashboard from the project root — for a headless cron or a host that never loaded the `redskilled` server:
+**A host that never loaded the `rs_dev` server has no board.** ADR 0147 rule 1
+left no second implementation to render one, so the repair is the plugin load or
+the daemon (see [`MCP.md`](./MCP.md)) — not a shell reimplementation of this
+dashboard. Where only raw evidence is wanted, the Worker's own TOONL lane at
+`.red/tmp/workers/*/worker.log.toonl` is readable without any tool.
 
-```bash
-RED_AFK_RUNNER=<runner> npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor
-```
+The board has **two modes**, selected by where it is rendered:
 
-The command has **two modes**, auto-selected by stdout type:
-
-- **TTY (real terminal)**: full box-drawing layout, refreshes every 3 s, `clear` between frames. Ctrl-C to exit.
-- **Non-TTY (piped, captured by an agent, redirected)**: one-shot **compact dashboard** — one sparkline header + one line per worker, then exit 0. Force this with `--once` or `RED_AFK_MONITOR_COMPACT=1` even from a TTY.
+- **A live terminal**: full box-drawing layout, refreshed on a fixed tick.
+- **Captured by an agent**: one-shot **compact dashboard** — one sparkline header + one line per worker. `status {scope: worker}` returns the same inputs as data, which is the form an agent should read.
 
 Compact output shape (≈3 lines total for 2 workers — fits inline without truncation in an agent transcript):
 
@@ -128,11 +128,7 @@ The mirror is a pure diff: it reconciles the live worker state files against the
 
 1. Fetch `TaskCreate`, `TaskUpdate`, and `TaskList` via `ToolSearch` if not already loaded (deferred tools).
 2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `w<id> [<…>] #<n> <slug>`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>","phase":"<last phase>"}`, reading the key (`worker_id` from the leading token, `issue` from the `#<n>`) and the **phase** (the word inside the title's `[…]` bracket, after any `n/5 `) from the title, and the **stage** from the description (`stage: <x>`). Keep a key→task_id map for step 4.
-3. **Compute the plan.** The mirror reconciler is host plumbing rather than execution truth, so it has **no redskilled tool** — this is a standing no-MCP fallback, not a lapse. Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
-   ```bash
-   printf '%s\n' "$tracked" | red-skills-dev monitor --mirror-plan
-   ```
-   The command globs the state files and reconciles them against the tracked set on stdin (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** to stdout — one descriptor per harness call (empty stdin → cold reconcile; empty plan → no output). A `TaskUpdate` rewrites the **title** when the macro phase moves and refreshes the **description** when the micro stage moves; a terminal failure re-titles to `[blocked]` and flips the task to `failed`:
+3. **Compute the plan.** The mirror reconciler is host plumbing rather than execution truth. Reconcile the tracked set from step 2 against the live Worker rows `status {scope: worker}` returns, keyed by `worker_id:issue`, so parallel Workers each get exactly one task and re-runs never duplicate. The result is a JSONL **call plan** — one descriptor per harness call (nothing tracked → cold reconcile; nothing changed → no calls). A `TaskUpdate` rewrites the **title** when the macro phase moves and refreshes the **description** when the micro stage moves; a terminal failure re-titles to `[blocked]` and flips the task to `failed`:
    ```jsonl
    {"call":"TaskCreate","key":"wAAAA:22","title":"wAAAA [2/5 coding] #22 extract state.sh","description":"stage: impl","state":"in_progress"}
    {"call":"TaskUpdate","key":"wAAAA:22","title":"wAAAA [3/5 validating] #22 extract state.sh","description":"stage: tests","state":"in_progress"}
@@ -170,18 +166,14 @@ supervisor under Codex:
 1. Fetch a sub-agent spawn primitive via `ToolSearch` (query:
    `spawn agent background monitor`).
 2. If unavailable, continue the worker launch and print:
-   `monitor loop unavailable in this runner; call redskilled status with scope: worker; no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/worker.log.toonl manually.`
-3. If available, emit the canonical prompt from the bundle (use `--mode run` for a
-   single worker, `--mode fleet` for a supervisor, so the read-only rules stay
-   identical across launches):
-   ```bash
-   RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
-   ```
-   Spawn exactly one monitor agent with that prompt. The monitor agent is a
-   presentation consumer only: it periodically reads rs_dev `status` with
-   `scope: worker`, reports concise progress in the Codex
-   UI, and exits once no supervisor or live workers remain. Its prompt carries
-   the `/dev:afk monitor --once` CLI form as the no-MCP fallback.
+   `monitor loop unavailable in this runner; read rs_dev status with scope: worker, or tail .red/tmp/workers/*/worker.log.toonl.`
+3. If available, get the canonical prompt from the `codex_monitor_agent` tool
+   (`mode: run` for a single Worker, `mode: fleet` for a producer, so the
+   read-only rules stay identical across launches). The tool spawns nothing — the
+   host's own spawn primitive does. Spawn exactly one monitor agent with that
+   prompt. The monitor agent is a presentation consumer only: it periodically
+   reads rs_dev `status` with `scope: worker`, reports concise progress in the
+   Codex UI, and exits once no producer or live Worker remains.
 4. Tell the user one line:
    `Codex monitor agent spawned — auto-closes when AFK exits; manual monitor: redskilled status with scope: worker, or /dev:afk monitor without the MCP.`
 
