@@ -339,10 +339,25 @@ describe("check 26 — marketplace registration source", () => {
           : { present: false },
     });
 
+    expect(reports.marketplaceSources.findings).toHaveLength(1);
     const finding = reports.marketplaceSources.findings[0]!;
     expect(finding.host).toBe("claude");
     expect(finding.kind).toBe("standalone-source");
     expect(finding.remediation).toBe("mise use --global red-dev@1 && red-dev install");
+    // A leftover still resolves, so the row warns and the uninstalled host
+    // beside it stays clean — the classifier never invents a finding per host.
+    expect(reports.marketplaceSources.rows.map((row) => row.verdict)).toEqual(["warn", "ok"]);
+  });
+
+  it("reports nothing when no host CLI is installed", async () => {
+    const root = await poseRoot("doctor-marketplace-absent-");
+
+    const reports = await collectDoctorClassifierReports(repoContext(root), {
+      ...OFFLINE,
+      readMarketplaceList: async () => ({ present: false }),
+    });
+
+    expect(reports.marketplaceSources.findings).toEqual([]);
   });
 });
 
