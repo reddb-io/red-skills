@@ -12,7 +12,7 @@
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   applySemanticAuthority,
@@ -24,8 +24,39 @@ import {
 import { planEmit } from "../src/emit.js";
 import type { McpPlan } from "../src/mcp-passthrough.js";
 
-const REPO = resolve(__dirname, "../../..");
-const REAL_PLUGINS = resolve(REPO, "plugins");
+/**
+ * A plugins tree that still DECLARES navigator.
+ *
+ * ADR 0147 §4 switched navigator off in the shipped `plugins/` tree, and the
+ * deferral rule is precisely about what happens when a host is handed one — so
+ * reading the shipped tree here would make every assertion below pass for the
+ * wrong reason (nothing to defer is not the same as deferring). The fixture is
+ * the pre-0147 shape, kept because the rule outlives the switch-off: navigator
+ * returns once the daemon has a memory ceiling of its own.
+ */
+function navigatorPluginsRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "semantic-authority-plugins-"));
+  const declare = (plugin: string, servers: Record<string, unknown>): void => {
+    mkdirSync(join(root, plugin, "hooks"), { recursive: true });
+    writeFileSync(
+      join(root, plugin, ".mcp.json"),
+      JSON.stringify({ mcpServers: servers }, null, 2) + "\n",
+      "utf8",
+    );
+  };
+  const shC = (body: string) => ({ command: "sh", args: ["-c", body] });
+  declare("dev", {
+    navigator: shC('root="${CODEX_PLUGIN_ROOT:-}"; exec bash "$root/hooks/code-nav-mcp.sh"'),
+    redskilled: shC('root="${CODEX_PLUGIN_ROOT:-}"; exec bash "$root/hooks/redskilled-mcp.sh"'),
+  });
+  writeFileSync(join(root, "dev/hooks/code-nav-mcp.sh"), "#!/usr/bin/env bash\n", "utf8");
+  writeFileSync(join(root, "dev/hooks/redskilled-mcp.sh"), "#!/usr/bin/env bash\n", "utf8");
+  declare("memory", { "red-memory": shC('exec node "$root/scripts/bootstrap.mjs" mcp') });
+  declare("brain", { brain: shC('exec node "$root/scripts/bootstrap.mjs" mcp') });
+  return root;
+}
+
+const FIXTURE_PLUGINS = navigatorPluginsRoot();
 
 /** The language servers the navigator spawns (apps/code-nav/src/config.ts). */
 const LANGUAGE_SERVER_COMMANDS = [
@@ -94,7 +125,7 @@ describe("host generation fixtures (the emitted tree)", () => {
     const outRoot = mkdtempSync(join(tmpdir(), "semantic-authority-"));
     try {
       const emitPlan = planEmit({
-        pluginsRoot: REAL_PLUGINS,
+        pluginsRoot: FIXTURE_PLUGINS,
         plugins: ["dev"],
         configText: CONFIG,
         env: {},
@@ -137,7 +168,7 @@ describe("host generation fixtures (the emitted tree)", () => {
 
   it("records what it deferred, so a missing MCP is explained", () => {
     const emitPlan = planEmit({
-      pluginsRoot: REAL_PLUGINS,
+      pluginsRoot: FIXTURE_PLUGINS,
       plugins: ["dev"],
       configText: CONFIG,
       env: {},
@@ -149,7 +180,7 @@ describe("host generation fixtures (the emitted tree)", () => {
 
   it("defaults to a bare opencode host when no authority is passed", () => {
     const emitPlan = planEmit({
-      pluginsRoot: REAL_PLUGINS,
+      pluginsRoot: FIXTURE_PLUGINS,
       plugins: ["dev"],
       configText: CONFIG,
       env: {},
@@ -164,7 +195,7 @@ describe("process birth (nothing spawns a second language server)", () => {
 
   function commandsFor(host: "opencode" | "redcode"): string[] {
     const emitPlan = planEmit({
-      pluginsRoot: REAL_PLUGINS,
+      pluginsRoot: FIXTURE_PLUGINS,
       plugins: ["dev", "memory", "brain"],
       configText: CONFIG,
       env: {},
