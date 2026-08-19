@@ -71,6 +71,11 @@ import {
 } from "../machine-scope.js";
 import { createRedskilledOrphanReaperRuntime } from "../orphan-reaper.js";
 import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-template.js";
+import {
+  classifyLaunchProbe,
+  launchProbeArgv,
+  launchProbeRefusal,
+} from "../launch-probe.js";
 import { demandTurnForBirth } from "../acp-demand-turn.js";
 import { createRedskilledRegistrationIntentStore } from "../registration-intent-store.js";
 import {
@@ -378,6 +383,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const activityMs = activityRegistration?.intervalMs ?? DEFAULT_REDSKILLED_ACTIVITY_MS;
   const balanceRegistration = options.githubBalance;
   const queueRegistration = options.queueDiscovery;
+  // **Off unless a host asks for it.** Running a registration's argv is the one
+  // place the daemon touches a string it otherwise only carries, so the reach is
+  // granted by the entry that serves a real machine rather than assumed by every
+  // daemon a test constructs.
+  const probeLaunch = options.probeLaunch;
   // Not `const`: an unarmed poller asks again before every poll, so the daemon
   // that was spawned from a session without a credential still counts once one
   // exists (#3056).
@@ -1418,6 +1428,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now,
       held: registrations.get(request.project_label),
     });
+    // Asked here, because 22 deaths later is too late (#4006, #4103). A launch
+    // that cannot answer `--version` is one no Worker could have been born
+    // from; a probe that could not run at all says so and changes nothing.
+    if (probeLaunch != null) {
+      const verdict = classifyLaunchProbe(probeLaunch(launchProbeArgv(registration.argv)));
+      if (verdict === "unrunnable") {
+        throw new Error(launchProbeRefusal(registration.project_label, registration.argv));
+      }
+    }
     registrations.set(registration.project_label, registration);
     persistRegistrationIntent();
     // Somebody is watching now: a poll waiting out an idle window comes forward.

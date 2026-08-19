@@ -1,5 +1,6 @@
 // The daemon's option, registration and handle shapes — its contract with
 // every caller, kept apart from the lifecycle that implements it.
+import type { LaunchProbeResult } from "../launch-probe.js";
 import type { DeathAttribution } from "@reddb-io/shared/death-attribution.js";
 import { type RedskilledAdmissionVerdict,
   type RedskilledHostCeiling,
@@ -274,6 +275,14 @@ export interface RedskilledDaemonOptions {
    * would spend more quota than the batching saves.
    */
   readonly queueDiscovery?: RedskilledQueueRegistration;
+  /**
+   * Ask a registration's launch whether it can run at all (#4103).
+   *
+   * Injected so a test can answer without spawning, and so a host that wants no
+   * probe simply hands none — the registration then behaves exactly as it did
+   * before the probe existed.
+   */
+  readonly probeLaunch?: (argv: readonly string[]) => LaunchProbeResult;
   /**
    * Window between demand ticks; 0 or below leaves the loop unarmed.
    *

@@ -8,6 +8,7 @@
  * bundle versions. A path it needs is a path it was given.
  */
 import { execFileSync } from "node:child_process";
+import { defaultLaunchProbe } from "./launch-probe.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
@@ -532,6 +533,11 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
         // baked into this build rather than a placeholder, because "what version is
         // answering" is the first fact a skew investigation needs.
         daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+        // The serving daemon is the one that births from a registration, so it
+        // is the one that asks whether the launch can run at all (#4103): a
+        // refusal here costs one process; discovering it at birth cost #4006
+        // twenty-two deaths.
+        probeLaunch: defaultLaunchProbe,
         // The verdicts reach the statusline and both dashboards from here, because
         // this is the only moment they exist in memory: the reaper clears the
         // anchors it read, so a surface asking later would find a lane it would
