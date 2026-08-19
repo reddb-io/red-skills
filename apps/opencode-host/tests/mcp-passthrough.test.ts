@@ -217,44 +217,36 @@ describe("rewriteServer (Claude/Codex → opencode)", () => {
 });
 
 describe("planPluginMcp against the real source tree", () => {
-  it("plans the dev plugin's navigator and redskilled MCPs", () => {
+  // ADR 0147 §4 left each plugin declaring the one server it owns: navigator,
+  // rsp and the default red-ui are switched off at the declaration, so what the
+  // passthrough plans from the shipped tree is exactly that remainder.
+  it("plans the dev plugin's redskilled MCP and nothing beside it", () => {
     const plans = planPluginMcp(REAL_PLUGINS, "dev");
-    expect(plans.length).toBeGreaterThanOrEqual(1);
-    const codeNav = plans.find((p) => p.name === "navigator");
-    expect(codeNav).toBeDefined();
-    expect(codeNav!.entry.type).toBe("local");
+    expect(plans.map((p) => p.name)).toEqual(["redskilled"]);
+    const redskilled = plans[0]!;
+    expect(redskilled.entry.type).toBe("local");
     // The source dev checkout ships the launcher; the resolved
     // command must point at the absolute script path.
-    expect(codeNav!.entry.command[1]).toMatch(/code-nav-mcp\.sh$/);
-
-    const redskilled = plans.find((p) => p.name === "redskilled");
-    expect(redskilled).toBeDefined();
-    expect(redskilled!.entry.type).toBe("local");
-    expect(redskilled!.entry.command[1]).toMatch(/redskilled-mcp\.sh$/);
+    expect(redskilled.entry.command[1]).toMatch(/redskilled-mcp\.sh$/);
   });
 
-  it("keeps the installed RedSkills rsp launcher in the runtime fallback chain", () => {
+  it("keeps the installed RedSkills launcher in the runtime fallback chain", () => {
     const raw = readMcpJson(REAL_PLUGINS, "dev")!;
-    const body = raw.mcpServers!.rsp!.args![1]!;
-    expect(body).toContain('$HOME/.red-skills/current/bin/rsp.mjs');
+    const body = raw.mcpServers!.redskilled!.args![1]!;
+    expect(body).toContain("$HOME/.codex/.tmp/marketplaces/red-skills");
   });
 
-  it("plans the memory plugin's red-memory and red-ui MCPs", () => {
+  it("plans the memory plugin's red-memory MCP, with no default red-ui", () => {
     const plans = planPluginMcp(REAL_PLUGINS, "memory");
-    const names = plans.map((p) => p.name);
-    expect(names).toContain("red-memory");
-    expect(names).toContain("red-ui");
-    const redMemory = plans.find((p) => p.name === "red-memory")!;
+    expect(plans.map((p) => p.name)).toEqual(["red-memory"]);
+    const redMemory = plans[0]!;
     expect(redMemory.entry.command[0]).toBe("node");
     expect(redMemory.entry.command[1]).toMatch(/bootstrap\.mjs$/);
     expect(redMemory.entry.command[2]).toBe("mcp");
   });
 
-  it("plans the brain plugin's brain and red-ui MCPs", () => {
-    const plans = planPluginMcp(REAL_PLUGINS, "brain");
-    const names = plans.map((p) => p.name);
-    expect(names).toContain("brain");
-    expect(names).toContain("red-ui");
+  it("plans the brain plugin's brain MCP, with no default red-ui", () => {
+    expect(planPluginMcp(REAL_PLUGINS, "brain").map((p) => p.name)).toEqual(["brain"]);
   });
 
   it("returns an empty list when the plugin has no .mcp.json", () => {
