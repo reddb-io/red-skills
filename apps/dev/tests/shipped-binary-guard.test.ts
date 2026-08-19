@@ -134,7 +134,7 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
 
     expect(answers.get("red-skills-redskilled")).toEqual(["apps/redskilled/src/cli.ts"]);
     expect(answers.get("red-skills-redskilled-mcp")).toEqual(["apps/dev/src/mcp-server.ts"]);
-    expect(answers.get("memory-mcp")).toEqual(["apps/memory/src/mcp-server/runtime.ts"]);
+    expect(answers.get("memory-mcp")).toEqual(["apps/memory/src/mcp-server.ts"]);
   });
 });
 
