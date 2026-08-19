@@ -146,6 +146,10 @@ _Avoid_: Project coordinator Worker, resident, daemon, durable Worker, pet proce
 The one thin, stateless MCP adapter a RedSkills plugin ships (`rs_dev`, `rs_memory`, `rs_brain`), an ACP client of **redskilled** that publishes tool schemas and forwards every call; it holds no engine, store, GitHub client, or fallback, so a session or **Worker** may mount it without paying for a heavy process. The daemon carries the weight once per host; the adapter is what a host multiplies per session.
 _Avoid_: castle MCP, "redskilled MCP" (as the plugin adapter's name), resident MCP, heavy MCP, per-plugin daemon
 
+**Forge passthrough**:
+The one tool `rs_github` publishes — a method, a path, a body and headers, forwarded whole to **redskilled**'s Project-bound gateway. It is cross-plugin rather than any one plugin's, because every plugin asks about the same repository through the same credential profile. An observing method joins the gateway's existing demand, so two sessions asking the same question at the same moment cost one upstream call, and the answer states how old the value it served is; a mutating one is scheduled through the durable write outbox under a key derived from the request, so the retry after a timeout re-reaches the first receipt instead of publishing twice. The MCP itself holds no credential and no cache — a per-session copy of either is the cost the **Plugin MCP** exists to remove.
+_Avoid_: GitHub proxy, forge tunnel (nothing arbitrary crosses — a request that maps to no declared read or outbox write is refused by name), per-endpoint GitHub tools
+
 **Project control state**:
 The stateful per-project partition inside **redskilled** that understands the project's workflow policy, maintains queue consumption, and decides which disposable **Workers** to request. It is daemon state, not a separate project process, resident, or special Worker.
 _Avoid_: Project coordinator Worker, Castle resident, Demand producer, Project listener, project daemon

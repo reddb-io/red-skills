@@ -18,6 +18,17 @@ const ADAPTERS = [
  */
 const ADAPTER_TOOL_TREE = resolve(__dirname, "..", "src", "mcp-tools");
 
+/**
+ * `rs_github`, the cross-plugin GitHub MCP (#4025, ADR 0147 rule 2).
+ *
+ * It publishes ONE forge-shaped passthrough and forwards it. The credential
+ * profile that answers, the age-stamped cache that may serve it, and the
+ * coalescing that makes two concurrent identical reads cost one upstream call
+ * all belong to the daemon. A token or a cache HERE would be one per session
+ * per plugin — the cost ADR 0147 rule 2 removed, wearing a different name.
+ */
+const RS_GITHUB_TREE = resolve(__dirname, "..", "src", "mcp-github");
+
 const FORBIDDEN = [
   // Both spellings: the wire was `@reddb-io/red-castle/resident` before #4013
   // renamed the package, and a reintroduction would reach for the new name.
@@ -35,6 +46,24 @@ const FORBIDDEN = [
   // dependency of the stateless client a host starts once per session.
   { pattern: /@reddb-io\/worker/, owner: "the Worker body" },
 ] as const;
+
+/**
+ * What `rs_github` specifically may not hold, beyond the shared list above.
+ *
+ * Each pattern names an IDENTIFIER rather than a word, because the tool's own
+ * description has to say "cache" and "credential profile" out loud — telling a
+ * caller what the daemon does for it is the opposite of doing it here.
+ */
+const RS_GITHUB_FORBIDDEN = [
+  { pattern: /\bsecret\b|\bBearer\b|Authorization|process\.env/, owner: "a daemon-owned credential" },
+  { pattern: /createGithubCache|\bcacheKey\b|\bnew Map\b|\bnew Set\b|\binFlight\b/, owner: "a daemon-owned cache" },
+  { pattern: /\bfetch\s*\(|node:https?|api\.github\.com/, owner: "a direct upstream call" },
+] as const;
+
+/** Prose describing what the adapter does NOT hold is documentation, not a hold. */
+function code(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
 
 describe("ACP adapter ownership guard", () => {
   it("keeps public adapters as stateless ACP clients", () => {
@@ -55,6 +84,27 @@ describe("ACP adapter ownership guard", () => {
       const source = readFileSync(path, "utf8");
       for (const rule of FORBIDDEN) {
         if (rule.pattern.test(source)) {
+          violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+        }
+      }
+    }
+    expect(violations, violations.join("\n")).toEqual([]);
+  });
+
+  // Acceptance criterion of #4025: the MCP holds no token and no cache.
+  it("keeps `rs_github` a forwarder — no credential, no cache, no upstream call", () => {
+    const swept = sourceFiles(RS_GITHUB_TREE);
+    expect(swept.length, "swept no rs_github source — a walker that reaches nothing is green by accident")
+      .toBeGreaterThan(0);
+
+    const violations: string[] = [];
+    for (const path of swept) {
+      const source = readFileSync(path, "utf8");
+      for (const rule of FORBIDDEN) {
+        if (rule.pattern.test(source)) violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+      }
+      for (const rule of RS_GITHUB_FORBIDDEN) {
+        if (rule.pattern.test(code(source))) {
           violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
         }
       }

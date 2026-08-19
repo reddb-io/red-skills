@@ -8,10 +8,17 @@ import {
   type RedskilledGithubCustodyRecord,
   type RedskilledGithubCustodyStatus,
   type RedskilledGithubManagedProjectReader,
+  type RedskilledGithubProjectReader,
   type RedskilledGithubRead,
   type RedskilledGithubUpdate,
   type RedskilledGithubWriteRequest,
 } from "./github-gateway.js";
+import {
+  githubRequestAnswer,
+  githubRequestParams,
+  planGithubRequest,
+  type RedskilledGithubRequestAnswer,
+} from "./github-request.js";
 import {
   redskillsAcpMethod,
   type RedskillsAcpMethodDomain,
@@ -22,6 +29,7 @@ import { RedskilledGithubCredentialProfileError } from "./github-credential-prof
 type GithubReadParams = { readonly read: RedskilledGithubRead };
 type GithubWriteParams = RedskilledGithubWriteRequest;
 type GithubCustodyHandoffParams = RedskilledGithubCustodyHandoff;
+type GithubRequestParams = ReturnType<typeof githubRequestParams>;
 
 export const REDSKILLED_GITHUB_UPDATE_METHOD = REDSKILLS_ACP_METHODS.githubUpdate;
 
@@ -88,6 +96,63 @@ function emptyObserver(): AcpGithubUpdateObserver {
   return { close: () => undefined, settled: async () => undefined };
 }
 
+/**
+ * Run one operation under this connection's Project against the daemon-owned
+ * gateway, with the two refusals every credential-bound method owes a caller:
+ * an unresolvable profile is an authorization answer, and upstream backpressure
+ * is a dated retry rather than an opaque failure.
+ */
+async function servedByProjectReader<T>(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  project: AcpProjectWorkspace,
+  onReader: ((reader: unknown) => void) | undefined,
+  run: (reader: RedskilledGithubProjectReader) => Promise<T>,
+): Promise<T> {
+  try {
+    const selection = await gateway?.credentialForProject({
+      projectId: project.projectId,
+      projectLabel: project.projectLabel,
+      workspacePath: project.workspacePath,
+    });
+    if (gateway == null || selection == null) {
+      throw RequestError.authRequired(
+        {
+          version: 1,
+          kind: "github-credential-profile",
+          reason: "missing-credentials",
+          credential_profile: "personal",
+        },
+        "this Project has no resolvable daemon-owned GitHub credential profile",
+      );
+    }
+    try {
+      const reader = gateway.gateway.forProject({
+        projectId: project.projectId,
+        projectLabel: project.projectLabel,
+        workspacePath: project.workspacePath,
+        credentialProfile: selection.profile,
+      }, selection.credential);
+      onReader?.(reader);
+      return await run(reader);
+    } catch (error) {
+      if (!(error instanceof GithubBackpressureError)) throw error;
+      throw new RequestError(-32001, error.message, {
+        version: 1,
+        kind: "github-backpressure",
+        project_id: project.projectId,
+        credential_profile: selection.profile,
+        retry_at: error.fact.retry_at,
+        fact: error.fact,
+      });
+    }
+  } catch (error) {
+    if (error instanceof RedskilledGithubCredentialProfileError) {
+      throw RequestError.authRequired(error.refusal, error.message);
+    }
+    throw error;
+  }
+}
+
 /** Bind one ACP connection's Project authority to the daemon-owned gateway. */
 export function bindAcpProjectGithubRead(
   gateway: RedskilledGithubGatewayRegistration | undefined,
@@ -96,49 +161,41 @@ export function bindAcpProjectGithubRead(
 ) {
   return async ({ params: { read } }: { readonly params: GithubReadParams }) => {
     const project = projectForConnection();
-    try {
-      const selection = await gateway?.credentialForProject({
-        projectId: project.projectId,
-        projectLabel: project.projectLabel,
-        workspacePath: project.workspacePath,
-      });
-      if (gateway == null || selection == null) {
-        throw RequestError.authRequired(
-          {
-            version: 1,
-            kind: "github-credential-profile",
-            reason: "missing-credentials",
-            credential_profile: "personal",
-          },
-          "this Project has no resolvable daemon-owned GitHub credential profile",
-        );
-      }
-      try {
-        const reader = gateway.gateway.forProject({
-          projectId: project.projectId,
-          projectLabel: project.projectLabel,
-          workspacePath: project.workspacePath,
-          credentialProfile: selection.profile,
-        }, selection.credential);
-        onReader?.(reader);
-        return await reader.read(read);
-      } catch (error) {
-        if (!(error instanceof GithubBackpressureError)) throw error;
-        throw new RequestError(-32001, error.message, {
-          version: 1,
-          kind: "github-backpressure",
-          project_id: project.projectId,
-          credential_profile: selection.profile,
-          retry_at: error.fact.retry_at,
-          fact: error.fact,
-        });
-      }
-    } catch (error) {
-      if (error instanceof RedskilledGithubCredentialProfileError) {
-        throw RequestError.authRequired(error.refusal, error.message);
-      }
-      throw error;
-    }
+    return await servedByProjectReader(gateway, project, onReader, (reader) => reader.read(read));
+  };
+}
+
+/**
+ * Bind the forge-shaped passthrough `rs_github` forwards.
+ *
+ * One method serves both directions because a caller composing a request has
+ * not yet decided which it is — the PATH and the METHOD decide, and the
+ * translation decides them once, here. An observing request joins the gateway's
+ * existing demand for that read, so two sessions asking the same question at
+ * the same moment cost one upstream call; a mutating one is scheduled through
+ * the durable outbox under a key derived from the request itself.
+ */
+export function bindAcpProjectGithubRequest(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+  projectForConnection: () => AcpProjectWorkspace,
+  onReader?: (reader: unknown) => void,
+) {
+  return async (
+    { params: { request } }: { readonly params: GithubRequestParams },
+  ): Promise<RedskilledGithubRequestAnswer> => {
+    const project = projectForConnection();
+    return await servedByProjectReader(gateway, project, onReader, async (reader) => {
+      const plan = planGithubRequest(project.projectLabel, request);
+      return plan.mode === "read"
+        ? githubRequestAnswer(request.method, plan.path, {
+            mode: "read",
+            answer: await reader.read(plan.read),
+          })
+        : githubRequestAnswer(request.method, plan.path, {
+            mode: "write",
+            answer: await reader.write(plan.write),
+          });
+    });
   };
 }
 
@@ -325,12 +382,14 @@ export function githubCustodyHandoffParams(value: unknown): GithubCustodyHandoff
  */
 export function githubMethodDomain(deps: AcpGithubDomainDeps): RedskillsAcpMethodDomain {
   const readGithub = bindAcpProjectGithubRead(deps.gateway, deps.scopedProject, deps.onReader);
+  const requestGithub = bindAcpProjectGithubRequest(deps.gateway, deps.scopedProject, deps.onReader);
   const writeGithub = bindAcpProjectGithubWrite(deps.gateway, deps.scopedProject);
   const handoffCustody = bindAcpProjectGithubCustodyHandoff(deps.gateway, deps.scopedProject);
   return {
     domain: "github",
     bindings: [
       redskillsAcpMethod(REDSKILLS_ACP_METHODS.githubRead, githubReadParams, readGithub),
+      redskillsAcpMethod(REDSKILLS_ACP_METHODS.githubRequest, githubRequestParams, requestGithub),
       redskillsAcpMethod(REDSKILLS_ACP_METHODS.githubWrite, githubWriteParams, writeGithub),
       redskillsAcpMethod(
         REDSKILLS_ACP_METHODS.githubCustodyHandoff,
@@ -344,6 +403,7 @@ export function githubMethodDomain(deps: AcpGithubDomainDeps): RedskillsAcpMetho
           version: 1,
           methods: [
             REDSKILLS_ACP_METHODS.githubRead,
+            REDSKILLS_ACP_METHODS.githubRequest,
             REDSKILLS_ACP_METHODS.githubWrite,
             REDSKILLS_ACP_METHODS.githubCustodyHandoff,
           ],
