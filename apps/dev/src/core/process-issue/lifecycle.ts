@@ -88,7 +88,7 @@ import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
 import { deriveIssueType } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
-import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
+import { acquireClaim, ClaimVerificationError, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
 import {
   parseTrustPolicy,
@@ -274,8 +274,13 @@ export async function processIssue(
     } catch (err) {
       await deps.claimLock.release(issue);
       const reason = err instanceof Error ? err.message : String(err);
+      // **Say which of the two happened** (#4049): `infrastructure` means the
+      // claim WAS written and the read-back could not see it — no race lost,
+      // and calling it "could not be written" taught the healer a phantom.
       return withdraw(
-        `the claim could not be written, so this issue is declined rather than worked on a host-local lock: ${reason}`,
+        err instanceof ClaimVerificationError && err.kind === "infrastructure"
+          ? `the claim was written but the read-back could not be believed, so this issue is declined without conceding — a tracker-read failure, not a lost race: ${reason}`
+          : `the claim could not be written, so this issue is declined rather than worked on a host-local lock: ${reason}`,
       );
     }
     if (decision.verdict === "lost") {

@@ -179,6 +179,14 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * #4047: an incumbent that has handed over now LEAVES, so every in-process
+ * daemon in this file needs somewhere for that exit to go. Recording it keeps
+ * the departure assertable instead of tearing the test runner down.
+ */
+const exitCodes: number[] = [];
+const recordExit = (code: number): void => void exitCodes.push(code);
+
 async function until(condition: () => Promise<boolean>, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -275,7 +283,7 @@ describe("a published major the daemon will not adopt", () => {
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => ({ version: PUBLISHED_VERSION, newest: "2.0.0" }),
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(daemon);
 
@@ -300,7 +308,7 @@ describe("a published major the daemon will not adopt", () => {
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => ({ version: RUNNING_VERSION, newest: RUNNING_VERSION }),
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(daemon);
 
@@ -324,7 +332,7 @@ describe("a published major the daemon will not adopt", () => {
       },
       // A host holding no bundle either: an unreadable registry is then the whole
       // answer, rather than the cached evidence a read that resolves nothing gets.
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") }, exit: recordExit },
     });
     running.push(daemon);
 
@@ -472,7 +480,7 @@ describe("a daemon that has observed a newer published version", () => {
       replaceCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => PUBLISHED_VERSION,
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(daemon);
 
@@ -502,7 +510,7 @@ describe("a daemon that has observed a newer published version", () => {
       },
       // Nothing cached either: unresolvable here means from anywhere, which is
       // the only state that must never be reported as a match.
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") }, exit: recordExit },
     });
     running.push(daemon);
 
@@ -524,7 +532,7 @@ describe("a daemon that has observed a newer published version", () => {
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => "3.0.0",
       // No cache, no dispatch: the successor cannot be found at all.
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty"), RED_SKILLS_NO_PINNED_DISPATCH: "1" } },
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty"), RED_SKILLS_NO_PINNED_DISPATCH: "1" }, exit: recordExit },
     });
     running.push(daemon);
 
@@ -587,7 +595,7 @@ describe("an unsupervised daemon replaces itself", () => {
       daemonVersion: RUNNING_VERSION,
       liveness: (view) => alive(view.pid),
       publishedVersion: async () => PUBLISHED_VERSION,
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(first);
     first.trackWorker(worker);
@@ -655,7 +663,7 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
         probes += 1;
         return PUBLISHED_VERSION;
       },
-      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
     });
     running.push(daemon);
 
@@ -686,7 +694,7 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
         probes += 1;
         return RUNNING_VERSION;
       },
-      replacementIO: { env, spawnSuccessor: (entry) => spawns.push(entry.command) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry) => spawns.push(entry.command) },
     });
     running.push(daemon);
 
@@ -710,7 +718,7 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
         probes += 1;
         return "9.9.9";
       },
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(daemon);
 
@@ -735,7 +743,7 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
         probes += 1;
         return RUNNING_VERSION;
       },
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(daemon);
     daemon.trackWorker({
@@ -787,7 +795,7 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
       publishedVersion: () => new Promise(() => undefined),
       // And a host that holds no bundle either, so the read running out of time
       // is genuinely the whole answer rather than the cache being consulted.
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") }, exit: recordExit },
     });
     running.push(daemon);
 
@@ -832,7 +840,7 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
       replaceBootCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => PUBLISHED_VERSION,
-      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
     });
     running.push(daemon);
     hold(daemon, paths.runtimeDir);
@@ -870,7 +878,7 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
       replaceBootCheckMs: 25,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => PUBLISHED_VERSION,
-      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
     });
     running.push(daemon);
     hold(daemon, paths.runtimeDir);
@@ -897,7 +905,7 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
         probes += 1;
         return PUBLISHED_VERSION;
       },
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(daemon);
     hold(daemon, paths.runtimeDir);
@@ -921,7 +929,7 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
       daemonVersion: RUNNING_VERSION,
       liveness: (view) => alive(view.pid),
       publishedVersion: async () => PUBLISHED_VERSION,
-      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
     });
     running.push(daemon);
     daemon.trackWorker(worker);
@@ -947,7 +955,7 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
         probes += 1;
         return "9.9.9";
       },
-      replacementIO: { env, spawnSuccessor: (entry) => spawns.push(entry.command) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry) => spawns.push(entry.command) },
     });
     running.push(daemon);
     hold(daemon, paths.runtimeDir);
@@ -980,7 +988,7 @@ describe("a check that held and a check that never fired", () => {
       replaceBootCheckMs: 0,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: async () => RUNNING_VERSION,
-      replacementIO: { env },
+      replacementIO: { env, exit: recordExit },
     });
     running.push(silent);
 
@@ -1010,7 +1018,7 @@ describe("a check that held and a check that never fired", () => {
         throw new Error("the registry is unreachable");
       },
       // Nothing cached either, so nothing is resolvable from anywhere.
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") }, exit: recordExit },
     });
     running.push(daemon);
 
@@ -1037,7 +1045,7 @@ describe("a read the registry never answers", () => {
       publishedProbeTimeoutMs: 20,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: () => new Promise(() => undefined),
-      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
     });
     running.push(daemon);
 
@@ -1046,6 +1054,29 @@ describe("a read the registry never answers", () => {
     // same bytes, the directory nothing prunes — so the pin is the VERSIONED
     // basename, which both locations share and no other version can wear.
     expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
+  });
+
+  // #4047: the incumbent must LEAVE once the endpoint is someone else's.
+  it("leaves after handing over, so no socketless daemon holds the host slot", async () => {
+    const { paths, env } = await session();
+    const before = exitCodes.length;
+    const spawns: string[][] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => PUBLISHED_VERSION,
+      replacementIO: { env, exit: recordExit, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+    });
+    running.push(daemon);
+
+    expect(await daemon.checkForReplacement()).toMatchObject({ act: "replace", to: PUBLISHED_VERSION });
+    // A successor was started AND the incumbent asked to go: either half alone
+    // is the failure — a successor with a live predecessor is the zombie that
+    // left the host with no socket for 25 minutes.
+    expect(spawns.length).toBeGreaterThan(0);
+    expect(exitCodes.slice(before)).toContain(75);
   });
 
   it("stays unknown when the host holds nothing either", async () => {
@@ -1057,7 +1088,7 @@ describe("a read the registry never answers", () => {
       publishedProbeTimeoutMs: 20,
       daemonVersion: RUNNING_VERSION,
       publishedVersion: () => new Promise(() => undefined),
-      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") }, exit: recordExit },
     });
     running.push(daemon);
 

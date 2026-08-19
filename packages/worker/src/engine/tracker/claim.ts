@@ -101,12 +101,12 @@ export type ClaimVerdict = "won" | "lost";
  * caller surfaces it as a session error so the dispatch fails loudly instead of
  * conceding an issue nobody else contends.
  */
-export class ClaimVerificationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ClaimVerificationError";
-  }
-}
+import { ClaimVerificationError, listVerifiedClaims } from "./claim-verification.js";
+
+export {
+  ClaimVerificationError,
+  type ClaimVerificationFailure,
+} from "./claim-verification.js";
 
 export interface ClaimDecision {
   verdict: ClaimVerdict;
@@ -575,41 +575,6 @@ const DEFAULT_VERIFY_ATTEMPTS = 3;
 const DEFAULT_VERIFY_DELAY_MS = 1000;
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Read the issue's claim markers back until OUR OWN marker is visible (the
- * verification step). Retries a list that has not yet propagated and a list call
- * that failed outright; throws `ClaimVerificationError` when every attempt is
- * exhausted. Never returns a list that lacks our marker — that ambiguity is what
- * made a sole claimant concede its own freshly minted issue (#2385).
- */
-async function listVerifiedClaims(
-  gh: ClaimGh,
-  issue: number,
-  commentId: number,
-  opts: AcquireClaimOptions,
-): Promise<RawClaimComment[]> {
-  const attempts = Math.max(1, opts.verifyAttempts ?? DEFAULT_VERIFY_ATTEMPTS);
-  const delayMs = opts.verifyDelayMs ?? DEFAULT_VERIFY_DELAY_MS;
-  const sleep = opts.sleep ?? realSleep;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (attempt > 0 && delayMs > 0) await sleep(delayMs);
-    let raw: RawClaimComment[];
-    try {
-      raw = await gh.listClaims(issue);
-    } catch (error) {
-      lastError = error;
-      continue;
-    }
-    if (raw.some((c) => c.id === commentId)) return raw;
-    lastError = new Error(`our claim comment ${commentId} was absent from ${raw.length} listed comment(s)`);
-  }
-  const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new ClaimVerificationError(
-    `claim verification failed on #${issue} after ${attempts} read-back attempt(s): ${detail}`,
-  );
-}
 
 /**
  * Attempt to claim `issue` for `self` via the GitHub-native primitive: post our
