@@ -14,7 +14,7 @@ unit name and rehydrates identity and budget from its own append-only event lane
 
 ## Why its own app
 
-The vendored `packages/red-castle` cannot *be* this daemon: every checkout
+The vendored `packages/worker` cannot *be* this daemon: every checkout
 carries its own copy, so a host-scoped singleton living there would be N
 singletons. The rsp core is repository-scoped and deliberately minimal, so the
 daemon does not belong inside it either. It lives here and consumes the shared

@@ -1,7 +1,7 @@
 // state-transition.ts — the HOST shim over the castle engine's transition API
 // (ADR 0122 rule 5, Spec #2523, slices #2524 + #2661 + #2666).
 //
-// The planner itself crossed to `@reddb-io/red-castle`'s
+// The planner itself crossed to `@reddb-io/worker`'s
 // `engine/state-transition.ts` in #2666, so the castle's own writers (the
 // quarantine curator, the dependency cascade) prove the same one-state-role
 // invariant this host has enforced since #2524. Nothing about the rules moved:
@@ -25,7 +25,7 @@ import {
   type StateTransitionLabels,
   type RefusedTransition,
   type TransitionPlan,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import {
   LABEL_BASE_STALE,
   LABEL_BUDGET,
@@ -67,7 +67,7 @@ export {
   type StateTransition,
   type StateTransitionLabels,
   type TransitionPlan,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 
 /** This host's transition vocabulary, wired into every engine call below. */
 export const HOST_STATE_TRANSITION_LABELS: StateTransitionLabels = {

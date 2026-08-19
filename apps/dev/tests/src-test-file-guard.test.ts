@@ -9,8 +9,8 @@
 //
 // This is a PACKAGE-LOCAL layout rule, not a repo-wide invariant, which is why
 // it lives in the ordinary suite rather than in `REPO_INVARIANT_SUITES`: the
-// same `src/**/*.test.ts` layout is CORRECT in `packages/red-castle`, whose
-// config includes it (`packages/red-castle/vitest.config.ts:5`). What is wrong
+// same `src/**/*.test.ts` layout is CORRECT in `packages/worker`, whose
+// config includes it (`packages/worker/vitest.config.ts:5`). What is wrong
 // is a colocated test in a package whose config only collects `tests/`.
 
 import { readdirSync } from "node:fs";

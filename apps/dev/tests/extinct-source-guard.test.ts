@@ -43,7 +43,7 @@ const ROOT = join(import.meta.dirname, "..", "..", "..");
 
 /** A file that reads the extinct named-fleet registry — the shape ADR 0130 removed. */
 const FLEET_READER = `
-  import { readFleetProfiles } from "@reddb-io/red-castle/engine";
+  import { readFleetProfiles } from "@reddb-io/worker/engine";
 
   export async function attributeWorker(root: string, name: string) {
     const profiles = await readFleetProfiles(root + "/.red/state/castle/fleets.toonl");
@@ -53,7 +53,7 @@ const FLEET_READER = `
 
 /** A file that reads the extinct attempt record. */
 const ATTEMPT_READER = `
-  import { readCastleAttemptRecords } from "@reddb-io/red-castle/engine";
+  import { readCastleAttemptRecords } from "@reddb-io/worker/engine";
 
   export async function lastTry(root: string, worker: string) {
     const records = await readCastleAttemptRecords(root);
@@ -108,7 +108,7 @@ describe("the live tree carries no fleet or attempt source (#2795)", () => {
 
     expect(files.length).toBeGreaterThan(500);
     expect(files.some((file) => file.relativePath === "apps/dev/src/core/repo-invariants.ts")).toBe(true);
-    expect(files.some((file) => file.relativePath === "packages/red-castle/src/engine/paths.ts")).toBe(true);
+    expect(files.some((file) => file.relativePath === "packages/worker/src/engine/paths.ts")).toBe(true);
   });
 
   it("carries no attempt-keyed accounting module at all (#2850)", () => {
@@ -126,7 +126,7 @@ describe("a newly added source fails, naming the offending location (#2795)", ()
   it("rejects reintroducing an expired status alias as an MCP tool", () => {
     const findings = collectExtinctSourceFindingsFromFiles([
       {
-        relativePath: "packages/red-castle/src/mcp/legacy-status.ts",
+        relativePath: "packages/worker/src/mcp/legacy-status.ts",
         sourceText: `
 export const tools = [
   { name: "worker_status", invoke: () => readWorkers() },
@@ -168,17 +168,17 @@ export const tools = [
 
   it("names a reintroduced attempt source and the Worker that replaced it", () => {
     const findings = collectExtinctSourceFindingsFromFiles([
-      { relativePath: "packages/red-castle/src/engine/replay.ts", sourceText: ATTEMPT_READER },
+      { relativePath: "packages/worker/src/engine/replay.ts", sourceText: ATTEMPT_READER },
     ]);
     const message = formatExtinctSourceFailureMessage(formatExtinctSourceViolations({ findings, baseline: [] }));
 
-    // The fixture imports from `@reddb-io/red-castle/engine`, a specifier the
+    // The fixture imports from `@reddb-io/worker/engine`, a specifier the
     // execution-chain crossing also names, so the attempt half is what is
     // asserted here rather than every finding the file produces.
     const attempt = findings.filter((finding) => finding.sourceId.startsWith("attempt-"));
     expect(attempt.length).toBeGreaterThan(0);
     expect(attempt.every((finding) => finding.noun === "attempt")).toBe(true);
-    expect(message).toContain("packages/red-castle/src/engine/replay.ts");
+    expect(message).toContain("packages/worker/src/engine/replay.ts");
     expect(message).toContain("liveness-anchor");
   });
 
@@ -492,6 +492,8 @@ function nameProbeFor(id: string): string {
     "project-supervisor-tick": `export async function superviseTick(): Promise<void> {}`,
     "project-supervisor-loop": `export async function runSupervisor(): Promise<void> {}`,
     "manual-landing-mode": `export async function handoffForManualLanding(c: StageCommon): Promise<void> {}`,
+    // The probe keeps the RETIRED specifier on purpose: after #4013 nothing in
+    // the tree imports it, so only this line still proves the pattern is live.
     "red-castle-naming": `import { Orchestrator } from "@reddb-io/red-castle";`,
     "castle-resident-naming": `export function startCastleResident(root: string): void {}`,
   };
@@ -593,8 +595,10 @@ export const PROJECT_LANE = "project";
  * THE SECOND CROSSING (ADRs 0147/0148/0149, Spec #4007, issue #4009). The first
  * one declared its inventory while deleting; this one declares it BEFORE, at
  * today's counts, because `red-skills-dev` still routes 36 commands, the dev
- * bundle is still a Worker body, the janitor still sweeps a human's checkout and
- * 97 modules still name `red-castle`. Four properties are load-bearing: the
+ * bundle is still a Worker body and the janitor still sweeps a human's checkout.
+ * The `red-castle` specifier is the first debt paid: issue #4013 renamed the
+ * package to `@reddb-io/worker` under `packages/worker`, clearing 72 declared
+ * locations. Four properties are load-bearing: the
  * declared counts ARE the tree's counts, one extra reference at ANY declared
  * location reds the guard, each entry names the route that replaced it, and the
  * surfaces that SURVIVE the redesign are not reddened by mistake.
@@ -638,13 +642,18 @@ describe("the execution-chain crossing is declared at today's counts (#4009)", (
     );
 
     expect(drifted, drifted.join("\n")).toEqual([]);
-    expect(EXECUTION_CHAIN_BASELINE.length).toBeGreaterThan(100);
+    // The inventory's SIZE is itself a debt, so it is bounded from ABOVE and the
+    // bound only ever comes down. It opened at 157 locations and #4013's rename
+    // paid 72 of them; a slice that needs the ceiling RAISED is adding a
+    // location, which is the reintroduction the entry-level counts already
+    // refuse. Lower this number when a slice clears more.
+    expect(EXECUTION_CHAIN_BASELINE.length).toBeLessThanOrEqual(85);
   });
 
   it("fails when ANY declared location gains one reference (the ratchet itself)", () => {
     // Raising a baseline is exactly what a reintroduction needs, so one extra
     // reference at each declared location must red the guard on its own — all
-    // 157 of them, not a sampled few.
+    // 85 of them, not a sampled few.
     const survived = EXECUTION_CHAIN_BASELINE.filter((entry) => {
       const seed = findings.find((finding) => finding.locationKey === entry.id)!;
       const violations = formatExtinctSourceViolations({

@@ -5,7 +5,7 @@
 // left where it is (a later reader's legacy fallback still finds it).
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { appendCastleHistoryRecord } from "@reddb-io/red-castle/engine";
+import { appendCastleHistoryRecord } from "@reddb-io/worker/engine";
 import {
   migrationActionFor,
   planDevDurablePathMigration,

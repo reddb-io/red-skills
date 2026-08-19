@@ -16,7 +16,7 @@ import { join, relative } from "node:path";
 import {
   recordIssueHeal,
   type HealLedgerStore,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import {
   DEFAULT_ATTEMPT_KEEP,
   DEFAULT_ATTEMPT_TTL_S,

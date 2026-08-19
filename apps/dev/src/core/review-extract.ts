@@ -9,9 +9,9 @@
 // Retries require a resumable provider (claude/codex); under OpenCode/MiniMax the
 // budget resolves to 0 (a no-op) and the single-attempt advisory path must still
 // work. The provider/sandbox/model wiring is injected so this module stays pure
-// of the heavy `@reddb-io/red-castle` import in tests.
+// of the heavy `@reddb-io/worker` import in tests.
 
-import type { RunOptions, RunResult } from "@reddb-io/red-castle";
+import type { RunOptions, RunResult } from "@reddb-io/worker";
 import {
   reviewFindingsSchema,
   resolveMaxRetries,

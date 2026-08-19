@@ -1,3 +1,19 @@
+# `@reddb-io/worker` — the Worker body
+
+**This package is what runs INSIDE one admitted Worker process, and nothing
+else.** Agent and sandbox providers, worktree materialisation, the gate runner
+and the turn loop live here; whether, when and where a Worker exists belongs to
+the `redskilled` daemon (ADR 0148). A Worker is cattle — it performs bounded
+work in an isolated worktree and carries no durable project-control authority.
+
+The source is vendored from [`mattpocock/sandcastle`](https://github.com/mattpocock/sandcastle)
+under the MIT License; `.upstream` records the reviewed SHA and `NOTICE` carries
+the attribution (ADR 0101). The sandcastle documentation below is kept verbatim
+because the JS API it describes is still the API this package exposes — read it
+as the library reference, not as the mission.
+
+---
+
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://res.cloudinary.com/total-typescript/image/upload/v1775033787/readme-sandcastle-ondark_2x.png">

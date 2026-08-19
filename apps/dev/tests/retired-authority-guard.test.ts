@@ -25,12 +25,13 @@ const RETIRED_IMPLEMENTATIONS = [
   "apps/redskilled/src/demand-producer.ts",
   "apps/redskilled/src/interactive-reservation.ts",
   "apps/redskilled/src/project-breaker.ts",
-  "packages/red-castle/src/resident.ts",
+  "packages/worker/src/resident.ts",
 ] as const;
 
-const ACTIVE_ROOTS = ["apps/dev/src", "apps/redskilled/src", "packages/red-castle/src"] as const;
+const ACTIVE_ROOTS = ["apps/dev/src", "apps/redskilled/src", "packages/worker/src"] as const;
 const SOURCE_SUFFIXES = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
-const PRIVATE_WIRE = /@reddb-io\/red-castle\/resident|sendCastleResidentRequest|CastleResidentClient|startCastleResident/;
+const PRIVATE_WIRE =
+  /@reddb-io\/(?:red-castle|worker)\/resident|sendCastleResidentRequest|CastleResidentClient|startCastleResident/;
 
 describe("retired workflow authorities stay deleted", () => {
   it("leaves redskilled as the only live control-plane owner", () => {
@@ -41,7 +42,7 @@ describe("retired workflow authorities stay deleted", () => {
   });
 
   it("exposes neither the Castle resident wire nor the Demand producer", () => {
-    const castle = JSON.parse(readFileSync(join(ROOT, "packages/red-castle/package.json"), "utf8"));
+    const castle = JSON.parse(readFileSync(join(ROOT, "packages/worker/package.json"), "utf8"));
     const redskilled = JSON.parse(readFileSync(join(ROOT, "apps/redskilled/package.json"), "utf8"));
     expect(castle.exports).not.toHaveProperty("./resident");
     expect(redskilled.exports).not.toHaveProperty("./demand-producer");

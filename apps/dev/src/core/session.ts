@@ -23,7 +23,7 @@ import type { HookExec } from "./hook-dispatcher.js";
 import type { ResolveHooksOptions, HookName } from "./hook-config.js";
 import type { ConfigValues } from "./config.js";
 import type { Runner } from "../types/runner.js";
-import type { WorkSelector } from "@reddb-io/red-castle/engine";
+import type { WorkSelector } from "@reddb-io/worker/engine";
 
 // ---------- pure helpers (slugify / gen_worker_id) ----------
 
@@ -133,7 +133,7 @@ function matchesSpec(c: IssueCandidate, spec: number): boolean {
  * backlog, exactly like the `all` filter.
  *
  * Keep in sync with `matchesWorkSelector` in
- * `packages/red-castle/src/engine/worker-drain.ts` — the castle copy drives the
+ * `packages/worker/src/engine/worker-drain.ts` — the castle copy drives the
  * live drain; this copy backs the dev-side previews.
  */
 export function matchesSelector(c: IssueCandidate, selector: WorkSelector): boolean {

@@ -7,7 +7,7 @@ import {
   appendCastleHistoryRecord,
   createEnginePaths,
   writeCastleStateSnapshot,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { describe, expect, it } from "vitest";
 import { auditCastleStateLane } from "../src/core/castle-state-doctor.js";
 

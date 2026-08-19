@@ -887,7 +887,7 @@ House rules:
 | [`packages/browser-bridge`](./packages/browser-bridge) | Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts and long-polls for human feedback and layout-audit results. |
 | [`packages/cdp-driver`](./packages/cdp-driver) | CDP-based live-app driver for `red-browser`: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots, and streams console/network events. |
 | [`packages/build-info`](./packages/build-info) | Shared runtime build metadata helpers consumed by bundled apps and by plain-ESM binaries. |
-| [`packages/red-castle`](./packages/red-castle) | Execution substrate vendored in-repo (`@reddb-io/red-castle`): worktree isolation, agent spawning, and signal detection. |
+| [`packages/worker`](./packages/worker) | The Worker body (`@reddb-io/worker`), vendored in-repo from sandcastle: worktree isolation, agent spawning, and signal detection. |
 | [`packaging/npm`](./packaging/npm) | The publishable `@reddb-io/red-skills` npm package (outside the pnpm workspace): built bundles plus the shipped bin shims. The client transport (ADR 0091). |
 | [`docs`](./docs) | The hero and section artwork, the [install walkthroughs](./docs/INSTALL.md), and the [release flow](./docs/RELEASING.md). |
 | [`.red`](./.red) | RedSkills' own project configuration: context map, glossaries, ADRs, contracts, issue-tracker docs, and agent rules. |

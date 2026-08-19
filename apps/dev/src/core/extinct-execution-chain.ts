@@ -2,13 +2,17 @@
 // surfaces ADRs 0147, 0148 and 0149 retire (Spec #4007, issue #4009).
 //
 // The first crossing (ADR 0130) ran to zero, which is why
-// `EXTINCT_SOURCE_BASELINE` stood empty. This one starts at TODAY'S COUNT.
-// Nothing here is deleted yet: `red-skills-dev` still routes 36 commands, the
-// dev bundle is still a Worker body, the janitor still sweeps a human's
-// checkout, and 97 modules still name `red-castle`. Declaring the inventory
-// BEFORE the deletion is what makes the deletion a ratchet rather than a hope —
-// a slice may lower a count, and a slice that raises one is reintroducing the
-// surface the ADR retired.
+// `EXTINCT_SOURCE_BASELINE` stood empty. This one started at TODAY'S COUNT and
+// is being paid down slice by slice: `red-skills-dev` still routes 36 commands,
+// the dev bundle is still a Worker body, and the janitor still sweeps a human's
+// checkout. The `red-castle` package specifier is the first line to have cleared
+// — issue #4013 moved `packages/red-castle` to `packages/worker` as
+// `@reddb-io/worker`, so the 78 importer rename sites are gone and what remains
+// under that entry is the vendored source's own on-disk `.red-castle` config
+// directory and cache-key vocabulary, which are behaviour rather than naming.
+// Declaring the inventory BEFORE the deletion is what makes the deletion a
+// ratchet rather than a hope — a slice may lower a count, and a slice that
+// raises one is reintroducing the surface the ADR retired.
 //
 // **A COUNT IS A DEBT WITH A NUMBER ON IT.** Each entry pairs the noun with what
 // it owned and names the route that replaced it — `rs_dev` and the other Plugin
@@ -134,9 +138,10 @@ export const EXECUTION_CHAIN_SOURCES: readonly ExtinctSource[] = [
 /**
  * The names ADRs 0147–0149 retire. A source entry catches a reader reaching for
  * something removed; a name entry catches the concept returning as VOCABULARY,
- * which is the dimension `red-castle` needs — the package is imported by
- * specifier from 97 modules, and every one of them is a rename site rather than
- * a reader of anything deleted.
+ * which is the dimension `red-castle` needs — the package was imported by
+ * specifier from 97 modules, every one of them a rename site rather than a
+ * reader of anything deleted. Issue #4013 paid those sites: the specifier is now
+ * `@reddb-io/worker`, and the entry keeps watch so the old noun cannot return.
  */
 export const EXECUTION_CHAIN_NAMES: readonly ExtinctName[] = [
   {
@@ -209,7 +214,7 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
       "apps/dev/src/core/retake.ts": 2,
       "apps/dev/src/mcp-server.ts": 2,
       "apps/dev/src/runtime/published-entry.ts": 2,
-      "packages/red-castle/src/extinct-nouns.ts": 1,
+      "packages/worker/src/extinct-nouns.ts": 1,
       "packages/shared/canonical-invocation.ts": 1,
     },
   ),
@@ -305,103 +310,31 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
     "red-castle-naming",
     "one rename site onto `@reddb-io/worker` / `@reddb-io/protocol-acp`; a migration slice lowers the number as it moves the code it names",
     {
-      "apps/dev/src/acp-lane-follower.ts": 1,
-      "apps/dev/src/commands/audit-skills.ts": 1,
-      "apps/dev/src/commands/go.ts": 1,
-      "apps/dev/src/commands/monitor.ts": 1,
       "apps/dev/src/commands/red-doctor.ts": 3,
-      "apps/dev/src/commands/requeue.ts": 1,
-      "apps/dev/src/commands/respond.ts": 1,
-      "apps/dev/src/commands/review.ts": 1,
-      "apps/dev/src/commands/run/claim-lease.ts": 1,
-      "apps/dev/src/commands/run/command.ts": 1,
-      "apps/dev/src/commands/run/flags.ts": 1,
-      "apps/dev/src/commands/run/implementer-run-agent.ts": 1,
-      "apps/dev/src/commands/run/process-deps.ts": 2,
-      "apps/dev/src/commands/run/reconcile.ts": 1,
-      "apps/dev/src/commands/run/state.ts": 2,
-      "apps/dev/src/core/adversarial-review.ts": 1,
-      "apps/dev/src/core/boot.ts": 1,
       "apps/dev/src/core/castle-cutover-migration.ts": 1,
-      "apps/dev/src/core/castle-state-doctor.ts": 3,
-      "apps/dev/src/core/castle-worker-lane-bridge.ts": 2,
-      "apps/dev/src/core/claim-staleness.ts": 2,
-      "apps/dev/src/core/claim.ts": 2,
-      "apps/dev/src/core/comment-respond-extract.ts": 1,
-      "apps/dev/src/core/declared-wait-guard.ts": 5,
-      "apps/dev/src/core/envelope.ts": 2,
-      "apps/dev/src/core/execution.ts": 2,
-      "apps/dev/src/core/execution/host-hooks.ts": 1,
-      "apps/dev/src/core/execution/runtime.ts": 7,
-      "apps/dev/src/core/file-size-guard.ts": 9,
-      "apps/dev/src/core/handoff.ts": 4,
-      "apps/dev/src/core/history.ts": 1,
-      "apps/dev/src/core/hitl-card.ts": 2,
-      "apps/dev/src/core/host-env-allowlist.ts": 1,
-      "apps/dev/src/core/land-lock.ts": 1,
-      "apps/dev/src/core/lane-idle-reaper.ts": 1,
-      "apps/dev/src/core/lane-retention-guard.ts": 4,
-      "apps/dev/src/core/monitor.ts": 1,
-      "apps/dev/src/core/pr-medic.ts": 1,
-      "apps/dev/src/core/process-issue/lifecycle.ts": 1,
-      "apps/dev/src/core/process-issue/reseed-handoff.ts": 1,
-      "apps/dev/src/core/process-issue/spin-lifecycle.ts": 1,
-      "apps/dev/src/core/process-issue/terminal.ts": 1,
-      "apps/dev/src/core/process-issue/types.ts": 1,
-      "apps/dev/src/core/repair-guard.ts": 4,
-      "apps/dev/src/core/repo-invariants.ts": 5,
-      "apps/dev/src/core/review-extract.ts": 1,
-      "apps/dev/src/core/runner-detection.ts": 2,
-      "apps/dev/src/core/runner-spawn.ts": 3,
-      "apps/dev/src/core/runner-spec.ts": 2,
-      "apps/dev/src/core/session.ts": 1,
-      "apps/dev/src/core/skill-audit-extract.ts": 1,
-      "apps/dev/src/core/state-transition.ts": 2,
-      "apps/dev/src/core/supervisor/boot-breaker.ts": 1,
-      "apps/dev/src/core/supervisor/config.ts": 1,
-      "apps/dev/src/core/supervisor/envelopes.ts": 1,
-      "apps/dev/src/core/supervisor/types.ts": 3,
-      "apps/dev/src/core/verdict.ts": 1,
-      "apps/dev/src/core/worker-outcome.ts": 1,
+      "apps/dev/src/core/castle-state-doctor.ts": 2,
+      "apps/dev/src/core/handoff.ts": 3,
       "apps/dev/src/core/worker-paths.ts": 1,
-      "apps/dev/src/core/worker-state-reader.ts": 1,
-      "apps/dev/src/lane-subscription.ts": 1,
-      "apps/dev/src/mcp-server.ts": 1,
-      "apps/dev/src/runtime/implementer-environment.ts": 1,
-      "apps/dev/src/runtime/merge-driver-io.ts": 1,
-      "apps/dev/src/runtime/red-path-migration.ts": 1,
-      "apps/dev/src/runtime/supervisor-fs.ts": 2,
-      "apps/dev/src/runtime/wire/boot.ts": 1,
-      "apps/dev/src/runtime/wire/monitor.ts": 1,
-      "apps/dev/src/runtime/wire/paths.ts": 1,
-      "apps/dev/src/runtime/wire/settings.ts": 1,
-      "apps/dev/src/runtime/wire/statusline.ts": 1,
-      "apps/dev/src/runtime/worker-state-reclaim.ts": 1,
-      "apps/dev/src/types/runner.ts": 2,
-      "apps/herdr-plugin-red-skills/scripts/fake-daemon.mjs": 1,
-      "apps/herdr-plugin-red-skills/scripts/preview.mjs": 1,
-      "apps/redskilled/src/acp-child-agent.ts": 1,
-      "apps/redskilled/src/acp-child-spin.ts": 1,
-      "apps/rsp/src/wait/webhook-wake-source.ts": 1,
-      "packages/red-castle/.factory/implement-task.ts": 2,
-      "packages/red-castle/.red-castle/run.ts": 4,
-      "packages/red-castle/src/EnvResolver.ts": 1,
-      "packages/red-castle/src/InitService.ts": 18,
-      "packages/red-castle/src/PromptResolver.ts": 1,
-      "packages/red-castle/src/RecoveryMessage.ts": 2,
-      "packages/red-castle/src/WorktreeManager.ts": 3,
-      "packages/red-castle/src/cli.ts": 3,
-      "packages/red-castle/src/createSandbox.ts": 1,
-      "packages/red-castle/src/createWorktree.ts": 3,
-      "packages/red-castle/src/engine/tracker/github/adapter.ts": 8,
-      "packages/red-castle/src/mountUtils.ts": 1,
-      "packages/red-castle/src/run.ts": 1,
-      "packages/red-castle/src/syncOut.ts": 3,
-      "packages/red-castle/src/templates/blank/main.mts": 2,
-      "packages/red-castle/src/templates/parallel-planner-with-review/main.mts": 5,
-      "packages/red-castle/src/templates/parallel-planner/main.mts": 4,
-      "packages/red-castle/src/templates/sequential-reviewer/main.mts": 3,
-      "packages/red-castle/src/templates/simple-loop/main.mts": 2,
+      "apps/dev/src/runtime/supervisor-fs.ts": 1,
+      "packages/worker/.factory/implement-task.ts": 2,
+      "packages/worker/.red-castle/run.ts": 4,
+      "packages/worker/src/EnvResolver.ts": 1,
+      "packages/worker/src/InitService.ts": 18,
+      "packages/worker/src/PromptResolver.ts": 1,
+      "packages/worker/src/RecoveryMessage.ts": 2,
+      "packages/worker/src/WorktreeManager.ts": 3,
+      "packages/worker/src/cli.ts": 3,
+      "packages/worker/src/createSandbox.ts": 1,
+      "packages/worker/src/createWorktree.ts": 3,
+      "packages/worker/src/engine/tracker/github/adapter.ts": 8,
+      "packages/worker/src/mountUtils.ts": 1,
+      "packages/worker/src/run.ts": 1,
+      "packages/worker/src/syncOut.ts": 3,
+      "packages/worker/src/templates/blank/main.mts": 2,
+      "packages/worker/src/templates/parallel-planner-with-review/main.mts": 5,
+      "packages/worker/src/templates/parallel-planner/main.mts": 4,
+      "packages/worker/src/templates/sequential-reviewer/main.mts": 3,
+      "packages/worker/src/templates/simple-loop/main.mts": 2,
     },
   ),
   ...crossing(
@@ -409,7 +342,7 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
     "the retired resident's status schema still ships in the package's MCP contracts; it clears when those schemas move to `rs_dev`",
     {
       "apps/redskilled/src/resource-incidents.ts": 1,
-      "packages/red-castle/src/mcp/contracts.ts": 4,
+      "packages/worker/src/mcp/contracts.ts": 4,
     },
   ),
 ];

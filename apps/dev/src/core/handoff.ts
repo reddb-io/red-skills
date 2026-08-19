@@ -21,7 +21,7 @@
 //   <issue-body> · <handoff-enrichment> · <iteration> · <previous-workers> · <human-guidance-thread> ·
 //   <prev-failure-context> · <thread-discussion> · <agent-notes>
 
-import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
+import { AGENT_OUTPUT_TAG } from "@reddb-io/worker";
 import { renderAmbientSkill, type RspInstructionRunner } from "../../../rsp/src/ambient-skill.js";
 import { classifyComment, extractDirectives } from "./comment-classification.js";
 import { renderTerseSteeringBlock, type OutputShapingAssignment } from "./output-shaping.js";

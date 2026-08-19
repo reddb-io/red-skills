@@ -1,7 +1,7 @@
 import type { Runner } from "../../types/runner.js";
 import { workerDir as workerDirPath } from "../../core/worker-paths.js";
 import * as fsx from "../../runtime/fs.js";
-import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/red-castle/engine";
+import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/worker/engine";
 import { parseHistoryLines, requeueOrdinal } from "../../core/history.js";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -9,7 +9,7 @@ import { basename, dirname, join } from "node:path";
 import { initStateSync, workerStatePath, writeIdentitySync } from "../../core/state.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { LocMemo } from "../../core/loc-memo.js";
-import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/worker";
 import { DIAGNOSTICS_TTL_S } from "../../core/tmp-janitor.js";
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;

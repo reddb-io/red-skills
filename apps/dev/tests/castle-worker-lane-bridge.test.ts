@@ -8,8 +8,8 @@ import {
   createEnginePaths,
   readCastleLaneRecords,
   readCastleStateSnapshot,
-} from "@reddb-io/red-castle/engine";
-import { parseLivenessRecords } from "@reddb-io/red-castle";
+} from "@reddb-io/worker/engine";
+import { parseLivenessRecords } from "@reddb-io/worker";
 import { initStateSync } from "../src/core/state.js";
 import {
   createBootCastleWorkerLaneBridge,

@@ -15,7 +15,7 @@
 // survives across rounds instead of being rebuilt from the last trigger.
 
 import { EMPTY_FAILURE_SIGNATURE } from "../failure-signature.js";
-import type { SpinPattern } from "@reddb-io/red-castle/engine";
+import type { SpinPattern } from "@reddb-io/worker/engine";
 import type { ReseedBudget, ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 
 /** The section tag naming WHAT ASKED for this round. The outstanding state

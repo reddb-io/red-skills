@@ -1,4 +1,4 @@
-// AFK execution backend on @reddb-io/red-castle (ADR 0033).
+// AFK execution backend on @reddb-io/worker (ADR 0033).
 //
 // sandcastle owns the execution substrate — spawn the agent, manage the git
 // worktree, run a sandbox, and land commits on a branch via `run()`. AFK keeps
@@ -10,8 +10,8 @@
 // wires real providers. AFK sentinels remain registered as completion signals,
 // preserving the existing AGENT-PROMPT contract.
 
-import type { AgentStreamEvent, CodexOptions, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
-import { extractAgentOutput } from "@reddb-io/red-castle";
+import type { AgentStreamEvent, CodexOptions, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/worker";
+import { extractAgentOutput } from "@reddb-io/worker";
 import { join } from "node:path";
 import { buildLineRedactor } from "../../runtime/outbound-redaction.js";
 import { resolveHostEnvAllowlist } from "../host-env-allowlist.js";
@@ -28,7 +28,7 @@ import {
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
   DONE_SIGNAL,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import {
   AGENT_OUTPUT_CLOSE,
   parseAgentOutput,
@@ -1166,10 +1166,10 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
  */
 export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
   const [core, noSandboxMod, dockerMod, podmanMod] = await Promise.all([
-    import("@reddb-io/red-castle"),
-    import("@reddb-io/red-castle/sandboxes/no-sandbox"),
-    import("@reddb-io/red-castle/sandboxes/docker"),
-    import("@reddb-io/red-castle/sandboxes/podman"),
+    import("@reddb-io/worker"),
+    import("@reddb-io/worker/sandboxes/no-sandbox"),
+    import("@reddb-io/worker/sandboxes/docker"),
+    import("@reddb-io/worker/sandboxes/podman"),
   ]);
   // FIX D / ADR 0059: the per-provider mapping (effort gating for claude/codex,
   // effort→`variant` for opencode, and the opencode auth env passthrough) lives

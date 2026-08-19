@@ -429,7 +429,7 @@ export interface ProcessIssueDeps {
   /** ADR 0122 heal ledger (#2576): durable per-issue retry accounting so the
    * merge-retry cap survives worker replacement. Optional; absent in tests
    * that predate it (worker-local ordinal then applies alone). */
-  healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
+  healLedger?: import("@reddb-io/worker/engine").HealLedgerStore;
   recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
   cascadeRebase?: CascadeRebasePort;
 }

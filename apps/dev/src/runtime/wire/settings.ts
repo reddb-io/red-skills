@@ -16,7 +16,7 @@ import {
   parseLivenessRecords,
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
-} from "@reddb-io/red-castle";
+} from "@reddb-io/worker";
 import { isRunner, type Runner } from "../../types/runner.js";
 import * as gitx from "../git.js";
 import { afkPaths } from "./paths.js";

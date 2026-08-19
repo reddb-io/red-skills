@@ -8,7 +8,7 @@ import {
   readCastleStateSnapshot,
   validateCastleStateSnapshot,
   type CastleValidationRecord,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { isCastleStateMember } from "@reddb-io/shared/red-paths.js";
 
 export type CastleStateFindingKind =

@@ -209,7 +209,7 @@ A log file written to `.red-castle/logs/` during a run session. Like every **hos
 _Avoid_: "log file" (too generic), "output file"
 
 **TOON log doctrine**:
-The fork-wide rule that every structured line-per-record lane and every red-castle-authored machine-readable output is written as TOONL/TOON via `@reddb-io/toon`, never JSONL — a deliberate divergence from upstream sandcastle's JSON logs, chosen for token efficiency when agents read the files back. Readers sniff per line (JSON first, TOON fallback) so pre-conversion files still parse. Exempt: raw agent-output passthrough, prose session logs, agent-owned session records.
+The fork-wide rule that every structured line-per-record lane and every package-authored machine-readable output is written as TOONL/TOON via `@reddb-io/toon`, never JSONL — a deliberate divergence from upstream sandcastle's JSON logs, chosen for token efficiency when agents read the files back. Readers sniff per line (JSON first, TOON fallback) so pre-conversion files still parse. Exempt: raw agent-output passthrough, prose session logs, agent-owned session records.
 _Avoid_: "TOON migration" (the doctrine is permanent, not a transition), "log format option" (it is not configurable)
 
 **Terminal mode**:

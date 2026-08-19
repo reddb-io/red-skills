@@ -20,7 +20,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
 import { planGithubRestRead } from "@reddb-io/github";
-import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { LIVENESS_LANE_FILENAME } from "@reddb-io/worker";
 import { encodeToonlLines } from "@reddb-io/toon";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";

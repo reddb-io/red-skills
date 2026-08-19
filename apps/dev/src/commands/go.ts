@@ -43,7 +43,7 @@ import { runCommand } from "./run.js";
 import * as ghx from "../runtime/gh.js";
 import type { GhContext } from "../runtime/gh.js";
 import { execTool } from "../runtime/exec.js";
-import { createGitHubTrackerAdapter } from "@reddb-io/red-castle/engine";
+import { createGitHubTrackerAdapter } from "@reddb-io/worker/engine";
 import {
   requestWorkerBirth,
   type DispatchedWorkerBirth,

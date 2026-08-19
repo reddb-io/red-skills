@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
-import { appendCastleHistoryRecord, readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
+import { appendCastleHistoryRecord, readCastleHistoryRecords } from "@reddb-io/worker/engine";
 
 // Port of lib/history.sh — the afk-history.jsonl ledger. The pure parts (the
 // JSONL record shape, the 48h `done`-event bucketing, and the sparkline glyph

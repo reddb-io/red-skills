@@ -81,14 +81,14 @@ describe("the duplicate-implementation ratchets can go red", () => {
 
   it("fails on a second blocker parser", () => {
     const findings = collectCustodyVerdictParkFindingsFromFiles(
-      duplicate("packages/red-castle/src/engine/local-blocker.ts", `
+      duplicate("packages/worker/src/engine/local-blocker.ts", `
         const match = /<!-- red:blocker-state v1 -->([\\s\\S]*?)<!-- \\/red:blocker-state -->/.exec(body);
         return match !== null && /^status:\\s*blocked\\s*$/m.test(match[1] ?? "");
       `),
     );
 
     expect(findings).toMatchObject([
-      { rule: "blocker-parser", kind: "duplicate", relativePath: "packages/red-castle/src/engine/local-blocker.ts" },
+      { rule: "blocker-parser", kind: "duplicate", relativePath: "packages/worker/src/engine/local-blocker.ts" },
     ]);
   });
 

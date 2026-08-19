@@ -228,9 +228,9 @@ jobs:
         if: steps.target.outputs.publish == 'true'
         run: scripts/test-red-release-npm-publish-contract.sh
 
-      - name: Test red-castle vendor contract
+      - name: Test worker vendor contract
         if: steps.target.outputs.publish == 'true'
-        run: scripts/test-red-castle-vendor-contract.sh
+        run: scripts/test-worker-vendor-contract.sh
 
       - name: Test red-release reddb asset contract
         if: steps.target.outputs.publish == 'true'

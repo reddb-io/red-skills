@@ -122,7 +122,7 @@ describe("removeDir sweep guard (#1928)", () => {
 
 // The atomic claim/steal semantics (#434, #568) now live in the ONE lease
 // implementation in castle (`createFsIssueLeaseStore`, #2578); their unit
-// coverage moved to packages/red-castle/src/engine/tracker/claim.test.ts. This
+// coverage moved to packages/worker/src/engine/tracker/claim.test.ts. This
 // suite keeps the sweep-reader coverage that consumes the `pid` file the lease
 // writes (`listStaleClaimDirs` above).
 

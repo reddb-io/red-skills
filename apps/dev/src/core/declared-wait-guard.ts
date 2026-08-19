@@ -90,7 +90,7 @@ export const WAIT_SCAN_ROOTS: readonly string[] = [
   "apps/redskilled/src",
   "packages/protocol-acp",
   "packages/shared/kill-tree.ts",
-  "packages/red-castle/src",
+  "packages/worker/src",
 ];
 
 /**
@@ -752,7 +752,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     },
   },
   {
-    path: "packages/red-castle/src/Orchestrator.ts",
+    path: "packages/worker/src/Orchestrator.ts",
     fn: "startWarningInterval",
     subject: "the agent's idle minutes while no output arrives",
     deadline:
@@ -762,7 +762,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { sink: "onIdleWarning" },
   },
   {
-    path: "packages/red-castle/src/engine/land-lock.ts",
+    path: "packages/worker/src/engine/land-lock.ts",
     fn: "acquire",
     subject: "the contended land or gate lock, named with its path, its holder and how long it has held",
     deadline: "`waitTimeoutMs`, default 15 minutes",
@@ -770,7 +770,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { sink: "onWait" },
   },
   {
-    path: "packages/red-castle/src/engine/tracker/claim.ts",
+    path: "packages/worker/src/engine/tracker/claim.ts",
     fn: "listVerifiedClaims",
     subject: "our own claim marker becoming visible in the issue's comments",
     deadline: "`verifyAttempts` × `verifyDelayMs`, default 1s apart",
@@ -779,7 +779,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a few one-second reads inside one claim acquisition; the throw names what never appeared" },
   },
   {
-    path: "packages/red-castle/src/sandboxes/no-sandbox.ts",
+    path: "packages/worker/src/sandboxes/no-sandbox.ts",
     fn: "terminateProcessGroup",
     subject: "the sandboxed process group leaving the process table after SIGTERM, then after SIGKILL",
     deadline: "`PROCESS_GROUP_GRACE_TRIES` then `PROCESS_GROUP_KILL_TRIES`, at `PROCESS_GROUP_POLL_MS`",

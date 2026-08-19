@@ -10,13 +10,13 @@ export {
   postHitlCard,
   renderCard,
   updateCardStatus,
-} from "@reddb-io/red-castle";
+} from "@reddb-io/worker";
 export type {
   CardAction,
   CardCommand,
   PrStatus,
   RenderCardOpts,
-} from "@reddb-io/red-castle";
+} from "@reddb-io/worker";
 
 export const HITL_CARD_ACTION_MARKER = "<!-- red:hitl-card:action v1 -->";
 export const HITL_CARD_STAND_DOWN_MARKER = "<!-- red:hitl-card:stand-down v1 -->";

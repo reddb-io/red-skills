@@ -9,16 +9,16 @@ import {
 
 const layout: PackageLayout = {
   hasPackage(scope) {
-    return [".", "packages/core", "apps/dev", "apps/docs", "packages/red-castle"].includes(scope);
+    return [".", "packages/core", "apps/dev", "apps/docs", "packages/worker"].includes(scope);
   },
 };
 
 const graph: WorkspaceGraph = {
   packages: [
     { dir: "packages/core", dependsOn: [] },
-    { dir: "apps/dev", dependsOn: ["packages/core", "packages/red-castle"] },
+    { dir: "apps/dev", dependsOn: ["packages/core", "packages/worker"] },
     { dir: "apps/docs", dependsOn: ["apps/dev"] },
-    { dir: "packages/red-castle", dependsOn: [] },
+    { dir: "packages/worker", dependsOn: [] },
   ],
 };
 
@@ -32,10 +32,10 @@ describe("castle validation cone", () => {
   });
 
   it("does not escalate package-scoped castle or shared changes to whole workspace", () => {
-    expect(computeValidationScope(["packages/red-castle/src/engine/gate-executor.ts"], layout, graph)).toEqual({
+    expect(computeValidationScope(["packages/worker/src/engine/gate-executor.ts"], layout, graph)).toEqual({
       type: "cone",
-      triggerPackages: ["packages/red-castle"],
-      packages: ["apps/dev", "apps/docs", "packages/red-castle"],
+      triggerPackages: ["packages/worker"],
+      packages: ["apps/dev", "apps/docs", "packages/worker"],
     });
 
     expect(computeValidationScope(["packages/core/src/index.ts"], layout, graph).type).toBe("cone");

@@ -38,7 +38,7 @@
 
 import { SUPERVISOR_DEFAULTS, validateStallThresholds } from "./supervisor.js";
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
-import type { LivenessVerdict } from "@reddb-io/red-castle";
+import type { LivenessVerdict } from "@reddb-io/worker";
 
 /** Default agent-lane sampling cadence in seconds (RED_AFK_STALL_POLL_S). Mirrors
  * the fleet passive stall detector's poll cadence so the solo reaper observes a

@@ -100,7 +100,7 @@ describe("detectBranchReversion", () => {
   });
 
   it("passes an intentional contract-phase deletion and cites its declaration", () => {
-    const file = "packages/red-castle/src/deprecated-aliases.ts";
+    const file = "packages/worker/src/deprecated-aliases.ts";
     const body = [
       "## What to build",
       "",
@@ -174,7 +174,7 @@ describe("detectBranchReversion", () => {
   });
 
   it("does not let a contract-phase alias declaration whitelist unrelated files", () => {
-    const aliasFile = "packages/red-castle/src/deprecated-aliases.ts";
+    const aliasFile = "packages/worker/src/deprecated-aliases.ts";
     const unrelated = "apps/dev/src/runtime/feedback-worktree.ts";
     const finding = detectBranchReversion(
       [patchForDeletedFile(aliasFile, ["alias"]), patchForDeletedFile(unrelated, ["setup"])].join("\n"),

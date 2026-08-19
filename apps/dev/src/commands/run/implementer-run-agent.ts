@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createSpinStreamProcessor } from "@reddb-io/red-castle/engine";
+import { createSpinStreamProcessor } from "@reddb-io/worker/engine";
 import { encode } from "@reddb-io/toon";
 import type { CastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import type { ConfigValues } from "../../core/config.js";

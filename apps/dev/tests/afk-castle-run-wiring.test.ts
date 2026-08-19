@@ -10,7 +10,7 @@ describe("afk run castle engine flip", () => {
   it("routes the drain through the red-castle worker engine instead of the dev session loop", () => {
     const source = readFileSync(runCommandTs, "utf8");
 
-    expect(source).toContain('from "@reddb-io/red-castle/engine"');
+    expect(source).toContain('from "@reddb-io/worker/engine"');
     expect(source).toContain("runCastleWorkerDrain");
     expect(source).toContain("summary = await runCastleWorkerDrain(deps, sessionCtx)");
     expect(source).not.toContain("summary = await runSession(deps, sessionCtx)");

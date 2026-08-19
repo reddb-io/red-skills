@@ -5,7 +5,7 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { readFile } from "node:fs/promises";
 import { isLivePid } from "../../runtime/kill-tree.js";
-import { parseWorkSelector } from "@reddb-io/red-castle/engine";
+import { parseWorkSelector } from "@reddb-io/worker/engine";
 
 export interface RunOptions {
   args: string[];

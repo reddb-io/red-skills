@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
+import { readCastleHistoryRecords } from "@reddb-io/worker/engine";
 import {
   buildSparkline,
   historyAppend,

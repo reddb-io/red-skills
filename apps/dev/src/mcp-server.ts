@@ -9,7 +9,7 @@ import {
   CASTLE_MCP_PROMPTS,
   createCastleMcpTools,
   type CastleMcpDependencies,
-} from "@reddb-io/red-castle/mcp-server";
+} from "@reddb-io/worker/mcp-server";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 import { invokeProjectMcp } from "./project-acp-adapter.js";
 import {

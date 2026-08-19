@@ -9,7 +9,7 @@ import {
   castleStateSnapshotPath,
   createEnginePaths,
   readCastleStateSnapshot,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import type {
   WorkerStateRecordEntry,
   WorkerStateRecordReclaimPlan,

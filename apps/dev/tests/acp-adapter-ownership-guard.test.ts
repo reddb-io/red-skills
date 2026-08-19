@@ -11,7 +11,9 @@ const ADAPTERS = [
 ] as const;
 
 const FORBIDDEN = [
-  { pattern: /red-castle\/resident/, owner: "adapter-owned resident protocol" },
+  // Both spellings: the wire was `@reddb-io/red-castle/resident` before #4013
+  // renamed the package, and a reintroduction would reach for the new name.
+  { pattern: /(?:red-castle|worker)\/resident/, owner: "adapter-owned resident protocol" },
   { pattern: /from ["']node:fs(?:\/promises)?["']/, owner: "adapter-owned state-file read" },
   { pattern: /\.red\/state|registrationIntentPath|eventLanePath/, owner: "adapter-owned daemon state" },
   { pattern: /runtime\/gh(?:\.js)?["']/, owner: "adapter-owned GitHub client" },

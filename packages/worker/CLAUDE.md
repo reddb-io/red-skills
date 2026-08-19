@@ -1,3 +1,11 @@
+# `@reddb-io/worker` — the Worker body
+
+**This package is what runs INSIDE one admitted Worker process, and nothing
+else** (ADR 0148). Whether, when and where a Worker exists belongs to the
+`redskilled` daemon; agent and sandbox providers, worktree materialisation, the
+gate runner and the turn loop belong here. `README.md` states the mission; the
+sandcastle documentation below it is the library reference.
+
 Use `npm run typecheck` for type checking.
 
 Check [./CONTEXT.md](./CONTEXT.md) for terminology questions.
@@ -5,7 +13,7 @@ Check [./CONTEXT.md](./CONTEXT.md) for terminology questions.
 ## Vendored source — archived upstream marker
 
 This is reddb.io's vendored fork of sandcastle, consumed by `red-skills` as a
-normal monorepo workspace package built from source (`@reddb-io/red-castle` is a
+normal monorepo workspace package built from source (`@reddb-io/worker` is a
 `workspace:*` dependency — see ADR 0061 and ADR 0101 in red-skills). The
 standalone `reddb-io/red-castle` repository is archived after the vendoring
 import; `.upstream` is the only upstream marker for the original sandcastle
@@ -21,7 +29,7 @@ documentation needs updating.
 
 ## TOON is the log doctrine — structured output is never JSON here
 
-**Every structured log lane and every piece of red-castle-authored internal
+**Every structured log lane and every piece of package-authored internal
 communication is TOON/TOONL via the pinned `@reddb-io/toon` package — never
 JSONL.** This is a deliberate, permanent divergence from upstream sandcastle,
 which writes JSON throughout its logs; TOON is markedly cheaper in tokens for
