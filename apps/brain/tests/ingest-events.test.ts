@@ -2,9 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ChannelBridge, ChannelBridgePollResult, ChannelEvent } from "../src/channel-bridge.js";
+import type { ChannelBridge, ChannelBridgePollResult, ChannelEvent } from "@reddb-io/brain-store/channel-bridge.js";
 import { ingestEvents } from "../src/ingest-events.js";
-import { BrainStore } from "../src/store.js";
+import { BrainStore } from "@reddb-io/brain-store/store.js";
 
 const roots: string[] = [];
 

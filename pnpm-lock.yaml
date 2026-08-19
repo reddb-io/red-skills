@@ -113,9 +113,18 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.29.0(zod@3.25.76)
+      '@reddb-io/brain-store':
+        specifier: workspace:*
+        version: link:../../packages/brain-store
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/protocol-acp':
+        specifier: workspace:*
+        version: link:../../packages/protocol-acp
+      '@reddb-io/redskilled':
+        specifier: workspace:*
+        version: link:../redskilled
       '@reddb-io/sdk':
         specifier: 1.23.1
         version: 1.23.1
@@ -184,6 +193,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.29.0(zod@3.25.76)
+      '@reddb-io/brain-store':
+        specifier: workspace:*
+        version: link:../../packages/brain-store
       '@reddb-io/brand-tokens':
         specifier: workspace:*
         version: link:../../packages/brand-tokens
@@ -351,6 +363,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 1.3.0
         version: 1.3.0(zod@4.4.3)
+      '@reddb-io/brain-store':
+        specifier: workspace:*
+        version: link:../../packages/brain-store
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
@@ -363,6 +378,9 @@ importers:
       '@reddb-io/redskilled-render':
         specifier: workspace:*
         version: link:../../packages/redskilled-render
+      '@reddb-io/sdk':
+        specifier: 1.23.1
+        version: 1.23.1
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -431,6 +449,9 @@ importers:
 
   apps/rsp:
     dependencies:
+      '@reddb-io/brain-store':
+        specifier: workspace:*
+        version: link:../../packages/brain-store
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
@@ -505,6 +526,25 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 2.1.9(@types/node@22.20.1)
+
+  packages/brain-store:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 'catalog:'
+        version: 1.29.0(zod@4.4.3)
+      '@reddb-io/sdk':
+        specifier: 1.23.1
+        version: 1.23.1
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
 
   packages/brand-tokens:
     devDependencies:
@@ -3511,6 +3551,28 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
+    dependencies:
+      '@hono/node-server': 1.19.14(hono@4.12.30)
+      ajv: 8.20.0
+      ajv-formats: 3.0.1(ajv@8.20.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.1.0
+      express: 5.2.1
+      express-rate-limit: 8.5.2(express@5.2.1)
+      hono: 4.12.30
+      jose: 6.2.3
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
+    transitivePeerDependencies:
+      - supports-color
+
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     optional: true
 
@@ -5179,6 +5241,10 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@3.25.76):
     dependencies:
       zod: 3.25.76
+
+  zod-to-json-schema@3.25.2(zod@4.4.3):
+    dependencies:
+      zod: 4.4.3
 
   zod@3.25.76: {}
 

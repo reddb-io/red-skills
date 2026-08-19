@@ -13,8 +13,8 @@ import {
 } from "@reddb-io/shared/resident-client.js";
 import type { BrainResidentAction, RspResidentConfig } from "@reddb-io/shared/resident-protocol.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
-import type { KpiQueryInput, KpiResult } from "./kpi-query.js";
-import type { ModelTierBanditDocument } from "./model-tier-bandit.js";
+import type { KpiQueryInput, KpiResult } from "@reddb-io/brain-store/kpi-query.js";
+import type { ModelTierBanditDocument } from "@reddb-io/brain-store/model-tier-bandit.js";
 import type {
   BrainStoreLike,
   BrainThinkResult,
@@ -22,9 +22,9 @@ import type {
   SearchHit,
   SearchOptions,
   ThinkOptions,
-} from "./store.js";
-import type { StoredBrainArtifact, StoredBrainConnection } from "./schema.js";
-import type { ResolvedBrainConfig } from "./config.js";
+} from "@reddb-io/brain-store/store.js";
+import type { StoredBrainArtifact, StoredBrainConnection } from "@reddb-io/brain-store/schema.js";
+import type { ResolvedBrainConfig } from "@reddb-io/brain-store/config.js";
 
 /** Canonical shared RedDB store location (state tier); see {@link SHARED_STORE_REL}. */
 export const SHARED_RSP_STORE_PATH = SHARED_STORE_REL;

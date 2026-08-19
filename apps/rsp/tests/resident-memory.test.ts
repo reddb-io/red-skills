@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { graphRecall } from "../../memory/src/graph-recall.js";
 import { MemoryStore } from "../../memory/src/graph-store.js";
 import { withBrainRuntime } from "../../brain/src/runtime.js";
-import { BrainStore } from "../../brain/src/store.js";
+import { BrainStore } from "@reddb-io/brain-store/store.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/config.js";
 import { ResidentRspElisionStore, resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";

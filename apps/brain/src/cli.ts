@@ -3,14 +3,14 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
-import { McpStdioChannelBridge } from "./channel-bridge.js";
+import { McpStdioChannelBridge } from "@reddb-io/brain-store/channel-bridge.js";
 import { handleHook, type Runner } from "./hook-runtime.js";
 import { ingestEvents } from "./ingest-events.js";
 import { withBrainRuntime } from "./runtime.js";
-import { brainAct } from "./brain-act.js";
+import { brainAct } from "@reddb-io/brain-store/brain-act.js";
 import { buildBrainDashboard, buildBrainDashboardArtifact, serveBrainDashboardHtml } from "./dashboard.js";
 import { loadIngestionState, saveIngestionState, scheduledIngest } from "./scheduled-ingestion.js";
-import type { KpiGroupBy, KpiInterval, KpiTimeField } from "./kpi-query.js";
+import type { KpiGroupBy, KpiInterval, KpiTimeField } from "@reddb-io/brain-store/kpi-query.js";
 import { isOutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import {
   ACT_FLAGS,

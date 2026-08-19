@@ -11,7 +11,8 @@ import {
   parseBrainRootOverride,
   resolveBrainConfig,
   resolveConnectionString,
-} from "../src/config.js";
+  resolveHostBrainConfig,
+} from "./config.js";
 
 const roots: string[] = [];
 
@@ -62,7 +63,7 @@ describe("Brain config", () => {
   it("uses the host root when no directory on the path carries a brain", async () => {
     const root = await tempRootWithoutRedAncestor();
     const env = { HOME: root };
-    await expect(findBrainRoot(root, { env })).resolves.toBe(join(root, ".red"));
+    await expect(findBrainRoot(root, { env })).resolves.toBe(root);
   });
 
   it("keeps a checkout that already carries a brain store", async () => {
@@ -135,7 +136,7 @@ describe("Brain config", () => {
     await mkdir(join(repo, ".red"), { recursive: true });
     await mkdir(start, { recursive: true });
 
-    await expect(findBrainRoot(start, { env: { HOME: root } })).resolves.toBe(join(root, ".red"));
+    await expect(findBrainRoot(start, { env: { HOME: root } })).resolves.toBe(root);
   });
 
   it("lets an environment root override walk-up brain resolution", async () => {
@@ -180,6 +181,28 @@ describe("Brain config", () => {
     expect(interpolateEnv("$RED_BRAIN_CONNECTION_STRING", {
       RED_BRAIN_CONNECTION_STRING: "file:///tmp/brain.rdb",
     })).toBe("file:///tmp/brain.rdb");
+  });
+
+  // #4026: the daemon holds ONE store for the host and stands in no checkout,
+  // so its resolution asks for the user's root by name instead of walking up.
+  it("resolves the host brain to ~/.red/brain without consulting any checkout", async () => {
+    const home = await tempRootWithoutRedAncestor();
+
+    const resolved = await resolveHostBrainConfig({ HOME: home });
+
+    expect(resolved.rootDir).toBe(home);
+    expect(resolved.configPath).toBe(join(home, ".red", "brain", "config.yaml"));
+    expect(resolved.connectionString).toBe(`file://${join(home, ".red", "brain", "brain.rdb")}`);
+  });
+
+  it("lets RED_BRAIN_ROOT relocate the host store without reaching a checkout", async () => {
+    const home = await tempRootWithoutRedAncestor();
+    const elsewhere = join(home, "elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+
+    const resolved = await resolveHostBrainConfig({ HOME: home, [BRAIN_ROOT_ENV]: elsewhere });
+
+    expect(resolved.rootDir).toBe(elsewhere);
   });
 
   it("loads workspace .env beside .red", async () => {

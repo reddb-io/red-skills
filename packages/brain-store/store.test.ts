@@ -3,14 +3,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { OUTCOME_EVENT_SCHEMA_VERSION, type OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
-import { recommendModelTier } from "../src/model-tier-bandit.js";
+import { recommendModelTier } from "./model-tier-bandit.js";
 import {
   createAfkHeadlessAutoLinkProvider,
   parseAutoLinkProviderResponse,
   type BrainAutoLinkProvider,
   type BrainAutoLinkRequest,
-} from "../src/auto-linker.js";
-import { BrainStore } from "../src/store.js";
+} from "./auto-linker.js";
+import { BrainStore } from "./store.js";
 
 const roots: string[] = [];
 

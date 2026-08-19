@@ -23,7 +23,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
+    "@reddb-io/brain-store": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/protocol-acp": "workspace:*",
+    "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",
     "@reddb-io/sdk": "1.23.1",

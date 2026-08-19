@@ -1,6 +1,6 @@
-import { sha256 } from "./hash.js";
-import type { ChannelEvent } from "./channel-bridge.js";
-import type { CaptureInput } from "./store.js";
+import { sha256 } from "@reddb-io/brain-store/hash.js";
+import type { ChannelEvent } from "@reddb-io/brain-store/channel-bridge.js";
+import type { CaptureInput } from "@reddb-io/brain-store/store.js";
 
 export interface EventArtifactMapInput {
   event: ChannelEvent;

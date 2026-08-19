@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
-import type { KpiResult } from "./kpi-query.js";
-import type { StoredBrainArtifact, StoredBrainConnection } from "./schema.js";
-import type { BrainStoreLike } from "./store.js";
+import type { KpiResult } from "@reddb-io/brain-store/kpi-query.js";
+import type { StoredBrainArtifact, StoredBrainConnection } from "@reddb-io/brain-store/schema.js";
+import type { BrainStoreLike } from "@reddb-io/brain-store/store.js";
 
 export interface BrainDashboardOptions {
   project: string;

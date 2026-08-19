@@ -8,7 +8,7 @@ import {
   HERMES_CHANNEL_BRIDGE_TOOLS,
   McpStdioChannelBridge,
   type ChannelBridge,
-} from "../src/channel-bridge.js";
+} from "@reddb-io/brain-store/channel-bridge.js";
 
 const TIMEOUT = 20_000;
 const pkgRoot = resolve(__dirname, "..");

@@ -21,7 +21,7 @@ _Avoid_: memory write, note append, manual Brain edit
 
 **Brain artifact**:
 A typed knowledge item created by a Capture. Its `kind` is one of the canonical
-artifact kinds defined in the Brain schema (`apps/brain/src/schema.ts`):
+artifact kinds defined in the Brain schema (`packages/brain-store/schema.ts`):
 `pillar`, `decision`, `concept`, `question`, `playbook`, `task`, `event`,
 `pattern`, `hypothesis`, `fact`, `source`, `bookmark`, `note`, `reference`,
 `custom`, `project`, `idea`, `meeting`, `claim`, `organization`, `person`.
@@ -38,12 +38,26 @@ _Avoid_: graph.rdb, memory database, markdown brain
 **Folder-level Brain**:
 A Brain root shared by multiple child repositories through walk-up resolution:
 the plugin prefers an explicit override, then an ancestor `.red/brain` directory
-or `.red/brain.root` marker, then the nearest `.red/` fallback.
+or `.red/brain.root` marker, then the **Host brain**.
 _Avoid_: global brain, monorepo memory, umbrella notes
+
+**Host brain**:
+The one Brain of a machine, at `~/.red/brain`, opened once by **redskilled** and
+served to every session over ACP (ADR 0152). A second repository is not a second
+brain: a checkout resolves here unless it names an override or already holds a
+store of its own. The handle is the daemon's — no session opens one.
+_Avoid_: global brain, per-repo brain, session store, brain daemon
+
+**rs_brain**:
+The brain plugin's thin Plugin MCP (ADR 0147 rule 2). It publishes the
+`brain_*` tool schemas and forwards each call to the daemon over
+`_redskills/brain_call`; it holds no store, no connection string, no root
+resolution and no channel bridge, so a host may start one per session.
+_Avoid_: brain MCP server, brain resident, local brain adapter
 
 **Connection**:
 A typed graph edge between Brain artifacts. The canonical connection kinds
-(`apps/brain/src/schema.ts`) are `supports`, `contradicts`, `depends_on`,
+(`packages/brain-store/schema.ts`) are `supports`, `contradicts`, `depends_on`,
 `derived_from`, `related_to`, `part_of`, `preceded_by`, `followed_by`,
 `authored`, and `tagged`.
 _Avoid_: backlink, loose link, relation

@@ -8,7 +8,7 @@
       "moveKey": "851f84311082"
     },
     {
-      "id": "apps/brain/src/auto-linker.ts#json-stringify-wire-write#5d0360c38f2b",
+      "id": "packages/brain-store/auto-linker.ts#json-stringify-wire-write#5d0360c38f2b",
       "classification": "external",
       "reason": "The AFK headless provider reads its request as JSON on stdin; the payload crosses into a foreign CLI.",
       "moveKey": "00e209399a32"

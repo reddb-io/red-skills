@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildBrainDashboard, buildBrainDashboardArtifact, serveBrainDashboardHtml } from "../src/dashboard.js";
-import { BrainStore } from "../src/store.js";
+import { BrainStore } from "@reddb-io/brain-store/store.js";
 
 const roots: string[] = [];
 

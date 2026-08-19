@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChannelEvent } from "../src/channel-bridge.js";
+import type { ChannelEvent } from "@reddb-io/brain-store/channel-bridge.js";
 import { EventArtifactMapper, eventUniqueKey } from "../src/event-artifact-mapper.js";
 
 describe("EventArtifactMapper", () => {

@@ -2,9 +2,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { decode, type JsonValue } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
-import type { ChannelBridge } from "./channel-bridge.js";
+import type { ChannelBridge } from "@reddb-io/brain-store/channel-bridge.js";
 import { ingestEvents } from "./ingest-events.js";
-import type { BrainStoreLike } from "./store.js";
+import type { BrainStoreLike } from "@reddb-io/brain-store/store.js";
 
 export interface IngestionState {
   cursor?: number | string;

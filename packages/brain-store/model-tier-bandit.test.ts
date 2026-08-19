@@ -5,7 +5,7 @@ import {
   replayModelTierBandit,
   type ModelTierBanditDocument,
   type ModelTierBanditTier,
-} from "../src/model-tier-bandit.js";
+} from "./model-tier-bandit.js";
 
 const event = (
   id: string,
