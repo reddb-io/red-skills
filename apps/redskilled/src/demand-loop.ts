@@ -113,6 +113,15 @@ export interface RedskilledDemandProject {
   /** Used verbatim as the Worker's working directory. */
   readonly workspace_path: string;
   readonly target: number;
+  /**
+   * The identifiers the last poll kept (#4098), in the order it saw them.
+   *
+   * The planner hands ONE to each birth and never the same one twice in a tick:
+   * two Workers on one item is the collision the claim exists to resolve, and
+   * paying for it with two Workers when the planner could see it is waste the
+   * host chose. Carried, never read.
+   */
+  readonly items?: readonly string[];
 }
 
 /** What the loop decided about one project this tick, and why. */
@@ -146,6 +155,8 @@ export interface RedskilledDemandBirth {
   readonly index: number;
   readonly argv: readonly string[];
   readonly workspace_path: string;
+  /** The queue identifier this birth is for, when the poll kept one (#4099). */
+  readonly work_item?: string;
 }
 
 export interface RedskilledDemandPlan {
@@ -307,13 +318,20 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
         : `project ${JSON.stringify(project.project_label)} holds ${live} Worker(s) against a target of ` +
           `${project.target} and a queue of ${depth}, so it asks for ${wanted} more`,
     });
+    // Workers already alive hold the head of the list: the planner cannot see
+    // WHICH item each one claimed (that is semantics), so it skips as many as
+    // are live and hands out from there. An overlap is still resolved by the
+    // claim; this only stops the planner from creating one on purpose.
+    const available = (project.items ?? []).slice(live);
     for (let index = 0; index < admitted; index += 1) {
       const round = rounds[index] ?? (rounds[index] = []);
+      const workItem = available[index];
       round.push({
         project_label: project.project_label,
         index: live + index,
         argv: project.argv,
         workspace_path: project.workspace_path,
+        ...(workItem == null ? {} : { work_item: workItem }),
       });
     }
   }
