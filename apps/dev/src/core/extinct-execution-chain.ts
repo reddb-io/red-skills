@@ -3,13 +3,25 @@
 //
 // The first crossing (ADR 0130) ran to zero, which is why
 // `EXTINCT_SOURCE_BASELINE` stood empty. This one started at TODAY'S COUNT and
-// is being paid down slice by slice: `red-skills-dev` still routes 36 commands,
-// the dev bundle is still a Worker body, and the janitor still sweeps a human's
-// checkout. The `red-castle` package specifier is the first line to have cleared
-// — issue #4013 moved `packages/red-castle` to `packages/worker` as
-// `@reddb-io/worker`, so the 78 importer rename sites are gone and what remains
-// under that entry is the vendored source's own on-disk `.red-castle` config
-// directory and cache-key vocabulary, which are behaviour rather than naming.
+// is being paid down slice by slice. Two lines have cleared:
+//
+//   - the `red-castle` package specifier — issue #4013 moved
+//     `packages/red-castle` to `packages/worker` as `@reddb-io/worker`, so the 78
+//     importer rename sites are gone and what remains under that entry is the
+//     vendored source's own on-disk `.red-castle` config directory and cache-key
+//     vocabulary, which are behaviour rather than naming;
+//   - the DEV CLI AND ITS WORKER BODY — issue #4031 deleted the 36-command
+//     router, every command it reached, the `run` body, the supervisor state
+//     machine and the project-side launch template, so `dev-cli-router`,
+//     `dev-worker-run-command`, `dev-bundle-supervisor` and
+//     `project-launch-template` all stand at zero. `dev-cli-binary` keeps two
+//     references and neither is a reader: one is the ratchet that REFUSES the
+//     name in a doc, and one is the container lane whose Worker body moves in
+//     its own slice.
+//
+// What is still owed is the janitor, the client-checkout reclaim it planned
+// with, and the vendored `red-castle` vocabulary.
+//
 // Declaring the inventory BEFORE the deletion is what makes the deletion a
 // ratchet rather than a hope — a slice may lower a count, and a slice that
 // raises one is reintroducing the surface the ADR retired.
@@ -190,11 +202,13 @@ function crossing(
 /**
  * The execution-chain crossing's declared locations, at TODAY'S COUNTS.
  *
- * Nothing here has been deleted yet, which is the point: the inventory lands
- * before the demolition so that every later slice is measured against a number
- * somebody wrote down. A slice that removes references LOWERS the count; a slice
- * that clears a file REMOVES the line; a slice that needs the number RAISED is
- * putting back the surface an ADR retired, and the ratchet says so by name.
+ * The inventory landed BEFORE the demolition, which is the point: every slice is
+ * measured against a number somebody wrote down. A slice that removes references
+ * LOWERS the count; a slice that clears a file REMOVES the line; an entry with no
+ * locations left is an entry that has been PAID, and its absence here is what
+ * makes every future reference a failure rather than a tolerance. A slice that
+ * needs a number RAISED is putting back the surface an ADR retired, and the
+ * ratchet says so by name.
  *
  * Grouped by entry, with the reason stated once per group — a per-file reason
  * repeated 97 times is 97 places for one fact to go stale.
@@ -202,73 +216,25 @@ function crossing(
 export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
   ...crossing(
     "dev-cli-binary",
-    "the binary still ships and is still named by guards, docs helpers and the container entrypoint; the slice that deletes the bundle clears the line",
+    "the binary is deleted; what still spells its name is the ratchet that REFUSES it in a doc, plus the container lane that has not moved its Worker body yet",
     {
+      // The container drives `red-skills-dev run --issues N --runner R --once`
+      // end to end. ADR 0148 gives that body to `@reddb-io/worker` under the
+      // daemon, and ADR 0153 renames the app to `worker-container`; both are
+      // that lane's own slice, and until it lands the entrypoint names what it
+      // actually calls rather than a binary it does not.
       "apps/afk-container/src/entrypoint.mjs": 1,
-      "apps/dev/src/cli.ts": 3,
-      "apps/dev/src/commands/install-type-labels.ts": 1,
-      "apps/dev/src/commands/worktree.ts": 1,
+      // A refusal has to spell the noun it refuses: `EXECUTION_CHAIN_ENTRYPOINTS`
+      // declares `red-skills-dev` NOT instructable, which is how a doc that puts
+      // a subcommand after it fails. Deleting the literal would delete the
+      // refusal.
       "apps/dev/src/core/bare-invocation-guard.ts": 1,
-      "apps/dev/src/core/codex-monitor-agent.ts": 1,
-      "apps/dev/src/core/engine-floor.ts": 1,
-      "apps/dev/src/core/retake.ts": 2,
-      "apps/dev/src/mcp-server.ts": 2,
-      "apps/dev/src/runtime/published-entry.ts": 2,
-      "packages/shared/canonical-invocation.ts": 1,
-    },
-  ),
-  ...crossing(
-    "dev-cli-router",
-    "the router still routes 36 commands; it clears when the last one a skill names has become an `rs_dev` tool and the rest have died with the bundle",
-    {
-      "apps/dev/src/cli.ts": 17,
-    },
-  ),
-  ...crossing(
-    "dev-worker-run-command",
-    "the dev bundle is still a Worker body; the line clears as `@reddb-io/worker` becomes the only one",
-    {
-      "apps/dev/src/cli.ts": 1,
-      "apps/dev/src/commands/run.ts": 14,
-      "apps/dev/src/commands/run/activity.ts": 1,
-      "apps/dev/src/commands/run/command.ts": 16,
-      "apps/dev/src/commands/run/flags.ts": 19,
-      "apps/dev/src/commands/run/process-deps.ts": 7,
-      "apps/dev/src/commands/run/state.ts": 3,
-      "apps/dev/src/core/file-size-guard.ts": 2,
-    },
-  ),
-  ...crossing(
-    "dev-bundle-supervisor",
-    "the project still drives slots, reaping and heartbeats from its own bundle; the line clears as the daemon takes the control half",
-    {
-      "apps/dev/src/commands/monitor.ts": 1,
-      "apps/dev/src/commands/run/command.ts": 1,
-      "apps/dev/src/core/host-owns-birth-guard.ts": 4,
-      "apps/dev/src/core/supervisor.ts": 11,
-      "apps/dev/src/runtime/redskilled-worker-log.ts": 1,
-      "apps/dev/src/runtime/registration-launch.ts": 1,
-      "apps/dev/src/runtime/supervisor-fs.ts": 1,
-      "apps/dev/src/runtime/wire/boot.ts": 1,
-      "apps/dev/src/runtime/wire/statusline.ts": 1,
-    },
-  ),
-  ...crossing(
-    "project-launch-template",
-    "the project still hands the daemon the argv of the next Worker; it clears when the daemon composes `redskilled acp-worker` itself",
-    {
-      "apps/dev/src/core/supervisor/launch-template.ts": 8,
-      "apps/dev/src/runtime/redskilled-worker-log.ts": 5,
-      "apps/dev/src/runtime/registration-launch.ts": 2,
     },
   ),
   ...crossing(
     "tmp-janitor",
     "the janitor still sweeps a human's checkout; it clears when Worker workspaces move to OS temporary storage and the module is deleted",
     {
-      "apps/dev/src/commands/boot-sweeps.ts": 5,
-      "apps/dev/src/commands/red-doctor.ts": 15,
-      "apps/dev/src/commands/run/state.ts": 1,
       "apps/dev/src/core/boot.ts": 18,
       "apps/dev/src/core/tmp-janitor.ts": 42,
       "apps/dev/src/core/worker-reclaim.ts": 1,
@@ -283,7 +249,6 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
     "client-checkout-reclaim",
     "reclaim is still planned against directories inside a client checkout; it clears with the janitor that called it",
     {
-      "apps/dev/src/commands/reap.ts": 3,
       "apps/dev/src/core/boot.ts": 9,
       "apps/dev/src/core/branch-reclaim.ts": 23,
       "apps/dev/src/core/reclaim.ts": 1,
@@ -309,7 +274,6 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
     "red-castle-naming",
     "one rename site onto `@reddb-io/worker` / `@reddb-io/protocol-acp`; a migration slice lowers the number as it moves the code it names",
     {
-      "apps/dev/src/commands/red-doctor.ts": 3,
       "apps/dev/src/core/castle-cutover-migration.ts": 1,
       "apps/dev/src/core/castle-state-doctor.ts": 2,
       "apps/dev/src/core/handoff.ts": 3,

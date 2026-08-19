@@ -57,7 +57,7 @@ export const REDSKILLED_HOST_WORKER_ID_ENV = "REDSKILLED_WORKER_ID";
  * stopped being allowed to be. What the template still has to do is SPELL the
  * daemon's token, so one place spells it.
  */
-export const RED_AFK_WORKER_ID_PLACEHOLDER = "{{worker_id}}";
+export const WORKER_ID_LAUNCH_TOKEN = "{{worker_id}}";
 
 /**
  * Where a Worker's output goes, as a template — WHATEVER ITS ORIGIN. PURE.
@@ -82,7 +82,7 @@ export const RED_AFK_WORKER_ID_PLACEHOLDER = "{{worker_id}}";
  * reclaiming.
  */
 export function workerLogPathTemplate(root: string): string {
-  return join(workersDir(root), RED_AFK_WORKER_ID_PLACEHOLDER, "worker.log.toonl");
+  return join(workersDir(root), WORKER_ID_LAUNCH_TOKEN, "worker.log.toonl");
 }
 
 /**

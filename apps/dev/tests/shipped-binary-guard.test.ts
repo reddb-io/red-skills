@@ -78,8 +78,12 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
     expect(files.size).toBeGreaterThan(200);
     expect(binaries.length).toBeGreaterThanOrEqual(10);
     expect(binaries.map((entry) => entry.name)).toEqual(
-      expect.arrayContaining(["brain", "memory", "rsp", "red-skills-dev", "red-skills-redskilled"]),
+      expect.arrayContaining(["brain", "memory", "rsp", "red-skills-redskilled"]),
     );
+    // ADR 0147 rule 1: `redskilled` is the ONLY binary of the execution chain.
+    // The 36-command CLI it replaced is not deprecated here, it is absent — a
+    // bin map that names it again is a second implementation coming back.
+    expect(binaries.map((entry) => entry.name)).not.toContain("red-skills-dev");
   });
 
   it("resolves every declared binary to a source that exists", () => {
@@ -91,11 +95,11 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
   });
 
   it("follows a packaged shim through to the bundle's own entry", () => {
-    const dev = binaries.find((entry) => entry.name === "red-skills-dev")!;
+    const daemon = binaries.find((entry) => entry.name === "red-skills-redskilled")!;
 
-    expect(resolveBinaryEntry(dev, files, bundles).hops).toEqual([
-      "packaging/npm/bin/red-skills-dev.mjs",
-      "apps/dev/src/cli.ts",
+    expect(resolveBinaryEntry(daemon, files, bundles).hops).toEqual([
+      "packaging/npm/bin/red-skills-redskilled.mjs",
+      "apps/redskilled/src/cli.ts",
     ]);
   });
 
@@ -128,7 +132,7 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
         ]),
     );
 
-    expect(answers.get("red-skills-dev")).toEqual(["apps/dev/src/cli.ts"]);
+    expect(answers.get("red-skills-redskilled")).toEqual(["apps/redskilled/src/cli.ts"]);
     expect(answers.get("red-skills-redskilled-mcp")).toEqual(["apps/dev/src/mcp-server.ts"]);
     expect(answers.get("memory-mcp")).toEqual(["apps/memory/src/mcp-server/runtime.ts"]);
   });

@@ -103,9 +103,17 @@ export interface EngineFloorVerdict {
   readonly message: string;
 }
 
-/** The one executable repair, with the measured version already substituted. */
+/**
+ * The one executable repair, with the measured version already substituted.
+ *
+ * It used to name `red-skills-dev reconcile-engine`, the dev CLI's own
+ * self-repair. ADR 0151 makes the DAEMON the owner of the version a machine
+ * runs, so the repair for a skewed engine is to make the daemon current —
+ * `provision` is the subcommand that does it, and it is the only binary of the
+ * execution chain a doc or a hint may instruct (ADR 0147 rule 1).
+ */
 export function engineFloorRepair(version: string): string {
-  return `\`npx -y -p @reddb-io/red-skills@${version} red-skills-dev reconcile-engine\``;
+  return `\`npx -y -p @reddb-io/red-skills@${version} red-skills-redskilled provision\``;
 }
 
 /**

@@ -27,7 +27,6 @@ import type { PublishedVersionObservation } from "../src/core/published-version.
 import { CONFIG_DEFAULTS } from "../src/core/config.js";
 import { invokeProjectMcp } from "../src/project-acp-adapter.js";
 import type { RedskillsProjectAcpSession } from "@reddb-io/redskilled/acp-client";
-import type { DispatchedWorkerBirth } from "../src/runtime/mcp-worker-birth.js";
 
 const roots: string[] = [];
 

@@ -117,7 +117,10 @@ describe("the live tree carries no fleet or attempt source (#2795)", () => {
     const files = readExtinctSourceFiles(ROOT);
 
     expect(files.filter((file) => /attempt-(?:accounting|budget)\./.test(file.relativePath))).toEqual([]);
-    expect(files.some((file) => file.relativePath === "apps/dev/src/core/supervisor/worker-accounting.ts")).toBe(true);
+    // `supervisor/worker-accounting.ts` used to stand here as the renamed
+    // survivor; ADR 0148 deleted the whole supervisor with it (#4031), so
+    // `worker-budget.ts` is the accounting the tree still carries — under a name
+    // keyed to the Worker rather than to a dead noun.
     expect(files.some((file) => file.relativePath === "apps/dev/src/core/worker-budget.ts")).toBe(true);
   });
 });
@@ -643,17 +646,18 @@ describe("the execution-chain crossing is declared at today's counts (#4009)", (
 
     expect(drifted, drifted.join("\n")).toEqual([]);
     // The inventory's SIZE is itself a debt, so it is bounded from ABOVE and the
-    // bound only ever comes down. It opened at 157 locations and #4013's rename
-    // paid 72 of them; a slice that needs the ceiling RAISED is adding a
-    // location, which is the reintroduction the entry-level counts already
-    // refuse. Lower this number when a slice clears more.
-    expect(EXECUTION_CHAIN_BASELINE.length).toBeLessThanOrEqual(85);
+    // bound only ever comes down. It opened at 157 locations; #4013's rename paid
+    // 72 of them and #4031's demolition of the CLI, the run body, the supervisor
+    // and the launch template paid 38 more. A slice that needs the ceiling RAISED
+    // is adding a location, which is the reintroduction the entry-level counts
+    // already refuse. Lower this number when a slice clears more.
+    expect(EXECUTION_CHAIN_BASELINE.length).toBeLessThanOrEqual(47);
   });
 
   it("fails when ANY declared location gains one reference (the ratchet itself)", () => {
     // Raising a baseline is exactly what a reintroduction needs, so one extra
     // reference at each declared location must red the guard on its own — all
-    // 85 of them, not a sampled few.
+    // of them, not a sampled few.
     const survived = EXECUTION_CHAIN_BASELINE.filter((entry) => {
       const seed = findings.find((finding) => finding.locationKey === entry.id)!;
       const violations = formatExtinctSourceViolations({
