@@ -40,8 +40,12 @@ export interface WorkerBodyModule {
    *
    * A ratchet, not history: this exact name reappearing in the daemon tree is
    * the most likely shape of the move being undone.
+   *
+   * Absent when the module was BORN in the package. A body module written after
+   * the cut has no daemon name to forbid, and inventing one would put a fictional
+   * path in a ratchet whose whole value is that every path in it is real.
    */
-  readonly formerDaemonModule: string;
+  readonly formerDaemonModule?: string;
   /** Symbols this module DEFINES. The daemon may re-export them, never define them. */
   readonly defines: readonly string[];
   /** What it does once the process is already running. */
@@ -78,6 +82,21 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     formerDaemonModule: "acp-worker-budget-grace.ts",
     defines: ["createAcpWorkerBudgetGraceRuntime"],
     runs: "cancels, checkpoints, asks the gateway to publish, writes the Envelope, dies",
+  },
+  {
+    module: "terminal-policy.ts",
+    defines: ["evaluateWorkerTerminalRequest"],
+    runs: "decides one child-agent terminal request: `git push`, `gh` and every credentialed remote are refused with the authority that owns them",
+  },
+  {
+    module: "terminal-host.ts",
+    defines: ["createWorkerTerminalHost"],
+    runs: "runs what the policy allowed, in the Worktree, with the Worker's credential-free environment",
+  },
+  {
+    module: "publish-request.ts",
+    defines: ["createWorkerPublisher"],
+    runs: "reads the branch and commit the turn produced and asks the ACP parent to publish them, once",
   },
 ];
 
