@@ -26,29 +26,29 @@ function writeFile(rel: string, body: string): void {
 }
 
 describe("planPluginStatusline (ADR 0080)", () => {
-  it("returns no plan for non-dev plugins (memory, brain have no AFK launcher)", () => {
+  it("returns no plan for non-dev plugins (memory and brain ship no statusline)", () => {
     expect(planPluginStatusline(root, "memory")).toEqual([]);
     expect(planPluginStatusline(root, "brain")).toEqual([]);
   });
 
-  it("warns and emits a no-op module when the AFK launcher is missing", () => {
+  it("warns and emits a no-op module when the dev manifest carries no version", () => {
     const plans = planPluginStatusline(root, "dev");
     expect(plans.length).toBe(1);
     const [plan] = plans;
     expect(plan.target).toBe("plugin/session-status.ts");
     expect(plan.warnings.length).toBe(1);
-    expect(plan.warnings[0]).toMatch(/AFK launcher not found/);
+    expect(plan.warnings[0]).toMatch(/no version in plugins\/dev\/\.claude-plugin\/plugin\.json/);
     // The module is still emitted; the spawn will fail at
     // runtime (no launcher at directory/skills/.../afk.mjs) and
     // the toast becomes a silent no-op. The build does not
     // fail-closed because the rest of the install is unaffected.
-    expect(plan.source).toContain("AFK_BIN");
+    expect(plan.source).toContain("REDSKILLED_VERSION");
   });
 
-  it("emits a working module when the AFK launcher exists", () => {
+  it("emits a working module pinned to the manifest version", () => {
     writeFile(
-      "dev/skills/engineering/afk/bin/afk.mjs",
-      "#!/usr/bin/env node\nconsole.log('ok');",
+      "dev/.claude-plugin/plugin.json",
+      JSON.stringify({ name: "dev", version: "9.9.9" }),
     );
     const plans = planPluginStatusline(root, "dev");
     expect(plans.length).toBe(1);
@@ -60,16 +60,16 @@ describe("planPluginStatusline (ADR 0080)", () => {
     // by the user-side plugin loader, not baked in at build
     // time (unlike Slice 3's MCP passthrough, the AFK launcher
     // lives in the same checkout the user is running from).
-    expect(plan.source).toContain("AFK_BIN");
-    expect(plan.source).toContain("skills/engineering/afk/bin/afk.mjs");
+    expect(plan.source).toContain("REDSKILLED_VERSION");
+    expect(plan.source).toContain("red-skills-redskilled statusline");
   });
 });
 
 describe("session-status module shape", () => {
   it("subscribes to session.idle, session.error, session.created, and experimental.session.compacting", () => {
     writeFile(
-      "dev/skills/engineering/afk/bin/afk.mjs",
-      "#!/usr/bin/env node\nconsole.log('ok');",
+      "dev/.claude-plugin/plugin.json",
+      JSON.stringify({ name: "dev", version: "9.9.9" }),
     );
     const [plan] = planPluginStatusline(root, "dev");
     expect(plan.source).toMatch(/"session\.idle"/);
@@ -80,8 +80,8 @@ describe("session-status module shape", () => {
 
   it("uses the opencode plugin API (tui.showToast, tui.appendPrompt, context push)", () => {
     writeFile(
-      "dev/skills/engineering/afk/bin/afk.mjs",
-      "#!/usr/bin/env node\nconsole.log('ok');",
+      "dev/.claude-plugin/plugin.json",
+      JSON.stringify({ name: "dev", version: "9.9.9" }),
     );
     const [plan] = planPluginStatusline(root, "dev");
     expect(plan.source).toMatch(/tui\.showToast/);
@@ -91,8 +91,8 @@ describe("session-status module shape", () => {
 
   it("spawns the AFK statusline via Bun shell (slice 4 surface contract)", () => {
     writeFile(
-      "dev/skills/engineering/afk/bin/afk.mjs",
-      "#!/usr/bin/env node\nconsole.log('ok');",
+      "dev/.claude-plugin/plugin.json",
+      JSON.stringify({ name: "dev", version: "9.9.9" }),
     );
     const [plan] = planPluginStatusline(root, "dev");
     expect(plan.source).toMatch(/Bun\.\$/);
@@ -101,8 +101,8 @@ describe("session-status module shape", () => {
 
   it("strips ANSI escape codes before surfacing the line to the toast", () => {
     writeFile(
-      "dev/skills/engineering/afk/bin/afk.mjs",
-      "#!/usr/bin/env node\nconsole.log('ok');",
+      "dev/.claude-plugin/plugin.json",
+      JSON.stringify({ name: "dev", version: "9.9.9" }),
     );
     const [plan] = planPluginStatusline(root, "dev");
     expect(plan.source).toMatch(/stripAnsi/);
@@ -115,6 +115,6 @@ describe("planPluginStatusline against the real source tree", () => {
     const plans = planPluginStatusline(REAL_PLUGINS, "dev");
     expect(plans.length).toBe(1);
     expect(plans[0]!.warnings).toEqual([]);
-    expect(plans[0]!.source).toContain("skills/engineering/afk/bin/afk.mjs");
+    expect(plans[0]!.source).toContain("red-skills-redskilled statusline");
   });
 });

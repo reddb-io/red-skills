@@ -63,7 +63,9 @@ if [ "${REHEARSAL_SKIP_BUNDLE:-}" != "1" ]; then
   pnpm bundle >"$work/bundle.log" 2>&1 || { cat "$work/bundle.log"; fail "pnpm bundle failed"; }
   (cd apps/dev && pnpm bundle:mcp >"$work/bundle-mcp.log" 2>&1) || { cat "$work/bundle-mcp.log"; fail "apps/dev bundle:mcp failed"; }
 fi
-for bundle in dev memory brain opencode-host redskilled-mcp code-nav-mcp rsp rsp-core redskilled release; do
+# `dev` is absent by design since #4031: the dev CLI bundle was deleted with the
+# binary it backed, and `redskilled` is the execution chain's only shipped one.
+for bundle in memory brain opencode-host redskilled-mcp code-nav-mcp rsp rsp-core redskilled release; do
   [ -f "dist/$bundle.bundle.min.mjs" ] || fail "dist/$bundle.bundle.min.mjs was not built"
 done
 [ -f dist/memory-tokenizer.asset.cjs ] || fail "dist/memory-tokenizer.asset.cjs was not built"
@@ -166,7 +168,7 @@ host="$xdg/opencode"
 current="$set_root"
 [ -f "$current/plugins/dev/.claude-plugin/plugin.json" ] || fail "materialised dev plugin has no manifest"
 [ -f "$current/plugins/memory/scripts/bootstrap.mjs" ] || fail "materialised memory plugin has no scripts/bootstrap.mjs"
-[ -f "$current/dist/dev.bundle.min.mjs" ] || fail "composed tree has no dev runtime bundle"
+[ ! -e "$current/dist/dev.bundle.min.mjs" ] || fail "the dev CLI bundle was deleted in #4031 and must not come back"
 [ ! -e "$current/dist/internal.bundle.min.mjs" ] || fail "skills-only internal plugin must not ship a bundle"
 for skill in afk store capture bootstrap; do
   [ -f "$host/skills/$skill/SKILL.md" ] || fail "OpenCode host is missing skill $skill"

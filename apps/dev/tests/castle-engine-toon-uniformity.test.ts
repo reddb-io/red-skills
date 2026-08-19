@@ -26,7 +26,6 @@ import {
 } from "../src/core/state.js";
 import { writeLogLineCursors } from "../src/runtime/log-cursor.js";
 import { afkPaths } from "../src/runtime/wire.js";
-import type { FleetHeartbeat } from "../src/core/supervisor.js";
 
 /** The single sanctioned non-TOON file the stack writes (ADR 0097). */
 const SOLE_NON_TOON_FILE = ".red/config.yaml";
@@ -39,27 +38,6 @@ const LEGACY_STATE_TOON_NAME_EXEMPTIONS = new Set<string>();
 function expectToonNotJson(bytes: string, expected: unknown): void {
   expect(() => JSON.parse(bytes)).toThrow();
   expect(decode(bytes)).toEqual(expected);
-}
-
-function sampleHeartbeat(): FleetHeartbeat {
-  return {
-    ts: "2026-07-17T00:00:00.000Z",
-    epoch: 42,
-    lastProgressEpoch: 41,
-    runner: "claude",
-    target: 2,
-    shrinkMode: "drain-then-retire",
-    bundleVersion: "9.9.9",
-    readyForAgent: 3,
-    slotsBusy: 1,
-    slotsFree: 1,
-    slotsTotal: 2,
-    slotsParked: 0,
-    spawnsThisTick: 0,
-    churn: { deaths: 2, respawns: 2, windowS: 300 },
-    slotDetails: [],
-    slotPids: [{ slot: 0, pid: 12345 }],
-  };
 }
 
 describe("castle-engine write-surface TOON uniformity", () => {

@@ -41,10 +41,13 @@ describe("end-to-end against the real source tree", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("plans the dev plugin's hooks (SessionStart + PreToolUse + PostToolUse)", () => {
+  // #4031 deleted the `path-brief` command with the dev CLI, and its PostToolUse
+  // hook went with it — a hook whose command no longer exists is a hook that
+  // fails on every tool call. Two events remain.
+  it("plans the dev plugin's hooks (SessionStart + PreToolUse)", () => {
     const plans = planPluginHooks(PLUGINS_ROOT, "dev");
     const events = plans.map((p) => p.opencodeEvent).sort();
-    expect(events).toEqual(["config", "tool.execute.after", "tool.execute.before"]);
+    expect(events).toEqual(["config", "tool.execute.before"]);
   });
 
   it("emits a full plan with skills and hooks for every plugin", () => {
@@ -58,7 +61,9 @@ describe("end-to-end against the real source tree", () => {
     const dev = plan.byPlugin.find((p) => p.plugin === "dev")!;
     const memory = plan.byPlugin.find((p) => p.plugin === "memory")!;
     expect(dev.skills.plans.length).toBeGreaterThan(30);
-    expect(dev.hooks.length).toBe(3);
+    // Two, not three, since #4031: the PostToolUse path-brief hook went with
+    // the CLI command it invoked.
+    expect(dev.hooks.length).toBe(2);
     expect(memory.hooks.map((p) => p.opencodeEvent).sort()).toEqual([
       "config",
       "experimental.session.compacting",

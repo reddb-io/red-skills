@@ -57,6 +57,16 @@ export interface HostOwnedBirthSite {
  * `commands/supervise.ts` is the whole point: it held `spawnSlot` and
  * `spawnReconcileWorker`, the two paths that put every AFK Worker on the
  * machine. Both now state a spec and ask the host.
+ *
+ * **The supervisor's four sites left this list because a STRONGER refusal took
+ * them** (#4031). `core/supervisor/{tick,resize,slot-actions,budget}.ts` were
+ * declared here so that, if they existed, they could hold no spawn; ADR 0148
+ * deleted the whole state machine, and the `dev-bundle-supervisor` entry of
+ * `EXECUTION_CHAIN_SOURCES` now refuses any reference to `core/supervisor` or
+ * `supervisor/<module>` anywhere under `apps/` and `packages/`. That refuses the
+ * module rather than only its spawns, so the birth path is further from
+ * returning than a declared-but-empty file ever made it — this is not rule 1
+ * being relaxed, it is the same concern held by a ratchet that can see more.
  */
 export const HOST_OWNED_BIRTH_SITES: readonly HostOwnedBirthSite[] = [
   {
@@ -67,28 +77,6 @@ export const HOST_OWNED_BIRTH_SITES: readonly HostOwnedBirthSite[] = [
     // ADR 0130 Amendment 4 removed the per-project process itself (#2909), so the
     // module that used to hold both births is gone rather than emptied.
     removed: true,
-  },
-  {
-    path: "apps/dev/src/core/supervisor/tick.ts",
-    what: "the tick's respawn, half-open probe and idle un-park births",
-    replacement:
-      "the host-scoped `redskilled` daemon; the per-project tick was removed with the supervisor loop",
-    removed: true,
-  },
-  {
-    path: "apps/dev/src/core/supervisor/resize.ts",
-    what: "the grow-to-target births",
-    replacement: "the same birth port, reached through `deps.proc.spawnSlot`",
-  },
-  {
-    path: "apps/dev/src/core/supervisor/slot-actions.ts",
-    what: "the dead-slot respawn and the reconcile dispatch births",
-    replacement: "the same birth port, reached through `deps.proc.spawnSlot` / `spawnReconcileWorker`",
-  },
-  {
-    path: "apps/dev/src/core/supervisor/budget.ts",
-    what: "the budget-gated Worker spawn",
-    replacement: "the same birth port; the budget decides WHETHER to ask, never how to launch",
   },
 ];
 

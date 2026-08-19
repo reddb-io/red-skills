@@ -1,3 +1,8 @@
+// #4031 deleted the `route-model-tier` CLI command with the rest of the dev
+// router (ADR 0147 §1). The POLICY it wrapped lives on in
+// `core/model-tier-route.ts` and keeps every assertion below; what left with the
+// command are the cases that drove it through a fake stdin and rendered its
+// Claude decision — a surface that no longer exists to test.
 import { describe, expect, it } from "vitest";
 import { loadConfig, type ConfigValues } from "../src/core/config.js";
 import {
@@ -7,18 +12,6 @@ import {
   type PreToolUseInput,
 } from "../src/core/model-tier-route.js";
 import type { ModelTierBanditAdvice } from "@reddb-io/brain-store/model-tier-bandit.js";
-import { Readable } from "node:stream";
-import { renderClaudeDecision, routeModelTierCommand } from "../src/commands/route-model-tier.js";
-
-/** Run the command with a JSON payload on a fake stdin, capturing stdout. */
-async function runCommand(args: string[], payload: unknown): Promise<string> {
-  const stdin = Readable.from([JSON.stringify(payload)]) as NodeJS.ReadableStream & { isTTY?: boolean };
-  stdin.isTTY = false;
-  let out = "";
-  const stdout = { write: (s: string) => ((out += s), true) } as NodeJS.WritableStream;
-  await routeModelTierCommand(args, "/tmp", stdout, stdin);
-  return out.trim();
-}
 
 /** Config with all defaults (no `.red/config.yaml` present). */
 const defaults = (): ConfigValues => loadConfig("/nope", { ignoreActivationGate: true, read: () => undefined, warn: () => {} });
@@ -211,62 +204,3 @@ describe("routeModelTier — bandit advice", () => {
   });
 });
 
-describe("renderClaudeDecision", () => {
-  it("renders noop as an empty object", () => {
-    expect(renderClaudeDecision({ kind: "noop" })).toEqual({});
-  });
-  it("renders rewrite as hookSpecificOutput.updatedInput", () => {
-    const out = renderClaudeDecision({
-      kind: "rewrite",
-      tier: "validate",
-      model: "claude-haiku-4-5",
-      effort: "low",
-      updatedInput: { subagent_type: "validate", model: "claude-haiku-4-5" },
-      reason: "r",
-    });
-    const hso = (out as { hookSpecificOutput?: Record<string, unknown> }).hookSpecificOutput;
-    expect(hso?.hookEventName).toBe("PreToolUse");
-    expect(hso?.updatedInput).toEqual({ subagent_type: "validate", model: "claude-haiku-4-5" });
-  });
-  it("renders block as a deny permission decision", () => {
-    const out = renderClaudeDecision({ kind: "block", tier: "validate", model: "claude-haiku-4-5", reason: "r" });
-    const hso = (out as { hookSpecificOutput?: Record<string, unknown> }).hookSpecificOutput;
-    expect(hso?.permissionDecision).toBe("deny");
-  });
-});
-
-describe("routeModelTierCommand — IO", () => {
-  it("emits updatedInput for a mis-tiered Claude dispatch", async () => {
-    const out = await runCommand([], {
-      tool_name: "Task",
-      tool_input: { subagent_type: "validate", model: "haiku", prompt: "p" },
-    });
-    const decision = JSON.parse(out) as { hookSpecificOutput?: { updatedInput?: { model?: string } } };
-    expect(decision.hookSpecificOutput?.updatedInput?.model).toBe("claude-opus-5");
-  });
-
-  it("emits an empty object for a correctly-tiered dispatch", async () => {
-    const out = await runCommand([], {
-      tool_name: "Task",
-      tool_input: { subagent_type: "validate", model: "opus" },
-    });
-    expect(JSON.parse(out)).toEqual({});
-  });
-
-  it("safe-degrades to no-op on Codex regardless of payload (#457)", async () => {
-    const out = await runCommand(["--host", "codex"], {
-      tool_name: "Task",
-      tool_input: { subagent_type: "validate", model: "opus" },
-    });
-    expect(JSON.parse(out)).toEqual({});
-  });
-
-  it("emits an empty object on a malformed payload (never wedges a dispatch)", async () => {
-    const stdin = Readable.from(["not json"]) as NodeJS.ReadableStream & { isTTY?: boolean };
-    stdin.isTTY = false;
-    let out = "";
-    const stdout = { write: (s: string) => ((out += s), true) } as NodeJS.WritableStream;
-    await routeModelTierCommand([], "/tmp", stdout, stdin);
-    expect(JSON.parse(out.trim())).toEqual({});
-  });
-});

@@ -556,17 +556,6 @@ export function blankCommentsAndStrings(source: string): string {
  */
 export const DECLARED_WAITS: readonly DeclaredWait[] = [
   {
-    path: "apps/dev/src/commands/redact-sweep.ts",
-    fn: "request",
-    subject: "a GitHub API call the redact sweep is retrying past a 403",
-    deadline: "6 attempts, backing off 1s→32s or the response's `retry-after`",
-    escalation: "throws `failed after retries`, ending the sweep with the status in the message",
-    heartbeat: {
-      silent:
-        "a bounded six-attempt retry inside ONE api call, under a minute end to end; the throw names the call",
-    },
-  },
-  {
     path: "apps/dev/src/core/mcp-lane-canary.ts",
     fn: "awaitHost",
     subject: "the daemon's own answer for a project reaching the shape this step requires",

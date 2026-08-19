@@ -260,7 +260,8 @@ Commands:
   --version     print the build stamp (--json for the build info)
   --help        print this usage
 
-Worker subcommands (run, monitor, fleet, …) belong to red-skills-dev.
+Workflow verbs are rs_dev tools, and Worker lifecycle is the redskilled
+daemon's own argv (ADR 0147 rule 1). Neither is a subcommand of this bundle.
 `;
 
 /** Route every executable role shipped in the afk-mcp bundle. Since ADR 0130
@@ -298,16 +299,17 @@ export async function main(
     );
     return 0;
   }
-  // Any OTHER leading token is a role this bundle does not own — `run`,
-  // `--once`, `monitor`, … all belong to the dev entry. Falling through would
-  // open an unintended Project surface. Fail with a named error instead, so a
-  // misrouted launch is legible in the adapter log.
+  // Any OTHER leading token is a role this bundle does not own. It used to
+  // belong to the dev entry; since ADR 0147 rule 1 there IS no dev entry, so a
+  // workflow verb is an `rs_dev` tool and Worker lifecycle is the daemon's argv.
+  // Falling through would open an unintended Project surface, so fail with a
+  // named error instead and keep a misrouted launch legible in the adapter log.
   const leading = argv[0];
   if (leading !== undefined) {
     process.stderr.write(
       `redskilled MCP: unroutable subcommand ${JSON.stringify(leading)} — ` +
         "the redskilled-mcp bundle routes only `--version` and `--help`; " +
-        "worker subcommands belong to the dev entry (red-skills-dev)\n",
+        "a workflow verb is an `rs_dev` tool and Worker lifecycle is `redskilled`\n",
     );
     return 2;
   }

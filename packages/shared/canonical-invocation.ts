@@ -29,7 +29,6 @@ export const CANONICAL_VERSION_PLACEHOLDER = "<version>";
 
 /** Every binary the npm package ships, as its bin-map name. */
 export type ShippedBinary =
-  | "red-skills-dev"
   | "red-skills-memory"
   | "red-skills-brain"
   | "red-skills-redskilled"

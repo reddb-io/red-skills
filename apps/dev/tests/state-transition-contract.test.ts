@@ -139,14 +139,6 @@ const ALLOWLIST = new Map<string, string>([
     "close-cascade fallback when the dependent's labels were not listed (#2528); the lane still follows the planned HUMAN-ONLY routing (#2966)",
   ],
   // --- claim machinery: ready<->running swaps are claims, not state transitions ---
-  [
-    "apps/dev/src/core/supervisor/reaper.ts :: await deps.gh.editLabels(contest.issue, [LABEL_READY], [LABEL_RUNNING, LABEL_CONTESTED]);",
-    "reap-contest claim swap; claim vocabulary, not a state transition",
-  ],
-  [
-    "apps/dev/src/core/supervisor/reaper.ts :: await deps.gh.editLabels( pair.issue, [LABEL_READY, LABEL_RUNNER_ERROR], [LABEL_HUMAN, LABEL_RUNNING], );",
-    "half-open probe re-claim of a runner-error park; claim machinery",
-  ],
   // --- non-issue surfaces: PR review-lane labels, not issue state ---
   [
     "apps/dev/src/core/review.ts :: await gh.editLabels(pr, [LABEL_RUNNING], [LABEL_HUMAN]);",
@@ -157,22 +149,6 @@ const ALLOWLIST = new Map<string, string>([
     "PR review-lane labels, not issue state",
   ],
   // --- human/manual command surfaces (outside the engine contract by design) ---
-  [
-    "apps/dev/src/commands/requeue.ts :: await gh.editLabels(input.issue, [LABEL_READY], []);",
-    "/requeue is a maintainer command surface (#2509 tracks its own fix)",
-  ],
-  [
-    "apps/dev/src/commands/requeue.ts :: if (readyWithheld) await gh.editLabels(input.issue, [], [LABEL_READY]);",
-    "/requeue is a maintainer command surface (#2509 tracks its own fix)",
-  ],
-  [
-    "apps/dev/src/commands/stop.ts :: await ghx.editLabels(ghCtx, issue, [LABEL_RUNNING], [LABEL_READY]);",
-    "fleet-stop operator reconcile; runs under explicit human intent",
-  ],
-  [
-    'apps/dev/src/commands/hitl-card.ts :: "gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--remove-label", LABEL_HUMAN, ]));',
-    "HITL reject sheds the human gate with NO automated next state — the one shape a one-state-role plan cannot express (#2663)",
-  ],
   // --- policy dispose sets applied through a planner-backed wrapper ---
   [
     "apps/dev/src/core/disposition.ts :: addLabels: [LABEL_READY], typedLabel, envelopeStatus, escalationComment: null, cap, }; }",

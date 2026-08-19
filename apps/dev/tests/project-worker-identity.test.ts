@@ -12,72 +12,50 @@
 // states, the facts the daemon writes into it, the id the Worker adopts from the
 // result, and the attribution that joins the two ends back together.
 import { describe, expect, it } from "vitest";
-import { expandLaunchTemplate } from "@reddb-io/redskilled/launch-template";
+import {
+  expandLaunchTemplate,
+  type RedskilledLaunchTemplate,
+} from "@reddb-io/redskilled/launch-template";
 import { attributeProjectWorkers } from "../src/core/project-attribution.js";
 import { resolveWorkerId } from "../src/core/session.js";
-import { registrationLaunch } from "../src/runtime/registration-launch.js";
 
 const BUNDLE_ARGV = ["/usr/bin/node", "/published/bundle.mjs"] as const;
 
-/** The launch a `project_start` hands the daemon, with no host in the test. */
-function launch(runner = "claude", path = "/published/node_modules/.bin:/usr/bin") {
-  return registrationLaunch({
-    runner,
-    bundleArgv: BUNDLE_ARGV,
-    logPath: "/repo/.red/tmp/logs/2026-08-03/worker-{{worker_id}}.log",
-    path,
-  });
+/**
+ * A launch as the DAEMON states it — placeholders, not values, because one
+ * template serves every Worker it births.
+ *
+ * Written out here rather than built by a project-side composer: ADR 0148 makes
+ * the daemon compose its own launch, so what this file pins is the CONTRACT the
+ * env carries (`{{worker_id}}` reaching the process as the id it files itself
+ * under), not who assembled the words.
+ */
+function launch(runner = "claude", path = "/published/node_modules/.bin:/usr/bin"): RedskilledLaunchTemplate {
+  return {
+    argv: [...BUNDLE_ARGV, "run", "--once", "--runner", runner],
+    env: {
+      RED_AFK_WORKER_ID: "{{worker_id}}",
+      REDSKILLED_WORKER_ID: "{{worker_id}}",
+      RED_AFK_SLOT: "{{slot}}",
+      RED_AFK_RUNNER: runner,
+      PATH: path,
+    },
+    log_path: "/repo/.red/tmp/logs/2026-08-03/worker-{{worker_id}}.log",
+  };
 }
 
-/** One Worker, born the way the daemon births it from a registration. */
+/** One Worker, born the way the daemon births it. */
 function born(hostWorkerId: string, slot: number, runner = "claude") {
   const expanded = expandLaunchTemplate(launch(runner), {
     worker_id: hostWorkerId,
     slot,
     workspace_path: "/repo",
   });
-  // The project's side of the same birth: `run` reads the env it was started
-  // with and decides what to call itself.
+  // The Worker's side of the same birth: it reads the env it was started with
+  // and decides what to call itself.
   const projectWorkerId = resolveWorkerId(expanded.env.RED_AFK_WORKER_ID);
   return { expanded, projectWorkerId };
 }
-
-describe("the launch a registration states", () => {
-  it("carries the id, the slot and the runner a Worker needs to know itself", () => {
-    const stated = launch("codex");
-
-    // Placeholders, not values: one registration serves every Worker it births.
-    expect(stated.env?.RED_AFK_WORKER_ID).toBe("{{worker_id}}");
-    expect(stated.env?.RED_AFK_SLOT).toBe("{{slot}}");
-    expect(stated.env?.RED_AFK_RUNNER).toBe("codex");
-  });
-
-  it("carries the project's own env passthrough alongside them", () => {
-    // The host's handle for the process rides beside the work's id rather than
-    // instead of it: a heartbeat is addressed with the daemon's string (#3079).
-    expect(launch().env?.REDSKILLED_WORKER_ID).toBe("{{worker_id}}");
-  });
-
-  it("carries the registering runtime's tool path to the detached Worker (#3493)", () => {
-    // The handoff explicitly tells the implementer to use `rsp`. Registrations
-    // outlive the MCP process that resolved that shipped binary, so the path to
-    // the published package must be stated in the launch rather than inferred
-    // later from the daemon's smaller service environment.
-    expect(launch("codex").env?.PATH).toBe("/published/node_modules/.bin:/usr/bin");
-  });
-
-  it("delivers the identity and tool-path facts to the process", () => {
-    const { expanded } = born("2aa48bea-81a5-409d-9310-ab0a9805", 1, "codex");
-
-    expect(expanded.env.RED_AFK_WORKER_ID).toBe("2aa48bea-81a5-409d-9310-ab0a9805");
-    expect(expanded.env.RED_AFK_SLOT).toBe("1");
-    expect(expanded.env.RED_AFK_RUNNER).toBe("codex");
-    expect(expanded.env.REDSKILLED_WORKER_ID).toBe("2aa48bea-81a5-409d-9310-ab0a9805");
-    expect(expanded.env.PATH).toBe("/published/node_modules/.bin:/usr/bin");
-    // The argv half always arrived, which is why the loss stayed invisible.
-    expect(expanded.argv).toEqual([...BUNDLE_ARGV, "run", "--once", "--runner", "codex"]);
-  });
-});
 
 describe("host-side and project-side worker ids", () => {
   it("are the same string for one Worker", () => {

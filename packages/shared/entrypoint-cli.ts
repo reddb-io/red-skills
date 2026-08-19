@@ -1,23 +1,24 @@
 #!/usr/bin/env node
 /**
  * entrypoint-cli.ts — the single committed, dependency-free entrypoint for every
- * per-plugin bundle (ADR 0039). One source, two roles, selected by the
- * `__ENTRYPOINT_ROLE__` build define so the same program ships at the two paths
- * external configs already pin:
+ * per-plugin bundle (ADR 0039), now carrying ONE role, selected by the
+ * `__ENTRYPOINT_ROLE__` build define:
  *
  *   - `fetch`   → built to `plugins/dev/hooks/red-fetch.mjs` (the SessionStart
  *                 cache pre-warmer). Best-effort: NEVER blocks; populates the
  *                 version-keyed cache and exits 0 on any failure.
- *   - `run:<p>` → built to `plugins/dev/skills/engineering/afk/bin/afk.mjs` (the
- *                 skill/statusline launcher). Resolves plugin `<p>`'s bundle
- *                 (cache → repo-root dist → fetch) and execs it, failing LOUD
- *                 when nothing resolves (interactive — no silent no-op).
  *
- * Both modes are also reachable explicitly as subcommands regardless of role:
+ * **The `run:<plugin>` role is gone with the binary it launched.** It resolved a
+ * plugin bundle and exec'd it with the whole argv — the path `afk.mjs` took to
+ * reach `red-skills-dev`'s 36 commands. ADR 0147 rule 1 makes `redskilled` the
+ * only shipped binary of the execution chain, so a launcher whose whole job was
+ * to start a second one has nothing left to start: a workflow verb is an `rs_dev`
+ * tool, and a prompt-cadence read is the daemon's own argv.
+ *
+ * Fetch is also reachable explicitly as a subcommand:
  *   node <entrypoint> fetch <plugin> <version> [--repo owner/name] [--cache-dir DIR]
- *   node <entrypoint> run   <plugin> [args… forwarded to the bundle]
- * and the no-subcommand form falls back to the build role (so the legacy
- * `red-fetch.mjs <plugin> <version>` invocation and `afk.mjs <cmd>` keep working).
+ * and the no-subcommand form is the legacy positional
+ * `red-fetch.mjs <plugin> <version>` invocation.
  *
  * Resolution logic is the pure {@link ensureBundle} in bundle-fetch.ts; this file
  * wires it to node built-ins plus an `npm install` materialiser that resolves the
@@ -32,25 +33,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   BundleFetchError,
   type BundleIO,
   NPM_PACKAGE,
-  bundleFileName,
   ensureBundle,
   isCacheableVersion,
-  npmBundlePackage,
   resolveBundle,
 } from "./bundle-fetch.js";
-import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
+import { type ReleaseChannel, resolveChannel } from "./channel.js";
 import { findUp, flatConfigValue, isPluginEnabled } from "./plugin-gate.js";
-import {
-  backgroundSelfUpdateWithRetry,
-  resolveActiveVersionDetailed,
-  type SelfUpdateIO,
-} from "./self-update.js";
-import { readServedVersion } from "./served-version.js";
+import { backgroundSelfUpdateWithRetry, type SelfUpdateIO } from "./self-update.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
 
@@ -163,15 +156,8 @@ export interface FetchPlan {
   cacheDir?: string;
   help: boolean;
 }
-export interface RunPlan {
-  mode: "run";
-  plugin?: string;
-  /** Args forwarded verbatim to the resolved bundle. */
-  rest: string[];
-  repo: string;
-  cacheDir?: string;
-}
-export type EntrypointPlan = FetchPlan | RunPlan;
+/** The only plan there is; the type survives as the routing contract's name. */
+export type EntrypointPlan = FetchPlan;
 
 function parseFetchArgs(argv: readonly string[]): FetchPlan {
   const out: FetchPlan = { mode: "fetch", repo: DEFAULT_REPO, help: false };
@@ -189,30 +175,16 @@ function parseFetchArgs(argv: readonly string[]): FetchPlan {
 }
 
 /**
- * Route argv into a fetch or run plan.
+ * Route argv into a fetch plan.
  *
- * A run-pinned build (`role === "run:<plugin>"`, e.g. the `afk.mjs` launcher) is
- * a *dedicated forwarder*: every arg goes to the pinned plugin's bundle, which
- * owns its own command surface (`run`, `monitor`, `fleet`, …). So the pin is
- * honoured FIRST — the generic `run`/`fetch` entrypoint verbs must not shadow a
- * dedicated launcher's own commands. Before #434 the `argv[0] === "run"` check
- * ran first, so `afk.mjs run --boot-only` parsed `--boot-only` as a *plugin
- * name* and 404'd; only the bare form happened to work.
- *
- * For the generic / fetch-role entrypoint (`red-fetch.mjs`, no run-pin) the
- * explicit `fetch`/`run <plugin>` subcommands still win, and the no-subcommand
- * form is the legacy positional fetch.
+ * The `role` parameter survives the deletion of the `run:<plugin>` role because
+ * the build define still names the role the binary was built with, and a build
+ * that names anything else is a stale artifact rather than a second mode: every
+ * argv shape lands in fetch. The explicit `fetch` subcommand still wins, and the
+ * no-subcommand form is the legacy positional fetch (`red-fetch.mjs dev 1.2.3`).
  */
-export function parseEntrypoint(argv: readonly string[], role: string): EntrypointPlan {
-  if (role.startsWith("run:")) {
-    return { mode: "run", plugin: role.slice(4), rest: [...argv], repo: DEFAULT_REPO };
-  }
-  if (argv[0] === "run") {
-    return { mode: "run", plugin: argv[1], rest: argv.slice(2), repo: DEFAULT_REPO };
-  }
-  if (argv[0] === "fetch") {
-    return parseFetchArgs(argv.slice(1));
-  }
+export function parseEntrypoint(argv: readonly string[], _role: string): EntrypointPlan {
+  if (argv[0] === "fetch") return parseFetchArgs(argv.slice(1));
   return parseFetchArgs(argv);
 }
 
@@ -252,150 +224,16 @@ function readProjectConfig(): string | undefined {
   }
 }
 
-// ── Run-mode bundle resolution (IO) ──────────────────────────────────────────
-
-const moduleDir = (() => {
-  try {
-    return dirname(fileURLToPath(import.meta.url));
-  } catch {
-    return process.cwd();
-  }
-})();
-
-/** Installed plugin version, read from the nearest `.claude-plugin/plugin.json`. */
-function resolvePluginVersion(): string {
-  const manifest = findUp(moduleDir, join(".claude-plugin", "plugin.json"));
-  if (!manifest) return "";
-  try {
-    return JSON.parse(readFileSync(manifest, "utf8")).version || "";
-  } catch {
-    return "";
-  }
-}
-
-function cachedBundlePath(
-  plugin: string,
-  version: string,
-  cacheDir: string,
-  channel: ReleaseChannel,
-): string | null {
-  if (!isCacheableVersion(version) && channel !== "canary") return null;
-  const p = resolveBundle({ plugin, version, cacheDir, channel });
-  return existsSync(p) ? p : null;
-}
-
-/** Repo-root `dist/<plugin>.bundle.min.mjs` fallback for local development. */
-function distBundlePath(plugin: string): string | null {
-  return findUp(moduleDir, join("dist", `${plugin}.bundle.min.mjs`));
-}
+// ── Plugin gate (ADR 0067) ───────────────────────────────────────────────────
 
 /**
- * The config flag a fetch/run for `plugin` gates on. `code-nav` ships under the
- * dev plugin's umbrella (dev's SessionStart hook warms it, there is no separate
+ * The config flag a fetch for `plugin` gates on. `code-nav` ships under the dev
+ * plugin's umbrella (dev's SessionStart hook warms it, there is no separate
  * `plugins.code-nav` block), so it gates on `dev` — not a `code-nav` flag that
  * would never be set.
  */
 export function gatePluginName(plugin: string): string {
   return plugin === "code-nav" ? "dev" : plugin;
-}
-
-/**
- * Run-mode subcommands that are fired by automatic hooks (PreToolUse model-tier
- * routing, the statusline refresh). When gated off they must be SILENT — no
- * stderr — so a non-opted-in repo gets zero noise on every tool call / render.
- * Interactive invocations (e.g. `/afk`) instead get a one-line setup hint.
- */
-const SILENT_RUN_SUBCOMMANDS = new Set(["route-model-tier", "statusline"]);
-
-async function runMode(plan: RunPlan): Promise<never> {
-  const { plugin } = plan;
-  if (!plugin) {
-    process.stderr.write("entrypoint: `run` requires a <plugin> name.\n");
-    process.exit(1);
-  }
-  // Per-directory gate (ADR 0067): a globally-installed launcher must stay inert
-  // in any directory that did not explicitly opt in. Exit 0 (not 1) so a blanked
-  // statusline degrades gracefully and an interactive invocation gets a hint
-  // instead of a crash. Checked BEFORE any bundle resolution or fetch.
-  if (!isPluginEnabled(process.cwd(), gatePluginName(plugin))) {
-    if (!SILENT_RUN_SUBCOMMANDS.has(plan.rest[0] ?? "")) {
-      process.stderr.write(
-        `entrypoint: ${plugin} is not enabled in this directory ` +
-          `(no \`plugins.${gatePluginName(plugin)}.enabled: true\` in .red/config.yaml). ` +
-          `Run /red-setup to enable it.\n`,
-      );
-    }
-    process.exit(0);
-  }
-  const cacheDir = cacheRoot(plan.cacheDir);
-  const installedVersion = resolvePluginVersion();
-  const channel = resolveLauncherChannel(process.env, readProjectConfig());
-  // In-range self-update (ADR 0084): serve the version a prior background update
-  // atomically swapped in, if any. This is a LOCAL read only (pointer + cache
-  // existence) — it can never fetch, so the render/hook path stays fetch-free
-  // (the blank-statusline class stays dead). No pointer → the installed version.
-  const resolution = await resolveActiveVersionDetailed(realSelfUpdateIO, {
-    plugin,
-    installedVersion,
-    cacheDir,
-    channel,
-  });
-  // **Ask the daemon, because the daemon owns the version** (ADR 0151). Three
-  // caches deciding for themselves is how one machine held 3.17.1, 3.18.12 and
-  // 3.19.3 at once. The pointer is a local file the daemon writes, so this stays
-  // fetch-free on the hook path; absent means no daemon, and the locally
-  // resolved version is then exactly the right answer. A pinned channel still
-  // wins — an operator asking for canary is not asking what the daemon serves.
-  const served = channel === "stable" ? readServedVersion() : null;
-  const version = served?.version ?? resolution.version;
-  // Audit line so a fleet's channel is visible in its boot output (ADR 0058).
-  const servedNote = served == null ? "" : `; served by the daemon (pid ${served.pid})`;
-  const resolutionNote = resolution.logNotes.length > 0 ? `; ${resolution.logNotes.join("; ")}` : "";
-  process.stderr.write(
-    `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})${servedNote}${resolutionNote}\n`,
-  );
-
-  let bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
-  if (!bundle && (version || channel === "canary")) {
-    try {
-      bundle = await ensureBundle(realIO, {
-        plugin,
-        version,
-        repo: plan.repo,
-        cacheDir,
-        installRoot: installRoot(),
-        channel,
-      });
-    } catch (err) {
-      const kind = err instanceof BundleFetchError ? err.kind : "unknown";
-      const msg = err instanceof Error ? err.message : String(err);
-      await logLine(cacheDir, `${kind}: ${msg} (run plugin=${plugin} version=${version} channel=${channel})`);
-      bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
-    }
-  }
-
-  if (!bundle) {
-    const want =
-      isCacheableVersion(version) || channel === "canary"
-        ? bundleFileName(plugin, version, channel)
-        : `${plugin}-<version>.bundle.min.mjs`;
-    process.stderr.write(
-      `entrypoint: could not resolve the ${plugin} runtime bundle (${want}).\n` +
-        `  Looked in cache ${cacheDir} and repo-root dist/.\n` +
-        `  The bundle ships inside the ${npmBundlePackage(plugin)} npm package (ADR 0146),\n` +
-        `  resolved via npm on first run; ensure network access, or build locally:\n` +
-        `    pnpm -C apps/${plugin} run bundle\n`,
-    );
-    process.exit(1);
-  }
-
-  // Delegate as a subprocess (argv[1] = bundle, so the bundle's
-  // `import.meta.url === file://process.argv[1]` self-exec guard fires).
-  const res = spawnSync(process.execPath, [bundle, ...plan.rest], { stdio: "inherit" });
-  if (res.signal) {
-    process.kill(process.pid, res.signal);
-  }
-  process.exit(res.status ?? 1);
 }
 
 // ── Fetch mode (IO) ──────────────────────────────────────────────────────────
@@ -544,13 +382,11 @@ async function main(): Promise<void> {
     await selfUpdateMode(argv.slice(1));
     return;
   }
-  const plan = parseEntrypoint(argv, buildRole());
-  if (plan.mode === "run") await runMode(plan);
-  else await fetchMode(plan);
+  await fetchMode(parseEntrypoint(argv, buildRole()));
 }
 
-// Only execute when invoked directly (`node red-fetch.mjs …` / `node afk.mjs …`),
-// never when imported (e.g. the unit test importing `parseEntrypoint`).
+// Only execute when invoked directly (`node red-fetch.mjs …`), never when
+// imported (e.g. the unit test importing `parseEntrypoint`).
 if (import.meta.url === `file://${process.argv[1]}`) {
   void main();
 }

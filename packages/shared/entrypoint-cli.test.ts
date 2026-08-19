@@ -21,17 +21,7 @@ describe("gatePluginName (ADR 0067)", () => {
 });
 
 describe("parseEntrypoint", () => {
-  it("routes an explicit `run <plugin>` and forwards the remaining args verbatim", () => {
-    const plan = parseEntrypoint(["run", "dev", "fleet", "3", "--request", "x"], "fetch");
-    expect(plan).toEqual<EntrypointPlan>({
-      mode: "run",
-      plugin: "dev",
-      rest: ["fleet", "3", "--request", "x"],
-      repo: DEFAULT_REPO,
-    });
-  });
-
-  it("routes an explicit `fetch <plugin> <version>` with flags under the generic role", () => {
+  it("routes an explicit `fetch <plugin> <version>` with flags", () => {
     const plan = parseEntrypoint(
       ["fetch", "memory", "1.2.3", "--repo", "o/n", "--cache-dir", "/c"],
       "fetch",
@@ -46,54 +36,7 @@ describe("parseEntrypoint", () => {
     });
   });
 
-  // #434 Defect 1: a run-pinned launcher (afk.mjs, role "run:dev") is a dedicated
-  // forwarder — the generic `run`/`fetch` verbs must NOT shadow the pinned
-  // plugin's own command surface. The pin is honoured before argv[0].
-  it("does NOT let `run` shadow a run-pinned launcher: `afk.mjs run --boot-only` forwards to dev", () => {
-    const plan = parseEntrypoint(["run", "--boot-only"], "run:dev");
-    expect(plan).toEqual<EntrypointPlan>({
-      mode: "run",
-      plugin: "dev",
-      rest: ["run", "--boot-only"],
-      repo: DEFAULT_REPO,
-    });
-  });
-
-  it("forwards a bare AFK command (`monitor`) to the pinned bundle under run:dev", () => {
-    expect(parseEntrypoint(["monitor"], "run:dev")).toMatchObject({
-      mode: "run",
-      plugin: "dev",
-      rest: ["monitor"],
-    });
-  });
-
-  it("forwards AFK's own `run` command (with flags) to the pinned bundle, not the plugin slot", () => {
-    expect(parseEntrypoint(["run", "--issues", "430", "-n", "1"], "run:dev")).toMatchObject({
-      mode: "run",
-      plugin: "dev",
-      rest: ["run", "--issues", "430", "-n", "1"],
-    });
-  });
-
-  it("forwards a literal `fetch` token to the pinned bundle under run:dev (red-fetch.mjs owns real fetch)", () => {
-    expect(parseEntrypoint(["fetch", "memory", "1.2.3"], "run:dev")).toMatchObject({
-      mode: "run",
-      plugin: "dev",
-      rest: ["fetch", "memory", "1.2.3"],
-    });
-  });
-
-  it("falls back to the `run:<plugin>` build role, forwarding ALL argv as bundle args", () => {
-    const plan = parseEntrypoint(["statusline"], "run:dev");
-    expect(plan).toEqual<EntrypointPlan>({
-      mode: "run",
-      plugin: "dev",
-      rest: ["statusline"],
-      repo: DEFAULT_REPO,
-    });
-  });
-
-  it("falls back to legacy positional fetch under the `fetch` role (red-fetch.mjs dev <ver>)", () => {
+  it("falls back to legacy positional fetch (red-fetch.mjs dev <ver>)", () => {
     const plan = parseEntrypoint(["dev", "1.147.6"], "fetch");
     expect(plan).toEqual<EntrypointPlan>({
       mode: "fetch",
@@ -104,9 +47,17 @@ describe("parseEntrypoint", () => {
     });
   });
 
-  it("treats `--version` as a run arg under run:dev (forwarded to the bundle), not a fetch flag", () => {
-    const plan = parseEntrypoint(["--version"], "run:dev");
-    expect(plan).toMatchObject({ mode: "run", plugin: "dev", rest: ["--version"] });
+  // ADR 0147 rule 1: the `run:<plugin>` role was the path to a second shipped
+  // binary. A stale build stamped with it is an artifact, not a second mode —
+  // every argv shape lands in fetch, so nothing execs a bundle any more.
+  it("routes a retired `run:dev` role's argv into fetch rather than launching anything", () => {
+    expect(parseEntrypoint(["dev", "1.2.3"], "run:dev")).toEqual<EntrypointPlan>({
+      mode: "fetch",
+      plugin: "dev",
+      version: "1.2.3",
+      repo: DEFAULT_REPO,
+      help: false,
+    });
   });
 
   it("with no role and no subcommand, an empty argv is an incomplete fetch (prints usage, exits 0)", () => {
