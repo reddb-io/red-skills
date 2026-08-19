@@ -19,7 +19,7 @@ import {
   type RoutedCommand,
   type RouterSchema,
 } from "@reddb-io/shared/args.js";
-import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
+import { ARTIFACT_KINDS, CONNECTION_KINDS } from "@reddb-io/brain-store/schema.js";
 
 /** Every verb the binary routes. Aliases are declared on the router. */
 export type BrainCommand =

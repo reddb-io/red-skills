@@ -6,7 +6,7 @@ import {
   TIER_AGENT_TIERS,
   type PreToolUseInput,
 } from "../src/core/model-tier-route.js";
-import type { ModelTierBanditAdvice } from "../../brain/src/model-tier-bandit.js";
+import type { ModelTierBanditAdvice } from "@reddb-io/brain-store/model-tier-bandit.js";
 import { Readable } from "node:stream";
 import { renderClaudeDecision, routeModelTierCommand } from "../src/commands/route-model-tier.js";
 

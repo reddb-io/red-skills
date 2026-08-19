@@ -1,0 +1,29 @@
+{
+  "name": "@reddb-io/brain-store",
+  "version": "3.21.0",
+  "private": true,
+  "type": "module",
+  "description": "The brain store engine (ADR 0152): the RedDB-backed artifact graph, its host-scoped root resolution, and the outbound channel bridge. Shared by the `brain` CLI and by redskilled, which holds the one handle per host.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.ts",
+    "./auto-linker.js": "./auto-linker.ts",
+    "./brain-act.js": "./brain-act.ts",
+    "./channel-bridge.js": "./channel-bridge.ts",
+    "./config.js": "./config.ts",
+    "./hash.js": "./hash.ts",
+    "./kpi-query.js": "./kpi-query.ts",
+    "./model-tier-bandit.js": "./model-tier-bandit.ts",
+    "./schema.js": "./schema.ts",
+    "./store.js": "./store.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "catalog:",
+    "@reddb-io/sdk": "1.23.1",
+    "@reddb-io/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

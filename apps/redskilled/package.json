@@ -52,7 +52,7 @@
     "test:acp-local-transport": "vitest run tests/acp-local-transport.test.ts",
     "test:placement-contract": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/placement-contract.test.ts",
     "test:github-gateway": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/github-gateway.test.ts",
-    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify --reddb-from-package",
     "build": "pnpm run typecheck && pnpm run bundle",
     "build:native": "node-gyp rebuild --directory=native",
     "serve": "tsx src/cli.ts serve",
@@ -60,12 +60,14 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",
+    "@reddb-io/brain-store": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
     "@reddb-io/protocol-acp": "workspace:*",
     "@reddb-io/worker": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*",
+    "@reddb-io/sdk": "1.23.1",
     "@reddb-io/toon": "catalog:",
     "tuiuiu.js": "1.0.75",
     "yaml": "^2.9.0"

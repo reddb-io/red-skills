@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ResolvedBrainConfig } from "../src/config.js";
+import type { ResolvedBrainConfig } from "@reddb-io/brain-store/config.js";
 import { SHARED_RSP_STORE_PATH, shouldUseResidentBrain } from "../src/resident-brain.js";
 
 const ROOT = "/repo";

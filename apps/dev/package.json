@@ -21,6 +21,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
     "@reddb-io/brand-tokens": "workspace:*",
+    "@reddb-io/brain-store": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
     "@reddb-io/protocol-acp": "workspace:*",

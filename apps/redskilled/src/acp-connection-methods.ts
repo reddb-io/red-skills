@@ -17,6 +17,7 @@ import {
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import { translateV1SessionUpdateToV2 } from "@reddb-io/protocol-acp";
 
+import { brainMethodDomain } from "./acp-brain.js";
 import { budgetMethodDomain } from "./acp-budget.js";
 import type { PublicSession } from "./acp-control-plane.js";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
@@ -40,6 +41,7 @@ import {
   type RedskilledWorkerWorktree,
 } from "./acp-worktree.js";
 import type { AcpSessionJournal } from "./acp-session-journal.js";
+import type { HostBrainStore } from "./brain-store.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
@@ -52,6 +54,14 @@ export interface ConnectionMethodDeps {
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
   readonly githubGateway: RedskilledGithubGatewayRegistration | undefined;
   readonly hostAdministration: boolean;
+  /**
+   * The host's ONE brain store holder (ADR 0152).
+   *
+   * Passed in rather than constructed here because this function runs per
+   * connection: a holder built at this depth would be a store handle per
+   * session, which is the cost the daemon took the store over to remove.
+   */
+  readonly brainStore: HostBrainStore;
   readonly sessionJournal: AcpSessionJournal;
   readonly sessions: Map<string, PublicSession>;
   readonly active: Map<string, ActiveWorkflowWorker>;
@@ -105,6 +115,7 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
       workerWorktrees: () => workerWorktrees(deps),
     }),
     telemetryMethodDomain({ hostAdministration: deps.hostAdministration }),
+    brainMethodDomain({ store: deps.brainStore }),
   ]);
   return { v1: table(admitThroughV1(deps)), v2: table(admitThroughV2(deps)) };
 }

@@ -44,10 +44,17 @@ export async function findBrainRoot(
   return hostBrainRoot(options.env ?? process.env);
 }
 
-/** `~/.red/brain`'s owning directory, honouring HOME on every platform. */
+/**
+ * The root the host-scoped brain hangs off — the user's home directory.
+ *
+ * A root is the directory that CONTAINS `.red/brain`, never `.red` itself:
+ * `brainConfigPath` and the default connection string both append `.red/brain`
+ * to it, exactly as a checkout root does. Returning `~/.red` here put the store
+ * at `~/.red/.red/brain` — one level deeper than the `~/.red/brain` ADR 0152
+ * decided, and deeper than every other root in this module resolves to.
+ */
 export function hostBrainRoot(env: Record<string, string | undefined> = process.env): string {
-  const home = env["HOME"] ?? env["USERPROFILE"] ?? homedir();
-  return join(home, ".red");
+  return env["HOME"] ?? env["USERPROFILE"] ?? homedir();
 }
 
 /** A checkout that already carries a brain store, walking up from `startDir`. */
@@ -186,8 +193,32 @@ function unquote(value: string): string {
   return value;
 }
 
+/**
+ * Resolve the HOST brain config — `~/.red/brain`, with no walk-up at all.
+ *
+ * The daemon holds this store for every session on the machine (ADR 0152), and
+ * it must never take a client checkout as an input (ADR 0144 §5). `findBrainRoot`
+ * deliberately does take one: it honours a directory that ALREADY carries a
+ * store, so a user's existing notes are never silently repointed. That mercy
+ * belongs to a session standing somewhere; the daemon stands nowhere, so it
+ * asks for the user's root by name. `RED_BRAIN_ROOT` still wins, resolved
+ * against the host root rather than against whoever happened to call.
+ */
+export async function resolveHostBrainConfig(
+  env: Record<string, string | undefined> = process.env,
+): Promise<ResolvedBrainConfig> {
+  const home = hostBrainRoot(env);
+  const override = env[BRAIN_ROOT_ENV];
+  return await resolveBrainConfigAt(
+    override == null || override === "" ? home : resolve(home, override),
+  );
+}
+
 export async function resolveBrainConfig(startDir = process.cwd()): Promise<ResolvedBrainConfig> {
-  const rootDir = await findBrainRoot(startDir);
+  return await resolveBrainConfigAt(await findBrainRoot(startDir));
+}
+
+async function resolveBrainConfigAt(rootDir: string): Promise<ResolvedBrainConfig> {
   const configPath = await ensureBrainConfig(rootDir);
   const config = (await readBrainConfig(rootDir)) ?? {
     connection_string: DEFAULT_CONNECTION_STRING,

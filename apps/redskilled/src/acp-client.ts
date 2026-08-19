@@ -19,6 +19,8 @@ import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 import {
   REDSKILLS_ACP_METHODS,
   REDSKILLS_WIRE_MAJOR,
+  type RedskilledBrainAnswer,
+  type RedskilledBrainCall,
   type RedskilledGithubRequest,
 } from "@reddb-io/protocol-acp";
 import type { RedskilledGithubRequestAnswer } from "./github-request.js";
@@ -64,6 +66,14 @@ export interface RedskillsProjectAcpSession {
    * mutation is scheduled durably are all decided on the far side of this call.
    */
   github(request: RedskilledGithubRequest): Promise<RedskilledGithubRequestAnswer>;
+  /**
+   * Forward one brain tool call to the store the daemon holds for this host.
+   *
+   * The client names a tool and its arguments and nothing else: WHERE the brain
+   * is, and whether it is already open, are answered on the far side of this
+   * call — which is the whole point of the daemon holding it (ADR 0152).
+   */
+  brain(call: RedskilledBrainCall): Promise<RedskilledBrainAnswer>;
   prompt(text: string): Promise<RedskillsProjectPromptResult>;
   cancel(): Promise<void>;
   permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;
@@ -139,6 +149,12 @@ export async function connectRedskillsProjectAcp(
       return connection.agent.request<RedskilledGithubRequestAnswer>(
         REDSKILLS_ACP_METHODS.githubRequest,
         { request },
+      );
+    },
+    brain(call) {
+      return connection.agent.request<RedskilledBrainAnswer>(
+        REDSKILLS_ACP_METHODS.brainCall,
+        { tool: call.tool, arguments: call.arguments },
       );
     },
     async prompt(text) {

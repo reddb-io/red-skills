@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@reddb-io/toon": "catalog:",
+    "@reddb-io/brain-store": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
     "@reddb-io/worker": "workspace:*",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KpiQuery } from "../src/kpi-query.js";
-import type { ArtifactKind, StoredBrainArtifact } from "../src/schema.js";
+import { KpiQuery } from "./kpi-query.js";
+import type { ArtifactKind, StoredBrainArtifact } from "./schema.js";
 
 interface SeedEvent {
   rid: number;

@@ -29,6 +29,24 @@ const ADAPTER_TOOL_TREE = resolve(__dirname, "..", "src", "mcp-tools");
  */
 const RS_GITHUB_TREE = resolve(__dirname, "..", "src", "mcp-github");
 
+/**
+ * `rs_brain`, the brain plugin's own MCP (#4026, ADR 0152).
+ *
+ * The daemon holds ONE brain for the whole host at `~/.red/brain`, so the
+ * adapter publishes schemas and forwards; a RedDB, a connection string, a root
+ * resolution or a channel bridge HERE would be the per-session, per-checkout
+ * store the daemon took over. The MCP ENTRY is swept alongside the tree because
+ * a bundle is exactly the transitive closure of its entry's imports.
+ */
+const RS_BRAIN_TREE = resolve(__dirname, "..", "..", "brain", "src", "rs-brain");
+const RS_BRAIN_ENTRY = resolve(__dirname, "..", "..", "brain", "src", "mcp-server.ts");
+
+const RS_BRAIN_FORBIDDEN = [
+  { pattern: /brain-store\/(?:store|config|auto-linker)\.js/, owner: "a daemon-owned brain store" },
+  { pattern: /brain-store\/(?:brain-act|channel-bridge)\.js/, owner: "a daemon-owned channel bridge" },
+  { pattern: /@reddb-io\/sdk|\bBrainStore\b|withBrainRuntime/, owner: "a session-opened RedDB" },
+] as const;
+
 const FORBIDDEN = [
   // Both spellings: the wire was `@reddb-io/red-castle/resident` before #4013
   // renamed the package, and a reintroduction would reach for the new name.
@@ -104,6 +122,27 @@ describe("ACP adapter ownership guard", () => {
         if (rule.pattern.test(source)) violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
       }
       for (const rule of RS_GITHUB_FORBIDDEN) {
+        if (rule.pattern.test(code(source))) {
+          violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+        }
+      }
+    }
+    expect(violations, violations.join("\n")).toEqual([]);
+  });
+
+  // Acceptance criterion of #4026: the brain plugin's bundle carries no store.
+  it("keeps `rs_brain` a forwarder — no RedDB, no root resolution, no bridge", () => {
+    const swept = [RS_BRAIN_ENTRY, ...sourceFiles(RS_BRAIN_TREE)];
+    expect(swept.length, "swept no rs_brain source — a walker that reaches nothing is green by accident")
+      .toBeGreaterThan(1);
+
+    const violations: string[] = [];
+    for (const path of swept) {
+      const source = readFileSync(path, "utf8");
+      for (const rule of FORBIDDEN) {
+        if (rule.pattern.test(source)) violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+      }
+      for (const rule of RS_BRAIN_FORBIDDEN) {
         if (rule.pattern.test(code(source))) {
           violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
         }

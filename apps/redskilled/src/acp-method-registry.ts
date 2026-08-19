@@ -30,6 +30,7 @@ export interface RedskillsAcpMethodBinding {
 /** Every `_redskills/*` domain the daemon knows, control-plane served or not. */
 export type RedskillsAcpMethodDomainName =
   | "host"
+  | "brain"
   | "project"
   | "github"
   | "budget"
@@ -155,6 +156,12 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
     domain: "github",
     module: "apps/redskilled/src/acp-github.ts",
     methods: ["githubRead", "githubRequest", "githubWrite", "githubUpdate", "githubCustodyHandoff"],
+    served: true,
+  },
+  {
+    domain: "brain",
+    module: "apps/redskilled/src/acp-brain.ts",
+    methods: ["brainCall"],
     served: true,
   },
   {

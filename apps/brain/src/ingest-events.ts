@@ -1,6 +1,6 @@
-import type { ChannelBridge } from "./channel-bridge.js";
+import type { ChannelBridge } from "@reddb-io/brain-store/channel-bridge.js";
 import { EventArtifactMapper } from "./event-artifact-mapper.js";
-import type { BrainStoreLike } from "./store.js";
+import type { BrainStoreLike } from "@reddb-io/brain-store/store.js";
 
 export interface IngestEventsInput {
   bridge: ChannelBridge;

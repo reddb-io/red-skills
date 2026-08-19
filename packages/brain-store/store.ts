@@ -25,7 +25,6 @@ import {
   INGESTION_KIND_ALIASES,
   type ArtifactKind,
   type BrainArtifact,
-  type BrainConnection,
   type ConnectionKind,
   type StoredBrainArtifact,
   type StoredBrainConnection,

@@ -40,6 +40,7 @@ export const REDSKILLS_ACP_METHODS = {
   worktreeAdd: "_redskills/worktree_add",
   worktreeList: "_redskills/worktree_list",
   metrics: "_redskills/metrics",
+  brainCall: "_redskills/brain_call",
 } as const;
 
 /** Any name the registry declares. */

@@ -5,14 +5,14 @@ import {
   BrainActError,
   resolveChannelBridgeProcess,
   type ChannelBridgeConnector,
-} from "../src/brain-act.js";
-import { McpStdioChannelBridge } from "../src/channel-bridge.js";
+} from "@reddb-io/brain-store/brain-act.js";
+import { McpStdioChannelBridge } from "@reddb-io/brain-store/channel-bridge.js";
 import type {
   ChannelBridge,
   ChannelBridgeChannelsResult,
   ChannelBridgePollResult,
   ChannelBridgeSendResult,
-} from "../src/channel-bridge.js";
+} from "@reddb-io/brain-store/channel-bridge.js";
 
 const pkgRoot = resolve(__dirname, "..");
 const tsx = join(pkgRoot, "node_modules", ".bin", "tsx");

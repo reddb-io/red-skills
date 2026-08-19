@@ -1,9 +1,9 @@
 import { basename } from "node:path";
 import { pingResident, resolveResidentPaths } from "@reddb-io/shared/resident-client.js";
-import { createConfiguredAfkHeadlessAutoLinkProvider } from "./auto-linker.js";
-import { resolveBrainConfig, type ResolvedBrainConfig } from "./config.js";
+import { createConfiguredAfkHeadlessAutoLinkProvider } from "@reddb-io/brain-store/auto-linker.js";
+import { resolveBrainConfig, type ResolvedBrainConfig } from "@reddb-io/brain-store/config.js";
 import { openResidentBrainStore, shouldUseResidentBrain } from "./resident-brain.js";
-import { BrainStore, type BrainStoreLike } from "./store.js";
+import { BrainStore, type BrainStoreLike } from "@reddb-io/brain-store/store.js";
 
 export interface BrainRuntime {
   config: ResolvedBrainConfig;

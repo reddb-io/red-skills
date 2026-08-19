@@ -37,22 +37,14 @@ import {
   translateV1SessionUpdateToV2,
   withTimeout,
 } from "@reddb-io/protocol-acp";
-import {
-  bindAcpGithubReaderUpdates,
-  bindAcpProjectGithubCustodyStatus,
-  type AcpGithubUpdateObserver,
-} from "./acp-github.js";
+import { bindAcpGithubReaderUpdates, bindAcpProjectGithubCustodyStatus, type AcpGithubUpdateObserver } from "./acp-github.js";
 import { connectionMethodTables } from "./acp-connection-methods.js";
 import {
   acpSessionJournalPath,
   createAcpSessionJournal as createDurableAcpSessionJournal,
   type AcpSessionJournal as DurableAcpSessionJournal,
 } from "./acp-session-journal.js";
-import {
-  isAcpRetakePrompt,
-  notifyV1AcpRetakeEvidence,
-  notifyV2AcpRetakeEvidence,
-} from "./acp-retake-evidence.js";
+import { isAcpRetakePrompt, notifyV1AcpRetakeEvidence, notifyV2AcpRetakeEvidence } from "./acp-retake-evidence.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
@@ -93,6 +85,7 @@ import {
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 export { runNativeAcpWorker } from "@reddb-io/worker/acp";
 import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
+import { createHostBrainStore, type HostBrainStore } from "./brain-store.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
 
@@ -120,6 +113,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly evidenceTtlMs?: number;
   /** Daemon clock used to date status projections. */
   readonly clock?: () => string;
+  /** The host's one brain holder (ADR 0152); injected only by a test. */
+  readonly brainStore?: HostBrainStore;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -136,6 +131,8 @@ export async function startRedskillsAcpControlPlane(
   const projectControls = await projectControlStore.read();
   const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
   const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
+  // Above the connection loop on purpose: every session shares this one handle.
+  const brainStore = options.brainStore ?? createHostBrainStore();
   const workspaceFor = (identity: AcpProjectIdentity): Promise<AcpProjectWorkspace> => {
     const held = projects.get(identity.projectId);
     if (held != null) return held;
@@ -155,7 +152,7 @@ export async function startRedskillsAcpControlPlane(
     socket.once("close", () => sockets.delete(socket));
     void servePublicConnection(
       socket,
-      options,
+      { ...options, brainStore },
       workspaceFor,
       projectControls,
       persistProjectControls,
@@ -173,13 +170,14 @@ export async function startRedskillsAcpControlPlane(
       for (const socket of sockets) socket.destroy();
       await closeServer(server);
       await removeAcpEndpoint(paths.acpSocketPath);
+      if (options.brainStore == null) await brainStore.close();
     },
   };
 }
 
 async function servePublicConnection(
   socket: Socket,
-  options: StartRedskillsAcpControlPlaneOptions,
+  options: StartRedskillsAcpControlPlaneOptions & { readonly brainStore: HostBrainStore },
   workspaceFor: (identity: AcpProjectIdentity) => Promise<AcpProjectWorkspace>,
   projectControls: Map<string, ProjectControlState>,
   persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
@@ -234,6 +232,7 @@ async function servePublicConnection(
     startWorker: options.startWorker,
     githubGateway: options.githubGateway,
     hostAdministration: options.hostAdministration === true,
+    brainStore: options.brainStore,
     sessionJournal,
     sessions,
     active,

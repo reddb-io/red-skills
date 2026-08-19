@@ -28,7 +28,6 @@ export interface FileSizeBaselineEntry {
  * one — a new entry is the accumulation this exists to refuse.
  */
 export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
-  { path: "apps/brain/src/store.ts", lines: 819 },
   { path: "apps/dev/src/commands/red-doctor.ts", lines: 1080 },
   { path: "apps/dev/src/commands/run/command.ts", lines: 819 },
   { path: "apps/dev/src/commands/run/process-deps.ts", lines: 1005 },
@@ -81,6 +80,11 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/rsp/src/resident-server.ts", lines: 931 },
   { path: "apps/rsp/src/two-axis-benchmark.ts", lines: 878 },
   { path: "apps/rsp/tests/cli.helpers.ts", lines: 828 },
+  // The same debt, at the address it moved to: the brain store engine became a
+  // package when the daemon took the handle over (ADR 0152, #4026). A move is
+  // not a new entry — the number came down by the one line the move removed,
+  // and it may only keep coming down.
+  { path: "packages/brain-store/store.ts", lines: 818 },
   { path: "packages/github/balance.ts", lines: 907 },
   { path: "packages/worker/src/AgentProvider.ts", lines: 1184 },
   { path: "packages/worker/src/InitService.ts", lines: 1086 },
