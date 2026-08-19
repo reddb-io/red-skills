@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { constants, accessSync } from "node:fs";
 import type { Socket } from "node:net";
+import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import {
   client,
@@ -41,6 +42,11 @@ import { resolveAcpWorkerEndpoint, type RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { mintHostWorkerId, type LaunchedWorker, type RedskilledWorkerSpec } from "./worker-launch.js";
 import {
+  DEFAULT_WORKER_EVIDENCE_TTL_MS,
+  workerEvidenceRoot,
+  type WorkerEvidencePlan,
+} from "./worker-evidence.js";
+import {
   materializeWorkerWorkspace,
   releaseWorkerWorkspace,
   workerWorkspaceRoot,
@@ -67,6 +73,16 @@ interface NativeWorkerAdmissionOptions {
   readonly hostState?: () => { readonly workers: readonly { readonly worker_id: string }[] };
   /** The host root Worker workspaces hang off. Defaults to the OS temporary root. */
   readonly workspaceRoot?: string;
+  /**
+   * The lane a dead Worker's log, session artifact and verdict are copied into.
+   *
+   * Defaults to this operator's `~/.red/tmp/workers` (ADR 0149 §2). Named here
+   * rather than at cleanup because a handle being dropped is the last moment
+   * anything knows this Worker existed.
+   */
+  readonly evidenceRoot?: string;
+  /** How long an expired lane survives. Host policy; thirty days by default. */
+  readonly evidenceTtlMs?: number;
 }
 
 export async function admitNativeAcpWorker(
@@ -116,6 +132,7 @@ export async function admitNativeAcpWorker(
   rendezvous.server.close();
 
   let downstreamSessionId = "";
+  let sessionArtifact: WorkerEvidencePlan["sessionArtifact"];
   const downstreamApp = client({ name: "redskilled" })
     .onNotification(methods.client.session.update, async ({ params }) => {
       const downstreamRedskills = (params._meta as {
@@ -182,6 +199,7 @@ export async function admitNativeAcpWorker(
     await sessionJournal.worker(publicSessionId, launched.worker.worker_id, downstreamSessionId, replacement);
     const evidence = providerSessionEvidenceFromMeta(downstreamSession._meta);
     if (evidence != null) {
+      sessionArtifact = evidence;
       await sessionJournal.evidence(publicSessionId, launched.worker.worker_id, evidence);
     }
   } catch (error) {
@@ -195,6 +213,12 @@ export async function admitNativeAcpWorker(
   return {
     workerId: launched.worker.worker_id,
     workspace,
+    evidence: {
+      root: options.evidenceRoot ?? workerEvidenceRoot(homedir()),
+      ttlMs: options.evidenceTtlMs ?? DEFAULT_WORKER_EVIDENCE_TTL_MS,
+      ...(launched.worker.log_path == null ? {} : { logPath: launched.worker.log_path }),
+      ...(sessionArtifact == null ? {} : { sessionArtifact }),
+    },
     downstreamSessionId,
     connection,
     socket: workerSocket,
