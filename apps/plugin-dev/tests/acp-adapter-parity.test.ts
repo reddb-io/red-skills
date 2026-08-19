@@ -110,7 +110,9 @@ describe("ACP Project adapter parity", () => {
         adapter_health: { status: "healthy" },
       },
     });
-    expect(mcp.control).toHaveBeenCalledWith("drain");
+    // The MCP call carries a request object even when it is empty: the control
+    // surface takes what the caller asked for, and "nothing" is an answer too.
+    expect(mcp.control).toHaveBeenCalledWith("drain", {});
     expect(cli.control).toHaveBeenCalledWith("drain");
     expect(redcode.prompt).toHaveBeenCalledWith("/drain");
   });
@@ -137,5 +139,36 @@ describe("ACP Project adapter parity", () => {
       .rejects.toThrow(/ACP Project capability/);
     await expect(invokeProjectCli(client.session, ["project", "github", "issues"]))
       .rejects.toThrow(/ACP Project command/);
+  });
+});
+
+describe("a control tool with arguments stays a control call", () => {
+  it("routes a width to the control method instead of rendering it as prose", async () => {
+    const calls: Array<{ operation: string; request: unknown }> = [];
+    const session = {
+      control: async (operation: string, request?: unknown) => {
+        calls.push({ operation, request });
+        return { version: 1, drain_intent: "draining" };
+      },
+      prompt: async () => {
+        throw new Error("a control tool must not reach the prompt path");
+      },
+    } as never;
+
+    await invokeProjectMcp(session, "drain", { target: 2, runner: "redcode" });
+
+    expect(calls).toEqual([{ operation: "drain", request: { target: 2, runner: "redcode" } }]);
+  });
+
+  it("refuses an argument the control surface cannot express, rather than dropping it", async () => {
+    const session = {
+      control: async () => ({ version: 1 }),
+      prompt: async () => {
+        throw new Error("a control tool must not reach the prompt path");
+      },
+    } as never;
+
+    await expect(invokeProjectMcp(session, "drain", { selector: { label: "ready-for-agent" } }))
+      .rejects.toThrow(/cannot express \["selector"\]/);
   });
 });

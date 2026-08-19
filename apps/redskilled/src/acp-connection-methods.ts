@@ -47,7 +47,11 @@ import type { ProjectMemoryStore } from "./memory-store.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
-import { projectControlMethodDomain, type ProjectControlOperation } from "./project-control.js";
+import {
+  projectControlMethodDomain,
+  type ProjectControlOperation,
+  type ProjectControlRequest,
+} from "./project-control.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 
@@ -79,7 +83,10 @@ export interface ConnectionMethodDeps {
   readonly scopedProject: () => AcpProjectWorkspace;
   /** The daemon's own state, read for the registration a worktree stands on. */
   readonly hostState: () => RedskilledHostState;
-  readonly mutateProjectControl: (operation: ProjectControlOperation) => Promise<unknown>;
+  readonly mutateProjectControl: (
+    operation: ProjectControlOperation,
+    request: ProjectControlRequest,
+  ) => Promise<unknown>;
   readonly readProjectStatus: () => Promise<unknown>;
   /** Observe the reader the first GitHub read resolves, to stream its updates. */
   readonly onGithubReader: (reader: unknown) => void;

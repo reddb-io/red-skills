@@ -31,6 +31,12 @@ import type { ProjectStatusContext } from "./project-control.js";
 
 export type RedskillsProjectControlOperation = "drain" | "stop" | "status";
 
+/** What a control call may ask for, opaque to the daemon beyond its shape. */
+export interface RedskillsProjectControlRequest {
+  readonly target?: number;
+  readonly runner?: string;
+}
+
 export interface RedskillsProjectControlSnapshot {
   readonly version: 1;
   readonly project_id: string;
@@ -59,7 +65,15 @@ export interface RedskillsProjectPromptResult {
 
 export interface RedskillsProjectAcpSession {
   control(operation: "status"): Promise<RedskillsProjectStatusSnapshot>;
-  control(operation: "drain" | "stop"): Promise<RedskillsProjectControlSnapshot>;
+  /**
+   * A control call CARRIES its request. A width the caller asked for that the
+   * wire drops is worse than a refusal: the caller reads a healthy answer and
+   * believes a number that never arrived.
+   */
+  control(
+    operation: "drain" | "stop",
+    request?: RedskillsProjectControlRequest,
+  ): Promise<RedskillsProjectControlSnapshot>;
   /**
    * Forward one forge-shaped request to the daemon's Project gateway.
    *
@@ -145,8 +159,14 @@ export async function connectRedskillsProjectAcp(
     mcpServers: [],
   })).sessionId;
 
-  const control = (async (operation: RedskillsProjectControlOperation) => {
-    const outcome = await connection.agent.request<unknown>(PROJECT_CONTROL_METHOD[operation], {});
+  const control = (async (
+    operation: RedskillsProjectControlOperation,
+    request: RedskillsProjectControlRequest = {},
+  ) => {
+    const outcome = await connection.agent.request<unknown>(PROJECT_CONTROL_METHOD[operation], {
+      ...(request.target == null ? {} : { target: request.target }),
+      ...(request.runner == null ? {} : { runner: request.runner }),
+    });
     if (!isProjectControl(outcome)) throw new Error("redskilled returned an invalid Project control outcome");
     if (operation === "status" && !isProjectStatus(outcome)) {
       throw new Error("redskilled returned Project status without a valid RedSkills context");

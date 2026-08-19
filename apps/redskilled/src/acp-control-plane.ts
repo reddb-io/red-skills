@@ -49,14 +49,12 @@ import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
-  applyProjectControl,
-  coreProjectOperation,
+  bindProjectControl,
   createProjectControlStore,
-  notifyV1ProjectControl,
-  projectStatusSnapshot,
+  coreProjectInvocation,
+  runV1ProjectControlTurn,
   projectControlStorePath,
   runV2ProjectControlTurn,
-  type ProjectControlOperation,
   type ProjectControlState,
 } from "./project-control.js";
 import {
@@ -224,19 +222,14 @@ async function servePublicConnection(
     }
     return connectionProject;
   };
-  const mutateProjectControl = (operation: ProjectControlOperation) =>
-    applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
-  const readGithubCustody = bindAcpProjectGithubCustodyStatus(options.githubGateway, scopedProject);
-  const readProjectStatus = async (project: AcpProjectWorkspace) => {
-    const control = projectStatusSnapshot(
-      project,
-      projectControls,
-      options.hostState(),
-      options.clock?.() ?? new Date().toISOString(),
-    );
-    const mergeCustody = await readGithubCustody();
-    return mergeCustody == null ? control : { ...control, merge_custody: mergeCustody };
-  };
+  const { mutateProjectControl, readProjectStatus } = bindProjectControl({
+    scopedProject,
+    projectControls,
+    persistProjectControls,
+    hostState: options.hostState,
+    clock: () => options.clock?.() ?? new Date().toISOString(),
+    readGithubCustody: bindAcpProjectGithubCustodyStatus(options.githubGateway, scopedProject),
+  });
 
   const { v1: v1Methods, v2: v2Methods } = connectionMethodTables({
     paths: options.paths,
@@ -344,22 +337,13 @@ async function servePublicConnection(
         } satisfies PromptResponse;
       }
 
-      const controlOperation = coreProjectOperation(params.prompt);
-      if (controlOperation != null) {
-        const control = controlOperation === "status"
-          ? await readProjectStatus(session.project)
-          : await applyProjectControl(
-              session.project,
-              controlOperation,
-              projectControls,
-              persistProjectControls,
-            );
-        await notifyV1ProjectControl(upstream, params.sessionId, controlOperation, control);
-        return {
-          stopReason: "end_turn",
-          _meta: { redskills: { authority: "redskilled", projectControl: control } },
-        } satisfies PromptResponse;
-      }
+      const controlTurn = await runV1ProjectControlTurn(
+        params,
+        upstream,
+        session.project,
+        { mutate: mutateProjectControl, read: readProjectStatus },
+      );
+      if (controlTurn != null) return controlTurn;
 
       busy.add(params.sessionId);
       try {
@@ -467,7 +451,7 @@ async function servePublicConnection(
       }
 
       const accepted = new Promise<void>((resolve) => setTimeout(resolve, 0));
-      const controlOperation = coreProjectOperation(params.prompt);
+      const invocation = coreProjectInvocation(params.prompt);
       const retake = isAcpRetakePrompt(params.prompt);
       const turn = accepted
         .then(async () => {
@@ -483,16 +467,10 @@ async function servePublicConnection(
             await notifyV2AcpRetakeEvidence(upstream, params.sessionId, projection);
             return;
           }
-          return controlOperation == null
+          return invocation == null
             ? runV2PublicTurn(options, sessionJournal, sessions, active, params, upstream, () => attached)
             : runV2ProjectControlTurn(
-              sessions,
-              params,
-              upstream,
-              controlOperation,
-              projectControls,
-              persistProjectControls,
-              readProjectStatus,
+              sessions, params, upstream, invocation, projectControls, persistProjectControls, readProjectStatus,
             );
         })
         .catch(() => {})
