@@ -12,11 +12,18 @@
 // or fs call lives here — the deciders perform no IO, and `runBoot` performs IO
 // only through the injected `deps`.
 
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import {
   recordIssueHeal,
   type HealLedgerStore,
 } from "@reddb-io/worker/engine";
+import {
+  planLiveBranchCleanup,
+  planLocalBranchCleanup,
+  branchesToReap,
+  type BranchRef,
+  type IssueLookup,
+} from "./branch-cleanup.js";
 import {
   DEFAULT_ATTEMPT_KEEP,
   DEFAULT_ATTEMPT_TTL_S,
@@ -25,13 +32,6 @@ import {
   type AttemptDir,
   type IssueOpenState,
 } from "./reclaim.js";
-import {
-  planLiveBranchCleanup,
-  planLocalBranchCleanup,
-  branchesToReap,
-  type BranchRef,
-  type IssueLookup,
-} from "./branch-cleanup.js";
 import {
   planBranchReclaim,
   type BranchReclaimVerdict,
@@ -90,10 +90,6 @@ import {
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
 import { isWorkerExemptBaseFreshnessFinding } from "./operational-probes/base-freshness.js";
-import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
-import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
-import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.js";
-import type { WorkerStateRecordReclaimPlan } from "./worker-state-reclaim.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { readHitlTypeLabels } from "./config.js";
 import { blockedLabelsIn, isRefused, planTransition, type StateTransition } from "./state-transition.js";
@@ -232,6 +228,15 @@ export function formatPreconditionFailure(result: Extract<PrecheckResult, { ok: 
 
 /** Filesystem side effects the boot sequence needs. All are best-effort in
  * afk.sh (`|| true`); the injected impl decides real semantics. */
+/**
+ * What the daemon says about a Worker that left something behind.
+ *
+ * Inlined when the janitor was deleted (#4032): the type outlived the reclaim
+ * planner because boot still reports a workspace's owner, and a three-member
+ * union does not need a module of its own.
+ */
+type WorkerProcessVerdict = "alive" | "dead" | "unknown";
+
 export interface BootFs {
   /** mkdir -p */
   ensureDir(path: string): Promise<void>;
@@ -761,22 +766,6 @@ export interface BootOptions {
    * sub-issue children. The reconciler attaches missing native edges and strips a
    * stale `needs-slicing` label once at least one slice exists. */
   specSubIssueCandidates?: readonly SpecSubIssueCandidate[];
-  /** ADR 0098 tmp janitor plan: expired named lanes, audited unknown root entries,
-   * and stale worker dirs the DAEMON already called dead and whose represented
-   * issues are closed. */
-  tmpJanitor?: {
-    plan: TmpJanitorPlan;
-    staleWorkers: WorkerDirJanitorPlan;
-    orphanTestRunners?: readonly OrphanTestRunnerSweepEntry[];
-    /** The daemon-keyed reclaim plan (Spec #2772 US 46). Absent means the caller
-     * had no daemon answer to plan against, so the sweep reclaims nothing on its
-     * behalf. */
-    workerReclaim?: WorkerReclaimPlan;
-    /** The durable Worker STATE RECORD reclaim (#2978). Absent means the caller
-     * planned none, so the sweep removes no record — the pile is left intact
-     * rather than reclaimed on a plan nobody built. */
-    workerStateRecords?: WorkerStateRecordReclaimPlan;
-  };
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
    * bootstrap only and returns before orphan cleanup / attempt cap / branch
@@ -858,32 +847,6 @@ export interface DocsSweepResult {
   plan: DocsSweepPlan;
 }
 
-export interface TmpJanitorSweepResult {
-  expiredLanes: string[];
-  staleWorkers: string[];
-  unknownTmpRoots: string[];
-  protectedLiveWorkers: string[];
-  protectedLiveFeedback: string[];
-  orphanTestRunners: Array<{ pid: number; pgid: number }>;
-  /** Workspaces removed because the daemon called their Worker gone. */
-  workerWorkspaces: string[];
-  /** Workspaces spared because the daemon did not call their Worker gone. */
-  protectedLiveWorkspaces: string[];
-  /** Worker state records removed: gone, settled, and past the retention (#2978). */
-  workerStateRecords: string[];
-  /** Worker state records spared because the daemon did not call their Worker gone. */
-  protectedLiveWorkerStateRecords: string[];
-  /** Paths a plan named outside this tmp tier: reported, never removed. */
-  refusedOutsideTmp: string[];
-  removals: Array<{
-    path: string;
-    livenessVerdict:
-      | "not-worker-workspace"
-      | "worker-dead"
-      | "owner-dead"
-      | "no-live-workers";
-  }>;
-}
 
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
  * only `precheck` is populated (the bash `die` aborts before any other step). */
@@ -897,8 +860,7 @@ export interface BootResult {
   orphanCleanup?: OrphanCleanupResult;
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
-  tmpJanitor?: TmpJanitorSweepResult;
-  docsSweep?: DocsSweepResult;
+    docsSweep?: DocsSweepResult;
   unblockSweep?: UnblockSweepResult;
   mixedBlockedNormalize?: MixedBlockedNormalizeResult;
   specSubIssueReconcile?: SpecSubIssueReconcileBootResult;
@@ -1042,7 +1004,6 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const branchCleanup = await runBranchCleanup(deps, options.branches);
 
   // ---- 5a. ADR 0098 tmp janitor ----
-  const tmpJanitor = await runTmpJanitorSweep(deps, options);
 
   // ---- 6. docs sweep ----
   const docsSweep = await runDocsSweep(deps, options);
@@ -1073,7 +1034,6 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     orphanCleanup,
     attemptCap,
     branchCleanup,
-    tmpJanitor,
     docsSweep,
     unblockSweep,
     mixedBlockedNormalize,
@@ -1084,141 +1044,6 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   };
 }
 
-async function runTmpJanitorSweep(
-  deps: BootDeps,
-  options: BootOptions,
-): Promise<TmpJanitorSweepResult> {
-  const sweep = options.tmpJanitor;
-  const result: TmpJanitorSweepResult = {
-    expiredLanes: [],
-    staleWorkers: [],
-    unknownTmpRoots: [],
-    protectedLiveWorkers: [],
-    protectedLiveFeedback: [],
-    orphanTestRunners: [],
-    workerWorkspaces: [],
-    protectedLiveWorkspaces: [],
-    workerStateRecords: [],
-    protectedLiveWorkerStateRecords: [],
-    refusedOutsideTmp: [],
-    removals: [],
-  };
-  if (!sweep) return result;
-
-  // The daemon-keyed pass runs FIRST and is the authority (Spec #2772 US 46): a
-  // workspace goes because the daemon says the Worker that owns it is gone. The
-  // passes below only ever narrow what it already decided.
-  for (const verdict of sweep.workerReclaim?.reclaim ?? []) {
-    // A reclaimable artifact with no path has no bytes here to remove.
-    if (verdict.artifact.path === undefined) continue;
-    const path = verdict.artifact.path;
-    if (!pathIsInsideTmp(options.bootstrap.tmpDir, path)) {
-      result.refusedOutsideTmp.push(path);
-      continue;
-    }
-    // Fail CLOSED: an unanswerable — or unwired — liveness probe spares the
-    // workspace. The opposite default deleted a live lane once already (#2679).
-    const live = await deps.fs.workerWorkspaceLivenessVerdict?.(path).catch(() => "unknown" as const);
-    if (live !== "dead") {
-      result.protectedLiveWorkspaces.push(path);
-      continue;
-    }
-    await deps.fs.removeDir(path);
-    result.removals.push({ path, livenessVerdict: "worker-dead" });
-    result.workerWorkspaces.push(path);
-  }
-
-  // The durable Worker STATE RECORD lane (#2978). It runs beside the workspace
-  // pass because it answers to the same authority: the record of a Worker the
-  // daemon calls gone, settled past its retention, is the pile every reader was
-  // paying for. Fail CLOSED here too — an unwired or unanswerable probe keeps
-  // the record.
-  for (const verdict of sweep.workerStateRecords?.reclaim ?? []) {
-    const live = await deps.fs.workerStateRecordLivenessVerdict?.(verdict.worker_id)
-      .catch(() => "unknown" as const);
-    if (live !== "dead") {
-      result.protectedLiveWorkerStateRecords.push(verdict.path);
-      continue;
-    }
-    await deps.fs.removeDir(verdict.path);
-    result.removals.push({ path: verdict.path, livenessVerdict: "worker-dead" });
-    result.workerStateRecords.push(verdict.path);
-  }
-
-  const expired = [
-    ...sweep.plan.scratch.reclaim,
-    ...sweep.plan.diagnostics.reclaim,
-    ...sweep.plan.feedbackWorktrees.reclaim,
-  ];
-  const feedbackPaths = new Set(sweep.plan.feedbackWorktrees.reclaim.map((entry) => entry.path));
-  // Counted apart from `expiredLanes`, which also holds logs and scratch: only a
-  // removed WORKTREE leaves a git registration behind to prune (#2866).
-  let removedFeedbackWorktrees = 0;
-  for (const entry of expired) {
-    if (feedbackPaths.has(entry.path)) {
-      const verdict = await deps.fs.feedbackWorktreeLiveness?.(entry.path).catch(() => "owner-live" as const)
-        ?? "owner-live";
-      if (verdict === "owner-live") {
-        result.protectedLiveFeedback.push(entry.path);
-        continue;
-      }
-      await deps.fs.removeDir(entry.path);
-      removedFeedbackWorktrees += 1;
-      result.removals.push({ path: entry.path, livenessVerdict: verdict });
-      result.expiredLanes.push(entry.path);
-      continue;
-    }
-    await deps.fs.removeDir(entry.path);
-    result.removals.push({ path: entry.path, livenessVerdict: "not-worker-workspace" });
-    result.expiredLanes.push(entry.path);
-  }
-
-  for (const worker of sweep.staleWorkers.reclaim) {
-    const live = await deps.fs.workerLivenessVerdict?.(worker.path).catch(() => "unknown" as const);
-    if (live !== "dead") {
-      result.protectedLiveWorkers.push(worker.path);
-      continue;
-    }
-    await deps.fs.removeDir(worker.path);
-    result.removals.push({ path: worker.path, livenessVerdict: "worker-dead" });
-    result.staleWorkers.push(worker.path);
-  }
-
-  // A registered lane is never removable through the unknown-entry path, even
-  // if the plan named one (issue #2679: a worker boot deleted the live
-  // `supervisors` lane this way and blinded fleet_status).
-  for (const name of removableUnknownTmpRoots(sweep.plan.unknownTmpRoots)) {
-    const path = join(options.bootstrap.tmpDir, name);
-    await deps.fs.removeDir(path);
-    result.removals.push({ path, livenessVerdict: "not-worker-workspace" });
-    result.unknownTmpRoots.push(path);
-  }
-
-  const reapedGroups = new Set<number>();
-  for (const orphan of sweep.orphanTestRunners ?? []) {
-    let reaped = reapedGroups.has(orphan.pgid);
-    if (!reaped) {
-      reaped = await deps.fs.reapProcessGroup?.(orphan.pgid).catch(() => false) ?? false;
-      if (reaped) reapedGroups.add(orphan.pgid);
-    }
-    if (!reaped) continue;
-    result.orphanTestRunners.push({ pid: orphan.pid, pgid: orphan.pgid });
-    deps.log?.(
-      `tmp-janitor reaped orphan test runner pid=${orphan.pid} pgid=${orphan.pgid} cwd=${relative(options.bootstrap.tmpDir, orphan.cwd)} command=${orphan.command}`,
-    );
-  }
-
-  // Deleting a registered worktree's bytes leaves git still pointing at the
-  // path, which blocks the next worktree created there (#2866). Every lane above
-  // that can delete one is counted; prune once, at the end, for all of them.
-  const removedWorktrees =
-    result.workerWorkspaces.length + result.staleWorkers.length + removedFeedbackWorktrees;
-  if (removedWorktrees > 0 && deps.git.worktreePrune) {
-    await deps.git.worktreePrune().catch(() => {});
-  }
-
-  return result;
-}
 
 async function runDocsSweep(deps: BootDeps, options: BootOptions): Promise<DocsSweepResult> {
   const plan = planDocsSweep(options.docsSweep ?? { base: options.precheck.configuredTrunk ?? "main", files: [] });

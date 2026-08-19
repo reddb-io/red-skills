@@ -31,7 +31,6 @@ import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.j
 import { readWorkerState } from "../../core/worker-state-reader.js";
 import { isLivePid, killTreeAndWait } from "../kill-tree.js";
 import { execTool, type ExecFn } from "../exec.js";
-import { collectTmpJanitorReport, readWorkerLivenessForTmpPath } from "../tmp-janitor.js";
 import { readWorkerLiveness } from "../liveness-anchor.js";
 import { issueMeta, type GhContext, type IssueStateRow } from "../gh.js";
 import * as ghx from "../gh.js";
@@ -84,7 +83,6 @@ export async function collectBootOptions(
     legacyWorkDirs,
     reconcileSweepCandidates,
     specSubIssueCandidates,
-    tmpJanitorIssueStates,
   ] =
     await Promise.all([
       gitx.listRemoteBranches(gitCtx, "afk/"),
@@ -101,10 +99,6 @@ export async function collectBootOptions(
       ghx.listIssueStates(ghCtx),
     ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
-  const tmpJanitor = await collectTmpJanitorReport(paths.tmpDir, nowS, (issue) => {
-    const state = tmpJanitorIssueStates.get(issue)?.state;
-    return state === "CLOSED" ? "CLOSED" : state === "OPEN" ? "OPEN" : "UNKNOWN";
-  });
 
   return {
     precheck: facts,
@@ -124,7 +118,6 @@ export async function collectBootOptions(
     reconcileSweepCandidates,
     docsSweep: await collectDocsSweepInput(ctx, facts.configuredTrunk ?? "main"),
     specSubIssueCandidates,
-    tmpJanitor,
   };
 }
 
@@ -516,33 +509,10 @@ export async function buildBootDeps(
       ensureDir: fsx.ensureDir,
       writeWorkerPid: fsx.writeWorkerPid,
       removeDir: fsx.removeDir,
-      // Both guards ask the DAEMON, which owns process death by construction,
-      // and never a pid file (Spec #2772 US 46).
-      workerLivenessVerdict: (workerDir) => readWorkerLivenessForTmpPath(paths.tmpDir, workerDir),
-      workerWorkspaceLivenessVerdict: (path) => readWorkerLivenessForTmpPath(paths.tmpDir, path),
       // The state record carries no workspace path, so its Worker is named
       // directly — the same daemon, asked the same question (#2978).
       workerStateRecordLivenessVerdict: async (workerId) =>
         (await readWorkerLiveness(workerId)).verdict,
-      feedbackWorktreeLiveness: async (path) => {
-        // Re-collect immediately before deletion: the boot plan may have been
-        // built before another fleet spawned the feedback worktree's owner.
-        const current = await collectTmpJanitorReport(
-          paths.tmpDir,
-          Math.floor(Date.now() / 1000),
-          () => "UNKNOWN",
-        );
-        const entries = [
-          ...current.orphanFeedback.reclaim,
-          ...current.orphanFeedback.spare,
-        ];
-        const entry = entries.find((candidate) => candidate.path === path);
-        if (!entry || entry.ownerAlive === true) return "owner-live";
-        if (entry.ownerAlive === false) return "owner-dead";
-        return current.orphanFeedback.reclaim.some((candidate) => candidate.path === path)
-          ? "no-live-workers"
-          : "owner-live";
-      },
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
       reapProcessGroup: (pgid) => killTreeAndWait(pgid),
     },

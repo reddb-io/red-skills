@@ -1,3 +1,7 @@
+/** Inlined when the janitor was deleted (#4032): a three-member union
+ * does not need a module of its own. */
+export type WorkerProcessVerdict = "alive" | "dead" | "unknown";
+
 // Boot-time reclaim deciders for the AFK orphan cleanup and attempt cap passes
 // (PRD #244, issues #252 / #257). Ported from afk.sh: prune_orphans (the orphan
 // attempt-dir fate decision) and cap_issue_attempts (the per-issue age/count
@@ -11,7 +15,6 @@
 // shared worker-paths.ts parser so the nested layout stays single-sourced.
 
 import { parseReapableWorkerPath } from "./worker-paths.js";
-import type { WorkerProcessVerdict } from "./worker-reclaim.js";
 import { LABEL_HUMAN, LABEL_RUNNING } from "./triage-labels.js";
 
 /** Orphan TTLs (afk.sh TTL_LONG / TTL_SHORT). */
