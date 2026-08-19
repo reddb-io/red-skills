@@ -116,9 +116,7 @@ describe("Gemini dev extension projection", () => {
       name: "dev",
       version: "9.9.9",
       mcpServers: {
-        navigator: { args: ["${extensionPath}${/}dist${/}code-nav-mcp.bundle.min.mjs"] },
         redskilled: { args: ["${extensionPath}${/}dist${/}redskilled-mcp.bundle.min.mjs"] },
-        rsp: { args: ["${extensionPath}${/}dist${/}rsp.bundle.min.mjs", "mcp"] },
       },
     });
     expect(JSON.parse(await readFile(join(output, "hooks/hooks.json"), "utf8"))).toMatchObject({
