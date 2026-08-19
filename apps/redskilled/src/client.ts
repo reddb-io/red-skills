@@ -18,7 +18,12 @@ import { dirname } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { type RedskilledEntryLookup } from "./daemon-entry.js";
 import { redskilledDashboardRequest } from "./dashboard-request.js";
-import { socketAnswers } from "./daemon.js";
+// **Import the module, not the barrel.** `./daemon.js` re-exports the whole
+// lifecycle, which reaches the ACP control plane and through it the MCP client
+// SDK — whose bundled ajv leaves bare `require()` calls that the dev bundle
+// contract forbids. `socketAnswers` is a 20-line socket probe; taking it from
+// its own module keeps the dev CLI's graph free of the daemon body (#4064).
+import { socketAnswers } from "./daemon/socket.js";
 import {
   describeRedskilledPresence,
   type RedskilledPresence,
