@@ -21,8 +21,8 @@ installed-cache, npm, and Release layouts; a launcher must refuse a missing
 half instead of falling back to a local engine. `status { scope: project }`
 reports the resident version, protocol, PID, uptime, client count, handover
 state, and a bounded resource sample without socket secrets or process argv.
-For local 1/4/8-session comparison after `pnpm -C apps/dev build`, run
-`pnpm -C apps/dev diagnose:castle-sessions`; it prints diagnostics to stdout
+For local 1/4/8-session comparison after `pnpm -C apps/plugin-dev build`, run
+`pnpm -C apps/plugin-dev diagnose:castle-sessions`; it prints diagnostics to stdout
 and never writes benchmark results into the repository or Issue tracker.
 
 ## How to reach the tools
@@ -339,7 +339,7 @@ These are the verbs ADR 0147 rule 1 promoted out of the dying dev CLI: a command
 a shipped skill still named became a tool here, and a command no skill named died
 with the bundle. Each returns its core's value — none of them
 renders a table and re-reads it. The pairing is declared in
-`apps/dev/src/core/skill-named-verb-tools.ts` and swept on every gate run.
+`apps/plugin-dev/src/core/skill-named-verb-tools.ts` and swept on every gate run.
 
 ## Refs
 

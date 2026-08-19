@@ -1,9 +1,9 @@
 ---
 name: guard-process-birth
 working-mode: interactive
-description: Keeps Worker process birth behind the host-scoped redskilled daemon. Use when changing per-project runtime source under apps/dev/src.
+description: Keeps Worker process birth behind the host-scoped redskilled daemon. Use when changing per-project runtime source under apps/plugin-dev/src.
 paths:
-  - "apps/dev/src/**/*.ts"
+  - "apps/plugin-dev/src/**/*.ts"
 ---
 
 # Guard Process Birth
@@ -38,7 +38,7 @@ Worker, and `host-owns-birth-guard.test.ts` passes.
 <supporting-info>
 
 The executable inventory and actionable failure routes live in
-`apps/dev/src/core/host-owns-birth-guard.ts`. ADR 0130 rules 2 and 6 own the
+`apps/plugin-dev/src/core/host-owns-birth-guard.ts`. ADR 0130 rules 2 and 6 own the
 host-authority and fail-closed decisions.
 
 </supporting-info>

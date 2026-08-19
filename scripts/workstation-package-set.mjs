@@ -74,7 +74,7 @@ export const WORKSTATION_PAYLOADS = [
   // the release is the only place they can come from (#3060).
   { asset: "dist/herdr-plugin-red-skills.bundle.min.mjs", kind: "companion-surface" },
   { asset: "dist/vscode-extension-red-skills-{version}.vsix", kind: "companion-surface" },
-  { asset: "dist/zellij-dashboard.tgz", kind: "terminal-integration", expandsTo: ["zellij-plugin-dashboard"] },
+  { asset: "dist/zellij-dashboard.tgz", kind: "terminal-integration", expandsTo: ["zellij-plugin-redskilled"] },
 
   // Everything a network-denied expansion needs to check itself.
   { asset: "dist/verify-package-set.mjs", kind: "verifier-input" },

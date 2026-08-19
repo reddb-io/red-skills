@@ -9,8 +9,8 @@ migration is a known move, not an undefined one.
 
 The mechanism is the ADR 0105 boot migration, not a second one: plan purely,
 execute best-effort at boot, never overwrite, and be a no-op the second time.
-The plan lives in `apps/dev/src/core/castle-cutover-migration.ts`, the executor
-in `apps/dev/src/runtime/castle-cutover-migration.ts`.
+The plan lives in `apps/plugin-dev/src/core/castle-cutover-migration.ts`, the executor
+in `apps/plugin-dev/src/runtime/castle-cutover-migration.ts`.
 
 ## When it runs
 

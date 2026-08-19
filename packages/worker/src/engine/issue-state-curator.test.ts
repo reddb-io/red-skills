@@ -40,7 +40,7 @@ function runIssueStateCurator(
 ) {
   return runIssueStateCuratorCore({
     ...input,
-    // The parser belongs to apps/dev; this package test injects only the fact
+    // The parser belongs to apps/plugin-dev; this package test injects only the fact
     // needed to exercise curator policy.
     hasActiveCurrentBlocker: (body) => body.includes("status: blocked"),
   });

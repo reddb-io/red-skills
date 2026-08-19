@@ -117,14 +117,19 @@ function pluginManifests(root) {
  * A plugin ships a runtime bundle iff its app actually EMITS one.
  *
  * The presence of `apps/<name>/` was a good enough proxy until #4031 deleted the
- * dev CLI bundle: `apps/dev` still exists — it holds the MCP adapter and the
+ * dev CLI bundle: `apps/plugin-dev` still exists — it holds the MCP adapter and the
  * cores — but it no longer emits `dev.bundle.min.mjs`, so the proxy demanded a
  * file nothing builds. Reading the app's own `bundle` script for the emitted
  * name keeps this check honest as apps gain and lose bundles.
  */
 function pluginHasRuntime(root, pluginName) {
-  const manifest = join(root, "apps", pluginName, "package.json");
-  if (!existsSync(manifest)) return false;
+  // ADR 0153 prefixes runtime directories by kind, so plugin `dev` lives in
+  // `apps/plugin-dev`. The bare name is tried first for anything that kept it.
+  const manifest = [
+    join(root, "apps", pluginName, "package.json"),
+    join(root, "apps", `plugin-${pluginName}`, "package.json"),
+  ].find((candidate) => existsSync(candidate));
+  if (manifest === undefined) return false;
   const scripts = readJson(manifest).scripts ?? {};
   return Object.values(scripts).some(
     (command) => typeof command === "string" && command.includes(`${pluginName}.bundle.min.mjs`),

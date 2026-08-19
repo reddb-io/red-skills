@@ -49,7 +49,7 @@ it encodes what an authority permits.
 
 ## Ownership guard
 
-`apps/dev/tests/acp-adapter-ownership-guard.test.ts` greps the daemon and
+`apps/plugin-dev/tests/acp-adapter-ownership-guard.test.ts` greps the daemon and
 adapter sources for a re-grown copy of any of the four agreements above, and
 for a `_redskills/*` literal spelled outside this package's registry. It runs in
-every gate through `pnpm -C apps/dev test:invariants`.
+every gate through `pnpm -C apps/plugin-dev test:invariants`.

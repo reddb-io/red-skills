@@ -319,7 +319,7 @@ launcher configs invoke us as `sh -c '<wrapper>'`, and on Debian/Ubuntu that
 the real logic by invoking bash. Bash-only constructs live behind the shebang,
 never in a wrapper.
 
-`apps/dev/tests/shipped-hooks-posix.test.ts` pins both halves: it executes every
+`apps/plugin-dev/tests/shipped-hooks-posix.test.ts` pins both halves: it executes every
 shipped hook in a sandbox whose `sh` is dash, and lints/parses every wrapper
 body with dash. A `#!/bin/sh` hook or an `sh "$hook"` invocation site fails it.
 
@@ -354,7 +354,7 @@ The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 
 ### Hook context schema (generated)
 
-> Generated from the canonical hook registry (`apps/dev/src/core/hook-registry.ts`, #834). A drift test (`hook-registry.test.ts`) fails if this block and the registry disagree, so the contract below can never drift from the wired hooks. Edit the registry, not this table.
+> Generated from the canonical hook registry (`apps/plugin-dev/src/core/hook-registry.ts`, #834). A drift test (`hook-registry.test.ts`) fails if this block and the registry disagree, so the contract below can never drift from the wired hooks. Edit the registry, not this table.
 
 The stdin-JSON context each point receives, the **mutable slice** a hook may rewrite via stdout JSON (everything else is read-only context), and the exit-code policy class:
 

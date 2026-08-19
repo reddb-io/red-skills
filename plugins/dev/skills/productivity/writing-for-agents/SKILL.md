@@ -173,7 +173,7 @@ ad-hoc work is coordinated by `redskilled` in daemon-placed storage.
 - **ADR-editing** — `/adr-editor`, which lands ADR changes from a fresh worktree.
 
 Declaring none, two, or an unknown value fails the doc-contract guard
-(`apps/dev/tests/working-mode-guard.test.ts`); leave the mode to be inferred and
+(`apps/plugin-dev/tests/working-mode-guard.test.ts`); leave the mode to be inferred and
 every reader infers a different one.
 
 ### Description requirements

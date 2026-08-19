@@ -2,7 +2,7 @@
 // ci-affected-scope — compute the CI gate's affected cone from a changed-file set.
 //
 // The AFK feedback gate already scopes validation to the dependency cone of a
-// change (apps/dev/src/core/validation-scope.ts). CI had no equivalent, so the
+// change (apps/plugin-dev/src/core/validation-scope.ts). CI had no equivalent, so the
 // same narrow diff was cheap when a worker validated it and a full-workspace
 // run when GitHub did. This script gives red-workspace-ci.yml the same cone, on
 // the same principle: touched packages plus every package that transitively
@@ -13,9 +13,9 @@
 //   1. Unclassifiable wins the whole workspace. Every path is matched against an
 //      explicit table; a path that matches nothing escalates to the full suite,
 //      because a wrongly-skipped test costs far more than a needlessly-run one.
-//   2. Docs are not inert here. This repo's apps/dev suite asserts the content of
+//   2. Docs are not inert here. This repo's apps/plugin-dev suite asserts the content of
 //      `.red/**` and `plugins/**` (the *-docs.test.ts contracts, ADR governance,
-//      pi package payloads), so a docs-only change still runs apps/dev — it just
+//      pi package payloads), so a docs-only change still runs apps/plugin-dev — it just
 //      stops paying for typecheck and for every unrelated package's suite.
 //
 // Usage:
@@ -102,9 +102,9 @@ function expandToCone(touchedDirs, graph) {
 const INERT_PREFIXES = ['.red/researches/', '.red/tmp/', '.changeset/'];
 
 /**
- * Doc lanes whose content apps/dev's suite asserts — the *-docs.test.ts
+ * Doc lanes whose content apps/plugin-dev's suite asserts — the *-docs.test.ts
  * contracts, ADR governance, the skill/manifest audits. A change here runs
- * apps/dev's tests but affects no type.
+ * apps/plugin-dev's tests but affects no type.
  */
 const DOC_PREFIXES = ['.red/'];
 
@@ -143,22 +143,22 @@ function classify(file, graph) {
 
   // `.red/` docs that the ADR/pi payload builders read are manifest inputs too.
   if (clean.startsWith('.red/adr/')) {
-    return { kind: 'scoped', packages: ['apps/dev'], typecheck: false, manifests: true };
+    return { kind: 'scoped', packages: ['apps/plugin-dev'], typecheck: false, manifests: true };
   }
   if (INERT_PREFIXES.some((p) => clean.startsWith(p))) return { kind: 'inert' };
   if (MANIFEST_INPUT_PREFIXES.some((p) => clean.startsWith(p))) {
-    return { kind: 'scoped', packages: ['apps/dev'], typecheck: false, manifests: true };
+    return { kind: 'scoped', packages: ['apps/plugin-dev'], typecheck: false, manifests: true };
   }
   if (DOC_PREFIXES.some((p) => clean.startsWith(p))) {
     // `.red/config.yaml` is repo configuration the runtimes read, not prose —
     // it does not get the docs discount.
     if (clean === '.red/config.yaml') return { kind: 'whole' };
-    return { kind: 'scoped', packages: ['apps/dev'], typecheck: false, manifests: false };
+    return { kind: 'scoped', packages: ['apps/plugin-dev'], typecheck: false, manifests: false };
   }
 
   if (!clean.includes('/')) {
     if (ROOT_DOC_FILES.has(clean)) {
-      return { kind: 'scoped', packages: ['apps/dev'], typecheck: false, manifests: false };
+      return { kind: 'scoped', packages: ['apps/plugin-dev'], typecheck: false, manifests: false };
     }
     // Every other root file (package.json, lockfile, turbo.json, tsconfig, …)
     // has global blast radius.

@@ -52,7 +52,7 @@ FAILED=0
 hdr "Phase 0 — prerequisites (read-only)"
 
 command -v node >/dev/null && pass "node $(node -v)" || fail "node not on PATH"
-[ -f "$BUNDLE" ] && pass "bundle: $BUNDLE" || { fail "bundle not found ($BUNDLE) — run: pnpm -C apps/dev build"; }
+[ -f "$BUNDLE" ] && pass "bundle: $BUNDLE" || { fail "bundle not found ($BUNDLE) — run: pnpm -C apps/plugin-dev build"; }
 node -e 'process.exit(+process.versions.node.split(".")[0] >= 20 ? 0 : 1)' 2>/dev/null \
   && pass "node >= 20" || warn "node < 20 — sandcastle targets node22"
 

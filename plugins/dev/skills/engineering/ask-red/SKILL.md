@@ -185,7 +185,7 @@ durable Project state, GitHub client, Worker birth, or private daemon protocol;
 Project status carries daemon-projected drain intent, dated queue posture,
 Project Worker summaries, and request-lane adapter health, preserving stale and
 unknown markers for stateless host sidebars) ->
-`apps/redskilled/src/acp-client.ts`, `apps/dev/src/project-acp-adapter.ts`, and
+`apps/redskilled/src/acp-client.ts`, `apps/plugin-dev/src/project-acp-adapter.ts`, and
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
@@ -203,9 +203,9 @@ or a blocking 0–1 floor) ->
 requests, and check runs) -> `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`;
 Path briefs across Claude Code, Codex, and OpenCode (automatic first-touch
 injection from a skill's `paths:` frontmatter, once per session per skill) ->
-`scripts/lib/path-briefs.mjs`, `apps/dev/src/core/path-brief-hook.ts`,
+`scripts/lib/path-briefs.mjs`, `apps/plugin-dev/src/core/path-brief-hook.ts`,
 `plugins/dev/hooks/{claude,codex}.hooks.json`, and
-`apps/opencode-host/src/hooks-to-events.ts`;
+`apps/host-opencode/src/hooks-to-events.ts`;
 `/afk` task-class runner routes (`plugins.dev.afk.routes.{validate,simple,complex,think}`),
 their override precedence, and `/red-setup` interview ->
 `plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
@@ -239,7 +239,7 @@ the host view a terminal can read (the `redskilled` daemon's `dashboard`
 command, and the `statusline` line it shares a render with) ->
 `plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md`;
 engine delivery repair (the `reconcile-engine` dev CLI subcommand) ->
-`apps/dev/src/runtime/reconcile-engine.ts`;
+`apps/plugin-dev/src/runtime/reconcile-engine.ts`;
 territory scoping (`tag:<value>` labels, `/afk --tags`/`--user`) ->
 `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
 

@@ -347,7 +347,7 @@ fi
 # 1. resolve the generator (release bundle preferred, tsx fallback)
 BUNDLE="$REPO_ROOT/dist/opencode-host.bundle.min.mjs"
 if [ "$DRY_RUN" = "true" ]; then
-  GENERATOR="(tsx $REPO_ROOT/apps/opencode-host/src/generate.ts)"
+  GENERATOR="(tsx $REPO_ROOT/apps/host-opencode/src/generate.ts)"
 elif [ -f "$BUNDLE" ]; then
   GENERATOR="node $BUNDLE"
 else

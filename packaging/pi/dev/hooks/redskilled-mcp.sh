@@ -44,7 +44,7 @@ fi
 # the version-pinned npx path above; neither host owns a binary download lane.
 repo="$PWD"
 if [ -f "$repo/pnpm-workspace.yaml" ] && \
-   [ -f "$repo/apps/dev/package.json" ] && \
+   [ -f "$repo/apps/plugin-dev/package.json" ] && \
    [ -f "$repo/dist/redskilled-mcp.bundle.min.mjs" ]; then
   exec node "$repo/dist/redskilled-mcp.bundle.min.mjs" "$@"
 fi

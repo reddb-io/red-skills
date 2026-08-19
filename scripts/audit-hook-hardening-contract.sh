@@ -89,7 +89,7 @@ collect_targets() {
   find "$ROOT/plugins/dev/skills/engineering/afk/defaults" "$ROOT/plugins/dev/skills/engineering/afk/hooks" -type f | sort
   printf '%s\n' \
     "$ROOT/plugins/dev/skills/misc/branch-lock/scripts/branch-lock-hook.sh" \
-    "$ROOT/apps/opencode-host/src/hooks-to-events.ts"
+    "$ROOT/apps/host-opencode/src/hooks-to-events.ts"
 }
 
 fixture="$ROOT/scripts/fixtures/hook-hardening/violating-hook.sh"

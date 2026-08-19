@@ -19,12 +19,12 @@ on:
   push:
     branches: [main]
     paths:
-      - apps/dev/src/core/mcp-lane-canary.ts
-      - apps/dev/src/commands/mcp-lane-canary.ts
-      - apps/dev/src/runtime/mcp-lane-canary-io.ts
-      - apps/dev/src/runtime/liveness-anchor.ts
-      - apps/dev/tests/mcp-lane-canary*.ts
-      - apps/dev/tests/fixtures/mcp-lane-canary/**
+      - apps/plugin-dev/src/core/mcp-lane-canary.ts
+      - apps/plugin-dev/src/commands/mcp-lane-canary.ts
+      - apps/plugin-dev/src/runtime/mcp-lane-canary-io.ts
+      - apps/plugin-dev/src/runtime/liveness-anchor.ts
+      - apps/plugin-dev/tests/mcp-lane-canary*.ts
+      - apps/plugin-dev/tests/fixtures/mcp-lane-canary/**
       - apps/redskilled/**
       - .github/workflows/red-mcp-lane-canary.yml
 
@@ -55,4 +55,4 @@ jobs:
       # and walks a deliberately broken lane — a dead daemon socket — that must
       # come back RED, so a green run here is evidence rather than an assumption.
       - name: Run the MCP lane canary
-        run: pnpm -C apps/dev test:canary
+        run: pnpm -C apps/plugin-dev test:canary

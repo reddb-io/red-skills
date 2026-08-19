@@ -8,14 +8,14 @@ test("parseSkillPaths reads an ordered block glob list", () => {
 name: guard
 description: Guard a source surface.
 paths:
-  - apps/dev/**/*.ts
+  - apps/plugin-dev/**/*.ts
   - packages/shared/*.ts
 ---
 Brief body.
 `;
 
   assert.deepEqual(parseSkillPaths(source), [
-    "apps/dev/**/*.ts",
+    "apps/plugin-dev/**/*.ts",
     "packages/shared/*.ts",
   ]);
 });
@@ -59,7 +59,7 @@ test("parseSkillPaths rejects a paths scalar instead of silently disabling the b
     () => parseSkillPaths(`---
 name: guard
 description: Guard a source surface.
-paths: apps/dev/**
+paths: apps/plugin-dev/**
 ---
 `),
     /paths must be a non-empty glob list/,
@@ -70,7 +70,7 @@ test("matchPathBriefs returns matching declarations in source order", () => {
   const briefs = [
     { name: "typescript", paths: ["apps/**/[a-z]*.{ts,tsx}"] },
     { name: "skill-doc", paths: ["**/SKILL.md"] },
-    { name: "dev-config", paths: ["apps/dev/src/config?.ts"] },
+    { name: "dev-config", paths: ["apps/plugin-dev/src/config?.ts"] },
   ];
 
   assert.deepEqual(
@@ -81,5 +81,5 @@ test("matchPathBriefs returns matching declarations in source order", () => {
     matchPathBriefs(briefs, "plugins/dev/skills/afk/SKILL.md").map((brief) => brief.name),
     ["skill-doc"],
   );
-  assert.deepEqual(matchPathBriefs(briefs, "apps/dev/src/1.ts"), []);
+  assert.deepEqual(matchPathBriefs(briefs, "apps/plugin-dev/src/1.ts"), []);
 });

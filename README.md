@@ -89,13 +89,13 @@ less visibly.**
 | Piece | What it is | Where |
 | --- | --- | --- |
 | [`rsp`](./apps/rsp/README.md) | Token-efficient terminal wrappers over a reversible elision store, plus `rsp wait`. | [Token-Efficient Terminal Work](#token-efficient-terminal-work) |
-| [`herdr-plugin`](./apps/herdr-plugin-red-skills/README.md) | A [herdr](https://herdr.dev) plugin pane reading the daemon: Workers, logs, events, PRs. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
-| [`vscode-extension-red-skills`](./apps/vscode-extension-red-skills/README.md) | A VSCode extension reading the same daemon from inside the editor. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| [`herdr-plugin`](./apps/herdr-plugin-redskilled/README.md) | A [herdr](https://herdr.dev) plugin pane reading the daemon: Workers, logs, events, PRs. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| [`vscode-extension-red-skills`](./apps/vscode-extension-redskilled/README.md) | A VSCode extension reading the same daemon from inside the editor. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
 | The statusline | The daemon's own one-line answer, rendered by the daemon and printed by the host. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
 | The Actions lane | One autonomous attempt per issue, from GitHub Actions, without a local daemon. | [GitHub Actions Lane](#github-actions-lane) |
-| [`afk-container`](./apps/afk-container/README.md) | The same drain in a stateless Docker image. | [Container Lane](#container-lane) |
-| [`code-nav`](./apps/code-nav/README.md) | The LSP-backed `navigator` MCP server used by `dev` for codebase orientation. | [Repo Layout](#repo-layout) |
-| [`red-browser`](./apps/red-browser) | Browser CLI and CDP driver for ground-truth verification of live apps. | [Repo Layout](#repo-layout) |
+| [`afk-container`](./apps/worker-container/README.md) | The same drain in a stateless Docker image. | [Container Lane](#container-lane) |
+| [`code-nav`](./apps/mcp-navigator/README.md) | The LSP-backed `navigator` MCP server used by `dev` for codebase orientation. | [Repo Layout](#repo-layout) |
+| [`red-browser`](./apps/mcp-browser) | Browser CLI and CDP driver for ground-truth verification of live apps. | [Repo Layout](#repo-layout) |
 
 Two properties are neither core nor complementary — they are **house rules the
 whole repo obeys**: structured data is TOON everywhere (files *and* wires), and
@@ -282,7 +282,7 @@ Maintainer-only plugin:
 `dev` owns the engineering workflow: issue pipeline, autonomous execution,
 interactive landing, process visibility, setup/adoption checks, codebase
 orientation, and three MCP servers — [`redskilled`](./plugins/dev/skills/engineering/afk/MCP.md),
-[`navigator`](./apps/code-nav/README.md), and [`rsp`](./apps/rsp/README.md).
+[`navigator`](./apps/mcp-navigator/README.md), and [`rsp`](./apps/rsp/README.md).
 
 Core responsibilities:
 
@@ -544,7 +544,7 @@ proves the two agree.
 
 ### herdr plugin
 
-[`apps/herdr-plugin-red-skills/`](./apps/herdr-plugin-red-skills/README.md) is a
+[`apps/herdr-plugin-redskilled/`](./apps/herdr-plugin-redskilled/README.md) is a
 [herdr](https://herdr.dev) plugin, vendored into this repo by
 [ADR 0131](./.red/adr/0131-herdr-plugin-is-vendored-in-this-repo.md). It answers
 the daemon's question in one pane:
@@ -565,14 +565,14 @@ directory, and its build hook fetches the release's single-file bundle over the
 entry:
 
 ```bash
-herdr plugin install reddb-io/red-skills/apps/herdr-plugin-red-skills
+herdr plugin install reddb-io/red-skills/apps/herdr-plugin-redskilled
 ```
 
 Linking is the contributor path, where the panes show the tree you are editing:
 
 ```bash
 pnpm install                    # from the repo root, once
-herdr plugin link apps/herdr-plugin-red-skills
+herdr plugin link apps/herdr-plugin-redskilled
 ```
 
 It holds itself to the daemon's own rules. **It reads and never writes** —
@@ -585,7 +585,7 @@ Why it lives here: it read `redskilled` from its own repository, so a contract
 change here silently aged the client there — the wire became TOON and the plugin
 still wrote a line of JSON, kept working only because the daemon answers in the
 dialect it was addressed in. The repo-wide invariants stopped at the repo
-boundary too. Absorbed at `apps/herdr-plugin-red-skills/` on the ADR 0124 precedent — a real
+boundary too. Absorbed at `apps/herdr-plugin-redskilled/` on the ADR 0124 precedent — a real
 directory, an `.upstream` marker recording the absorbed commit, every later
 change an ordinary one-PR change here — its `check-manifest.py` and `node --test`
 suite now run under the shared gate. Its bin is `red-skills-herdr`, because
@@ -602,7 +602,7 @@ node bin/red-skills-herdr.mjs logs --events
 
 ### VSCode extension
 
-[`apps/vscode-extension-red-skills/`](./apps/vscode-extension-red-skills/README.md) is the same
+[`apps/vscode-extension-redskilled/`](./apps/vscode-extension-redskilled/README.md) is the same
 reader inside the editor. It contributes three tree views and a log channel:
 
 | View | Reads | Answers |
@@ -637,9 +637,9 @@ codium --install-extension vscode-extension-red-skills-*.vsix   # VSCodium
 Building it is the contributor path:
 
 ```bash
-pnpm -C apps/vscode-extension-red-skills build      # typecheck + bundle out/extension.cjs
-pnpm -C apps/vscode-extension-red-skills package    # write dist/vscode-extension-red-skills-<version>.vsix
-code --install-extension apps/vscode-extension-red-skills/dist/vscode-extension-red-skills-0.1.0.vsix
+pnpm -C apps/vscode-extension-redskilled build      # typecheck + bundle out/extension.cjs
+pnpm -C apps/vscode-extension-redskilled package    # write dist/vscode-extension-red-skills-<version>.vsix
+code --install-extension apps/vscode-extension-redskilled/dist/vscode-extension-red-skills-0.1.0.vsix
 ```
 
 ### Statusline
@@ -741,7 +741,7 @@ Full guide: [Actions lane](./plugins/dev/skills/engineering/afk/actions-lane.md)
 
 ## Container Lane
 
-[`apps/afk-container/`](./apps/afk-container/README.md) is the same drain in a
+[`apps/worker-container/`](./apps/worker-container/README.md) is the same drain in a
 self-sufficient Docker image: it picks a runner, picks the queue head, clones the
 target repo into a temp directory, and hands the issue to the same Worker body
 the local daemon and the Actions lane drive. Claim comment, heartbeat, validation
@@ -785,7 +785,7 @@ the daemon births a Worker), `invariants:extinct-nouns` (ADR 0130's removed
 concepts stay removed, including modules merely *named* for one), and
 `invariants:shipped-binaries` (every shipped binary answers `--version` and
 `--help` without a working machine). The declared list lives in
-[`apps/dev/src/core/repo-invariants.ts`](./apps/dev/src/core/repo-invariants.ts).
+[`apps/plugin-dev/src/core/repo-invariants.ts`](./apps/plugin-dev/src/core/repo-invariants.ts).
 
 ## Configuration
 
@@ -822,7 +822,7 @@ plugins:
 Model defaults and escalation rules are documented in
 [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md).
 The runtime source of truth is `CONFIG_DEFAULTS` in
-[`apps/dev/src/core/config.ts`](./apps/dev/src/core/config.ts).
+[`apps/plugin-dev/src/core/config.ts`](./apps/plugin-dev/src/core/config.ts).
 
 Operator-declared pre-merge checks (backpressure):
 
@@ -862,20 +862,20 @@ House rules:
 | Path | Purpose |
 | --- | --- |
 | [`plugins/dev`](./plugins/dev) | Plugin definition, skills, hooks, scripts, MCP config, and docs for engineering workflow. |
-| [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/memory`. |
-| [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
+| [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/plugin-memory`. |
+| [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/plugin-brain`. |
 | [`plugins/internal`](./plugins/internal) | Maintainer-only plugin definition and skills for operating this repository. |
 | [`apps/redskilled`](./apps/redskilled) | The host-scoped execution daemon (ADR 0130): socket, lease, wire contract, placement, birth, event lane, statusline, provisioning, reclaim. |
-| [`apps/herdr-plugin-red-skills`](./apps/herdr-plugin-red-skills) | Vendored herdr plugin that reads the daemon (ADR 0131): Workers, logs, event lane, pull requests, notifications. `.upstream` records the absorbed commit. |
-| [`apps/vscode-extension-red-skills`](./apps/vscode-extension-red-skills) | VSCode extension that reads the daemon from inside the editor: Workers, host events, pull requests, per-Worker log channel, transition notifications. |
+| [`apps/herdr-plugin-redskilled`](./apps/herdr-plugin-redskilled) | Vendored herdr plugin that reads the daemon (ADR 0131): Workers, logs, event lane, pull requests, notifications. `.upstream` records the absorbed commit. |
+| [`apps/vscode-extension-redskilled`](./apps/vscode-extension-redskilled) | VSCode extension that reads the daemon from inside the editor: Workers, host events, pull requests, per-Worker log channel, transition notifications. |
 | [`apps/rsp`](./apps/rsp) | Token-efficient terminal wrappers, the elision store and resident, the interception hook and proxy, `rsp wait`, and the rsp MCP server. |
-| [`apps/dev`](./apps/dev) | Issue pipeline, execution, landing, dashboard, triage, runner, release/channel, repo invariants, and workflow runtime code. |
-| [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
-| [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
-| [`apps/code-nav`](./apps/code-nav) | LSP-backed `navigator` MCP server used by the `dev` plugin. |
-| [`apps/opencode-host`](./apps/opencode-host) | Adapter that emits OpenCode config, skills, hooks, MCP passthrough, and statusline/toast integration. |
-| [`apps/red-browser`](./apps/red-browser) | Browser CLI: opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate. |
-| [`apps/afk-container`](./apps/afk-container) | Stateless Docker image that drains `ready-for-agent` issues one ephemeral run at a time through the existing engine. |
+| [`apps/plugin-dev`](./apps/plugin-dev) | Issue pipeline, execution, landing, dashboard, triage, runner, release/channel, repo invariants, and workflow runtime code. |
+| [`apps/plugin-memory`](./apps/plugin-memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
+| [`apps/plugin-brain`](./apps/plugin-brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
+| [`apps/mcp-navigator`](./apps/mcp-navigator) | LSP-backed `navigator` MCP server used by the `dev` plugin. |
+| [`apps/host-opencode`](./apps/host-opencode) | Adapter that emits OpenCode config, skills, hooks, MCP passthrough, and statusline/toast integration. |
+| [`apps/mcp-browser`](./apps/mcp-browser) | Browser CLI: opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate. |
+| [`apps/worker-container`](./apps/worker-container) | Stateless Docker image that drains `ready-for-agent` issues one ephemeral run at a time through the existing engine. |
 | [`packages/shared`](./packages/shared) | Shared runtime helpers: plugin gate, bundle fetching, args, logging, channels, the resident core and wire, and the daemon-home namer. |
 | [`packages/browser-bridge`](./packages/browser-bridge) | Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts and long-polls for human feedback and layout-audit results. |
 | [`packages/cdp-driver`](./packages/cdp-driver) | CDP-based live-app driver for `red-browser`: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots, and streams console/network events. |
@@ -917,7 +917,7 @@ This is a map, not a replacement for the skill files. Open the linked
 | Dev knowledge, productivity, and utilities | [`research`](./plugins/dev/skills/knowledge/research/SKILL.md), [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md), [`wait-what`](./plugins/dev/skills/productivity/wait-what/SKILL.md), [`to-questionnaire`](./plugins/dev/skills/productivity/to-questionnaire/SKILL.md), [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md), [`writing-for-agents`](./plugins/dev/skills/productivity/writing-for-agents/SKILL.md), [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md), [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md), [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md), [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) |
 | Memory | [`init`](./plugins/memory/skills/core/init/SKILL.md), [`store`](./plugins/memory/skills/core/store/SKILL.md), [`recall`](./plugins/memory/skills/core/recall/SKILL.md), [`ingest`](./plugins/memory/skills/core/ingest/SKILL.md), [`extract`](./plugins/memory/skills/core/extract/SKILL.md), [`context-status`](./plugins/memory/skills/core/context-status/SKILL.md), [`skills-status`](./plugins/memory/skills/core/skills-status/SKILL.md), [`health`](./plugins/memory/skills/core/health/SKILL.md), [`improve-skills`](./plugins/memory/skills/core/improve-skills/SKILL.md), [`doctor`](./plugins/memory/skills/core/doctor/SKILL.md), [`export`](./plugins/memory/skills/core/export/SKILL.md), [`view`](./plugins/memory/skills/core/view/SKILL.md), [`wiki-init`](./plugins/memory/skills/core/wiki-init/SKILL.md), [`wiki`](./plugins/memory/skills/core/wiki/SKILL.md) |
 | Brain | [`capture`](./plugins/brain/skills/core/capture/SKILL.md), [`search`](./plugins/brain/skills/core/search/SKILL.md), [`think`](./plugins/brain/skills/core/think/SKILL.md), [`status`](./plugins/brain/skills/core/status/SKILL.md), [`view`](./plugins/brain/skills/core/view/SKILL.md) |
-| MCP servers | [`redskilled`](./plugins/dev/skills/engineering/afk/MCP.md), [`navigator`](./apps/code-nav/README.md), [`rsp`](./apps/rsp/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
+| MCP servers | [`redskilled`](./plugins/dev/skills/engineering/afk/MCP.md), [`navigator`](./apps/mcp-navigator/README.md), [`rsp`](./apps/rsp/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
 
 ## Development In This Repo
 
@@ -950,7 +950,7 @@ check vanish or report "skipped", which leaves branch protection waiting forever
 on a docs PR. Every job still runs on every PR and still reports a conclusion;
 only the work inside it shrinks, and an unclassifiable change escalates to the
 whole workspace. The repo-wide invariants run regardless of how narrow the cone
-is — that is what `pnpm -C apps/dev test:invariants` is for.
+is — that is what `pnpm -C apps/plugin-dev test:invariants` is for.
 
 Cutting a release is a maintainer flow of its own: `pnpm changeset`, the Version
 Packages PR, the tag, and the publish workflow are documented in

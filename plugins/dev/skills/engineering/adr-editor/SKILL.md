@@ -63,8 +63,8 @@ one destructive batch → apply → verify → land one cluster per PR**.
   list, group, surface inconsistencies, add, remove, rewrite, merge, split,
   archive, renumber, re-index.
 - ✅ **Use the shipped deterministic core.** Triage lives in
-  `apps/dev/src/core/adr-triage.ts`; mutations live in
-  `apps/dev/src/core/adr-operations.ts`. Do not reimplement their parsing in
+  `apps/plugin-dev/src/core/adr-triage.ts`; mutations live in
+  `apps/plugin-dev/src/core/adr-operations.ts`. Do not reimplement their parsing in
   prose or let their heuristics replace model judgment.
 - ✅ **Work through normal git flow.** Branch, worktree, commit, PR; never switch
   the primary checkout's branch.

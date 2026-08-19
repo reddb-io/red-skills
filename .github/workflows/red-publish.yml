@@ -303,7 +303,7 @@ jobs:
       # carries the bytes this rebuild produces.
       - name: Build dev runtime bundle
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/dev
+        working-directory: apps/plugin-dev
         env:
           NEXT: ${{ steps.target.outputs.tag }}
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
@@ -334,7 +334,7 @@ jobs:
       # uploaded onto the Release the release engine published for this tag.
       - name: Build memory runtime bundle + manifest
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/memory
+        working-directory: apps/plugin-memory
         env:
           NEXT: ${{ steps.target.outputs.tag }}
           PREVIOUS: ${{ steps.target.outputs.previous }}
@@ -426,7 +426,7 @@ jobs:
       # tag's Release; fetched by plugins/brain/scripts/bootstrap.mjs.
       - name: Build brain runtime bundle + manifest
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/brain
+        working-directory: apps/plugin-brain
         env:
           NEXT: ${{ steps.target.outputs.tag }}
           PREVIOUS: ${{ steps.target.outputs.previous }}
@@ -506,14 +506,14 @@ jobs:
           node scripts/verify-reddb-release-assets.mjs dist/brain-runtime-manifest.json
 
       # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
-      # the dev/memory runtimes. Its package lives under apps/code-nav.
+      # the dev/memory runtimes. Its package lives under apps/mcp-navigator.
       # `build` (typecheck + bundle) emits the dev-checkout
       # file dist/code-nav-mcp.bundle.min.mjs; the release asset the dynamic fetch
       # resolves is named code-nav.bundle.min.mjs (bundleAssetName('code-nav')),
       # with a code-nav.manifest.json mirroring dev.manifest.json.
       - name: Build code-nav MCP bundle + manifest
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/code-nav
+        working-directory: apps/mcp-navigator
         env:
           NEXT: ${{ steps.target.outputs.tag }}
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
@@ -542,7 +542,7 @@ jobs:
 
       - name: Build benchmark-memory bundle + manifest
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/benchmark-memory
+        working-directory: benchmarks/memory
         env:
           NEXT: ${{ steps.target.outputs.tag }}
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
@@ -567,7 +567,7 @@ jobs:
 
       - name: Build OpenCode host installer bundle
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/opencode-host
+        working-directory: apps/host-opencode
         env:
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
           RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
@@ -586,7 +586,7 @@ jobs:
 
       - name: Build benchmark-code-understanding bundle + manifest
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/benchmark-code-understanding
+        working-directory: benchmarks/code-understanding
         env:
           NEXT: ${{ steps.target.outputs.tag }}
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
@@ -670,10 +670,10 @@ jobs:
       # The herdr plugin bundles like every other app here: one esbuild file with
       # `@reddb-io/toon` and `@reddb-io/build-info` inlined. Its install-time
       # build hook downloads this asset and writes it over its own entry, so the
-      # asset name is a contract, checked by apps/herdr-plugin-red-skills/tests.
+      # asset name is a contract, checked by apps/herdr-plugin-redskilled/tests.
       - name: Build herdr plugin bundle
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/herdr-plugin-red-skills
+        working-directory: apps/herdr-plugin-redskilled
         env:
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
           RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
@@ -689,7 +689,7 @@ jobs:
       # installs. It is attached to the Release and pushed to no marketplace.
       - name: Package the VS Code extension .vsix
         if: steps.target.outputs.publish == 'true'
-        working-directory: apps/vscode-extension-red-skills
+        working-directory: apps/vscode-extension-redskilled
         env:
           RED_BUILD_VERSION: ${{ steps.target.outputs.version }}
         run: |
@@ -724,7 +724,7 @@ jobs:
             .claude-plugin/marketplace.json \
             .agents/plugins/marketplace.json \
             .gemini-plugin/marketplace.json
-          tar -czf dist/zellij-dashboard.tgz -C apps zellij-plugin-dashboard
+          tar -czf dist/zellij-dashboard.tgz -C apps zellij-plugin-redskilled
           # Generate the self-contained Gemini dev extension from this tree's
           # plugin payload plus the bundles built above, and run the
           # generated-path validator BEFORE the bytes can enter the signed set:

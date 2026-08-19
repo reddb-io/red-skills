@@ -36,7 +36,7 @@ in this repo.
 
 ## Decision
 
-**The plugin is vendored at `apps/herdr-plugin-red-skills/` as ordinary in-repo source, and
+**The plugin is vendored at `apps/herdr-plugin-redskilled/` as ordinary in-repo source, and
 this repo is the single home for `redskilled`'s read surfaces.**
 
 1. **A real directory, not a submodule, a subtree or a fork.** `.upstream`
@@ -50,7 +50,7 @@ this repo is the single home for `redskilled`'s read surfaces.**
    maintainer's call. Nothing here depends on that answer, because nothing here
    reads it.
 
-3. **A workspace member, held by the shared gate.** `apps/herdr-plugin-red-skills` is a
+3. **A workspace member, held by the shared gate.** `apps/herdr-plugin-redskilled` is a
    pnpm workspace package whose `test` script runs `scripts/check-manifest.py`
    and the `node --test` suite, so a cone-scoped gate that touches the plugin
    runs both, and the repo-wide invariants run whatever the cone.
@@ -82,7 +82,7 @@ this repo is the single home for `redskilled`'s read surfaces.**
 
 - The plugin is developed, tested and released as part of this repo. A change to
   the daemon's contract and the change to its reader are one pull request.
-- **Its install path changed**: it is `herdr plugin link apps/herdr-plugin-red-skills` from
+- **Its install path changed**: it is `herdr plugin link apps/herdr-plugin-redskilled` from
   a checkout with `pnpm install` run, not a clone of a standalone repository.
   The plugin is no longer dependency-free — it depends on `@reddb-io/toon` for
   the wire and its own files, and on `@reddb-io/build-info` for the version

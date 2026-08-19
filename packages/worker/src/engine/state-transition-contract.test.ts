@@ -2,7 +2,7 @@
 // CASTLE tree (#2528, #2664, #2666; red-skills ADR 0122 rule 5).
 //
 // The consuming host runs the same lint over its own `src` tree
-// (`apps/dev/tests/state-transition-contract.test.ts`); this one keeps the
+// (`apps/plugin-dev/tests/state-transition-contract.test.ts`); this one keeps the
 // engine's tree honest from the engine's own suite, so a castle-only change can
 // never introduce a raw state-role write that only the host's CI would catch.
 //

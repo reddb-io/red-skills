@@ -10,7 +10,7 @@ function baseInput(): RunCastleGateInput {
     changedFiles: ["packages/core/src/index.ts"],
     layout: {
       hasPackage(scope) {
-        return [".", "packages/core", "apps/dev"].includes(scope);
+        return [".", "packages/core", "apps/plugin-dev"].includes(scope);
       },
       hasScript(scope, script) {
         return scope === "packages/core" && ["test", "typecheck"].includes(script);
@@ -19,7 +19,7 @@ function baseInput(): RunCastleGateInput {
     graph: {
       packages: [
         { dir: "packages/core", dependsOn: [] },
-        { dir: "apps/dev", dependsOn: ["packages/core"] },
+        { dir: "apps/plugin-dev", dependsOn: ["packages/core"] },
       ],
     },
     sink: makeInteractiveGateSink({
@@ -48,7 +48,7 @@ describe("castle gate executor", () => {
     expect(result.validationScope).toEqual({
       type: "cone",
       triggerPackages: ["packages/core"],
-      packages: ["apps/dev", "packages/core"],
+      packages: ["apps/plugin-dev", "packages/core"],
     });
     expect(input.feedbackExec).toHaveBeenCalledWith(
       ["pnpm", "-C", "/repo/packages/core", "test"],

@@ -15,7 +15,7 @@ if (!args.entry || !args.outfile || !args.asset) {
 
 const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
 
-// The product has ONE version anchor — the same `apps/dev/package.json` that
+// The product has ONE version anchor — the same `apps/plugin-dev/package.json` that
 // The Release standard updates SOURCE — and every bundle carries it.
 //
 // Reading the *cwd's* package.json instead was wrong for the bundles that ship
@@ -26,7 +26,7 @@ const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
 const PRODUCT_VERSION_ANCHOR = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
-  "apps/dev/package.json",
+  "apps/plugin-dev/package.json",
 );
 const anchorVersion = readAnchorVersion(PRODUCT_VERSION_ANCHOR);
 const version = (process.env.RED_BUILD_VERSION || anchorVersion || pkg.version || "0.0.0-dev").replace(/^v/, "");

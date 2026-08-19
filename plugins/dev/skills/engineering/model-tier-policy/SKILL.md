@@ -10,7 +10,7 @@ description: Use when choosing or explaining the RedSkills dev model tier for va
 
 This is the dev plugin's cross-host policy for why a task uses a given model tier and which tier should run it. It is the human-readable policy from ADR 0049.
 
-The machine source for model ids and effort values is `apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex,opencode}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback.
+The machine source for model ids and effort values is `apps/plugin-dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex,opencode}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback.
 
 **Runtime override (flag / env, ADR 0049).** Like `--runner`/`RED_AFK_RUNNER` and `RED_AFK_SANDBOX`, the model and effort are overridable at run time without editing a file — for ad-hoc runs and the CI lane. Precedence: **`--model` flag > `RED_AFK_MODEL` env > `.red/config.yaml` > defaults** (and the same for `--effort` / `RED_AFK_EFFORT`). A non-empty override **flattens every tier** onto the one slug ("use this model regardless of tier"); `""` is treated as unset. The `--model`/`--effort` flags pre-set the env so the override flows through both `--once` and the fleet. Example — drive OpenCode against a MiniMax subscription with no config edit: `MINIMAX_API_KEY=… afk run --runner opencode --model minimax/MiniMax-M3 --issues 42` (the slug's leading segment routes the endpoint; `opencode-env.ts` picks the key). The CI composite action exposes this as the `model`/`effort` inputs.
 
@@ -70,12 +70,12 @@ See ADR 0049.
 
 - Claude interactive executors live in `plugins/dev/agents/validate.md`, `plugins/dev/agents/simple-code.md`, and `plugins/dev/agents/complex-code.md`. They are Claude-only wrappers over this policy.
 - Codex receives this same skill through `plugins/dev/.codex-plugin/plugin.json` (`"skills": "./skills/"`). Codex does not ship the Claude `agents/` wrappers.
-- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md`, `runner-codex.md`, and `runner-claude-minimax.md` (the MiniMax lane, which pins `MiniMax-M3` and caps effort to `low`). Runtime tier resolution flows through `resolveTier` in `apps/dev/src/core/process-issue.ts` and the config resolver in `apps/dev/src/core/config.ts`.
+- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md`, `runner-codex.md`, and `runner-claude-minimax.md` (the MiniMax lane, which pins `MiniMax-M3` and caps effort to `low`). Runtime tier resolution flows through `resolveTier` in `apps/plugin-dev/src/core/process-issue.ts` and the config resolver in `apps/plugin-dev/src/core/config.ts`.
 - Host hooks live in `plugins/dev/hooks/claude.hooks.json` and `plugins/dev/hooks/codex.hooks.json`; they are host-specific enforcement surfaces, not places to duplicate the policy.
 
 ## Interactive enforcement (issue #456, ADR 0049)
 
-The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the dev bundle's `route-model-tier` command (`apps/dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
+The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the dev bundle's `route-model-tier` command (`apps/plugin-dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
 
 - maps a dispatch to a tier-agent (`validate` → `validate`, `simple-code` → `simple`, `complex-code` → `complex`) and asks `resolveTier` for the policy model from the **single config source** (`plugins.dev.afk.models.claude.<tier>.model`); it hardcodes no model id;
 - when the dispatched model's family disagrees with the tier (or is unset), corrects it via the enforcement contract decided at HITL on 2026-06-08: **(a) rewrite** the dispatch model in place using Claude's `hookSpecificOutput.updatedInput` → **(b) fallback block-and-retry** (`permissionDecision: "deny"`) → **(c) degrade to audit** (`additionalContext`). Claude supports rewrite, so it always takes path (a);
