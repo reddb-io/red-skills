@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/release",
-  "version": "3.21.0",
+  "version": "3.22.0",
   "private": true,
   "description": "RedSkills release engine — changeset-compatible version computation and release orchestration.",
   "license": "Apache-2.0",
