@@ -765,8 +765,20 @@ jobs:
           for asset in "${workstation_assets[@]}"; do
             build_args+=(--asset "$asset")
           done
+          # version, channel and targets ride INSIDE the signed identity
+          # (#4005): red-dev decides on all three before it moves a machine,
+          # and a fact a consumer decides on cannot sit outside the signature.
+          # The targets come from the one enumeration, never from a literal
+          # written here.
+          target_args=()
+          while IFS= read -r target; do
+            target_args+=(--target "$target")
+          done < <(node scripts/workstation-package-set.mjs --targets)
           node scripts/build-package-set.mjs \
             --source-commit "$SOURCE_COMMIT" \
+            --release-version "$VERSION" \
+            --channel stable \
+            "${target_args[@]}" \
             --out dist/package-set.manifest.json \
             "${build_args[@]}"
           # The Sigstore bundle format (--new-bundle-format) carries the
