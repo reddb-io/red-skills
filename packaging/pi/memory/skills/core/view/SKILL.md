@@ -1,5 +1,6 @@
 ---
 name: view
+working-mode: interactive
 description: Open the project Memory graph in red-ui (the visual cluster/query/collections workspace) by pointing the red-ui MCP App at the local RedDB store, falling back to the browser Workbench in terminal hosts. Use when the user wants to SEE the memory graph, clusters, or collections visually rather than recall text.
 disable-model-invocation: true
 ---

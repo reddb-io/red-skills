@@ -1,5 +1,6 @@
 ---
 name: code-review
+working-mode: interactive
 description: Two-axis code review of the diff between HEAD and a fixed point — Standards (does the code follow this repo's documented coding standards and the Fowler smell baseline?) and Spec (does it implement what the issue/Spec asked for?). Runs both reviews as parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
 ---
 

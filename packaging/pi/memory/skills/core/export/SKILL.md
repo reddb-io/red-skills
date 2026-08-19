@@ -1,5 +1,6 @@
 ---
 name: export
+working-mode: interactive
 description: Export the memory graph to a self-contained, navigable bundle — graph.json (data), graph.html (an interactive node-link view that opens straight from disk), and audit.md (a health summary). Use when the user says "export memory", "visualize the memory graph", "show me the graph", "dump the memory graph", or wants to browse what's stored. Graph mode only.
 disable-model-invocation: true
 ---

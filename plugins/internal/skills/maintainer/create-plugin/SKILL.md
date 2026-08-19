@@ -1,5 +1,6 @@
 ---
 name: create-plugin
+working-mode: interactive
 description: Use when a RedSkills maintainer needs to scaffold a new repository plugin that is born compliant with the marketplace, skill, README, CHANGES, and structural-smoke contracts.
 disable-model-invocation: true
 ---

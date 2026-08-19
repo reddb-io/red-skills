@@ -1,5 +1,6 @@
 ---
 name: red-doctor
+working-mode: interactive
 description: Adoption/process doctor — reports how fully a repo has adopted the RedSkills engineering stack. Read-only by default; `--fix` applies the canonical fix for every finding, gated per hard-to-reverse change. The recurring counterpart to the one-time `/red-setup`. Use when asked "red doctor", "check adoption", before a large `/afk` drain, or to verify a repo against canonical conventions.
 argument-hint: "[--repo <path|owner/name>] [--fix] [--session-mcp <servers|none>]"
 ---

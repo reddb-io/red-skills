@@ -1,5 +1,6 @@
 ---
 name: wizard
+working-mode: interactive
 description: Generate an interactive Bash wizard for steps only a human can perform. Use for credentials, CI secrets, third-party dashboards, provisioning, migrations, or cutovers that require human action.
 ---
 

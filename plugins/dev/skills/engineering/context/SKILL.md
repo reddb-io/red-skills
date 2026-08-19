@@ -1,5 +1,6 @@
 ---
 name: context
+working-mode: interactive
 description: Build and refresh the project context stack before non-trivial work — domain glossary, ADRs, LLM Wiki, Memory graph, graph-aware zoom-out, and self-improvement signals. Use when the user asks to "get context", "manage context", onboard to a repo, prepare a large change, or improve agent memory/self-improvement loops.
 ---
 

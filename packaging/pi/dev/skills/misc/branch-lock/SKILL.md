@@ -1,5 +1,6 @@
 ---
 name: branch-lock
+working-mode: interactive
 description: Lock the agent to a branch and block it from switching away. Sets up self-contained pre-tool hooks that block the agent's git checkout/switch to any other branch while a lock is active, and gives you a /branch-lock command to set, change, and clear the lock. Use when you want the agent pinned to one branch for a session.
 disable-model-invocation: true
 ---

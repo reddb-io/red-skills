@@ -1,5 +1,6 @@
 ---
 name: view
+working-mode: interactive
 description: Open the project Brain graph in red-ui (cluster/query/collections/home) by pointing the red-ui MCP App at the local brain.rdb store, with a browser fallback for terminal hosts. Use when the user wants to visually explore Brain artifacts and typed connections.
 ---
 

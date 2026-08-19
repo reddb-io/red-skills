@@ -1,5 +1,6 @@
 ---
 name: report-bug
+working-mode: interactive
 description: Interview the user about a bug they hit, then file a structured `type:bug needs-triage` issue on the project tracker. Pulls seed material from the conversation context when invoked with no arguments, or from the argument when one is provided. Use when the user says "report a bug", "open a bug", "this is broken — file it", "/report-bug ...", or otherwise wants a bug captured on the tracker without going through full triage themselves.
 argument-hint: "[symptom — leave empty to seed from conversation]"
 disable-model-invocation: true

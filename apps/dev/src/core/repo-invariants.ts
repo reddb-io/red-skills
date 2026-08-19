@@ -140,6 +140,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every registered TOONL lane must be enforced by a writer and observable by the census (#3645); the lanes span apps/dev, apps/redskilled, apps/rsp, packages/github, packages/red-castle and packages/shared, the suite lives in apps/dev",
   },
   {
+    name: "invariants:working-mode",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "every shipped SKILL.md must declare exactly one of ADR 0150's four Working modes (#4012); the skills span every plugin, but their ratchet lives in apps/dev",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/dev",
     script: "test:invariants",

@@ -1,5 +1,6 @@
 ---
 name: init
+working-mode: interactive
 description: One-time setup wizard for the memory plugin. Asks what storage to use and writes the per-project memory config. Two modes ship today — markdown-only (plain notes, no engine) and graph (governed operational memory over a per-project RedDB store). Hooks are optional in graph mode; MCP/read surfaces come with graph mode. Use when the user installs the memory plugin and wants to turn memory on, or says "memory init", "set up memory", "initialize memory".
 disable-model-invocation: true
 ---

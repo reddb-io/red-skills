@@ -1,5 +1,6 @@
 ---
 name: doctor
+working-mode: interactive
 description: Inspect and maintain the memory graph — list stale nodes (long-unaccessed and never recalled) and, only after explicit confirmation, prune them. Use when the user says "memory doctor", "clean up memory", "what's stale in memory", "prune old memory", or wants a health check of the graph. Graph mode only.
 disable-model-invocation: true
 ---

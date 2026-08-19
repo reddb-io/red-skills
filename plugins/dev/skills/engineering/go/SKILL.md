@@ -1,5 +1,6 @@
 ---
 name: go
+working-mode: ad-hoc
 description: Middle tier of the dispatch spectrum — `/goal` → `/go` → `/afk`. Use for genuinely untracked, ad-hoc, one-off demands only; anything that is or should be a tracked issue belongs to `/afk`. Mints a disposable issue, spins a dedicated worker, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing.
 argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--request \"<inner-agent-instruction>\"] [--verify \"<cmd>\"] [--tags a,b] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [--attached] [+yolo] | --scout \"<question>\" [--runner ...]"
 disable-model-invocation: true

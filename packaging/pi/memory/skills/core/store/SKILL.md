@@ -1,5 +1,6 @@
 ---
 name: store
+working-mode: interactive
 description: Save one durable work fact to the project's configured memory surface. Use when the user says "remember this", "store that …", "/memory:store …", or when you want a scoped decision, gotcha, validation, or why-note to survive across sessions. Requires `memory init` to have run.
 ---
 

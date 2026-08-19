@@ -1,5 +1,6 @@
 ---
 name: retake
+working-mode: spec-driven
 description: Pick one issue back up — reconstruct where it stands (linked PRs, branches, worktrees, uncommitted or unpushed work, HITL state, active blocker), report that state, then execute the one right action — a plain requeue into `ready-for-agent`, an `--adopt-branch` landing through the no-agent gate, or a handoff to `/hitl`. Use when the user invokes `/retake #123`, asks to resume or recover an issue, wants to requeue a parked issue, or has hand-done work on a branch that needs to land.
 argument-hint: "#ISSUE [--apply] [--json] [--repo OWNER/REPO] [--pr-limit N]"
 ---

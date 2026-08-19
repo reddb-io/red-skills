@@ -1,5 +1,6 @@
 ---
 name: extract
+working-mode: interactive
 description: Extract durable facts from a transcript into the Memory graph through the configured AI provider. Use when the user wants to preserve decisions, gotchas, root causes, or reasoning traces from a conversation or log. Graph mode only; requires `provider` in the `plugins.memory` block of `.red/config.yaml`.
 ---
 

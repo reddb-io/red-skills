@@ -1,5 +1,6 @@
 ---
 name: recall
+working-mode: interactive
 description: Search the project's configured memory surface and return governed context ranked by relevance. Use when the user asks "what do we know about …", "did we decide …", "have we seen this before", "/memory:recall …", or when you want past decisions/gotchas before acting. Requires `memory init` to have run.
 ---
 
