@@ -197,6 +197,19 @@ export function encodeHostWorkerId(epochMs: number): string {
 }
 
 /**
+ * Whether `value` is a well-formed host Worker id. PURE.
+ *
+ * Asked by anything that reads a DIRECTORY NAME back as an id — the evidence
+ * lane's prune, above all. A name that is not one of these ids carries no birth
+ * instant, so judging its age would be a guess; the caller retains it and says
+ * so instead (ADR 0149 §3).
+ */
+export function isHostWorkerId(value: string): boolean {
+  return value.length === HOST_WORKER_ID_WIDTH &&
+    [...value].every((character) => HOST_WORKER_ID_ALPHABET.includes(character));
+}
+
+/**
  * Mint the host's Worker handle: the birth epoch in milliseconds, base62.
  *
  * **A collision walks the birth instant forward by 1 ms rather than redrawing.**
