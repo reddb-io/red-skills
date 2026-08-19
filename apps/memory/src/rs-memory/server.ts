@@ -112,7 +112,14 @@ function memoryToolList(result: unknown): RsMemoryTool[] {
     ? (result as { tools?: unknown }).tools
     : undefined;
   if (!Array.isArray(tools)) return [];
-  return tools.filter(isRsMemoryTool);
+  // The `type: "object"` is asserted rather than trusted: MCP refuses a tool
+  // whose input schema is not an object schema, and refusing the WHOLE list
+  // because the daemon shipped one thin descriptor would cost a session every
+  // memory tool it has.
+  return tools.filter(isRsMemoryTool).map((tool) => ({
+    ...tool,
+    inputSchema: { type: "object", ...tool.inputSchema },
+  }));
 }
 
 function isRsMemoryTool(value: unknown): value is RsMemoryTool {
