@@ -106,6 +106,7 @@ exports[`engine runner registry > projects the exact codex implementer constrain
       "brain": false,
       "red-memory": false,
       "red-ui": false,
+      "redskilled": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -126,6 +127,7 @@ exports[`engine runner registry > projects the exact codex implementer constrain
       "brain": false,
       "red-memory": true,
       "red-ui": false,
+      "redskilled": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -146,6 +148,7 @@ exports[`engine runner registry > projects the exact codex implementer constrain
       "brain": true,
       "red-memory": false,
       "red-ui": false,
+      "redskilled": false,
     },
     "plugins": {
       "brain@red-skills": true,
@@ -166,6 +169,7 @@ exports[`engine runner registry > projects the exact codex implementer constrain
       "brain": false,
       "red-memory": false,
       "red-ui": true,
+      "redskilled": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -186,6 +190,7 @@ exports[`engine runner registry > projects the exact codex implementer constrain
       "brain": false,
       "red-memory": false,
       "red-ui": false,
+      "redskilled": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -211,6 +216,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "red-ui": {
         "enabled": false,
       },
+      "redskilled": {
+        "enabled": false,
+      },
     },
     "pluginEvents": [],
     "plugins": [
@@ -233,6 +241,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": true,
       },
       "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
         "enabled": false,
       },
     },
@@ -260,6 +271,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "red-ui": {
         "enabled": false,
       },
+      "redskilled": {
+        "enabled": false,
+      },
     },
     "pluginEvents": [],
     "plugins": [
@@ -285,6 +299,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "red-ui": {
         "enabled": true,
       },
+      "redskilled": {
+        "enabled": false,
+      },
     },
     "pluginEvents": [],
     "plugins": [
@@ -307,6 +324,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
         "enabled": false,
       },
     },
