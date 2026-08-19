@@ -4,7 +4,6 @@ import {
   FEEDBACK_SCRIPTS,
   KILLED_EXIT_CODE,
   MECHANICAL_KINDS,
-  type FeedbackScript,
 } from "./gate-constants.js";
 import type { GateFinding, GateSink, GateSinkOutcome } from "./gate-sink.js";
 import {

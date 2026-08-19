@@ -571,11 +571,6 @@ export interface AcquireClaimOptions extends ClaimReconcileOptions {
   nowS?: number;
 }
 
-const DEFAULT_VERIFY_ATTEMPTS = 3;
-const DEFAULT_VERIFY_DELAY_MS = 1000;
-
-const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * Attempt to claim `issue` for `self` via the GitHub-native primitive: post our
  * claim marker, read all markers, run the pure reconciler, and concede cleanly if
