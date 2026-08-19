@@ -220,19 +220,22 @@ describe("planPluginMcp against the real source tree", () => {
   // ADR 0147 §4 left each plugin declaring the one server it owns: navigator,
   // rsp and the default red-ui are switched off at the declaration, so what the
   // passthrough plans from the shipped tree is exactly that remainder.
-  it("plans the dev plugin's redskilled MCP and nothing beside it", () => {
+  // ADR 0147 §2 renamed the dev plugin's adapter to `rs_dev` (#4023). The
+  // launcher script keeps its own name — it is the same on-demand entry the
+  // passthrough has always resolved — so only the SERVER name moved.
+  it("plans the dev plugin's rs_dev MCP and nothing beside it", () => {
     const plans = planPluginMcp(REAL_PLUGINS, "dev");
-    expect(plans.map((p) => p.name)).toEqual(["redskilled"]);
-    const redskilled = plans[0]!;
-    expect(redskilled.entry.type).toBe("local");
+    expect(plans.map((p) => p.name)).toEqual(["rs_dev"]);
+    const rsDev = plans[0]!;
+    expect(rsDev.entry.type).toBe("local");
     // The source dev checkout ships the launcher; the resolved
     // command must point at the absolute script path.
-    expect(redskilled.entry.command[1]).toMatch(/redskilled-mcp\.sh$/);
+    expect(rsDev.entry.command[1]).toMatch(/redskilled-mcp\.sh$/);
   });
 
   it("keeps the installed RedSkills launcher in the runtime fallback chain", () => {
     const raw = readMcpJson(REAL_PLUGINS, "dev")!;
-    const body = raw.mcpServers!.redskilled!.args![1]!;
+    const body = raw.mcpServers!.rs_dev!.args![1]!;
     expect(body).toContain("$HOME/.codex/.tmp/marketplaces/red-skills");
   });
 
