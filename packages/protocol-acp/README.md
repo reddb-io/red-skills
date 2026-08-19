@@ -44,6 +44,7 @@ it encodes what an authority permits.
 | `compat.ts` | `ACP_PROTOCOL_VERSION`, `ACP_V2_DRAFT_REVISION`, `REDSKILLS_WIRE_MAJOR`, the two gates that refuse an incompatible peer, and the v1 → v2 session-update translation. |
 | `transport.ts` | Binding, connecting, streaming and tearing down the local ACP endpoint on both platforms. |
 | `methods.ts` | The `_redskills/*` registry and the params shape shared by the methods that take none. |
+| `go-dispatch.ts` | The `go_dispatch` params, answer, published schema and params validator. |
 
 ## Ownership guard
 

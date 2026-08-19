@@ -5,5 +5,6 @@
 // ACP v1/v2 compat and draft-revision gating, the RedSkills wire major, the
 // local Unix-socket / Named Pipe transport, and the `_redskills/*` methods.
 export * from "./compat.js";
+export * from "./go-dispatch.js";
 export * from "./methods.js";
 export * from "./transport.js";

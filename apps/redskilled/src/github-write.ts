@@ -24,6 +24,15 @@ export type RedskilledGithubWrite =
       readonly issue?: number;
       readonly title?: string;
       readonly body: string;
+      /**
+       * Labels stamped on a NEWLY opened Ticket.
+       *
+       * A lane label decides who may claim the Ticket, so stamping it in the
+       * SAME call that opens the Ticket is what keeps the window shut: a Ticket
+       * opened unlabelled and labelled a round-trip later is claimable by
+       * whoever lists the queue in between.
+       */
+      readonly labels?: readonly string[];
     };
 
 export interface RedskilledGithubWriteRequest {
@@ -120,7 +129,11 @@ function apiWriteRequest(
   return {
     lookup: `repos/${repository}/issues?state=all&per_page=100`,
     path: `repos/${repository}/issues`,
-    body: { title: write.title, body: marked(write.body) },
+    body: {
+      title: write.title,
+      body: marked(write.body),
+      ...(write.labels == null || write.labels.length === 0 ? {} : { labels: [...write.labels] }),
+    },
   };
 }
 
