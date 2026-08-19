@@ -4,10 +4,11 @@ import { chmod, cp, mkdir, readFile, realpath, rename, rm, stat, writeFile } fro
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// ADR 0147 §4 switched `navigator` and `rsp` off at the declaration, and a
+// native extension is a declaration like any other: shipping their bundles here
+// would start on Gemini exactly the two processes every other host stopped.
 const MCP_BUNDLES = [
-  ["navigator", "code-nav-mcp.bundle.min.mjs", ["code-nav-mcp.bundle.min.mjs", "code-nav.bundle.min.mjs"], []],
   ["redskilled", "redskilled-mcp.bundle.min.mjs", ["redskilled-mcp.bundle.min.mjs"], []],
-  ["rsp", "rsp.bundle.min.mjs", ["rsp.bundle.min.mjs"], ["mcp"]],
 ];
 
 function parseArgs(argv) {
