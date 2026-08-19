@@ -1,5 +1,5 @@
 // The lane label implies the run mode, enforced at the CLAIM (issue #3026).
-import { describe, expect, harness, it, processIssue } from "./process-issue.test-helpers.js";
+import { describe, expect, it } from "vitest";
 import { laneRunModeRefusal, requiredRunModeForLane } from "../src/core/lane-run-mode.js";
 
 describe("laneRunModeRefusal — the pure contract", () => {
@@ -28,34 +28,7 @@ describe("laneRunModeRefusal — the pure contract", () => {
   });
 });
 
-describe("processIssue — lane-to-mode enforcement at the claim (#3026)", () => {
-  it("refuses a scout-lane issue picked up by a plain run, before any claim or agent run", async () => {
-    const { deps, input, trace } = harness({
-      outcome: "done",
-      labels: ["ready-for-agent", "lane:scout"],
-    });
-    const result = await processIssue(deps, input);
-    expect(result.outcome).toBe("claim-lost");
-    expect(trace.iterLogs.join("\n")).toContain("lane-to-mode contract");
-    expect(trace.iterLogs.join("\n")).toContain("run_mode=scout");
-    // Nothing was claimed, labelled, commented on, or run.
-    expect(trace.runAgentCalls).toHaveLength(0);
-    expect(trace.labelEdits).toHaveLength(0);
-    expect(trace.comments).toHaveLength(0);
-  });
-
-  it("still runs the same issue read-only through the scout dispatch path", async () => {
-    const { deps, input, trace } = harness({
-      outcome: "done",
-      labels: ["lane:scout"],
-      laneLabel: "lane:scout",
-      runMode: "scout",
-    });
-    const result = await processIssue(deps, input);
-    expect(result.outcome).not.toBe("claim-lost");
-    expect(trace.iterLogs.join("\n")).not.toContain("lane-to-mode contract");
-    expect(trace.runAgentCalls.length).toBeGreaterThan(0);
-    // Read-only: the scout run never pushes a branch.
-    expect(trace.pushedAttempt).toHaveLength(0);
-  });
-});
+// The enforcement half of this file drove `processIssue`, the dev CLI's engine.
+// That body had no shipped caller after #4031 removed the binary, and it is
+// deleted now — so what remains here is the contract itself, which the Worker
+// carrying the dev skills is the one that has to honour.

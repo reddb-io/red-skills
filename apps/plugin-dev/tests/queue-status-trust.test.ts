@@ -5,7 +5,7 @@ import {
   type TrustPolicy,
   type TrustProvenance,
 } from "../src/core/trust-gate.js";
-import type { IssueCandidate } from "../src/core/session.js";
+import type { IssueCandidate } from "../src/types/work-candidate.js";
 
 interface QueueStatusError {
   kind: "trust-read";

@@ -13,7 +13,13 @@ const ROOT = join(import.meta.dirname, "..", "..", "..");
 // to @reddb-io/worker. What remains under `apps/plugin-dev` that a Worker still reaches
 // is process-issue, so that is what this guard sweeps — the rule (ADR 0138: the
 // Worker never fetches the Trunk) is unchanged, only the surface it can hide in.
-const WORKER_FETCH_ROOTS = ["apps/plugin-dev/src/core/process-issue"] as const;
+// The Worker body moved: `process-issue` was the dev CLI's engine and is
+// deleted (#4031), so the rule — ADR 0138: the Worker cannot fetch the Trunk —
+// is swept where the body lives now.
+const WORKER_FETCH_ROOTS = ["packages/worker/src/acp"] as const;
+// The policy module is the REFUSAL, not a reach: it has to spell `fetch` to
+// deny it, exactly as every other inventory in this repo spells what it bans.
+const POLICY_FILE = "terminal-policy.ts";
 const WORKER_TRUNK_FETCH = /\b(?:fetchBase|resolveFreshBase)\b|\[\s*["']fetch["']/g;
 
 interface Finding {
@@ -41,13 +47,24 @@ function findingsInSource(path: string, source: string): Finding[] {
 
 function workerTrunkFetchFindings(root = ROOT): Finding[] {
   return WORKER_FETCH_ROOTS.flatMap((dir) =>
-    sourceFiles(join(root, dir)).flatMap((path) =>
-      findingsInSource(relative(root, path), readFileSync(path, "utf8")),
-    ),
+    sourceFiles(join(root, dir))
+      .filter((path) => !path.endsWith(POLICY_FILE))
+      .flatMap((path) => findingsInSource(relative(root, path), readFileSync(path, "utf8"))),
   );
 }
 
 describe("the Worker cannot fetch the Trunk (ADR 0138, #3354)", () => {
+  it("denies the fetch in the Worker's own terminal policy", async () => {
+    const policy = await import("@reddb-io/worker/acp");
+    const denied = (policy as { WORKER_DENIED_TERMINAL_PROGRAMS?: readonly { program: string; subcommands: readonly string[] }[] })
+      .WORKER_DENIED_TERMINAL_PROGRAMS ?? [];
+    const git = denied.filter((entry) => entry.program === "git").flatMap((entry) => entry.subcommands);
+
+    // The rule is enforced where the body lives now: the refusal must SPELL the
+    // subcommand, which is why the policy module is excluded from the sweep.
+    expect(git).toContain("fetch");
+  });
+
   it("finds no Worker-side trunk-fetch surface in the live tree", () => {
     const findings = workerTrunkFetchFindings();
 
@@ -58,7 +75,7 @@ describe("the Worker cannot fetch the Trunk (ADR 0138, #3354)", () => {
   });
 
   it("names the offending file and line when the extinct surface returns", () => {
-    expect(findingsInSource("apps/plugin-dev/src/core/process-issue/new-worker.ts", "\n\nawait git.fetchBase(trunk);\n"))
-      .toEqual([{ offender: "apps/plugin-dev/src/core/process-issue/new-worker.ts:3", match: "fetchBase" }]);
+    expect(findingsInSource("packages/worker/src/acp/new-worker.ts", "\n\nawait git.fetchBase(trunk);\n"))
+      .toEqual([{ offender: "packages/worker/src/acp/new-worker.ts:3", match: "fetchBase" }]);
   });
 });

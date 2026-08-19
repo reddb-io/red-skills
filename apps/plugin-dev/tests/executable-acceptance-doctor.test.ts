@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditExecutableAcceptanceCriteria,
 } from "../src/core/executable-acceptance-doctor.js";
-import type { IssueCandidate } from "../src/core/session.js";
+import type { IssueCandidate } from "../src/types/work-candidate.js";
 
 function candidate(overrides: Partial<IssueCandidate>): IssueCandidate {
   return {

@@ -1,6 +1,6 @@
 import { LABEL_READY, LABEL_TYPE_SPEC } from "./triage-labels.js";
 import { lintExecutableAcceptanceCriteria } from "./executable-acceptance.js";
-import type { IssueCandidate } from "./session.js";
+import type { IssueCandidate } from "../types/work-candidate.js";
 
 type DoctorVerdict = "ok" | "warn" | "error";
 

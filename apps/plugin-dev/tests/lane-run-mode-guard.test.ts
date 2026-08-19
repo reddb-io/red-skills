@@ -23,7 +23,14 @@ import {
 } from "../src/core/lane-run-mode.js";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 
-const CLAIM_PATH = join(import.meta.dirname, "..", "src", "core", "process-issue", "lifecycle.ts");
+// The claim moved with the engine. `processIssue` — the dev CLI's body, which
+// used to hold this refusal — had no shipped caller after #4031 deleted the
+// binary and is gone from the tree; the live claim is the ACP Worker's ticket
+// loop, which checks the lane BEFORE claiming for the same reason the old one
+// did: a claim this Worker may not honour is one another Worker cannot take.
+const CLAIM_PATH = join(
+  import.meta.dirname, "..", "..", "..", "packages", "worker", "src", "acp", "ticket-loop.ts",
+);
 
 describe("lane-to-mode contract (#3026)", () => {
   it("declares exactly the lanes the castle drain isolates — no gap, no fiction", () => {
