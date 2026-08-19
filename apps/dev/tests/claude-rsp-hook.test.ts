@@ -1,3 +1,14 @@
+// claude-rsp-hook — the rsp host hook script after ADR 0147 §4 switched its
+// wiring OFF (issue #4010).
+//
+// The manifests stopped invoking `hooks/rsp-hook.sh`; the script itself stayed,
+// because the ticket switches the surface off and keeps the code. That leaves
+// two obligations, and this file holds both. The manifests must name the hook
+// NOWHERE — an absence is what nobody notices coming back, so it is asserted
+// rather than assumed. And the script must keep behaving, so the wrapper the
+// retired manifest entry used to spell is kept HERE, verbatim in shape, and the
+// behavioural suite runs against it exactly as before: a host that re-wires the
+// hook tomorrow gets the same guarantees it had yesterday.
 import {
   chmodSync,
   copyFileSync,
@@ -31,29 +42,44 @@ const rspHookCases: RspHookCase[] = [
   { name: "codex post-exec", runner: "codex", lifecycle: "PostToolUse", subcommand: "codex-post-exec" },
 ];
 
+/**
+ * The SessionStart/PreToolUse/PostToolUse wrapper the dev hook manifests used
+ * to declare, before ADR 0147 §4 removed the entries. It lives here now so the
+ * script keeps being exercised through the shape a host actually invokes it
+ * with — stdin spooled to a temp file, both timeouts honoured, an absent or
+ * non-executable script degrading to a silent success.
+ */
+function hostWrapper(runner: RspHookCase["runner"], subcommand: string, fallback: "json" | "exit"): string {
+  const rootVar = runner === "claude" ? "CLAUDE_PLUGIN_ROOT" : "CODEX_PLUGIN_ROOT";
+  const onFailure = fallback === "json" ? 'printf "{}"' : "true";
+  const onAbsent = fallback === "json" ? 'printf "{}"' : "exit 0";
+  return (
+    `sh -c 'tmp="$(mktemp)"; trap "rm -f \\"$tmp\\"" EXIT; ` +
+    `timeout "\${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat >"$tmp" 2>/dev/null || true; ` +
+    `hook="\${${rootVar}}/hooks/rsp-hook.sh"; ` +
+    `if [ -x "$hook" ]; then timeout "\${RED_SKILLS_HOOK_TIMEOUT_S:-3s}" "$hook" ${subcommand} <"$tmp" || ${onFailure}; ` +
+    `else ${onAbsent}; fi'`
+  );
+}
+
 function rspHookCommand(testCase: RspHookCase): string {
-  const manifestPath = join(repoRoot, "plugins", "dev", "hooks", `${testCase.runner}.hooks.json`);
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const groups = manifest.hooks[testCase.lifecycle] ?? [];
-  const hook = groups
-    .flatMap((entry: { hooks?: Array<{ command?: string }> }) => entry.hooks ?? [])
-    .find(
-      (entry: { command?: string }) =>
-        entry.command?.includes("rsp-hook.sh") && entry.command?.includes(testCase.subcommand),
-    );
-  if (!hook?.command) throw new Error(`${testCase.runner} rsp ${testCase.name} hook command not found`);
-  return hook.command;
+  return hostWrapper(testCase.runner, testCase.subcommand, "exit");
 }
 
 function rspPrimeCommand(runner: RspHookCase["runner"]): string {
+  return hostWrapper(runner, "prime", "json");
+}
+
+/** Every `command` string anywhere in one dev hook manifest. */
+function manifestCommands(runner: RspHookCase["runner"]): string[] {
   const manifestPath = join(repoRoot, "plugins", "dev", "hooks", `${runner}.hooks.json`);
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const groups = manifest.hooks.SessionStart ?? [];
-  const hook = groups
-    .flatMap((entry: { hooks?: Array<{ command?: string }> }) => entry.hooks ?? [])
-    .find((entry: { command?: string }) => entry.command?.includes("rsp-hook.sh") && entry.command?.includes(" prime"));
-  if (!hook?.command) throw new Error(`${runner} rsp SessionStart prime hook command not found`);
-  return hook.command;
+  const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>;
+  };
+  return Object.values(parsed.hooks ?? {})
+    .flat()
+    .flatMap((group) => group.hooks ?? [])
+    .map((entry) => entry.command ?? "");
 }
 
 function runHook(
@@ -305,5 +331,24 @@ describe("rsp host hooks", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the dev hook manifests no longer wire the rsp host hooks (ADR 0147 §4)", () => {
+  it.each(["claude", "codex"] as const)("%s: names rsp-hook.sh in no lifecycle", (runner) => {
+    const offenders = manifestCommands(runner).filter((command) => command.includes("rsp-hook.sh"));
+    expect(offenders, `${runner}.hooks.json still invokes the rsp host hook`).toEqual([]);
+  });
+
+  it.each(["claude", "codex"] as const)("%s: injects no rsp instructions at session start", (runner) => {
+    const offenders = manifestCommands(runner).filter((command) => command.includes("rsp-instructions"));
+    expect(offenders, `${runner}.hooks.json still injects the rsp ambient skill`).toEqual([]);
+  });
+
+  it.each(["claude", "codex"] as const)("%s: keeps the script itself installed", (runner) => {
+    // The wiring is what ADR 0147 §4 removes; the code stays for the fold-in,
+    // and the behavioural suite above is only meaningful while it does.
+    void runner;
+    expect(existsSync(join(repoRoot, "plugins", "dev", "hooks", "rsp-hook.sh"))).toBe(true);
   });
 });

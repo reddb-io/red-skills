@@ -226,9 +226,26 @@ describe("opencode-host generate (CLI smoke)", () => {
     const out = join(dir, "opencode.json");
     writeFileSync(config, "plugins:\n  dev:\n    enabled: true\n", "utf8");
     try {
-      // The real plugins tree is the source: navigator is the MCP under test
-      // and the fixture tree ships no .mcp.json.
-      const realPlugins = resolve(REPO, "plugins");
+      // A fixture tree that still DECLARES navigator. ADR 0147 §4 switched it
+      // off in the shipped `plugins/`, and a deferral test run against a tree
+      // with nothing to defer passes for the wrong reason.
+      const realPlugins = join(dir, "plugins");
+      mkdirSync(join(realPlugins, "dev", ".claude-plugin"), { recursive: true });
+      mkdirSync(join(realPlugins, "dev", "hooks"), { recursive: true });
+      writeFileSync(join(realPlugins, "dev", ".claude-plugin", "plugin.json"), "{}\n", "utf8");
+      writeFileSync(
+        join(realPlugins, "dev", ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            navigator: { command: "sh", args: ["-c", 'exec bash "$root/hooks/code-nav-mcp.sh"'] },
+            redskilled: { command: "sh", args: ["-c", 'exec bash "$root/hooks/redskilled-mcp.sh"'] },
+          },
+        }),
+        "utf8",
+      );
+      for (const launcher of ["code-nav-mcp.sh", "redskilled-mcp.sh"]) {
+        writeFileSync(join(realPlugins, "dev", "hooks", launcher), "#!/usr/bin/env bash\n", "utf8");
+      }
 
       const redcode = runGenerate(
         ["--config", config, "--plugins-root", realPlugins, "--out", out, "--host", "redcode", "--no-slice-2"],

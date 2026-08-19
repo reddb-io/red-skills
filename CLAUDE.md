@@ -112,20 +112,6 @@ created by that daemon through its provisioner or canonical log writer (ADR
 launchers) with a mirrored inline copy in each of memory/brain's `bootstrap.mjs`;
 keep the three in lockstep.
 
-## Token-efficient terminal work
-
-`rsp` is the repo-owned surface for token-efficient terminal work. Prefer the explicit wrappers when summarized output is enough:
-
-- `rsp git status`, `rsp git diff`, `rsp git log`, `rsp git commit`, `rsp git push`
-- `rsp gh pr list`, `rsp gh pr view`, `rsp gh issue list`, `rsp gh issue view`, `rsp gh run list`, `rsp gh run view`
-- `rsp vitest`, `rsp vitest run`, `rsp cargo test`
-
-Use `--brief` for compact summaries that keep enough inline context for normal debugging. Use `--terse` for large or repetitive output; lossy output mints an `el:<id>` handle, and `rsp show el:<id>` writes the original bytes back to stdout. Large `git diff` and `git log` output is threshold-gated and truncates by default; pass `--full` when exact inline output is required.
-
-Use `rsp wait` as the standard waiting primitive for PR checks, GitHub Actions runs, releases, and local async commands. Never hand-write sleep polling loops; run `rsp wait` in a background shell and treat process exit as the signal.
-
-Use raw commands when exact stdout/stderr is the behavior under test, when a wrapper does not support the command shape, or when resolving low-level git conflicts where every byte matters. In repos whose `.red/config.yaml` sets `rsp.enabled: true`, the pre-exec hook may rewrite simple supported commands to their `rsp` wrappers; absent that opt-in, call `rsp` explicitly. The ambient host instructions that replace legacy per-host terminal guidance are tracked in #1415 and should ship from the generated `apps/rsp/generated/AMBIENT-SKILL.md` surface.
-
 ## Repo-wide invariants
 
 Some constraints span the whole repo but live in one package. They run in **every** gate run — including a cone-scoped one that touched a single package — via `pnpm -C apps/dev test:invariants`. The declared list is `apps/dev/src/core/repo-invariants.ts`; adding one is a single entry there plus the script it names.

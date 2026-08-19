@@ -159,10 +159,13 @@ describe("resolveImplementerProjection", () => {
 });
 
 describe("prepared Codex implementer projection", () => {
-  it("materializes only navigator when user and project fixtures contain unknown MCPs", () => {
+  it("materializes no MCP at all when nothing is enabled, whatever the fixtures declare", () => {
+    // ADR 0147 §4 left the dev plugin with no implementer-mountable server:
+    // an inner agent with no optional surface enabled gets an EMPTY map, not
+    // the navigator that used to ride along as a fixed essential.
     const dev = pluginFixture("dev");
     writeFileSync(join(dev, ".mcp.json"), JSON.stringify({ mcpServers: {
-      navigator: { command: "node", args: ["navigator.mjs"] },
+      redskilled: { command: "node", args: ["redskilled.mjs"] },
       "project-unknown": { command: "node", args: ["unknown.mjs"] },
     } }));
     const attemptDir = mkdtempSync(join(tmpdir(), "implementer-attempt-"));
@@ -173,7 +176,7 @@ describe("prepared Codex implementer projection", () => {
     expect(overrides).toContain("features.plugins=false");
     expect(overrides).toContain("features.apps=false");
     expect(overrides).toContain("features.hooks=false");
-    expect(overrides).toContain("mcp_servers={navigator=");
+    expect(overrides).toContain("mcp_servers={}");
     expect(overrides).not.toContain("project-unknown");
     expect(overrides).not.toContain("user-unknown");
     expect(overrides).toContain("skills.config=[");
@@ -184,13 +187,12 @@ describe("prepared Codex implementer projection", () => {
     const memory = pluginFixture("memory");
     const brain = pluginFixture("brain");
     writeFileSync(join(dev, ".mcp.json"), JSON.stringify({ mcpServers: {
-      navigator: { command: "node", args: ["navigator.mjs"] },
-      rsp: { command: "node", args: ["rsp.mjs"] },
       redskilled: { command: "node", args: ["redskilled.mjs"] },
     } }));
+    // No `red-ui` stanza: the viewer is composed from the config gate below,
+    // which is the whole point of it leaving the shipped declaration.
     writeFileSync(join(memory, ".mcp.json"), JSON.stringify({ mcpServers: {
       "red-memory": { command: "node", args: ["memory.mjs"] },
-      "red-ui": { command: "node", args: ["ui.mjs"] },
     } }));
     writeFileSync(join(brain, ".mcp.json"), JSON.stringify({ mcpServers: {
       brain: { command: "node", args: ["brain.mjs"] },
@@ -204,11 +206,11 @@ describe("prepared Codex implementer projection", () => {
     });
     const mcp = prepared.runtime.codexConfigOverrides.find((override) => override.startsWith("mcp_servers="));
 
-    expect(mcp).toContain("navigator=");
     expect(mcp).toContain("red-memory=");
     expect(mcp).toContain("brain=");
     expect(mcp).toContain("red-ui=");
-    expect(mcp).toContain("rsp=");
+    expect(mcp).not.toContain("navigator=");
+    expect(mcp).not.toContain("rsp=");
     expect(mcp).not.toContain("redskilled=");
   });
 });

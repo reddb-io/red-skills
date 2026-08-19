@@ -114,8 +114,8 @@ async function validateNativeManifest(extensionRoot) {
   }
   assertObject(manifest.mcpServers, "gemini-extension.json mcpServers");
   const serverNames = Object.keys(manifest.mcpServers).sort();
-  if (serverNames.join(",") !== "navigator,redskilled,rsp") {
-    throw new Error("gemini-extension.json must declare exactly navigator, redskilled, and rsp MCP servers");
+  if (serverNames.join(",") !== "redskilled") {
+    throw new Error("gemini-extension.json must declare exactly the redskilled MCP server");
   }
   for (const name of serverNames) {
     const server = manifest.mcpServers[name];

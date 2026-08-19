@@ -7,7 +7,7 @@ export type ImplementerConfigValues = Readonly<Record<string, string>>;
 
 export interface ImplementerEnabledSurfaces {
   plugins: Array<"dev" | "memory" | "brain">;
-  mcp: Array<"navigator" | "red-memory" | "brain" | "red-ui" | "rsp">;
+  mcp: Array<"red-memory" | "brain" | "red-ui">;
   rsp: boolean;
 }
 
@@ -29,10 +29,7 @@ export type ImplementerSpawnConstraint =
           "dev@red-skills" | "memory@red-skills" | "brain@red-skills",
           boolean
         >;
-        mcpServers: Record<
-          "navigator" | "redskilled" | "red-memory" | "brain" | "red-ui" | "rsp",
-          boolean
-        >;
+        mcpServers: Record<"redskilled" | "red-memory" | "brain" | "red-ui", boolean>;
         hooks: false;
         rsp: boolean;
       };
@@ -41,10 +38,7 @@ export type ImplementerSpawnConstraint =
       kind: "opencode-config";
       config: {
         plugins: ImplementerEnabledSurfaces["plugins"];
-        mcp: Record<
-          "navigator" | "redskilled" | "red-memory" | "brain" | "red-ui" | "rsp",
-          { enabled: boolean }
-        >;
+        mcp: Record<"redskilled" | "red-memory" | "brain" | "red-ui", { enabled: boolean }>;
         pluginEvents: readonly [];
         rsp: boolean;
       };
@@ -129,12 +123,13 @@ const codexImplementerEnvironment: ImplementerProjector = (enabled) => ({
       "brain@red-skills": enabled.plugins.includes("brain"),
     },
     mcpServers: {
-      navigator: true,
+      // `dev` stays enabled for the inner agent, so its one declared server is
+      // switched off by NAME here rather than by omission — a map that stops
+      // mentioning it hands the inner agent a daemon client nobody granted.
       redskilled: false,
       "red-memory": enabled.mcp.includes("red-memory"),
       brain: enabled.mcp.includes("brain"),
       "red-ui": enabled.mcp.includes("red-ui"),
-      rsp: enabled.mcp.includes("rsp"),
     },
     hooks: false,
     rsp: enabled.rsp,
@@ -146,12 +141,10 @@ const openCodeImplementerEnvironment: ImplementerProjector = (enabled) => ({
   config: {
     plugins: [...enabled.plugins],
     mcp: {
-      navigator: { enabled: true },
       redskilled: { enabled: false },
       "red-memory": { enabled: enabled.mcp.includes("red-memory") },
       brain: { enabled: enabled.mcp.includes("brain") },
       "red-ui": { enabled: enabled.mcp.includes("red-ui") },
-      rsp: { enabled: enabled.mcp.includes("rsp") },
     },
     pluginEvents: [],
     rsp: enabled.rsp,
@@ -222,12 +215,13 @@ function enabledImplementerSurfaces(
       ...(memory ? ["memory" as const] : []),
       ...(brain ? ["brain" as const] : []),
     ],
+    // ADR 0147 §4 switched `navigator` and `rsp` off at the declaration, so
+    // neither is a surface an inner agent can be granted any more: every entry
+    // left is strict opt-in, and the fixed essentials are the plugins alone.
     mcp: [
-      "navigator",
       ...(memory ? ["red-memory" as const] : []),
       ...(brain ? ["brain" as const] : []),
       ...(redUi ? ["red-ui" as const] : []),
-      ...(rsp ? ["rsp" as const] : []),
     ],
     rsp,
   };
@@ -235,7 +229,7 @@ function enabledImplementerSurfaces(
 
 /**
  * Project the repo's existing activation gates onto one runner's native
- * discovery constraint. Dev + navigator are the fixed implementer essentials;
+ * discovery constraint. The dev plugin is the fixed implementer essential;
  * every optional surface is strict `enabled: true`, with no payload allowlist.
  */
 export function projectImplementerEnvironment(

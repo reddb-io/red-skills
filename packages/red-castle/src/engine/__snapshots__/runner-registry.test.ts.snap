@@ -9,9 +9,7 @@ exports[`engine runner registry > projects the exact claude implementer constrai
   "kind": "claude-settings",
   "settings": {
     "hooks": [],
-    "mcpServers": [
-      "navigator",
-    ],
+    "mcpServers": [],
     "plugins": [
       "dev",
     ],
@@ -30,7 +28,6 @@ exports[`engine runner registry > projects the exact claude implementer constrai
   "settings": {
     "hooks": [],
     "mcpServers": [
-      "navigator",
       "red-memory",
     ],
     "plugins": [
@@ -52,7 +49,6 @@ exports[`engine runner registry > projects the exact claude implementer constrai
   "settings": {
     "hooks": [],
     "mcpServers": [
-      "navigator",
       "brain",
     ],
     "plugins": [
@@ -74,7 +70,6 @@ exports[`engine runner registry > projects the exact claude implementer constrai
   "settings": {
     "hooks": [],
     "mcpServers": [
-      "navigator",
       "red-ui",
     ],
     "plugins": [
@@ -94,10 +89,7 @@ exports[`engine runner registry > projects the exact claude implementer constrai
   "kind": "claude-settings",
   "settings": {
     "hooks": [],
-    "mcpServers": [
-      "navigator",
-      "rsp",
-    ],
+    "mcpServers": [],
     "plugins": [
       "dev",
     ],
@@ -112,11 +104,9 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "navigator": true,
       "red-memory": false,
       "red-ui": false,
       "redskilled": false,
-      "rsp": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -135,11 +125,9 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "navigator": true,
       "red-memory": true,
       "red-ui": false,
       "redskilled": false,
-      "rsp": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -158,11 +146,9 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": true,
-      "navigator": true,
       "red-memory": false,
       "red-ui": false,
       "redskilled": false,
-      "rsp": false,
     },
     "plugins": {
       "brain@red-skills": true,
@@ -181,11 +167,9 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "navigator": true,
       "red-memory": false,
       "red-ui": true,
       "redskilled": false,
-      "rsp": false,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -204,11 +188,9 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "navigator": true,
       "red-memory": false,
       "red-ui": false,
       "redskilled": false,
-      "rsp": true,
     },
     "plugins": {
       "brain@red-skills": false,
@@ -228,9 +210,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "navigator": {
-        "enabled": true,
-      },
       "red-memory": {
         "enabled": false,
       },
@@ -238,9 +217,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "redskilled": {
-        "enabled": false,
-      },
-      "rsp": {
         "enabled": false,
       },
     },
@@ -261,9 +237,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "navigator": {
-        "enabled": true,
-      },
       "red-memory": {
         "enabled": true,
       },
@@ -271,9 +244,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "redskilled": {
-        "enabled": false,
-      },
-      "rsp": {
         "enabled": false,
       },
     },
@@ -295,9 +265,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": true,
       },
-      "navigator": {
-        "enabled": true,
-      },
       "red-memory": {
         "enabled": false,
       },
@@ -305,9 +272,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "redskilled": {
-        "enabled": false,
-      },
-      "rsp": {
         "enabled": false,
       },
     },
@@ -329,9 +293,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "navigator": {
-        "enabled": true,
-      },
       "red-memory": {
         "enabled": false,
       },
@@ -339,9 +300,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": true,
       },
       "redskilled": {
-        "enabled": false,
-      },
-      "rsp": {
         "enabled": false,
       },
     },
@@ -362,9 +320,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "navigator": {
-        "enabled": true,
-      },
       "red-memory": {
         "enabled": false,
       },
@@ -373,9 +328,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       },
       "redskilled": {
         "enabled": false,
-      },
-      "rsp": {
-        "enabled": true,
       },
     },
     "pluginEvents": [],
@@ -390,9 +342,7 @@ exports[`engine runner registry > projects the exact opencode implementer constr
 
 exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 1`] = `
 {
-  "extensions": [
-    "navigator",
-  ],
+  "extensions": [],
   "flags": [
     "--no-extensions",
     "--no-skills",
@@ -410,7 +360,6 @@ exports[`engine runner registry > projects the exact pi implementer constraint f
 exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 2`] = `
 {
   "extensions": [
-    "navigator",
     "red-memory",
   ],
   "flags": [
@@ -431,7 +380,6 @@ exports[`engine runner registry > projects the exact pi implementer constraint f
 exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 3`] = `
 {
   "extensions": [
-    "navigator",
     "brain",
   ],
   "flags": [
@@ -452,7 +400,6 @@ exports[`engine runner registry > projects the exact pi implementer constraint f
 exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 4`] = `
 {
   "extensions": [
-    "navigator",
     "red-ui",
   ],
   "flags": [
@@ -471,10 +418,7 @@ exports[`engine runner registry > projects the exact pi implementer constraint f
 
 exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 5`] = `
 {
-  "extensions": [
-    "navigator",
-    "rsp",
-  ],
+  "extensions": [],
   "flags": [
     "--no-extensions",
     "--no-skills",
