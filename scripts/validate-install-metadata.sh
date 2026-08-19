@@ -111,9 +111,12 @@ validate_plugin() {
           || fail "$plugin: navigator MCP manifest must use the on-demand launcher"
       fi
       [[ -x "$dir/hooks/redskilled-mcp.sh" ]] \
-        || fail "$plugin: redskilled MCP launcher must exist and be executable"
-      jq -e '.mcpServers["redskilled"].args[]? | contains("redskilled-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
-        || fail "$plugin: redskilled MCP manifest must use the on-demand launcher"
+        || fail "$plugin: rs_dev MCP launcher must exist and be executable"
+      # ADR 0147 §2 renamed the dev plugin's adapter `redskilled` -> `rs_dev`
+      # (#4023). The LAUNCHER keeps its own filename — it is the same on-demand
+      # entry — so only the server name moved, and the assertion follows it.
+      jq -e '.mcpServers["rs_dev"].args[]? | contains("redskilled-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
+        || fail "$plugin: rs_dev MCP manifest must use the on-demand launcher"
     fi
   fi
 
