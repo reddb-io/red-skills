@@ -16,7 +16,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { ensureRedskilledDaemon } from "./client.js";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
-import { REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
+import { REDSKILLS_ACP_METHODS, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import type { ProjectStatusContext } from "./project-control.js";
 
@@ -67,9 +67,9 @@ export interface ConnectRedskillsProjectAcpOptions {
 }
 
 const PROJECT_CONTROL_METHOD = {
-  drain: "_redskills/project_drain",
-  stop: "_redskills/project_stop",
-  status: "_redskills/project_status",
+  drain: REDSKILLS_ACP_METHODS.projectDrain,
+  stop: REDSKILLS_ACP_METHODS.projectStop,
+  status: REDSKILLS_ACP_METHODS.projectStatus,
 } as const;
 
 /** Connect a public adapter to redskilled through ACP and no private daemon wire. */

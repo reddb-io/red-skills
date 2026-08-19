@@ -7,7 +7,7 @@ import { client, methods, type ClientConnection } from "@agentclientprotocol/sdk
 import { afterEach, describe, expect, it } from "vitest";
 import type { RedskillsProjectStatusSnapshot } from "../src/acp-client.js";
 import { startRedskillsAcpControlPlane } from "../src/acp-control-plane.js";
-import { socketStream } from "../src/acp-socket.js";
+import { socketStream } from "@reddb-io/protocol-acp";
 import { resolveRedskilledPaths } from "../src/paths.js";
 import { resolveAcpProjectIdentity } from "../src/project-workspace.js";
 

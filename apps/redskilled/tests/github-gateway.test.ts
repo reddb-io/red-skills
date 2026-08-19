@@ -23,7 +23,7 @@ import {
 import { bindAcpProjectGithubRead } from "../src/acp-github.js";
 import { decode } from "@reddb-io/toon";
 import { startRedskillsAcpControlPlane } from "../src/acp-control-plane.js";
-import { socketStream } from "../src/acp-socket.js";
+import { socketStream } from "@reddb-io/protocol-acp";
 import { resolveRedskilledPaths } from "../src/paths.js";
 
 const PROJECT: RedskilledGithubProjectAuthority = {

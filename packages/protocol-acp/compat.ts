@@ -1,3 +1,14 @@
+// compat — ACP v1/v2 negotiation and the RedSkills wire major (ADR 0145 §2-3).
+//
+// ACP v2 draft revisions share `protocolVersion: 2` while changing
+// incompatibly, so the number on the wire is not enough to tell two peers
+// apart; every revision RedSkills ships names itself in `_meta.redskills`. The
+// RedSkills wire major is a SECOND, independent axis: two peers can agree on
+// ACP and still disagree on RedSkills workflow traffic.
+//
+// This module is the one home of both answers. A private copy in the daemon or
+// in an adapter is how the two ends of one socket come to disagree about what
+// they just negotiated.
 import { RequestError, type SessionNotification } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 

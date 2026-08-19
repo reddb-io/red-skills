@@ -6,6 +6,7 @@ import {
   type AgentConnection,
 } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
+import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { RedskilledDemandOutcome } from "./demand-loop.js";
 import type { RedskilledHostState } from "./host-state.js";
@@ -13,9 +14,9 @@ import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { REDSKILLED_QUEUE_STALENESS_MS } from "./queue-discovery.js";
 
 export const PROJECT_CONTROL_METHODS = [
-  "_redskills/project_drain",
-  "_redskills/project_stop",
-  "_redskills/project_status",
+  REDSKILLS_ACP_METHODS.projectDrain,
+  REDSKILLS_ACP_METHODS.projectStop,
+  REDSKILLS_ACP_METHODS.projectStatus,
 ] as const;
 
 export type ProjectControlOperation = "drain" | "stop";

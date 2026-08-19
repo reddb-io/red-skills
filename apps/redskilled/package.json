@@ -56,6 +56,7 @@
     "@agentclientprotocol/sdk": "1.3.0",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
+    "@reddb-io/protocol-acp": "workspace:*",
     "@reddb-io/red-castle": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*",

@@ -7,7 +7,7 @@ import {
   type PromptResponse,
 } from "@agentclientprotocol/sdk";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
-import { removeAcpEndpoint } from "./acp-socket.js";
+import { removeAcpEndpoint } from "@reddb-io/protocol-acp";
 
 export interface ActiveWorkflowWorker {
   readonly workerId: string;
