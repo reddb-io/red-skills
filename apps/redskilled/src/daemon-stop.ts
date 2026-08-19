@@ -27,7 +27,6 @@ import type { RedskilledWorkerView } from "./host-state.js";
 export type RedskilledStopReason =
   | "requested"
   | "signal"
-  | "idle"
   | "replaced"
   | "unreachable"
   | "not-running";
@@ -191,7 +190,6 @@ function toStopWorkerView(worker: RedskilledWorkerView): RedskilledStopWorkerVie
 export function describeRedskilledStopReason(reason: RedskilledStopReason): string {
   if (reason === "requested") return "an operator asked for it";
   if (reason === "signal") return "the daemon was signalled";
-  if (reason === "idle") return "the daemon was idle and held nothing";
   if (reason === "replaced") return "a newer published bundle is taking the session over";
   if (reason === "unreachable") return "the daemon held the socket but could not be reached";
   return "no daemon was running";

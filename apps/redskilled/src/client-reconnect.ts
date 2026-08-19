@@ -6,6 +6,7 @@
  * absent first-time daemon into a replacement wait.
  */
 import { redskilledPresenceAdvice, type RedskilledPresence } from "./daemon-presence.js";
+import { REDSKILLED_PROVISION_FIX } from "./provision-fix.js";
 
 /** How long an established client follows a daemon through replacement. */
 export const DEFAULT_REDSKILLED_RECONNECT_TIMEOUT_MS = 30_000;
@@ -28,6 +29,29 @@ export class RedskilledUnreachableError extends Error {
       }${presence?.kind === "held-unresponsive" ? `. ${redskilledPresenceAdvice(presence)}` : ""}`,
     );
     this.name = "RedskilledUnreachableError";
+  }
+}
+
+/**
+ * No daemon, and none this client may create — the fail-closed end of a reach.
+ *
+ * **This is the whole of ADR 0150 §4 on the client side.** A client that found
+ * no daemon used to spawn one, which handed whichever bundle the client happened
+ * to carry the choice of which daemon the machine runs (ADR 0143's "resident by
+ * accident"). The daemon is an OS service now, so the absence of one is an
+ * operator's unfinished setup rather than a gap for a client to fill, and the
+ * error carries the ONE repair sentence rather than a second spelling of it.
+ */
+export class RedskilledNotProvisionedError extends RedskilledUnreachableError {
+  constructor(socketPath: string) {
+    super(
+      socketPath,
+      new Error(
+        "this host has no redskilled service installed, and a client never starts one " +
+          `(ADR 0150 §4) — ${REDSKILLED_PROVISION_FIX}`,
+      ),
+    );
+    this.name = "RedskilledNotProvisionedError";
   }
 }
 

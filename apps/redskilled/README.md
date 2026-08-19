@@ -142,11 +142,12 @@ operator-owned.
 | Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
 | Finding processes a crashed daemon left outside its Worker set | `src/orphan-reaper.ts` — pure candidate selection, `/proc` census, PID-reuse guard |
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
-| Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
-| Which file a spawn runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
-| Reviving a daemon nobody asked for | `src/supervision.ts` — the optional user unit, `Restart=always` |
+| Reaching the daemon | `src/client.ts` — never starts one; fails closed with the repair hint |
+| Starting the daemon | `src/daemon-birth.ts` — the provisioner's own start, through the service when there is one |
+| Which file a start runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
+| Reviving a daemon nobody asked for | `src/supervision.ts` — the always-on user unit, `Restart=always` |
 | Becoming the version that is published | `src/self-replace.ts` — decide, find the successor, hand the session over |
-| The home, and the route to a reachable daemon | `src/provision.ts` — the ONE creator of `~/.red/redskilled/`, the pure provisioning audit, and the optional user unit |
+| The home, and the route to a reachable daemon | `src/provision.ts` — the ONE creator of `~/.red/redskilled/`, the pure provisioning audit, and the user unit |
 | Clearing the sessions that died | `src/reclaim.ts` — the lease decides, another tool's directory is left alone |
 
 ## Behaviours worth knowing
@@ -282,16 +283,19 @@ operator-owned.
   what a `.red/config.yaml` is — so only decided values cross the socket. A
   malformed value is named on stderr and ignored, never fatal: this line renders
   on every turn, and a blank statusline is the harder failure to diagnose.
-- **Supervision is optional; auto-spawn is the floor only without it.** The `unit install`
-  command writes a user unit whose `ExecStart` is the very argv a client spawn builds —
-  one builder, so a flag cannot reach one start path and miss the other — plus
-  `Restart=always`, which revives a daemon after either a failed or clean exit *without a
-  client having to want work first*. Once installed, the unit is the sole birth
-  authority: a cold client asks systemd to start it instead of racing it with a
-  direct spawn. Restart bursts are bounded (`5` starts per `60` seconds), so a
-  stale holder becomes a visible failed unit rather than an unbounded storm. A host that never installs it is a supported
-  configuration and the status says so (`floor: "auto-spawn"`); the binary, the
-  socket and the contract are identical either way.
+- **The daemon is always on, and no client starts one** (ADR 0150 §4). `provision`
+  writes a user unit whose `ExecStart` is the one serve argv every start path
+  builds — one builder, so a flag cannot reach one start path and miss the other
+  — plus `Restart=always`, which revives a daemon after either a failed or clean
+  exit. The unit is the sole birth authority: a cold client asks systemd to start
+  it, and a client that finds neither daemon nor unit raises
+  `RedskilledNotProvisionedError` carrying the one repair sentence rather than
+  launching a process of its own. There is no idle exit and no idle knob — an
+  idle daemon handed the next client's bundle the choice of which daemon a whole
+  machine ran (ADR 0143). Restart bursts are bounded (`5` starts per `60`
+  seconds), so a stale holder becomes a visible failed unit rather than an
+  unbounded storm. A host with no `systemd --user` session is provisioned
+  directly instead; the binary, the socket and the contract are identical.
 - **A superseded daemon replaces itself, and a Worker never notices.** The daemon
   resolves the published version on its own tick and, when a newer one exists,
   finds a successor that runs *exactly that version*, flushes the lane, lets go
@@ -416,10 +420,10 @@ RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
 $RS provision                  # start the daemon, print the audit
 $RS provision --check          # the read-only half — creates nothing, starts nothing
 $RS provision --workspace host # a lane under the home: provision the home too
-$RS provision --install-unit   # also write the optional supervising user unit
+$RS provision --no-unit        # skip the OS service; keep the host's own arrangement
 ```
 
-- **The daemon owns its state home.** The socket, spawn lock and lease stay in the session
+- **The daemon owns its state home.** The socket and lease stay in the session
   runtime directory; the durable event/narrative lane and registration-intent
   snapshot are host-scoped under `~/.red/redskilled/`. A successor therefore
   restores the same project drains even if XDG availability changes its socket
@@ -446,9 +450,9 @@ $RS provision --install-unit   # also write the optional supervising user unit
   **without spawning** the daemon it reports on. An absent home is two states,
   not one: absent-and-unneeded is `ok` with the declaration that says so, and
   only absent-and-needed is a finding.
-- **The optional unit is optional.** It adds `Restart=always` over the same
-  binary, socket and contract auto-spawn uses (rule 7), and becomes the only
-  start authority while installed. An absent unit is
+- **The unit is the birth authority.** It adds `Restart=always` over the same
+  binary, socket and contract every start path uses, and is the only way the
+  daemon is born on a host that can hold one. An absent unit is
   reported as `ok`. An installed and enabled but inactive unit is reported as a
   finding. An existing unit file is never rewritten by provisioning; an in-major
   self-replacement atomically overrides only `ExecStart` through a managed drop-in.
@@ -465,7 +469,6 @@ plugins:
       worker_ceiling: 6
       memory_ceiling: 8G
       validation_ceiling: 2
-      idle_ms: 300000
       evidence_ttl_ms: 2592000000
 ```
 
@@ -476,14 +479,13 @@ counterparts are `REDSKILLED_WORKER_CEILING` and `REDSKILLED_MEMORY_CEILING`.
 full-suite semaphore. When absent, its capacity is the tightest of half the
 available CPU count, the resolved memory ceiling in 2 GiB shares, and the
 Worker ceiling; every dimension retains a minimum capacity of one.
-`REDSKILLED_IDLE_MS` follows the same precedence for idle time.
 `evidence_ttl_ms` (or `REDSKILLED_EVIDENCE_TTL_MS`) is how long a dead Worker's
 evidence lane under `~/.red/tmp/workers/<id>/` survives — its log, the runner's
 session artifact and the daemon's verdict — and defaults to thirty days. `0`
 keeps nothing; a live Worker's lane is never pruned at any TTL. The daemon's own
 log stays in `~/.red/redskilled/`, which this TTL never touches. `host-state`
 reports the resolved `ceiling` and the `memory_source` / `worker_source` that won,
-so a restart or an auto-spawn from another project remains directly auditable.
+so a restart or a service start remains directly auditable.
 
 ### Counters, and where they may be pushed
 
@@ -546,7 +548,7 @@ $RS statusline --no-verbose          # one read without the second lines
 ```bash
 $RS unit status                      # is a supervisor installed? (absent is fine)
 $RS unit install                     # write the user unit and enable it now
-$RS unit uninstall                   # remove it; auto-spawn stays the floor
+$RS unit uninstall                   # remove it; nothing starts the daemon afterwards
 ```
 
 ```bash

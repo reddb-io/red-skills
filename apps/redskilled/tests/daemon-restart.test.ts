@@ -86,7 +86,7 @@ describe("a daemon restart re-attaches to its live Workers", () => {
   it("leaves them running and reports them with their original project labels", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const first = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: pidLiveness });
+    const first = await startRedskilledDaemon({ paths, liveness: pidLiveness });
     running.push(first);
 
     const started = first.startWorker(longLivedSpec(workspace));
@@ -98,7 +98,7 @@ describe("a daemon restart re-attaches to its live Workers", () => {
     // to do rather than a thing to mourn.
     expect(pidLiveness(started.worker)).toBe(true);
 
-    const second = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: pidLiveness });
+    const second = await startRedskilledDaemon({ paths, liveness: pidLiveness });
     running.push(second);
 
     const state = second.hostState();
@@ -120,7 +120,6 @@ describe("a daemon restart re-attaches to its live Workers", () => {
     const asked: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: (worker) => {
         asked.push(worker.unit ?? `pid:${worker.pid}`);
         return worker.unit === unitWorker.unit;
@@ -138,7 +137,7 @@ describe("a daemon restart re-attaches to its live Workers", () => {
     const lane = createRedskilledEventLane(paths.eventLanePath);
     await lane.record({ event: "worker-birth", worker: workerView({ worker_id: "w-gone" }), ts: "2026-07-29T00:00:00.000Z" });
 
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: () => false });
+    const daemon = await startRedskilledDaemon({ paths, liveness: () => false });
     running.push(daemon);
     await daemon.flushEvents();
 
@@ -154,7 +153,7 @@ describe("budget accounting survives the restart", () => {
   it("reports the same totals after the restart as before it", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const first = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: pidLiveness });
+    const first = await startRedskilledDaemon({ paths, liveness: pidLiveness });
     running.push(first);
 
     const started = first.startWorker(longLivedSpec(workspace));
@@ -163,7 +162,7 @@ describe("budget accounting survives the restart", () => {
     const before = first.hostState().budget_accounting;
     await first.stop();
 
-    const second = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: pidLiveness });
+    const second = await startRedskilledDaemon({ paths, liveness: pidLiveness });
     running.push(second);
 
     expect(second.hostState().budget_accounting).toEqual(before);
@@ -195,7 +194,6 @@ describe("the host event lane", () => {
     const workspace = await scratch("redskilled-workspace-");
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: pidLiveness,
       budgetGraceMs: 0,
       signalWorkerForBudgetGrace: () => true,
@@ -231,7 +229,6 @@ describe("the host event lane", () => {
     const workspace = await scratch("redskilled-workspace-");
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: pidLiveness,
       stopWorker: () => true,
     });
@@ -323,7 +320,7 @@ describe("the host event lane", () => {
     // The death was the record still in flight, so the Worker is believed alive.
     await truncate(paths.eventLanePath, whole.lastIndexOf("\n") - 3);
 
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: () => true });
+    const daemon = await startRedskilledDaemon({ paths, liveness: () => true });
     running.push(daemon);
 
     expect(daemon.hostState().workers.map((worker) => worker.worker_id)).toEqual(["w-live"]);
@@ -379,7 +376,7 @@ describe("a sweep retires a re-attached Worker the host stopped confirming", () 
     await lane.record({ event: "worker-birth", worker: workerView({ worker_id: "w-fading" }), ts: "2026-07-29T00:00:00.000Z" });
 
     let alive = true;
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, liveness: () => alive });
+    const daemon = await startRedskilledDaemon({ paths, liveness: () => alive });
     running.push(daemon);
     expect(daemon.workerCount()).toBe(1);
 
@@ -389,7 +386,6 @@ describe("a sweep retires a re-attached Worker the host stopped confirming", () 
 
     expect(retired.map((worker) => worker.worker_id)).toEqual(["w-fading"]);
     expect(daemon.workerCount()).toBe(0);
-    expect(daemon.evaluateIdle()).toBe("exited");
     const events = await readRedskilledEvents(paths.eventLanePath);
     expect(events.at(-1)!.event).toBe("worker-death");
   });

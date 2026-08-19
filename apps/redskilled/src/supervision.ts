@@ -76,7 +76,6 @@ export interface PlanRedskilledUnitOptions {
   readonly override?: RedskilledEntryOverride;
   /** Where to look for the published bundle when no command is stated. */
   readonly entryLookup?: RedskilledEntryLookup;
-  readonly idleMs?: number;
   /**
    * The version this daemon IS, so a cache-resident bundle can be copied
    * somewhere durable before the unit names it.
@@ -117,7 +116,7 @@ export function planRedskilledUnit(
   );
   const args = [
     ...entry.args,
-    ...redskilledServeArgv(paths, options.idleMs == null ? {} : { idleMs: options.idleMs }),
+    ...redskilledServeArgv(paths),
   ];
   return {
     unitName: REDSKILLED_UNIT_NAME,
@@ -181,8 +180,7 @@ export function repointRedskilledUnitForReplacement(
   target: RedskilledServeTarget,
   options: {
     readonly env?: NodeJS.ProcessEnv;
-    readonly idleMs?: number;
-    readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
+      readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
   } = {},
 ): string {
   // systemd resolves the ExecStart binary with the MANAGER's PATH, which the
@@ -202,7 +200,7 @@ export function repointRedskilledUnitForReplacement(
   const argv = [
     entry.command,
     ...entry.args,
-    ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
+    ...redskilledServeArgv(target),
   ];
   const text = [
     "[Service]",

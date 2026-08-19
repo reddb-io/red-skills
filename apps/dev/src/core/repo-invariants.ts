@@ -86,6 +86,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every verb a shipped skill still names must have an `rs_dev` tool of the same core, and every command no skill names must be recorded for deletion (ADR 0147 rule 1, #4024); the skill tree lives in plugins/, the tool surface in apps/dev",
   },
   {
+    name: "invariants:always-on-daemon",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "the daemon is always on and no client starts one (ADR 0150 §4, #4022); the swept modules live in apps/redskilled, the suite lives in apps/dev",
+  },
+  {
     name: "invariants:bare-invocations",
     scope: "apps/dev",
     script: "test:invariants",

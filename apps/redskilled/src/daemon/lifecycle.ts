@@ -196,7 +196,6 @@ import { measureGithubCompanions } from "../github-companions.js";
 import { createRedskilledLeaseStore, currentProcessOwner, type RedskilledLease } from "../session-lease.js";
 import { REDSKILLED_QUEUE_UNCONFIGURED_REASON, RedskilledDaemon, RedskilledDaemonOptions, RedskilledStopIntent } from "./types.js";
 import {
-  DEFAULT_REDSKILLED_IDLE_MS,
   DEFAULT_REDSKILLED_LEASE_RENEW_MS,
   DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS,
   DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS,
@@ -218,7 +217,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const { paths } = options;
   const daemonVersion = options.daemonVersion ?? "0.0.0-dev";
   const hostTopology = options.hostTopology ?? detectRedskilledHostTopology();
-  const idleMs = options.idleMs ?? DEFAULT_REDSKILLED_IDLE_MS;
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;
   const refreshTrunk = options.refreshTrunk ?? refreshRedskilledTrunk;
@@ -494,7 +492,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // machine it has not tried yet.
   const birthHealth: Record<string, RedskilledBirthHealth> = {};
   let demandTicking = false;
-  let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
   let leaseTimer: NodeJS.Timeout | undefined;
   let registrationTimer: NodeJS.Timeout | undefined;
@@ -511,7 +508,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // departure has reached the lane. See `stop`.
   let leaving = false;
   // The one append that says this daemon left, held so every route to a stop —
-  // the op, a signal, idle, a handover — writes it exactly once.
+  // the op, a signal, a handover — writes it exactly once.
   let departure: Promise<unknown> | null = null;
   const activityPoller = createRedskilledActivityPoller({
     poll: () => pollRepositoryActivity(),
@@ -938,8 +935,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     try {
       // Swept BEFORE the live count is taken (#3123). A record whose Worker is
       // gone occupies a slot the planner then declines to fill, so a queue with
-      // work sits undrained beside a machine that is entirely free — and the
-      // idle timer, five minutes away, is not the cadence a birth decision runs at.
+      // work sits undrained beside a machine that is entirely free — and no other
+      // timer runs at the cadence a birth decision needs.
       await sweepWorkerLiveness().catch(() => undefined);
       const live: Record<string, number> = {};
       for (const worker of workers.values()) {
@@ -1286,7 +1283,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, {
       ...death.facts, refusal, birthOutcome: workerTerminalOutcome({ exitCode: code, signal, tail: reported }),
     });
-    armIdleTimer();
   }
 
   /** Clear one project's birth breaker after project-scoped reach permits it. */
@@ -1334,7 +1330,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       warnings: [...worker.warnings, reason],
     });
     reattached.add(worker.worker_id);
-    armIdleTimer();
   }
 
   /**
@@ -1367,10 +1362,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // tail now so a later deliberate stop cannot uncover an older lapse and lie
     // about which transition happened most recently.
     removeRegistrationHistory(registration.project_label);
-    // A registration holds the daemon awake, exactly as a Worker does: a drain the
-    // operator walked away from must outlive the terminal, and a daemon that idled
-    // out under a standing registration would take the promise with it.
-    armIdleTimer();
     return {
       version: 1,
       registration,
@@ -1431,7 +1422,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // A renewal is a session saying "I am still here" — the same presence a
     // registration carries, and the same reason not to wait out a back-off.
     activityPoller.nudge();
-    armIdleTimer();
     return {
       version: 1,
       registration,
@@ -1497,7 +1487,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       const pgid = worker.pgid ?? worker.pid;
       record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
         `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
-      armIdleTimer();
     });
     return true;
   }
@@ -1560,8 +1549,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * Admission comes first and the verdict travels into the launch, so a refusal
    * is a Worker that never existed rather than one killed after the fact.
    *
-   * Tracking happens here rather than in the caller, so the idle gate and the
-   * host state learn about a Worker at the same instant the process exists —
+   * Tracking happens here rather than in the caller, so the host state learns
+   * about a Worker at the same instant the process exists —
    * a launch the daemon forgot to track would be an untracked budget.
    */
   function startWorker(
@@ -1593,7 +1582,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);
         if (worker == null) {
-          armIdleTimer();
           return;
         }
         observedExitTail = observedExitTail.then(() => resolveObservedExit(worker, code, signal)).catch(() => undefined);
@@ -1613,7 +1601,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     record("worker-birth", worker, null, {
       admissionVerdict: grant.admission?.verdict ?? launched.admission.verdict,
     });
-    armIdleTimer();
     return tracked;
   }
 
@@ -1698,7 +1685,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         record("worker-death", worker, death.detail, death.facts);
       },
     });
-    if (dead.length > 0) armIdleTimer();
     return dead;
   }
   const orphanReaper = createRedskilledOrphanReaperRuntime({
@@ -1709,10 +1695,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     adopt: async (worker, recordBirth, detail) => {
       workers.set(worker.worker_id, worker); reattached.add(worker.worker_id);
       if (recordBirth) { record("worker-birth", worker, detail); await eventLane.flush(); }
-      armIdleTimer();
     },
     record_reaped: async (worker, detail) => {
-      forgetWorker(worker.worker_id); record("worker-death", worker, detail); await eventLane.flush(); armIdleTimer();
+      forgetWorker(worker.worker_id); record("worker-death", worker, detail); await eventLane.flush();
     },
   });
   const budgetGrace = createBudgetGraceRuntime({
@@ -1720,7 +1705,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     signal: options.signalWorkerForBudgetGrace ?? signalWorkerForBudgetGrace,
     held: (workerId) => workers.has(workerId),
     kill: async (worker, detail) => { await endWorkerOnce(worker, () => {
-      forgetWorker(worker.worker_id); record("worker-budget-kill", worker, detail); armIdleTimer();
+      forgetWorker(worker.worker_id); record("worker-budget-kill", worker, detail);
     }); },
     record: (kind, worker, detail) => record(kind, worker, detail),
   });
@@ -1787,8 +1772,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * answered the same way for exactly that reason — the shipped probe already
    * consults the bundle cache when the read THROWS, and a deadline that answered
    * `null` instead left a host holding the newer bundle serving the older one
-   * (#2975). The deadline itself stays, because the idle exit WAITS on this
-   * answer and an unbounded read would hold a daemon that had decided to leave.
+   * (#2975). The deadline itself stays, because the replacement watch WAITS on
+   * this answer and an unbounded read would hold a daemon that had decided to
+   * hand its session over.
    *
    * Local evidence never competes with the registry: it is consulted only when
    * the read resolved nothing at all.
@@ -1825,8 +1811,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   async function observePublishedVersion(): Promise<RedskilledReplacementDecision> {
-    // A local build is decided BEFORE the read, on every route rather than at the
-    // idle boundary alone: no release supersedes a source checkout, so the read
+    // A local build is decided BEFORE the read, on every route: no release
+    // supersedes a source checkout, so the read
     // could only spend a shared registry quota to be told what is already known.
     // The look still COUNTS — it fired, and it concluded something.
     if (isLocalRedskilledBuild(daemonVersion)) {
@@ -1862,7 +1848,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       decision,
       io: replacementIO,
       paths,
-      ...(idleMs == null ? {} : { idleMs }),
       incumbentVersion: daemonVersion,
       incumbentPid: owner.pid,
       clock,
@@ -1880,10 +1865,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * interval.
    *
    * The interval alone leaves a daemon unable to know anything for its first
-   * fifteen minutes, and a daemon holding a registration never reaches the idle
-   * boundary that would have asked — so a release published into that window is
-   * served past, and the daemon's own answer cannot say whether the check held or
-   * had simply never run (#2975). The boot look is what closes both.
+   * fifteen minutes — so a release published into that window is served past, and
+   * the daemon's own answer cannot say whether the check held or had simply never
+   * run (#2975). The boot look is what closes both. It is also the ONLY route now
+   * that the daemon is always on: the idle boundary this watch once shared
+   * (ADR 0150 §4) is gone, so the timer is the whole of the ask.
    *
    * A successor is owed no boot look: it was started BY a replacement seconds
    * ago, and a mis-resolving one would otherwise restart itself as fast as it
@@ -2034,74 +2020,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     demandTimer.unref();
   }
 
-  function armIdleTimer(): void {
-    if (stopping) return;
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      // Sweep before deciding: a daemon that exited on a stale belief in a
-      // re-attached Worker would hold this session's socket for nothing.
-      void sweepWorkerLiveness()
-        .catch(() => undefined)
-        .then(() => evaluateIdle());
-    }, idleMs);
-    idleTimer.unref();
-  }
-
-  function evaluateIdle(): "exited" | "held-by-workers" | "held-by-registrations" {
-    // The rule that will matter once Workers exist, in place from the start: a
-    // daemon that believes it holds live Workers rearms instead of exiting.
-    if (workers.size > 0) {
-      armIdleTimer();
-      return "held-by-workers";
-    }
-    // A standing registration holds the daemon just as a Worker does, and holds it
-    // for the state a Worker cannot: a project between Workers is a project the
-    // host must still be awake to poll for. The deadline is what keeps this from
-    // being "awake forever" — a registration nobody renews lapses in the sweep
-    // above, and the very next tick finds nothing holding anything.
-    expireLapsedRegistrations(clock());
-    if (registrations.size > 0) {
-      armIdleTimer();
-      return "held-by-registrations";
-    }
-    void leaveIdleSession();
-    return "exited";
-  }
-
-  /**
-   * Leave — as a newer daemon when one is published, or for good.
-   *
-   * **The idle boundary is where a quiet host's daemon asks, because it is the
-   * only moment it ever reaches.** The check interval is three times the idle
-   * window, so this process exits three times over before the timer's first tick;
-   * self-replacement shipped unable to fire here at all (#2968). It is also the
-   * safest instant to ask: nothing is waiting on this socket, and the alternative
-   * already on the table was going away entirely — so an upgrade that fails costs
-   * only the upgrade.
-   *
-   * ONE read, and only when it can decide something. A local build is not a point
-   * on the published lane, so it leaves exactly as it did before, without asking —
-   * which is also why a developer's own daemon never spends a registry read to be
-   * told what it already knows.
-   */
-  async function leaveIdleSession(): Promise<void> {
-    if (!isLocalRedskilledBuild(daemonVersion)) {
-      // A replacement stops this daemon itself, and by a different name: the
-      // successor is what takes the session, so there is no idle exit to make.
-      const decision = await checkForReplacement().catch(() => null);
-      if (decision?.act === "replace") return;
-      if (leaving || stopping) return;
-      // A Worker or a registration that arrived while the registry was being read
-      // holds this daemon exactly as it would have a moment earlier — the read is
-      // a window the instantaneous decision never had.
-      if (workers.size > 0 || registrations.size > 0) {
-        armIdleTimer();
-        return;
-      }
-    }
-    await stop({ reason: "idle" });
-  }
-
   /**
    * What this daemon is holding, and what a stop for `reason` would leave behind.
    *
@@ -2155,7 +2073,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // process leaves is indistinguishable from the crash it exists to rule out.
     await recordDeparture(intent);
     stopping = true;
-    if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
     if (leaseTimer) clearInterval(leaseTimer);
     if (registrationTimer) clearInterval(registrationTimer);
@@ -2284,7 +2201,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
     handleSocket(socket, async (request, reply) => {
-      if (request.op !== "ping" || request.self !== true) armIdleTimer();
       const response = await respond(request);
       reply(response);
       // The report is written to the caller BEFORE the daemon leaves: a stop that
@@ -2407,7 +2323,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     throw error;
   }
 
-  armIdleTimer();
   armSampleTimer();
   armLeaseTimer();
   armRegistrationTimer();
@@ -2446,14 +2361,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
       record("worker-birth", worker, null);
-      armIdleTimer();
     },
     releaseWorker(workerId) {
       const worker = workers.get(workerId);
       const removed = worker != null;
       if (worker != null) forgetWorker(workerId);
       if (worker) record("worker-death", worker, "released by the daemon");
-      armIdleTimer();
       return removed;
     },
     workerCount: () => workers.size,
@@ -2466,7 +2379,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     hostState,
     refreshRegisteredTrunks,
     statuslinePayload,
-    evaluateIdle,
     observePublishedVersion,
     checkForReplacement,
     stopReport,

@@ -532,7 +532,6 @@ describe("the daemon serves the dashboard it renders", () => {
     const daemon = await startRedskilledDaemon({
       paths,
       daemonVersion: "0.1.0",
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -552,7 +551,6 @@ describe("the daemon serves the dashboard it renders", () => {
     const daemon = await startRedskilledDaemon({
       paths,
       daemonVersion: "0.1.0",
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,

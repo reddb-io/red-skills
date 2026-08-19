@@ -732,11 +732,11 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a five-second local teardown drain whose returned pending list is the report" },
   },
   {
-    path: "apps/redskilled/src/client.ts",
+    path: "apps/redskilled/src/daemon-birth.ts",
     fn: "waitForDaemon",
-    subject: "the spawned or concurrently starting daemon answering its socket",
+    subject: "the daemon this provisioning run spawned answering its socket",
     deadline: "`readyTimeoutMs`, default `DEFAULT_REDSKILLED_READY_TIMEOUT_MS`",
-    escalation: "throws the spawn failure, the held spawn-lock owner, or the daemon's missed ready window",
+    escalation: "throws the spawn failure, or the daemon's missed ready window naming the entry that ran",
     heartbeat: { silent: "a 25ms local socket rendezvous whose terminal throw names what did not start" },
   },
   {

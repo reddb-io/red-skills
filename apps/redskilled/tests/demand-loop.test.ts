@@ -475,23 +475,21 @@ describe("the daemon drives the demand loop itself", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
       demandMs: 0,
-      idleMs: 60_000,
     });
     running.push(daemon);
 
-    expect(daemon.evaluateIdle()).toBe("exited");
+    expect(daemon.hostState().registrations ?? []).toEqual([]);
 
     const held = await startRedskilledDaemon({
       paths: await sessionPaths(),
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
       demandMs: 0,
-      idleMs: 60_000,
     });
     running.push(held);
     held.registerProject(registration("acme/widgets", 1, await scratch("redskilled-workspace-")));
 
-    expect(held.evaluateIdle()).toBe("held-by-registrations");
+    expect(held.hostState().registrations ?? []).toHaveLength(1);
   });
 });
 

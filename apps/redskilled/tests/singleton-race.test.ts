@@ -1,7 +1,8 @@
-// Two projects auto-spawning at once must produce ONE daemon, and the loser
-// must connect to the winner rather than fail. This is the start race ADR 0130
-// resolves with an exclusive bind plus a session lease — the failure mode being
-// guarded is two daemons that both believe they own the socket.
+// One machine, one daemon. Since ADR 0150 §4 no client starts one, so the race
+// these checks guard is between the daemon and its own debris — a stale socket, an
+// aged lease, a shipped candidate arriving at a session somebody already holds.
+// ADR 0130 resolves each with an exclusive bind plus a session lease; the failure
+// mode being guarded is two daemons that both believe they own the socket.
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -14,6 +15,7 @@ import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureRedskilledDaemon, readRedskilledHostState } from "../src/client.js";
+import { birthRedskilledDaemon } from "../src/daemon-birth.js";
 import { RedskilledAlreadyRunningError, socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { redskilledServeArgv } from "../src/daemon-entry.js";
 import { createRedskilledMachineClaimStore } from "../src/machine-scope.js";
@@ -46,7 +48,6 @@ function clientConfig(paths: RedskilledPaths) {
     serverCommand: process.execPath,
     serverArgs: ["--import", tsxLoader, cliEntry],
     readyTimeoutMs: 20_000,
-    idleMs: 60_000,
     env: { ...process.env, REDSKILLED_SESSION: `test:${paths.runtimeDir}` },
   };
 }
@@ -63,12 +64,12 @@ describe("redskilled singleton", () => {
 
   it("lets a shipped candidate stand down without recording a daemon death", async () => {
     const paths = await sessionPaths();
-    const first = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const first = await startRedskilledDaemon({ paths });
     running.push(first);
     const home = paths.runtimeDir;
     const candidate = spawn(
       process.execPath,
-      ["--import", tsxLoader, cliEntry, ...redskilledServeArgv(paths, { idleMs: 60_000 })],
+      ["--import", tsxLoader, cliEntry, ...redskilledServeArgv(paths)],
       {
         stdio: "ignore",
         env: {
@@ -89,18 +90,18 @@ describe("redskilled singleton", () => {
     ).toEqual([]);
   });
 
-  it("resolves two concurrent auto-spawns into one daemon the loser joins", async () => {
+  it("serves concurrent clients from one owner, and refuses a second daemon", async () => {
     const paths = await sessionPaths();
     const config = clientConfig(paths);
+    // Provisioning is the ONE start on the machine now, so the daemon exists
+    // before any client asks — the clients only ever find it.
+    await birthRedskilledDaemon(paths, config);
 
     const [a, b] = await Promise.all([
       ensureRedskilledDaemon(paths, config),
       ensureRedskilledDaemon(paths, config),
     ]);
-
-    // Both clients end up served; at most one of them did the spawning.
-    expect([a, b].filter((outcome) => outcome === "spawned").length).toBeLessThanOrEqual(1);
-    expect(a === "spawned" || b === "spawned" || a === "already-running" || b === "already-running").toBe(true);
+    expect([a, b]).toEqual(["already-running", "already-running"]);
 
     const state = await readRedskilledHostState(paths, config);
     expect(state.workers).toEqual([]);
@@ -167,7 +168,7 @@ describe("redskilled singleton", () => {
 
   it("starts the daemon out of process through the shipped cli entry", async () => {
     const paths = await sessionPaths();
-    const outcome = await ensureRedskilledDaemon(paths, clientConfig(paths));
+    const outcome = await birthRedskilledDaemon(paths, clientConfig(paths));
     expect(outcome).toBe("spawned");
 
     const state = await readRedskilledHostState(paths, clientConfig(paths));

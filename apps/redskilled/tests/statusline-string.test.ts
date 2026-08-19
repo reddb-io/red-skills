@@ -130,7 +130,6 @@ describe("the rendered statusline", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -385,7 +384,6 @@ describe("the host's whole job", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
@@ -430,7 +428,6 @@ describe("the host's whole job", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,

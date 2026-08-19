@@ -406,8 +406,12 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("~/.red/redskilled/");
     expect(skill).toContain("apps/redskilled/src/provision.ts");
     expect(skill).toContain("auditRedskilledProvisioning");
-    // The optional unit is reported, never flagged.
-    expect(skill).toContain("The optional unit is reported and never flagged");
+    // The unit is reported, never flagged. #4022 made the daemon an always-on
+    // service (ADR 0150 §4), so the unit stopped being described as "optional"
+    // — but the doctor's rule is unchanged and still the point: a host with no
+    // `systemd --user` session is provisioned directly, and reddening over an
+    // arrangement it cannot have teaches operators to ignore a red row.
+    expect(skill).toContain("The unit is reported and never flagged");
     // Read-only means it neither starts the daemon nor creates the home.
     expect(skill).toContain("never spawn the daemon");
     expect(skill).toContain("never create the home");

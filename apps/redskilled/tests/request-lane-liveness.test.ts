@@ -54,28 +54,6 @@ function localLaunch(options: LaunchWorkerOptions): LaunchedWorker {
 }
 
 describe("the daemon request lane during a stalled GitHub poll", () => {
-  it("does not mistake its own liveness probes for user activity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "redskilled-self-ping-idle-"));
-    roots.push(root);
-    const paths = resolveRedskilledPaths({
-      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
-      runtimeDir: root,
-    });
-    const daemon = await startRedskilledDaemon({
-      paths,
-      idleMs: 20,
-      sampleMs: 0,
-      selfPingIntervalMs: 5,
-      selfPingTimeoutMs: 2,
-    });
-    running.push(daemon);
-
-    await expect(Promise.race([
-      daemon.closed.then(() => "closed"),
-      new Promise<string>((resolve) => setTimeout(() => resolve("still open"), 100)),
-    ])).resolves.toBe("closed");
-  });
-
   it("reports consecutive self-ping misses on host state", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-self-ping-"));
     roots.push(root);
@@ -85,7 +63,6 @@ describe("the daemon request lane during a stalled GitHub poll", () => {
     });
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       selfPingIntervalMs: 5,
       selfPingTimeoutMs: 2,
@@ -116,7 +93,6 @@ describe("the daemon request lane during a stalled GitHub poll", () => {
     const daemon = await startRedskilledDaemon({
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
-      idleMs: 60_000,
       sampleMs: 0,
       demandMs: 0,
       launch: localLaunch,

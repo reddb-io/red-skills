@@ -50,8 +50,10 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
 
    This calls `provisionRedskilledHome`, the only authority allowed to create
    `~/.red/redskilled/`, creates the initial `~/.red/config.yaml` template when
-   absent, starts the daemon through ordinary client auto-spawn, and prints the
-   audit. Never replace this step with a bare `mkdir ~/.red` — call the owner.
+   absent, **installs the always-on OS service and starts the daemon through
+   it** (ADR 0150 §4), and prints the audit. Never replace this step with a bare
+   `mkdir ~/.red` — call the owner. Pass `--no-unit` only when the operator has
+   asked to keep whatever service arrangement the host already has.
 
 3. **Configure the machine policy** — edit the existing home file at
    `~/.red/config.yaml`, preserving unrelated operator settings, and set the
@@ -64,8 +66,12 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
          worker_ceiling: 6
          memory_ceiling: 8G
          validation_ceiling: 2
-         idle_ms: 300000
    ```
+
+   **There is no idle knob, because the daemon is always on** (ADR 0150 §4). It
+   holds the session until an operator, a signal or a published replacement takes
+   it; a host whose daemon left by boredom handed the next client's bundle the
+   choice of which daemon the machine runs (ADR 0143).
 
    Resolution is `serve flag > environment > home config > derived default`.
    Keep these keys in the home config only: a project's `.red/config.yaml` may
@@ -137,8 +143,9 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
 
    Read the survival report before continuing. Workers are init-system units and
    survive the daemon stop: this is a restart, never an evacuation. There is no
-   standalone `start` verb; #3217 established client auto-spawn, so start the
-   successor through the same idempotent provisioning client:
+   standalone `start` verb, and **no client ever starts the daemon** — a client
+   that finds none fails closed with the repair hint — so start the successor
+   through the same idempotent provisioning command:
 
    ```bash
    npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --workspace host

@@ -92,7 +92,6 @@ describe("the registration supplies the remote-counter poll", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
       queueDiscovery: { ...queueDiscovery, intervalMs: 0 },
     });

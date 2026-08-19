@@ -110,7 +110,6 @@ async function daemonHoldingOneWorker(
   await lane.record({ event: "worker-birth", worker: workerView(), ts: "2026-08-11T10:00:00.000Z" });
   const daemon = await startRedskilledDaemon({
     paths,
-    idleMs: 60_000,
     sampleMs: 0,
     liveness: () => true,
     stopWorker,

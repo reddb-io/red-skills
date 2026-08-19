@@ -119,7 +119,6 @@ export interface RedskilledDaemonOptions {
   readonly deaths?: readonly DeathAttribution[];
   /** Registrations proved to remain behind another live daemon beyond this socket. */
   readonly orphanedRegistrations?: readonly RedskilledOrphanedRegistration[];
-  readonly idleMs?: number;
   /**
    * How long a dead Worker's evidence lane survives (ADR 0149 §2).
    *
@@ -226,8 +225,8 @@ export interface RedskilledDaemonOptions {
   /**
    * How long one published-version read may take before it counts as unresolved.
    *
-   * Injected so the bound itself is provable: an idle exit that waits on a read
-   * has to be able to stop waiting, and a test that could not shorten the
+   * Injected so the bound itself is provable: a replacement watch that waits on
+   * a read has to be able to stop waiting, and a test that could not shorten the
    * deadline would have to spend it.
    */
   readonly publishedProbeTimeoutMs?: number;
@@ -443,7 +442,7 @@ export interface RedskilledDaemon {
   admit(spec: RedskilledWorkerSpec): RedskilledAdmissionVerdict;
   /** The ceiling this daemon admits against. */
   ceiling(): RedskilledHostCeiling;
-  /** Record a Worker the daemon believes is alive — the idle gate reads this set. */
+  /** Record a Worker the daemon believes is alive — admission reads this set. */
   trackWorker(worker: RedskilledWorkerView): void;
   /** Forget a Worker the daemon has observed dying. */
   releaseWorker(workerId: string): boolean;
@@ -588,14 +587,6 @@ export interface RedskilledDaemon {
   reattached(): readonly RedskilledWorkerView[];
   /** Resolves once every event handed to the lane has reached disk. */
   flushEvents(): Promise<void>;
-  /**
-   * Force the idle check to run now — the timer's body, exposed for tests.
-   *
-   * `"exited"` is the DECISION to give the session up, not a completed exit: a
-   * daemon on its way out first asks whether it should come back newer instead
-   * (#2968), so the leaving finishes on `closed` rather than on this return.
-   */
-  evaluateIdle(): "exited" | "held-by-workers" | "held-by-registrations";
   /**
    * Resolve the published version and decide, WITHOUT acting on the decision.
    *

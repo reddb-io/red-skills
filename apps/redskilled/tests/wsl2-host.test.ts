@@ -82,7 +82,6 @@ describe("WSL2 — a synthetic /proc cannot confer Worker ownership", () => {
     const killed: number[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       unitInventory: () => [],
       orphanReaperMs: 0,
       orphanCensus: () => censusRedskilledProcesses({ proc_root: procRoot }),
@@ -388,7 +387,6 @@ describe("WSL2 — the socket lands somewhere the kernel will actually bind", ()
     expect(paths.socketPath.length).toBeLessThan(UNIX_SOCKET_PATH_LIMIT);
     // Every path the daemon lives by shares the directory, so a fitting socket
     // that left the lease behind in the overlong one would be half a fallback.
-    expect(paths.lockPath.startsWith(paths.runtimeDir)).toBe(true);
     expect(paths.leasePath.startsWith(paths.runtimeDir)).toBe(true);
     expect(paths.eventLanePath).toBe(
       join(WSL2_ENV.HOME!, ".red", "redskilled", "redskilled.log.toonl"),

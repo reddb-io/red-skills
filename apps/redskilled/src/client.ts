@@ -1,38 +1,22 @@
 /**
- * client — how a project reaches `redskilled`, including starting it.
+ * client — how a project reaches `redskilled`.
  *
- * ADR 0130 rule 7 and Amendment 11: start is auto-spawn until a user unit is
- * installed. From then on a cold client asks systemd to start that same argv;
- * the unit is the only birth authority, never a rival spawn path.
+ * **No client ever spawns the daemon** (ADR 0150 §4). The daemon is an OS
+ * service `provision` installs, so a cold client's whole repertoire is: answer
+ * on the socket, follow the machine claim to the daemon that owns this host,
+ * wait out a holder that is mid-boot, or ask the INSTALLED unit to start — and
+ * when none of those produces a daemon, fail closed with the one repair
+ * sentence. Client auto-spawn was ADR 0143's "resident by accident": whichever
+ * bundle a client happened to carry decided which daemon the machine ran.
  *
- * The start race is resolved twice over, and deliberately so. The spawn lock
- * keeps N simultaneous clients from launching N processes; the daemon's own
- * exclusive bind keeps the ones that slip past the lock from both believing they
- * own the socket. **The loser never fails — it waits and connects to the
- * winner**, because a client that errored out on "someone else started it" would
- * turn a healthy race into an outage.
- *
- * ADR 0130 rule 6: fail closed. A daemon that will not start is a thrown error,
+ * ADR 0130 rule 6: fail closed. A daemon that is not there is a thrown error,
  * never a quiet local fallback — for a launcher, failing open costs the machine.
  */
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import {
-  acquireSpawnLock,
-  describeSpawnLockHolder,
-  isPidAlive,
-  releaseSpawnLock,
-  type SpawnLockHeld,
-  type SpawnLockReaping,
-} from "@reddb-io/shared/resident-core.js";
-import {
-  redskilledServeArgv,
-  type RedskilledEntryLookup,
-  type ResolvedRedskilledEntry,
-} from "./daemon-entry.js";
-import { requireRedskilledEntryWithFetch } from "./entry-fetch.js";
+import { isPidAlive } from "@reddb-io/shared/resident-core.js";
+import { type RedskilledEntryLookup } from "./daemon-entry.js";
 import { redskilledDashboardRequest } from "./dashboard-request.js";
 import { socketAnswers } from "./daemon.js";
 import {
@@ -99,6 +83,7 @@ import {
   reconnectRedskilled,
   redskilledReconnectExhausted,
   RedskilledDaemonHeldError,
+  RedskilledNotProvisionedError,
   RedskilledUnreachableError,
   type RedskilledReconnectConfig,
 } from "./client-reconnect.js";
@@ -145,6 +130,7 @@ export {
   DEFAULT_REDSKILLED_RECONNECT_BACKOFF_MS,
   DEFAULT_REDSKILLED_RECONNECT_TIMEOUT_MS,
   RedskilledDaemonHeldError,
+  RedskilledNotProvisionedError,
   RedskilledUnreachableError,
 } from "./client-reconnect.js";
 
@@ -198,7 +184,6 @@ export interface RedskilledClientConfig extends RedskilledReconnectConfig {
    * caller passes nothing and gets the process's own environment.
    */
   readonly entryLookup?: RedskilledEntryLookup;
-  readonly idleMs?: number;
   readonly readyTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
   readonly env?: NodeJS.ProcessEnv;
@@ -210,15 +195,6 @@ export interface RedskilledClientConfig extends RedskilledReconnectConfig {
    * in the config is how a client stays inside its own repository by default.
    */
   readonly sessionProject?: string;
-  /**
-   * How long a spawn lock is believed before this client reaps it.
-   *
-   * Injected so a test can age a lock without waiting a minute; a real caller
-   * passes nothing and gets `DEFAULT_SPAWN_LOCK_MAX_AGE_MS`.
-   */
-  readonly spawnLockMaxAgeMs?: number;
-  /** Where a reaping is reported; stderr when nothing else is stated. */
-  readonly onSpawnLockReaped?: (reaping: SpawnLockReaping) => void;
   /**
    * Optional supervisor seam. Production detects the installed user unit and
    * asks systemd to start it; tests inject the same two decisions without
@@ -234,14 +210,14 @@ export interface RedskilledClientConfig extends RedskilledReconnectConfig {
  * Ensure a daemon is answering on this session's socket.
  *
  * Returns how the daemon came to be there — `already-running` when one answered
- * straight away, `spawned` when this call started it, `joined` when this call
- * lost the race and connected to the winner. The distinction is diagnostic, not
- * behavioural: all three mean the socket is live.
+ * straight away, `joined` when this call followed the machine claim or waited out
+ * the installed unit's start. The distinction is diagnostic, not behavioural:
+ * both mean the socket is live, and neither means this process started anything.
  */
 export async function ensureRedskilledDaemon(
   paths: RedskilledPaths,
   config: RedskilledClientConfig = {},
-): Promise<"already-running" | "spawned" | "joined"> {
+): Promise<"already-running" | "joined"> {
   return await reconnectRedskilled({
     socketPath: paths.socketPath,
     config,
@@ -256,7 +232,7 @@ export async function ensureRedskilledDaemon(
 async function ensureRedskilledDaemonOnce(
   paths: RedskilledPaths,
   config: RedskilledClientConfig,
-): Promise<"already-running" | "spawned" | "joined"> {
+): Promise<"already-running" | "joined"> {
   const endpoint = await resolveRedskilledClientEndpoint(paths);
   try {
     const reached = await reachRedskilledDaemon(endpoint.paths, config);
@@ -279,66 +255,28 @@ async function ensureRedskilledDaemonOnce(
 async function reachRedskilledDaemon(
   paths: RedskilledPaths,
   config: RedskilledClientConfig,
-): Promise<"already-running" | "spawned" | "joined"> {
+): Promise<"already-running" | "joined"> {
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
   if (await socketAnswers(paths.socketPath)) return "already-running";
 
-  // Our own socket is silent — so before spawning, ask the machine whether it
-  // already has a daemon somewhere this session cannot see (ADR 0130 Amendment 3).
-  // Spawning first and refusing afterwards would still have been two daemons.
+  // Our own socket is silent — so ask the machine whether it already has a
+  // daemon somewhere this session cannot see (ADR 0130 Amendment 3).
   await refuseWhenMachineIsHeld(paths);
 
-  // And ask the socket's own lease before spawning too. A live pid holding THIS
-  // socket is a daemon that exists, so the spawn about to happen would be refused
-  // by the singleton guard — correctly — and its `exit 1` would then be reported
-  // as "the daemon did not start" (#3092). Waiting is what a client owes a daemon
-  // that is booting; naming the holder is what it owes one that is wedged.
+  // And ask the socket's own lease. A live pid holding THIS socket is a daemon
+  // that exists, and one that is merely mid-boot is the common case. Waiting is
+  // what a client owes a daemon that is booting; naming the holder is what it
+  // owes one that is wedged (#3092).
   const held = await waitOutTheLeaseHolder(paths, config);
   if (held != null) return held;
 
-  // Once a unit is installed it is the one birth authority. During a restart
-  // the socket and claim are briefly absent; direct auto-spawn in that window
-  // races systemd and turns singleton protection into a restart storm.
+  // The installed unit is the ONE birth authority: the client asks the service
+  // manager, it does not become a second one.
   if (await startThroughInstalledSupervisor(paths, config, DEFAULT_REDSKILLED_READY_TIMEOUT_MS)) return "joined";
 
-  const lock = await acquireSpawnLock(paths.lockPath, {
-    ...(config.spawnLockMaxAgeMs == null ? {} : { maxAgeMs: config.spawnLockMaxAgeMs }),
-    onReap: config.onSpawnLockReaped ?? reportSpawnLockReaping,
-  });
-  if (!lock.acquired) {
-    // Lost the spawn race. The winner is starting the very daemon we wanted, so
-    // waiting for it is the whole job — restarting one would be the bug. What is
-    // new is the gate travelling with the wait: if the winner never appears, the
-    // failure names the lock rather than blaming a daemon that was never asked.
-    await waitForDaemon(paths, config, undefined, lock);
-    return "joined";
-  }
-  try {
-    // Re-checked under the lock: between the first probe and the acquisition a
-    // winner may already have bound, and spawning on top of it is the very
-    // second daemon the lock exists to prevent.
-    if (await socketAnswers(paths.socketPath)) return "already-running";
-    const spawned = await spawnDaemon(paths, config);
-    await waitForDaemon(paths, config, spawned);
-    return "spawned";
-  } finally {
-    await releaseSpawnLock(lock);
-  }
-}
-
-/**
- * Say out loud that a lock was reaped — the default, overridable per client.
- *
- * A reaping that left no trace would be indistinguishable from the lock never
- * having existed, and the one moment an operator needs this line is when the
- * guess was wrong and two daemons raced.
- */
-function reportSpawnLockReaping(reaping: SpawnLockReaping): void {
-  process.stderr.write(
-    `redskilled: reaped the spawn lock ${JSON.stringify(reaping.lockPath)} (${reaping.reason}, ` +
-      `${Math.round(reaping.ageMs / 1_000)}s old, holder ${reaping.holder == null ? "unnamed" : `pid ${reaping.holder.pid}`}) ` +
-      "and went on to spawn\n",
-  );
+  // Nothing answered, nothing is booting, and this host carries no service. That
+  // is an unprovisioned machine, and the client's whole answer is to say so.
+  throw new RedskilledNotProvisionedError(paths.socketPath);
 }
 
 /**
@@ -885,94 +823,3 @@ export async function startRedskilledWorker(
   return value;
 }
 
-/**
- * A spawn in flight: what was started, and the first thing that went wrong.
- *
- * `failure` exists so a daemon that never bound is diagnosed by the reason it
- * died rather than by a bare timeout — `ENOENT` on the resolved bundle and a
- * daemon that is merely slow read identically otherwise.
- */
-interface SpawnedDaemon {
-  readonly entry: ResolvedRedskilledEntry;
-  failure?: Error;
-  exit?: string;
-}
-
-async function waitForDaemon(
-  paths: RedskilledPaths,
-  config: RedskilledClientConfig,
-  spawned?: SpawnedDaemon,
-  /**
-   * The gate that stopped this client spawning, when one did.
-   *
-   * Carried into the wait rather than re-read at the timeout, because a lock
-   * released a moment before the deadline would leave the failure describing a
-   * gate that is no longer there — and the sentence owed is about the gate that
-   * refused, not the state afterwards.
-   */
-  heldBy?: SpawnLockHeld,
-): Promise<void> {
-  const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_REDSKILLED_READY_TIMEOUT_MS);
-  for (;;) {
-    if (await socketAnswers(paths.socketPath)) return;
-    if (spawned?.failure) {
-      throw new Error(
-        `redskilled daemon failed to start from ${JSON.stringify(spawned.entry.entry ?? spawned.entry.command)} ` +
-          `(resolved as ${spawned.entry.source}): ${spawned.failure.message}`,
-      );
-    }
-    if (Date.now() >= deadline) {
-      // A spawn this client never attempted must not be reported as one that
-      // failed: "the daemon did not start" sends an operator to inspect a daemon
-      // that is healthy, which is #3092's misattribution through another door.
-      if (heldBy != null) {
-        throw new Error(
-          `no redskilled daemon answered on ${JSON.stringify(paths.socketPath)} within the ready window, and ` +
-            `${describeSpawnLockHolder(heldBy)}`,
-        );
-      }
-      const from = spawned
-        ? ` from ${JSON.stringify(spawned.entry.entry ?? spawned.entry.command)} (resolved as ${spawned.entry.source})${
-            spawned.exit ? `, which ${spawned.exit}` : ""
-          }`
-        : "";
-      throw new Error(`redskilled daemon did not start on ${JSON.stringify(paths.socketPath)}${from}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
-
-async function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): Promise<SpawnedDaemon> {
-  // Resolved before anything is launched: a missing bundle must be a named error
-  // (ADR 0130 rule 6), never a process started from whatever the caller happens
-  // to be running.
-  const stated = config.serverCommand ?? (config.serverArgs != null ? process.execPath : undefined);
-  // A host that has never cached the bundle has no local path to resolve, so the
-  // fetch rung runs BEFORE the fail-closed raise. Local always wins: a checkout's
-  // own entry must never lose to a published one (#2961).
-  const entry = await requireRedskilledEntryWithFetch(
-    { ...(stated != null ? { serverCommand: stated } : {}), serverArgs: config.serverArgs },
-    config.entryLookup ?? {},
-  );
-  const spawned: SpawnedDaemon = { entry };
-  const args = [
-    ...entry.args,
-    ...redskilledServeArgv(paths, config.idleMs == null ? {} : { idleMs: config.idleMs }),
-  ];
-  const child = spawn(entry.command, args, {
-    detached: true,
-    stdio: "ignore",
-    env: { ...(config.env ?? process.env), REDSKILLED_DAEMON: "1" },
-  });
-  // A detached child still reports its own launch failure to this process, and an
-  // unhandled `error` event on a child is an uncaught exception in the caller —
-  // so the listener is both the diagnosis and the safety.
-  child.on("error", (err: Error) => {
-    spawned.failure = err;
-  });
-  child.on("exit", (code, signal) => {
-    spawned.exit = signal ? `died on ${signal}` : `exited with code ${code ?? -1}`;
-  });
-  child.unref();
-  return spawned;
-}

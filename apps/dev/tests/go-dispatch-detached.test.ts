@@ -203,7 +203,7 @@ describe("killing the dispatcher leaves the dispatched worker running", () => {
       REDSKILLED_MACHINE_DIR: host,
     };
     const paths = resolveRedskilledPaths({ env });
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const tsx = join(import.meta.dirname, "..", "node_modules", ".bin", "tsx");

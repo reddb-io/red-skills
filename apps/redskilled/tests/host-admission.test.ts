@@ -74,7 +74,7 @@ describe("two projects spend one host budget", () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
     const ceiling: RedskilledHostCeiling = { memory_bytes: 8 * GIB, worker_count: null, source: "declared" };
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, ceiling });
+    const daemon = await startRedskilledDaemon({ paths, ceiling });
     running.push(daemon);
 
     const first = await startRedskilledWorker(
@@ -99,7 +99,7 @@ describe("two projects spend one host budget", () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
     const ceiling: RedskilledHostCeiling = { memory_bytes: 8 * GIB, worker_count: null, source: "declared" };
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, ceiling });
+    const daemon = await startRedskilledDaemon({ paths, ceiling });
     running.push(daemon);
 
     await startRedskilledWorker(paths, projectSpec("acme/widgets", workspace, "5G"), { readyTimeoutMs: 5_000 });
@@ -118,7 +118,7 @@ describe("two projects spend one host budget", () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
     const ceiling: RedskilledHostCeiling = { memory_bytes: 8 * GIB, worker_count: null, source: "declared" };
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, ceiling });
+    const daemon = await startRedskilledDaemon({ paths, ceiling });
     running.push(daemon);
 
     const started = await startRedskilledWorker(

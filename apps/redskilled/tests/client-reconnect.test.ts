@@ -33,7 +33,7 @@ describe("an established client across daemon replacement", () => {
       env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
       runtimeDir: root,
     });
-    const first = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const first = await startRedskilledDaemon({ paths });
     running.push(first);
 
     const config = {
@@ -47,7 +47,7 @@ describe("an established client across daemon replacement", () => {
 
     const replacement = new Promise<RedskilledDaemon>((resolve, reject) => {
       setTimeout(() => {
-        startRedskilledDaemon({ paths, idleMs: 60_000 }).then(resolve, reject);
+        startRedskilledDaemon({ paths }).then(resolve, reject);
       }, 150);
     });
 
@@ -119,7 +119,7 @@ describe("an established client across daemon replacement", () => {
       socket.destroy();
       replacement = new Promise<RedskilledDaemon>((resolve, reject) => {
         server.close(() => {
-          setTimeout(() => startRedskilledDaemon({ paths, idleMs: 60_000 }).then(resolve, reject), 100);
+          setTimeout(() => startRedskilledDaemon({ paths }).then(resolve, reject), 100);
         });
       });
     }));

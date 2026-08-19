@@ -183,7 +183,7 @@ describe("the three silences a redskilled client can meet", () => {
     const paths = await sessionPaths();
     // Renewal off, then the record backdated by a week: past any staleness
     // threshold anyone could reasonably invent.
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, leaseRenewMs: 0 });
+    const daemon = await startRedskilledDaemon({ paths, leaseRenewMs: 0 });
     running.push(daemon);
     await writeLease(paths, lease(paths, {
       pid: process.pid,

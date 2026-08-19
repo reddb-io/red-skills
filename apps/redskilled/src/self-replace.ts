@@ -72,23 +72,15 @@ export const REDSKILLED_REPLACE_EXIT_CODE = 75;
 /**
  * How long the daemon waits between published-version checks.
  *
- * **This is the BUSY daemon's check, and it is deliberately longer than the idle
- * window** (`DEFAULT_REDSKILLED_IDLE_MS`, five minutes, in `daemon.ts`). A probe
- * costs a read of a registry every project on the host shares, so paying it every
- * few minutes on a quiet machine buys nothing — but a daemon that leaves at five
- * minutes reaches a fifteen-minute timer never, and shipped alone this interval
- * made self-replacement unreachable on exactly the hosts where nobody would
- * notice (#2968). The two numbers are coupled by `leaveIdleSession` in
- * `daemon.ts`, which asks once at the idle boundary, and not by their ratio:
- * whoever moves either one changes how often a LIVE daemon looks, never whether
- * an idle one looks at all.
+ * A probe costs a read of a registry every project on the host shares, so paying
+ * it every few minutes buys nothing.
  *
- * **It is not the only look a live daemon gets, and must not be made to carry
- * that alone.** A daemon holding a registration never reaches the idle boundary
- * — the registration is what keeps it alive — so on those hosts this interval
- * and the boot look (`DEFAULT_REDSKILLED_REPLACE_BOOT_CHECK_MS`) are the whole
- * upgrade path, and a first look one interval after start left the opening
- * fifteen minutes blind (#2975).
+ * **Since ADR 0150 §4 the daemon never leaves by boredom, so this interval and
+ * the boot look (`DEFAULT_REDSKILLED_REPLACE_BOOT_CHECK_MS`) are the WHOLE
+ * upgrade path.** The idle exit used to ask once on its way out; an always-on
+ * daemon reaches no such boundary, which is why the boot look exists at all — a
+ * first look one interval after start left the opening fifteen minutes blind
+ * (#2975).
  */
 export const DEFAULT_REDSKILLED_REPLACE_CHECK_MS = 900_000;
 
@@ -423,7 +415,6 @@ export interface RedskilledReplacementIO {
   readonly repointSupervisor?: (
     entry: ResolvedRedskilledReplacementEntry,
     target: RedskilledServeTarget,
-    idleMs?: number,
   ) => void;
   /** Ends this process so its supervisor revives it; `process.exit` by default. */
   readonly exit?: (code: number) => void;
@@ -462,19 +453,15 @@ export function prepareRedskilledReplacement(
   decision: Extract<RedskilledReplacementDecision, { act: "replace" }>,
   io: RedskilledReplacementIO = {},
   target?: RedskilledServeTarget,
-  idleMs?: number,
 ): PreparedRedskilledReplacement {
   const resolve = io.resolveEntry ??
     ((version: string) => requireRedskilledReplacementEntry(version, io.env == null ? {} : { env: io.env }));
   const entry = resolve(decision.to);
   if (decision.via === "supervisor-exit") {
-    const repoint = io.repointSupervisor ?? ((resolved: ResolvedRedskilledReplacementEntry, serve: RedskilledServeTarget, ms?: number) =>
-      repointRedskilledUnitForReplacement(resolved, serve, {
-        ...(io.env == null ? {} : { env: io.env }),
-        ...(ms == null ? {} : { idleMs: ms }),
-      }));
+    const repoint = io.repointSupervisor ?? ((resolved: ResolvedRedskilledReplacementEntry, serve: RedskilledServeTarget) =>
+      repointRedskilledUnitForReplacement(resolved, serve, io.env == null ? {} : { env: io.env }));
     if (target == null) throw new Error("a supervised redskilled replacement needs its serve target before exit");
-    repoint(entry, target, idleMs);
+    repoint(entry, target);
   }
   return { via: decision.via, to: decision.to, entry };
 }
@@ -490,13 +477,13 @@ export function prepareRedskilledReplacement(
 export async function stageRedskilledReplacementSuccessor(
   prepared: PreparedRedskilledReplacement,
   target: RedskilledServeTarget,
-  options: { readonly idleMs?: number; readonly io?: RedskilledReplacementIO } = {},
+  options: { readonly io?: RedskilledReplacementIO } = {},
 ): Promise<RedskilledSuccessorControl | undefined> {
   if (prepared.via === "supervisor-exit") return undefined;
   const io = options.io ?? {};
   const argv = [
     ...prepared.entry.args,
-    ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
+    ...redskilledServeArgv(target),
   ];
   const successor = await (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
   return isSuccessorControl(successor) ? successor : { commit() {}, abort() {} };
@@ -520,7 +507,6 @@ export function completeRedskilledReplacement(
   prepared: PreparedRedskilledReplacement,
   target: RedskilledServeTarget,
   options: {
-    readonly idleMs?: number;
     readonly io?: RedskilledReplacementIO;
     readonly successor?: RedskilledSuccessorControl;
   } = {},
@@ -541,7 +527,7 @@ export function completeRedskilledReplacement(
   }
   const argv = [
     ...prepared.entry.args,
-    ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
+    ...redskilledServeArgv(target),
   ];
   (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
   // Same rule on the bare-spawn path: the detached successor owns the endpoint.

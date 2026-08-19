@@ -1,45 +1,43 @@
-// The first client reaching an absent socket starts the daemon — ADR 0130 rule 7,
-// one behaviour with an optional supervisor, never a second manual start mode.
+// The daemon is always on, and only `provision` ever starts one (ADR 0150 §4).
 //
-// Nothing used to spawn the daemon at all, so every consumer of host-scoped truth
-// silently got nothing (issue #2843). These checks pin the four facts that make
-// auto-spawn trustworthy rather than merely present:
+// Two facts, and they are opposite halves of the same rule:
 //
-//   1. an absent socket produces EXACTLY ONE daemon, and a live socket produces none;
-//   2. clients racing an absent socket converge on one daemon;
-//   3. the spawn runs the PUBLISHED BUNDLE — never the calling process's own entry
-//      path, the defect already fixed twice here (#2736 rsp, #2677 the launcher);
-//   4. a daemon that cannot be resolved or reached is a NAMED state, never an
-//      empty answer that reads as a healthy machine with nothing running.
+//   1. a CLIENT that finds no daemon fails closed — non-zero exit, the canonical
+//      repair invocation from the one namer, and NO child process spawned. Client
+//      auto-spawn was ADR 0143's "resident by accident": whichever bundle the
+//      client happened to carry decided which daemon the machine ran.
+//   2. the PROVISIONER still has a route up, and it runs the PUBLISHED BUNDLE —
+//      never the calling process's own entry path, the defect already fixed twice
+//      (#2736 rsp, #2677 the launcher) — or names why it could not.
 //
 // The published bundle is faked, not built: the fixture is a real file at the real
 // artifact name that records every launch and then serves, which is what lets the
 // launch log answer "how many daemons?" and "from which file, at which version?".
+// An empty launch log is what proves nothing was spawned at all.
 import type { ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  acquireSpawnLock,
-  releaseSpawnLock,
-  type SpawnLockReaping,
-  type SpawnLockTaken,
-} from "@reddb-io/shared/resident-core.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
   RedskilledDaemonEntryError,
+  RedskilledNotProvisionedError,
   RedskilledUnreachableError,
   REDSKILLED_BUNDLE_ASSET,
   resolveRedskilledEntry,
   type RedskilledClientConfig,
 } from "../src/client.js";
+import { birthRedskilledDaemon } from "../src/daemon-birth.js";
+import { REDSKILLED_PROVISION_FIX } from "../src/provision-fix.js";
 import { socketAnswers } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
+import { assertIsolatedHostIdentity } from "./support/test-host-isolation.js";
 
 const require_ = createRequire(import.meta.url);
 const tsxLoader = require_.resolve("tsx");
@@ -73,6 +71,7 @@ interface Host {
   readonly callerLog: string;
   readonly publishedBundle: string;
   readonly callerEntry: string;
+  readonly root: string;
 }
 
 /**
@@ -83,7 +82,12 @@ interface Host {
  * the former may ever be executed.
  */
 async function host(options: { readonly publishBundle?: boolean } = {}): Promise<Host> {
-  const root = await mkdtemp(join(tmpdir(), "redskilled-spawn-"));
+  // Every path below is invented under the suite's own root, and the identity
+  // that resolves them is the sandbox's. Asserted rather than assumed: this
+  // suite launches real processes, and one that inherited the operator's real
+  // HOME would provision the developer's actual machine.
+  assertIsolatedHostIdentity();
+  const root = await mkdtemp(join(tmpdir(), "redskilled-birth-"));
   roots.push(root);
   const dist = join(root, "dist");
   await mkdir(dist, { recursive: true });
@@ -100,6 +104,7 @@ async function host(options: { readonly publishBundle?: boolean } = {}): Promise
   const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
   return {
     paths,
+    root,
     launchLog,
     callerLog,
     publishedBundle,
@@ -108,7 +113,6 @@ async function host(options: { readonly publishBundle?: boolean } = {}): Promise
       // Poses as a stale foreign host: a different app's bundle, at another version.
       entryLookup: { callerEntry, execArgv: [], env: {}, listDir: () => [] },
       readyTimeoutMs: 30_000,
-      idleMs: 60_000,
       env: { ...process.env, REDSKILLED_SESSION: `test:${root}` },
     },
   };
@@ -146,39 +150,83 @@ function launches(path: string): Array<{ version: string; entry: string; pid: nu
     .map((line) => JSON.parse(line) as { version: string; entry: string; pid: number });
 }
 
-describe("redskilled auto-spawn at the client reach boundary", () => {
-  it("starts exactly one daemon when a client reaches an absent socket", async () => {
+describe("a client that finds no daemon fails closed", () => {
+  it("refuses in process, naming the one repair, without spawning anything", async () => {
+    const { paths, config, launchLog, callerLog } = await host();
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+
+    const error = await ensureRedskilledDaemon(paths, config).then(
+      (outcome) => outcome as never,
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(RedskilledNotProvisionedError);
+    // The one namer, verbatim: a second spelling of the repair is a second
+    // repair, and the whole point of `REDSKILLED_PROVISION_FIX` is that there
+    // is exactly one sentence to keep true.
+    expect((error as Error).message).toContain(REDSKILLED_PROVISION_FIX);
+    expect((error as Error).message).toContain("a client never starts one");
+
+    // Nothing was born: not the published bundle, not the caller's own file.
+    expect(launches(launchLog)).toEqual([]);
+    expect(launches(callerLog)).toEqual([]);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  }, 60_000);
+
+  it("exits non-zero from the shipped cli, printing the canonical invocation", async () => {
+    const { paths, root, launchLog, callerLog } = await host();
+    assertIsolatedHostIdentity();
+
+    // A real client command, in a real child, against a session with no daemon.
+    const run = spawnSync(
+      process.execPath,
+      ["--import", tsxLoader, cliEntry, "status"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: root,
+          REDSKILLED_SESSION: `test:${root}`,
+          REDSKILLED_MACHINE_DIR: root,
+          XDG_RUNTIME_DIR: root,
+        },
+      },
+    );
+
+    expect(run.status, "a client with no daemon reported success").not.toBe(0);
+    const said = `${run.stdout}${run.stderr}`;
+    // ADR 0091's direct-run form, because a host with no daemon has no reason to
+    // carry a PATH shim for one — a hint that names its own precondition is the
+    // #2961 dead end.
+    expect(said).toContain("npx -y -p @reddb-io/red-skills");
+    expect(said).toContain("red-skills-redskilled provision");
+
+    // And it spawned nothing on its way out.
+    expect(launches(launchLog)).toEqual([]);
+    expect(launches(callerLog)).toEqual([]);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  }, 60_000);
+});
+
+describe("provisioning is the one route from no daemon to a live one", () => {
+  it("starts exactly one daemon, and a second call finds it rather than starting another", async () => {
     const { paths, config, launchLog } = await host();
     expect(await socketAnswers(paths.socketPath)).toBe(false);
 
-    const outcome = await ensureRedskilledDaemon(paths, config);
+    expect(await birthRedskilledDaemon(paths, config)).toBe("spawned");
     started.push(paths.socketPath);
 
-    expect(outcome).toBe("spawned");
     expect(await socketAnswers(paths.socketPath)).toBe(true);
     expect(launches(launchLog)).toHaveLength(1);
 
-    // The original request completes without the caller retrying anything.
-    const state = await readRedskilledHostState(paths, config);
-    expect(state.pid).not.toBe(process.pid);
-  }, 60_000);
-
-  it("resolves concurrent clients racing an absent socket into one daemon", async () => {
-    const { paths, config, launchLog } = await host();
-
-    const outcomes = await Promise.all([
-      ensureRedskilledDaemon(paths, config),
-      ensureRedskilledDaemon(paths, config),
-      ensureRedskilledDaemon(paths, config),
-    ]);
-    started.push(paths.socketPath);
-
-    // Every client ends up served, and only one of them did the spawning.
-    expect(outcomes.filter((outcome) => outcome === "spawned")).toHaveLength(1);
+    const owner = (await readRedskilledHostState(paths, config)).pid;
+    expect(owner).not.toBe(process.pid);
+    for (const _ of [0, 1, 2]) {
+      expect(await birthRedskilledDaemon(paths, config)).toBe("already-running");
+      expect(await ensureRedskilledDaemon(paths, config)).toBe("already-running");
+    }
     expect(launches(launchLog)).toHaveLength(1);
-
-    const state = await readRedskilledHostState(paths, config);
-    expect((await readRedskilledHostState(paths, config)).pid).toBe(state.pid);
+    expect((await readRedskilledHostState(paths, config)).pid).toBe(owner);
   }, 60_000);
 
   it("runs the published bundle, not the calling process's own entry path", async () => {
@@ -189,7 +237,7 @@ describe("redskilled auto-spawn at the client reach boundary", () => {
     expect(resolution).toMatchObject({ entry: publishedBundle, source: "caller-sibling-bundle" });
     expect(resolution).not.toMatchObject({ entry: callerEntry });
 
-    await ensureRedskilledDaemon(paths, config);
+    await birthRedskilledDaemon(paths, config);
     started.push(paths.socketPath);
 
     // Execution second: the file that ran is the published bundle, and the
@@ -205,37 +253,20 @@ describe("redskilled auto-spawn at the client reach boundary", () => {
     expect(state.daemon_version).not.toBe(CALLER_VERSION);
   }, 60_000);
 
-  it("does not spawn a second daemon when a client reaches a live socket", async () => {
-    const { paths, config, launchLog } = await host();
-    const first = await ensureRedskilledDaemon(paths, config);
-    started.push(paths.socketPath);
-    expect(first).toBe("spawned");
-    const owner = (await readRedskilledHostState(paths, config)).pid;
-
-    for (const _ of [0, 1, 2]) {
-      expect(await ensureRedskilledDaemon(paths, config)).toBe("already-running");
-    }
-
-    expect(launches(launchLog)).toHaveLength(1);
-    expect((await readRedskilledHostState(paths, config)).pid).toBe(owner);
-  }, 60_000);
-
   it("fails loudly and names why when no published bundle can be resolved", async () => {
     const { paths, config, callerLog, publishedBundle, callerEntry } = await host({ publishBundle: false });
     expect(existsSync(publishedBundle)).toBe(false);
 
-    const error = await readRedskilledHostState(paths, config).then(
-      (state) => state as never,
+    const error = await birthRedskilledDaemon(paths, config).then(
+      (outcome) => outcome as never,
       (err: unknown) => err,
     );
     // Named, and named at both ends: the diagnostic code plus the caller that
     // asked, because "which host asked?" is the operator's first question.
-    expect(error).toBeInstanceOf(RedskilledUnreachableError);
-    const cause = (error as RedskilledUnreachableError).cause;
-    expect(cause).toBeInstanceOf(RedskilledDaemonEntryError);
-    expect((cause as RedskilledDaemonEntryError).code).toBe("redskilled-daemon-entry-unresolved");
-    expect((cause as RedskilledDaemonEntryError).searched).toContain(publishedBundle);
-    expect((cause as RedskilledDaemonEntryError).callerEntry).toBe(callerEntry);
+    expect(error).toBeInstanceOf(RedskilledDaemonEntryError);
+    expect((error as RedskilledDaemonEntryError).code).toBe("redskilled-daemon-entry-unresolved");
+    expect((error as RedskilledDaemonEntryError).searched).toContain(publishedBundle);
+    expect((error as RedskilledDaemonEntryError).callerEntry).toBe(callerEntry);
     expect((error as Error).message).toContain("NOT used as a fallback");
 
     // The refusal is the whole behaviour: nothing was spawned at all, least of
@@ -244,55 +275,10 @@ describe("redskilled auto-spawn at the client reach boundary", () => {
     expect(await socketAnswers(paths.socketPath)).toBe(false);
   }, 60_000);
 
-  it("spawns past an orphaned lock instead of obeying it forever", async () => {
-    const { paths, config, launchLog } = await host();
-    // The field artifact: zero bytes, hours old, naming nobody (#3123).
-    await mkdir(dirname(paths.lockPath), { recursive: true });
-    await writeFile(paths.lockPath, "");
-    const aged = new Date(Date.now() - 6 * 60 * 60 * 1_000);
-    await utimes(paths.lockPath, aged, aged);
-
-    const reaped: SpawnLockReaping[] = [];
-    const outcome = await ensureRedskilledDaemon(paths, {
-      ...config,
-      spawnLockMaxAgeMs: 60_000,
-      onSpawnLockReaped: (reaping) => reaped.push(reaping),
-    });
-    started.push(paths.socketPath);
-
-    expect(outcome, "an orphaned lock still blocked the only path to a daemon").toBe("spawned");
-    expect(launches(launchLog)).toHaveLength(1);
-    expect(reaped.map((r) => r.reason)).toEqual(["unattributed"]);
-    expect(await socketAnswers(paths.socketPath)).toBe(true);
-  }, 60_000);
-
-  it("blames the lock, not the daemon, when a fresh lock's winner never appears", async () => {
-    const { paths, config, launchLog } = await host();
-    // A live holder's fresh lock: obeyed, correctly — and the winner never binds.
-    const held = await acquireSpawnLock(paths.lockPath, { pid: process.pid });
-    expect(held.acquired).toBe(true);
-
-    const error = await ensureRedskilledDaemon(paths, { ...config, readyTimeoutMs: 500 }).then(
-      (outcome) => outcome as never,
-      (err: unknown) => err,
-    );
-
-    expect(error).toBeInstanceOf(RedskilledUnreachableError);
-    const message = (error as Error).message;
-    expect(message).toContain(paths.lockPath);
-    expect(message).toContain(`pid ${process.pid}`);
-    expect(message).toContain("no spawn was attempted");
-    // The misattribution this replaces: nothing was ever asked to start.
-    expect(message, "a spawn never attempted was reported as one that failed").not.toContain("did not start on");
-    expect(launches(launchLog)).toEqual([]);
-
-    await releaseSpawnLock(held as SpawnLockTaken);
-  }, 60_000);
-
-  it("surfaces an unreachable daemon as its own state, never as an empty answer", async () => {
+  it("surfaces a daemon that never bound as its own state, never as an empty answer", async () => {
     const { paths, config } = await host();
     // A command that exits without binding: the socket stays absent, so the
-    // client must report "no host answered" and not a host with no Workers.
+    // provisioner must report a start that failed and not a host with no Workers.
     const doomed: RedskilledClientConfig = {
       ...config,
       serverCommand: process.execPath,
@@ -300,14 +286,19 @@ describe("redskilled auto-spawn at the client reach boundary", () => {
       readyTimeoutMs: 1_500,
     };
 
-    const error = await readRedskilledHostState(paths, doomed).then(
-      (state) => state as never,
+    const error = await birthRedskilledDaemon(paths, doomed).then(
+      (outcome) => outcome as never,
       (err: unknown) => err,
     );
-    expect(error).toBeInstanceOf(RedskilledUnreachableError);
-    expect((error as RedskilledUnreachableError).socketPath).toBe(paths.socketPath);
     expect((error as Error).message).toContain(paths.socketPath);
     // Nothing about the answer may look healthy: there is no state object to read.
     expect(error).not.toHaveProperty("workers");
+
+    const reachError = await readRedskilledHostState(paths, doomed).then(
+      (state) => state as never,
+      (err: unknown) => err,
+    );
+    expect(reachError).toBeInstanceOf(RedskilledUnreachableError);
+    expect((reachError as RedskilledUnreachableError).socketPath).toBe(paths.socketPath);
   }, 60_000);
 });

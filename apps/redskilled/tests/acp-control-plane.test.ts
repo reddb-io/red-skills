@@ -202,8 +202,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -324,8 +323,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -434,8 +432,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -537,8 +534,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -659,8 +655,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const adapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -805,8 +800,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const firstAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -902,8 +896,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "redskilled daemon socket");
 
     const firstAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
@@ -960,8 +953,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "--lease", paths.leasePath,
       "--events", paths.eventLanePath,
       "--machine-claim", paths.machineClaimPath,
-      "--idle-ms", "60000",
-    ], env, ["ignore", "ignore", "pipe"]);
+      ], env, ["ignore", "ignore", "pipe"]);
     await waitFor(() => socketAnswers(paths.socketPath, 1_000), "replacement redskilled daemon socket");
 
     const secondAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);

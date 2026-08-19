@@ -64,7 +64,6 @@ describe("a record whose Worker is gone is reaped on the liveness sweep", () => 
     let confirmed = true;
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       liveness: () => confirmed,
       livenessGraceMs: 0,
     });
@@ -90,7 +89,6 @@ describe("a record whose Worker is gone is reaped on the liveness sweep", () => 
     let confirmed = true;
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 300_000,
       liveness: () => confirmed,
       livenessGraceMs: 0,
     });
@@ -112,7 +110,6 @@ describe("a record whose Worker is gone is reaped on the liveness sweep", () => 
     roots.push(workspace);
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       // Nothing this daemon holds is confirmed, so only the grace can save it.
       liveness: () => false,
       livenessGraceMs: 30_000,

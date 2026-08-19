@@ -176,13 +176,14 @@ describe("a registration outlives its session", () => {
 
     daemon.registerProject(request());
     // No Worker is running: a project between Workers is exactly the state the
-    // host has to stay awake for, and a daemon that idled out under it would end
-    // the drain the operator walked away from.
+    // host stays registered for, and the registration is what keeps the drain
+    // the operator walked away from addressable.
     expect(daemon.workerCount()).toBe(0);
-    expect(daemon.evaluateIdle()).toBe("held-by-registrations");
+    expect(daemon.hostState().registrations ?? []).toHaveLength(1);
 
     clock.advance(WINDOW_MS);
-    expect(daemon.evaluateIdle()).toBe("exited");
+    daemon.sweepRegistrations();
+    expect(daemon.hostState().registrations ?? []).toEqual([]);
   });
 });
 

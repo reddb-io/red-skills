@@ -97,7 +97,6 @@ describe("a registration drains with no session alive behind it", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       // Real windows, only shortened: the loop is armed exactly as `serve` arms it.
       demandMs: 50,
       queueDiscovery: {
@@ -144,7 +143,6 @@ describe("a daemon that could not arm at start arms itself when it can", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 50,
       queueDiscovery: { ...queueDiscovery, intervalMs: 50 },
     });
@@ -183,7 +181,6 @@ describe("the sustain and the idle exit follow the poll outcome", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       // No births: this is about what keeps the RECORD standing, not about work.
       demandMs: 0,
       queueDiscovery: {
@@ -206,10 +203,9 @@ describe("the sustain and the idle exit follow the poll outcome", () => {
     // Sustained by the daemon's own poll, with nobody renewing it — and reported
     // as such, because "nobody is watching this" stays true.
     expect(held[0]!.sustained_by).toBe("open-work");
-    expect(daemon.evaluateIdle()).toBe("held-by-registrations");
   });
 
-  it("lets a registration nothing counted lapse, and the daemon idle out behind it", async () => {
+  it("lets a registration nothing counted lapse, so nothing is held behind it", async () => {
     // The other side of the same rule: an uncounted queue sustains nothing, so a
     // host that cannot ask stops holding a promise it cannot keep — with the poll
     // outcome saying WHY on the way out, never a bare disappearance.
@@ -219,7 +215,6 @@ describe("the sustain and the idle exit follow the poll outcome", () => {
       paths,
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
-      idleMs: 60_000,
       demandMs: 0,
       // No transport and no way to get one: the poll can only report why.
       queueDiscovery: { intervalMs: 40 },
@@ -234,6 +229,5 @@ describe("the sustain and the idle exit follow the poll outcome", () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     expect(daemon.hostState().registrations ?? []).toHaveLength(0);
-    expect(daemon.evaluateIdle()).toBe("exited");
   });
 });

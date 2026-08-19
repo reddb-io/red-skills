@@ -53,7 +53,7 @@ describe("worker birth through the socket", () => {
   it("starts a Worker, and it appears in host state with its project label", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const started = await startRedskilledWorker(paths, proofSpec(workspace), { readyTimeoutMs: 5_000 });
@@ -74,7 +74,7 @@ describe("worker birth through the socket", () => {
     // neither may be silent. That is the assertion.
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const started = await startRedskilledWorker(paths, proofSpec(workspace), { readyTimeoutMs: 5_000 });
@@ -93,7 +93,7 @@ describe("worker birth through the socket", () => {
   it("runs the Worker in the workspace it was handed, verbatim", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     await startRedskilledWorker(paths, proofSpec(workspace), { readyTimeoutMs: 5_000 });
@@ -113,7 +113,7 @@ describe("worker birth through the socket", () => {
   it("holds the daemon open while it believes the Worker is alive, and lets go on exit", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     await startRedskilledWorker(
@@ -123,7 +123,6 @@ describe("worker birth through the socket", () => {
     );
 
     expect(daemon.workerCount()).toBe(1);
-    expect(daemon.evaluateIdle()).toBe("held-by-workers");
 
     for (let attempt = 0; attempt < 100 && daemon.workerCount() > 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -135,7 +134,7 @@ describe("worker birth through the socket", () => {
   it("refuses an unlaunchable spec instead of half-starting one", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     await expect(
@@ -147,7 +146,7 @@ describe("worker birth through the socket", () => {
   it("keeps a project-minted Worker id distinguishable from a host fallback", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
     const started = await startRedskilledWorker(

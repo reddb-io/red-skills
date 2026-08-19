@@ -24,7 +24,6 @@ import {
   stopRedskilledDaemon,
   type RedskilledClientConfig,
 } from "./client.js";
-import { isResolvedRedskilledEntry } from "./daemon-entry.js";
 import { startRedskilledHostOtlpExport } from "./telemetry-otlp.js";
 import {
   readRedskilledHostConfig,
@@ -33,14 +32,7 @@ import {
   resolveRedskilledHostEventSinks,
   resolveRedskilledHostSettings,
 } from "./host-config.js";
-import {
-  auditRedskilledProvisioning,
-  installRedskilledUserUnit,
-  provisionRedskilledHome,
-  readRedskilledHomeNeed,
-  readRedskilledProvisionFacts,
-  renderRedskilledUserUnit,
-} from "./provision.js";
+import { runProvision } from "./provision-command.js";
 import {
   RedskilledAlreadyRunningError,
   startRedskilledDaemon,
@@ -77,7 +69,6 @@ import {
   type RedskilledUnitIO,
 } from "./supervision.js";
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
-import { stabilizeRedskilledEntry } from "./stable-bundle.js";
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
 import { runAcpWorkerCommand } from "@reddb-io/worker/acp";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
@@ -125,7 +116,6 @@ Runs the daemon in this process. Every path is a flag and none is derived
   --machine-claim <path>      the machine-wide claim record
   --worker-ceiling <n>        host-wide Worker slots across every project
   --memory-ceiling <size>     host-wide Worker memory budget
-  --idle-ms <n>               exit after this long with no work
   --daemon-version <v>        the version this daemon reports as
   --queue-endpoint <url>      where the queue poll asks; GitHub's when absent
   --queue-ms <n>              window between queue polls
@@ -186,20 +176,25 @@ side and only decided values cross the socket (ADR 0130 rule 10).
 Manages the OPTIONAL user supervisor unit — auto-spawn is the floor, and a host
 with no unit is a supported configuration (ADR 0130 rule 7). Defaults to status.
 `,
-  provision: `Usage: redskilled provision [--check] [--no-start] [--install-unit]
+  provision: `Usage: redskilled provision [--check] [--no-start] [--no-unit]
                           [--workspace <target>] [--project <dir>]
 
 Makes a machine with no prior state ready, and prints the audit. Idempotent: a
 second run creates nothing and reports the same verdicts.
+
+Installs the always-on OS service (ADR 0150 §4) and starts the daemon through
+it. The service carries no idle-exit tunable: once installed the daemon stays up
+until an operator, a signal or a published replacement takes the session, and no
+client ever starts one of its own.
 
 The host-scoped state home is created only when a declared workspace target reads it
 (the \`host\` preset, or a custom parent under the home). The daemon never reads
 that state directory, so the default \`local\` preset needs none — and never gets
 an empty one. Host policy is read separately from ~/.red/config.yaml.
 
-  --check         read-only; creates and starts nothing
+  --check         read-only; creates, installs and starts nothing
   --no-start      make the host ready without starting the daemon
-  --install-unit  also install the user supervisor unit
+  --no-unit       skip the OS service; the host keeps whatever it already had
   --workspace <t> state the workspace target outright, instead of reading a config
   --project <dir> the repository whose config declares the target (default: cwd)
 `,
@@ -243,7 +238,6 @@ const SERVE_FLAGS = {
   "machine-claim": { kind: "value", coerce: (raw: string) => raw },
   "worker-ceiling": { kind: "value", coerce: (raw: string) => raw },
   "memory-ceiling": { kind: "value", coerce: (raw: string) => raw },
-  "idle-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
   "daemon-version": { kind: "value", coerce: (raw: string) => raw },
   "queue-endpoint": { kind: "value", coerce: (raw: string) => raw },
   "queue-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
@@ -477,7 +471,6 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       flags: {
         ...(values["worker-ceiling"] == null ? {} : { workerCeiling: values["worker-ceiling"] }),
         ...(values["memory-ceiling"] == null ? {} : { memoryCeiling: values["memory-ceiling"] }),
-        ...(values["idle-ms"] == null ? {} : { idleMs: values["idle-ms"] }),
       },
       config: hostConfig,
     });
@@ -790,125 +783,6 @@ export async function runUnit(
   throw new Error(`unsupported redskilled unit action ${JSON.stringify(action)}: expected install, uninstall or status`);
 }
 
-const PROVISION_FLAGS = {
-  "no-start": { kind: "boolean" },
-  "install-unit": { kind: "boolean" },
-  check: { kind: "boolean" },
-  /** The repository whose declared workspace target decides whether the home is needed. */
-  project: { kind: "value", coerce: (raw: string) => raw },
-  /** A workspace target stated outright — the moment an operator selects one. */
-  workspace: { kind: "value", coerce: (raw: string) => raw },
-} as const;
-
-/**
- * `redskilled provision` — a machine with no prior state, made ready.
- *
- * It starts the daemon through the ordinary auto-spawn path, prints the audit,
- * and creates the host-scoped state home **when a declared workspace target reads it**
- * (`--workspace host`, or a repository whose config declares it). The home is not
- * a precondition for a daemon — the daemon never resolves that state directory
- * (host policy is the sibling `~/.red/config.yaml`) — so creating it
- * unconditionally left most machines with a directory nothing would ever open
- * (#2958).
- *
- * **Idempotent**: a second run creates nothing, rewrites nothing and reports the
- * same verdicts, which is what makes it safe for `/red-setup` to run on every
- * pass rather than only when something looks wrong.
- *
- * `--check` is the read-only half — the shape `/red-doctor` consumes — and never
- * creates or starts anything.
- */
-export async function runProvision(
-  args: readonly string[],
-  io: {
-    readonly write?: (text: string) => void;
-    /** The session to provision; derived from the environment when absent. */
-    readonly paths?: RedskilledPaths;
-    readonly homeDir?: string;
-    readonly configHome?: string;
-    /** The repository in view when no `--project` is stated. */
-    readonly projectRoot?: string;
-    /** Client options for the start, so a test can pose as another host. */
-    readonly client?: RedskilledClientConfig;
-  } = {},
-): Promise<number> {
-  const write = io.write ?? ((text: string) => process.stdout.write(text));
-  const { values } = parseFlags(args, PROVISION_FLAGS);
-  const paths = io.paths ?? resolveRedskilledPaths();
-  const homeDir = io.homeDir ?? homedir();
-
-  // The need is read BEFORE anything is created: `provisionRedskilledHome` stays
-  // the ONE creator (ADR 0130 Amendment 2) and this only decides whether to call
-  // it — a home no declared lane reads is never brought into being.
-  const need = await readRedskilledHomeNeed({
-    homeDir,
-    declaredTarget: values.workspace,
-    projectRoot: values.project ?? io.projectRoot ?? process.cwd(),
-  });
-  const home = values.check || !need.needed ? undefined : await provisionRedskilledHome(homeDir);
-
-  // The daemon is started through the very path a client uses, so provisioning
-  // proves the route a project will take rather than a private one beside it.
-  let startError: string | undefined;
-  if (!values.check && !values["no-start"]) {
-    try {
-      await ensureRedskilledDaemon(paths, io.client ?? {});
-    } catch (err) {
-      startError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  const facts = await readRedskilledProvisionFacts({
-    paths,
-    homeNeed: need,
-    ...(io.homeDir == null ? {} : { homeDir: io.homeDir }),
-    ...(io.configHome == null ? {} : { configHome: io.configHome }),
-    ...(io.client?.serverCommand == null
-      ? {}
-      : { entryOverride: { serverCommand: io.client.serverCommand, serverArgs: io.client.serverArgs } }),
-  });
-  // Stabilized when possible (#3554 closure): the installed unit outlives every
-  // cache, so its ExecStart points at the daemon-home copy when the resolved
-  // bundle's name states its version; anything else installs as resolved.
-  const unitEntry = isResolvedRedskilledEntry(facts.entry)
-    // Same reason as `planRedskilledUnit`: the version comes from the build
-    // stamp because an npx-resolved entry carries none in its name, and a unit
-    // pointing into a prunable cache is a daemon that stops starting.
-    ? stabilizeRedskilledEntry(facts.entry, {
-        homeDir,
-        version: readBuildInfo("redskilled").version,
-      })
-    : undefined;
-  const unit = values["install-unit"] && unitEntry != null
-    ? await installRedskilledUserUnit({
-        configHome: io.configHome ?? configHome(),
-        unit: renderRedskilledUserUnit({
-          command: [unitEntry.command, ...unitEntry.args].join(" "),
-          socketPath: paths.socketPath,
-        }),
-      })
-    : undefined;
-
-  const report = auditRedskilledProvisioning(facts);
-  write(`${encodeToon({
-    verdict: report.verdict,
-    home: {
-      path: home?.path ?? facts.homePath,
-      created: home?.created ?? false,
-      tightened: home?.tightened ?? false,
-      // Stated on every run, so "why is it empty / why is it absent?" is answered
-      // by the receipt instead of by an operator guessing.
-      needed: need.needed,
-      needed_by: need.declaredBy,
-    },
-    socket: facts.socketPath,
-    ...(startError == null ? {} : { start_error: startError }),
-    ...(unit == null ? {} : { unit: { path: unit.path, status: unit.status } }),
-    checks: report.rows.map((row) => ({ check: row.check, verdict: row.verdict, evidence: row.evidence })),
-    fixes: report.findings.map((finding) => ({ check: finding.check, fix: finding.fix })),
-  })}\n`);
-  return report.verdict === "ok" ? 0 : 1;
-}
 
 const RECLAIM_FLAGS = {
   "dry-run": { kind: "boolean" },
@@ -979,11 +853,6 @@ export async function runReclaim(
   })}\n`);
   // A failure to read or remove is the one thing an operator must not miss.
   return report.entries.some((entry) => entry.verdict === "failed") ? 1 : 0;
-}
-
-function configHome(): string {
-  const declared = process.env.XDG_CONFIG_HOME?.trim();
-  return declared && declared !== "" ? declared : join(homedir(), ".config");
 }
 
 /**

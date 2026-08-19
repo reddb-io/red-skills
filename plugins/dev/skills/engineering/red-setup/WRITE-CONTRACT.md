@@ -113,7 +113,7 @@ For Section E3, provision the execution daemon:
 
 1. Run `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` — the canonical npm direct-run form (ADR 0091), which works on a host that has never seen this daemon. It creates the host-scoped home, starts the daemon, and prints the audit. **Never `mkdir ~/.red/redskilled/` here** — the home belongs to `redskilled` (ADR 0130 Amendment 1) and this skill's `.red/` authority is repository-scoped. Re-running is a no-op, so run it on every pass.
 2. If the verdict is not `ok`, print the per-check fix the command already named and stop rather than improvising one. A `daemon-entry` finding is a missing published bundle, cured by warming the bundle for this host and re-running — never by pointing the daemon at a caller's own entry.
-3. Only if the user accepted the optional supervising unit, run `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --install-unit` and then tell them the `systemctl --user` commands. The installer writes the unit only when absent; per the no-clobber rule, an existing `redskilled.service` is left exactly as the operator has it.
+3. Provisioning installs the always-on user service by default (ADR 0150 §4); tell the user the `systemctl --user` commands that activate it across logins. The installer writes the unit only when absent; per the no-clobber rule, an existing `redskilled.service` is left exactly as the operator has it. Pass `--no-unit` only when the user asked to keep their own arrangement.
 4. Do not write anything about the daemon into `.red/config.yaml` — the daemon reads no repository config (ADR 0130 rule 3).
 
 If the user accepted Section H, activate the development workflow:

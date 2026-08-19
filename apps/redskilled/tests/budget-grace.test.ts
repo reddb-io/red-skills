@@ -46,7 +46,6 @@ describe("daemon Budget grace", () => {
     const kills: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths: await sessionPaths(),
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 1_000,
       signalWorkerForBudgetGrace: (held) => { signals.push(held.worker_id); return true; },
@@ -72,7 +71,6 @@ describe("daemon Budget grace", () => {
     let checkpointStarted = false;
     const daemon = await startRedskilledDaemon({
       paths: await sessionPaths(),
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 1_000,
       signalWorkerForBudgetGrace: () => { checkpointStarted = true; return true; },
@@ -96,7 +94,6 @@ describe("daemon Budget grace", () => {
     const kills: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths: await sessionPaths(),
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 1_000,
       signalWorkerForBudgetGrace: () => false,
@@ -117,7 +114,6 @@ describe("daemon Budget grace", () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
       paths,
-      idleMs: 60_000,
       sampleMs: 0,
       budgetGraceMs: 1_000,
       signalWorkerForBudgetGrace: () => true,

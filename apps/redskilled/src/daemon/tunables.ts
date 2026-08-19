@@ -6,25 +6,12 @@ import { type RedskilledHostEvent,
 import { type RedskilledDeathObservation,
 } from "../statusline-payload.js";
 /**
- * Default idle window before a Worker-free daemon leaves.
- *
- * **Shorter than `DEFAULT_REDSKILLED_REPLACE_CHECK_MS` (fifteen minutes), which
- * is why the idle exit asks about the published version on its way out.** A quiet
- * host's daemon leaves three times over before that interval's first tick, so an
- * upgrade that only ever rode the timer could not fire here at all (#2968) — and
- * the failure hid itself, because a daemon born after a release reports the right
- * version without ever having upgraded. `leaveIdleSession` is the coupling; these
- * two numbers may move freely, in either direction, without reintroducing it.
- */
-export const DEFAULT_REDSKILLED_IDLE_MS = 300_000;
-
-/**
  * How long a published-version read may take before it counts as unresolved.
  *
  * A bound rather than a preference: the shipped probe is a `fetch` with no
- * timeout of its own, and the idle exit now waits on one — a registry that
- * accepts the connection and never answers would otherwise strand a daemon that
- * had already decided to leave, holding the session for a host that wanted none.
+ * timeout of its own, and the replacement watch waits on one — a registry that
+ * accepts the connection and never answers would otherwise strand a daemon in
+ * the middle of handing its session over.
  * A read that runs out of time resolves to whatever this host can say WITHOUT
  * the registry — the cached bundle — and to UNKNOWN when it can say nothing.
  */
@@ -33,13 +20,12 @@ export const DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS = 10_000;
 /**
  * How long after starting a daemon takes its FIRST published-version look.
  *
- * **The busy daemon's blind spot, and the one the idle exit cannot cover.** A
- * daemon that only ever looks on the interval spends its first fifteen minutes
- * unable to know anything at all, and a daemon holding a registration never
- * reaches the idle boundary that would have asked — so a release published into
- * that window is served past for a whole interval, with `checks: 0` looking
- * exactly like a timer that is broken (#2975). One look shortly after boot makes
- * the daemon's own answer say which.
+ * **The always-on daemon's blind spot.** A daemon that only ever looks on the
+ * interval spends its first fifteen minutes unable to know anything at all — so a
+ * release published into that window is served past for a whole interval, with
+ * `checks: 0` looking exactly like a timer that is broken (#2975). One look
+ * shortly after boot makes the daemon's own answer say which. Since ADR 0150 §4
+ * there is no idle boundary to fall back on: the timer is the whole of the ask.
  *
  * Deliberately a minute rather than instant: a successor that mis-resolves its
  * own version would otherwise restart itself as fast as it could boot. A
