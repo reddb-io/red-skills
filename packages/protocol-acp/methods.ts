@@ -33,6 +33,7 @@ export const REDSKILLS_ACP_METHODS = {
   githubUpdate: "_redskills/github_update",
   githubCustodyHandoff: "_redskills/github_custody_handoff",
   workerBudgetGrace: "_redskills/worker_budget_grace",
+  goDispatch: "_redskills/go_dispatch",
 } as const;
 
 /** Any name the registry declares. */

@@ -1,6 +1,12 @@
 /** Exact governed intent retained by redskilled across Workflow Worker replacement. */
 export type AcpWorkerKind = "afk" | "go" | "scout";
 
+/** The isolated lane every `go` dispatch selects — never `ready-for-agent`. */
+export const GO_DISPATCH_LANE = "lane:go";
+
+/** The isolated lane every read-only `scout` dispatch selects. */
+export const SCOUT_DISPATCH_LANE = "lane:scout";
+
 export interface AcpTargetedDispatchIntent {
   readonly version: 1;
   readonly workerKind: AcpWorkerKind;
@@ -67,7 +73,9 @@ function validateTargetedDispatch(value: unknown): AcpTargetedDispatchIntent {
   }
   const lane = typeof selector.lane === "string" ? selector.lane.trim() : "";
   if (lane === "") throw new Error("a targeted ACP dispatch requires an explicit selector lane");
-  const requiredLane = workerKind === "go" ? "lane:go" : workerKind === "scout" ? "lane:scout" : undefined;
+  const requiredLane = workerKind === "go"
+    ? GO_DISPATCH_LANE
+    : workerKind === "scout" ? SCOUT_DISPATCH_LANE : undefined;
   if (requiredLane != null && lane !== requiredLane) {
     throw new Error(`Worker kind ${workerKind} requires selector lane ${requiredLane}`);
   }

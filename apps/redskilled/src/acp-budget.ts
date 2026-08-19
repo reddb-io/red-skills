@@ -7,6 +7,10 @@ import {
   type RedskilledGithubHostBudgetProjection,
   type RedskilledGithubProjectBudgetProjection,
 } from "./github-gateway.js";
+import {
+  redskillsAcpMethod,
+  type RedskillsAcpMethodDomain,
+} from "./acp-method-registry.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 
@@ -77,4 +81,43 @@ export const emptyBudgetParams: (value: unknown) => EmptyParams = emptyRedskills
 function budgetGateway(gateway: RedskilledGithubGateway | undefined): RedskilledGithubBudgetGateway | null {
   if (gateway == null || !("projectBudget" in gateway) || !("hostBudget" in gateway)) return null;
   return gateway as RedskilledGithubBudgetGateway;
+}
+
+export interface AcpBudgetDomainDeps {
+  readonly gateway: RedskilledGithubGatewayRegistration | undefined;
+  readonly scopedProject: () => AcpProjectWorkspace;
+  /** Explicit endpoint authority; ordinary project ACP stays false. */
+  readonly hostAdministration: boolean;
+}
+
+/**
+ * The `budget` domain: what one Project may observe of its own credential
+ * spend, plus the host-wide projection an administrative endpoint may read.
+ *
+ * The host method is advertised only where it is answerable. A connection that
+ * sees `host_budgets` in the capability block and is then refused for lacking
+ * authority learned nothing it could act on; one that never sees it knows the
+ * endpoint it dialed is not the administrative one.
+ */
+export function budgetMethodDomain(deps: AcpBudgetDomainDeps): RedskillsAcpMethodDomain {
+  const readProjectBudget = bindAcpProjectGithubBudget(deps.gateway, deps.scopedProject);
+  const readHostBudget = bindAcpHostGithubBudget(deps.gateway, deps.hostAdministration);
+  return {
+    domain: "budget",
+    bindings: [
+      redskillsAcpMethod(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget),
+      redskillsAcpMethod(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget),
+    ],
+    ...(deps.gateway == null ? {} : {
+      capability: {
+        credentialBudgets: {
+          version: 1,
+          methods: [
+            REDSKILLED_PROJECT_BUDGET_METHOD,
+            ...(deps.hostAdministration ? [REDSKILLED_HOST_BUDGET_METHOD] : []),
+          ],
+        },
+      },
+    }),
+  };
 }

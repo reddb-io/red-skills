@@ -248,21 +248,37 @@ function validateWrite(write: RedskilledGithubWrite): RedskilledGithubWrite {
     return { kind: "pull-request", head, base, title, body };
   }
   if (write.kind === "issue-publication") {
-    requireOnlyKeys(write, ["kind", "issue", "title", "body"]);
+    requireOnlyKeys(write, ["kind", "issue", "title", "body", "labels"]);
     const body = typeof write.body === "string" ? write.body : refuse("an Issue publication needs a body");
     if (write.issue != null) {
       if (!Number.isSafeInteger(write.issue) || write.issue <= 0 || write.title != null) {
         return refuse("an Issue comment needs one positive Issue number and no title");
       }
+      if (write.labels != null) return refuse("an Issue comment carries no labels");
       return { kind: "issue-publication", issue: write.issue, body };
     }
+    const labels = validateLabels(write.labels);
     return {
       kind: "issue-publication",
       title: nonEmpty(write.title, "a new Issue publication needs a title"),
       body,
+      ...(labels.length === 0 ? {} : { labels }),
     };
   }
   return refuse("Project authority permits only repository push, pull request, and Issue publication writes");
+}
+
+/** Labels are routing, so each one must be a real, single, non-empty name. */
+function validateLabels(value: unknown): readonly string[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) return refuse("Issue labels must be a list of label names");
+  return value.map((entry) => {
+    const name = typeof entry === "string" ? entry.trim() : "";
+    if (name === "" || name.includes(",") || name.includes("\n")) {
+      return refuse("an Issue label must be one non-empty label name");
+    }
+    return name;
+  });
 }
 
 function validateBranchRef(value: unknown, label: string): string {

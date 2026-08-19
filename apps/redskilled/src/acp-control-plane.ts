@@ -26,7 +26,6 @@ import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import {
   ACP_PROTOCOL_VERSION,
   ACP_V2_DRAFT_REVISION,
-  REDSKILLS_ACP_METHODS,
   REDSKILLS_WIRE_MAJOR,
   closeServer,
   connectWithDeadline,
@@ -39,24 +38,11 @@ import {
   withTimeout,
 } from "@reddb-io/protocol-acp";
 import {
-  REDSKILLED_GITHUB_UPDATE_METHOD,
   bindAcpGithubReaderUpdates,
-  bindAcpProjectGithubCustodyHandoff,
   bindAcpProjectGithubCustodyStatus,
-  bindAcpProjectGithubRead,
-  bindAcpProjectGithubWrite,
-  githubCustodyHandoffParams,
-  githubReadParams,
-  githubWriteParams,
   type AcpGithubUpdateObserver,
 } from "./acp-github.js";
-import {
-  bindAcpHostGithubBudget,
-  bindAcpProjectGithubBudget,
-  emptyBudgetParams,
-  REDSKILLED_HOST_BUDGET_METHOD,
-  REDSKILLED_PROJECT_BUDGET_METHOD,
-} from "./acp-budget.js";
+import { connectionMethodTables } from "./acp-connection-methods.js";
 import {
   acpSessionJournalPath,
   createAcpSessionJournal as createDurableAcpSessionJournal,
@@ -68,19 +54,13 @@ import {
   notifyV2AcpRetakeEvidence,
 } from "./acp-retake-evidence.js";
 import type { RedskilledHostState } from "./host-state.js";
-import {
-  REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD,
-  REDSKILLED_GITHUB_READ_METHOD,
-  REDSKILLED_GITHUB_WRITE_METHOD,
-  type RedskilledGithubGatewayRegistration,
-} from "./github-gateway.js";
+import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   applyProjectControl,
   coreProjectOperation,
   createProjectControlStore,
   notifyV1ProjectControl,
-  PROJECT_CONTROL_METHODS,
   projectStatusSnapshot,
   projectControlStorePath,
   runV2ProjectControlTurn,
@@ -116,7 +96,7 @@ import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
 
-interface PublicSession {
+export interface PublicSession {
   readonly request: NewSessionRequest;
   readonly project: AcpProjectWorkspace;
   readonly dispatchJournal: AcpDispatchJournal;
@@ -231,15 +211,6 @@ async function servePublicConnection(
   };
   const mutateProjectControl = (operation: ProjectControlOperation) =>
     applyProjectControl(scopedProject(), operation, projectControls, persistProjectControls);
-  const readGithub = bindAcpProjectGithubRead(options.githubGateway, scopedProject, (reader) => {
-    if (githubObserver != null || githubNotify == null) return;
-    githubObserver = Promise.resolve(bindAcpGithubReaderUpdates(
-      reader,
-      (method, update) => githubNotify!(method, update),
-    ));
-  });
-  const writeGithub = bindAcpProjectGithubWrite(options.githubGateway, scopedProject);
-  const handoffGithubCustody = bindAcpProjectGithubCustodyHandoff(options.githubGateway, scopedProject);
   const readGithubCustody = bindAcpProjectGithubCustodyStatus(options.githubGateway, scopedProject);
   const readProjectStatus = async (project: AcpProjectWorkspace) => {
     const control = projectStatusSnapshot(
@@ -251,10 +222,34 @@ async function servePublicConnection(
     const mergeCustody = await readGithubCustody();
     return mergeCustody == null ? control : { ...control, merge_custody: mergeCustody };
   };
-  const readProjectControl = () => readProjectStatus(scopedProject());
-  const readProjectBudget = bindAcpProjectGithubBudget(options.githubGateway, scopedProject);
-  const readHostBudget = bindAcpHostGithubBudget(options.githubGateway, options.hostAdministration === true);
-  const emptyParams = () => ({});
+
+  const { v1: v1Methods, v2: v2Methods } = connectionMethodTables({
+    paths: options.paths,
+    startWorker: options.startWorker,
+    githubGateway: options.githubGateway,
+    hostAdministration: options.hostAdministration === true,
+    sessionJournal,
+    sessions,
+    active,
+    scopedState,
+    scopedProject,
+    mutateProjectControl,
+    readProjectStatus: () => readProjectStatus(scopedProject()),
+    onGithubReader: (reader) => {
+      if (githubObserver != null || githubNotify == null) return;
+      githubObserver = Promise.resolve(bindAcpGithubReaderUpdates(
+        reader,
+        (method, update) => githubNotify!(method, update),
+      ));
+    },
+    permission: (sessionId, request, project) => resolvePermission(
+      sessionJournal,
+      sessionId,
+      request,
+      () => attached,
+      project,
+    ),
+  });
 
   const v1App = agent({ name: "RedSkills" })
     .onRequest(methods.agent.initialize, ({ params }) => {
@@ -269,25 +264,7 @@ async function servePublicConnection(
           redskills: {
             wireMajor: REDSKILLS_WIRE_MAJOR,
             workerBacked: true,
-            projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
-            ...(options.githubGateway == null ? {} : {
-              githubGateway: {
-                version: 1,
-                methods: [
-                  REDSKILLED_GITHUB_READ_METHOD,
-                  REDSKILLED_GITHUB_WRITE_METHOD,
-                  REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD,
-                ],
-                notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
-              },
-              credentialBudgets: {
-                version: 1,
-                methods: [
-                  REDSKILLED_PROJECT_BUDGET_METHOD,
-                  ...(options.hostAdministration === true ? [REDSKILLED_HOST_BUDGET_METHOD] : []),
-                ],
-              },
-            }),
+            ...v1Methods.capabilities,
           },
         },
       };
@@ -400,18 +377,10 @@ async function servePublicConnection(
         sessionId: worker.downstreamSessionId,
         ...(params._meta == null ? {} : { _meta: params._meta }),
       });
-    })
-    // Compatibility spelling, but deliberately a Project projection. Ordinary
-    // ACP socket access is not an administrative capability.
-    .onRequest(REDSKILLS_ACP_METHODS.hostState, emptyParams, scopedState)
-    .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
-    .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
-    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
-    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
-    .onRequest(REDSKILLED_GITHUB_WRITE_METHOD, githubWriteParams, writeGithub)
-    .onRequest(REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD, githubCustodyHandoffParams, handoffGithubCustody)
-    .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
-    .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
+    });
+  for (const binding of v1Methods.bindings) {
+    v1App.onRequest(binding.method, binding.params, binding.handle);
+  }
 
   const v2Turns = new Map<string, Promise<void>>();
   const v2App = acpV2.agent({ name: "RedSkills" })
@@ -427,25 +396,7 @@ async function servePublicConnection(
             wireMajor: REDSKILLS_WIRE_MAJOR,
             workerBacked: true,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
-            projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS },
-            ...(options.githubGateway == null ? {} : {
-              githubGateway: {
-                version: 1,
-                methods: [
-                  REDSKILLED_GITHUB_READ_METHOD,
-                  REDSKILLED_GITHUB_WRITE_METHOD,
-                  REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD,
-                ],
-                notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
-              },
-              credentialBudgets: {
-                version: 1,
-                methods: [
-                  REDSKILLED_PROJECT_BUDGET_METHOD,
-                  ...(options.hostAdministration === true ? [REDSKILLED_HOST_BUDGET_METHOD] : []),
-                ],
-              },
-            }),
+            ...v2Methods.capabilities,
           },
         },
       };
@@ -530,16 +481,10 @@ async function servePublicConnection(
         sessionId: worker.downstreamSessionId,
         ...(params._meta == null ? {} : { _meta: params._meta }),
       });
-    })
-    .onRequest(REDSKILLS_ACP_METHODS.hostState, emptyParams, scopedState)
-    .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
-    .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
-    .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
-    .onRequest(REDSKILLED_GITHUB_READ_METHOD, githubReadParams, readGithub)
-    .onRequest(REDSKILLED_GITHUB_WRITE_METHOD, githubWriteParams, writeGithub)
-    .onRequest(REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD, githubCustodyHandoffParams, handoffGithubCustody)
-    .onRequest(REDSKILLED_PROJECT_BUDGET_METHOD, emptyBudgetParams, readProjectBudget)
-    .onRequest(REDSKILLED_HOST_BUDGET_METHOD, emptyBudgetParams, readHostBudget);
+    });
+  for (const binding of v2Methods.bindings) {
+    v2App.onRequest(binding.method, binding.params, binding.handle);
+  }
 
   const connection = acpV2.agentProtocolRouter()
     .withV1(v1App)

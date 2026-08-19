@@ -8,6 +8,7 @@
   "exports": {
     ".": "./index.ts",
     "./compat.js": "./compat.ts",
+    "./go-dispatch.js": "./go-dispatch.ts",
     "./methods.js": "./methods.ts",
     "./transport.js": "./transport.ts"
   },
