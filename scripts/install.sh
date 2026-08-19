@@ -38,7 +38,7 @@ RED_DEV_SPEC="${RED_SKILLS_RED_DEV_SPEC:-red-dev@1}"
 # Where the retired standalone path put its tree. Kept for `--uninstall
 # --purge`, which is how that tree leaves a machine, and as the scratch root the
 # escape hatch generates host surfaces into.
-INSTALL_ROOT="${RED_SKILLS_INSTALL_ROOT:-$HOME/.red-skills}"
+INSTALL_ROOT="${RED_SKILLS_INSTALL_ROOT:-$HOME/.red/skills}"
 LOCAL_DEV_ROOT="$INSTALL_ROOT/local-dev"
 
 ONLY="${RED_SKILLS_ONLY:-auto}"
@@ -75,7 +75,7 @@ Options:
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
   --install-root <dir>  Where the retired standalone tree lives, for --purge
-                        (default: ~/.red-skills)
+                        (default: ~/.red/skills)
   --uninstall           Remove RedSkills from detected/specified CLIs
   --force               With --local-dev: reinstall plugins, and replace a
                         directory-sourced marketplace registration this script
@@ -291,7 +291,7 @@ announce_local_dev() {
 #   Configured marketplaces:
 #
 #     ❯ red-skills
-#       Source: Directory (/home/…/.red-skills/current)
+#       Source: Directory (/home/…/.red/skills/current)
 #
 # Prints the lowercased kind (`github`, `directory`, `git`), `absent` when the
 # marketplace is not registered, or `unknown` when a source line cannot be read.

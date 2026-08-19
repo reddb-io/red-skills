@@ -66,9 +66,17 @@ function cacheRoot(override?: string): string {
   return join(homedir(), ".cache", "red-skills", "bundles");
 }
 
-/** Versioned runtime tree populated by the standalone installer. */
+/**
+ * Versioned runtime tree populated by the standalone installer.
+ *
+ * **Everything RedSkills owns on an operator's machine lives under `~/.red/`.**
+ * The daemon home is `~/.red/redskilled/`, brain is `~/.red/brain`, memory is
+ * `~/.red/memory/<project>` — a sibling `~/.red/skills/` was the one holdout
+ * from before that shape existed, and a second top-level directory is a second
+ * place to look when something is missing.
+ */
 function installRoot(): string {
-  return process.env.RED_SKILLS_INSTALL_ROOT || join(homedir(), ".red-skills");
+  return process.env.RED_SKILLS_INSTALL_ROOT || join(homedir(), ".red", "skills");
 }
 
 const realIO: BundleIO = {

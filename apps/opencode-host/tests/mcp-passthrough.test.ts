@@ -68,18 +68,18 @@ describe("resolveScriptPath (Slice 3 search order)", () => {
 
 describe("resolveHomeScriptPath", () => {
   it("resolves a launcher installed under the user's home", () => {
-    writeFile("home/.red-skills/current/bin/rsp.mjs", "console.log(1)");
+    writeFile("home/.red/skills/current/bin/rsp.mjs", "console.log(1)");
     const body =
-      'if [ -f "$HOME/.red-skills/current/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/bin/rsp.mjs" mcp; fi';
+      'if [ -f "$HOME/.red/skills/current/bin/rsp.mjs" ]; then exec node "$HOME/.red/skills/current/bin/rsp.mjs" mcp; fi';
 
     expect(resolveHomeScriptPath(body, join(root, "home"))).toBe(
-      join(root, "home/.red-skills/current/bin/rsp.mjs"),
+      join(root, "home/.red/skills/current/bin/rsp.mjs"),
     );
   });
 
   it("keeps the mcp argument before a shell command separator", () => {
-    writeFile("home/.red-skills/current/bin/rsp.mjs", "console.log(1)");
-    const launcher = join(root, "home/.red-skills/current/bin/rsp.mjs");
+    writeFile("home/.red/skills/current/bin/rsp.mjs", "console.log(1)");
+    const launcher = join(root, "home/.red/skills/current/bin/rsp.mjs");
     const previousHome = process.env.HOME;
     process.env.HOME = join(root, "home");
     try {
@@ -87,7 +87,7 @@ describe("resolveHomeScriptPath", () => {
         command: "sh",
         args: [
           "-c",
-          'if [ -f "$HOME/.red-skills/current/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/bin/rsp.mjs" mcp; fi',
+          'if [ -f "$HOME/.red/skills/current/bin/rsp.mjs" ]; then exec node "$HOME/.red/skills/current/bin/rsp.mjs" mcp; fi',
         ],
       });
       expect(warnings).toEqual([]);
@@ -135,7 +135,7 @@ describe("rewriteServer prefers the tree it generates from", () => {
         command: "sh",
         args: [
           "-c",
-          'root="${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"; for bundle in "$PWD/dist/rsp.bundle.min.mjs" "$root/dist/rsp.bundle.min.mjs" "$HOME/.red-skills/current/bin/rsp.mjs"; do if [ -f "$bundle" ]; then exec node "$bundle" mcp; fi; done; exit 1',
+          'root="${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"; for bundle in "$PWD/dist/rsp.bundle.min.mjs" "$root/dist/rsp.bundle.min.mjs" "$HOME/.red/skills/current/bin/rsp.mjs"; do if [ -f "$bundle" ]; then exec node "$bundle" mcp; fi; done; exit 1',
         ],
       });
       expect(warnings).toEqual([]);

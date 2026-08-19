@@ -48,7 +48,7 @@ removes, or repoints a registration itself.
 
 The standalone `scripts/install.sh` remains as a handoff to that bootstrap and
 as the way to retire what it used to install (`--uninstall`, plus `--purge` for
-the `~/.red-skills` tree). `--local-dev --source-dir <checkout>` is the
+the `~/.red/skills` tree). `--local-dev --source-dir <checkout>` is the
 development escape hatch: it wires the detected hosts from a checkout, says out
 loud that it is not a production installation, and acquires nothing.
 
