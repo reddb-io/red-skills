@@ -9,6 +9,7 @@ import {
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 import { removeAcpEndpoint } from "@reddb-io/protocol-acp";
 import { redskilledMetrics } from "./telemetry-metrics.js";
+import { releaseWorkerWorkspace, type MaterializedWorkerWorkspace } from "./worker-workspace.js";
 
 export interface ActiveWorkflowWorker {
   readonly workerId: string;
@@ -18,6 +19,14 @@ export interface ActiveWorkflowWorker {
   readonly endpoint: string;
   readonly publicSessionId: string;
   readonly notify: AgentConnection["client"]["notify"];
+  /**
+   * The OS-temporary workspace this Worker stands in, released when it dies.
+   *
+   * Held on the handle rather than looked up at cleanup time: the daemon is the
+   * only thing that knows this directory exists, so a Worker whose handle is
+   * dropped without it is bytes nobody will ever attribute again (ADR 0149 §1).
+   */
+  readonly workspace?: MaterializedWorkerWorkspace;
   readonly dispatch?: AcpTargetedDispatchIntent;
   idleTimer?: NodeJS.Timeout;
   cancelled: boolean;
@@ -93,6 +102,10 @@ export function cleanupWorkflowWorker(
   worker.connection.close();
   worker.socket.destroy();
   void removeAcpEndpoint(worker.endpoint);
+  // The workspace goes with the Worker. It is expensive and regenerable, and
+  // deleting it costs no conscience precisely because nothing a human returns to
+  // was ever written there (ADR 0149 §1).
+  if (worker.workspace != null) void releaseWorkerWorkspace(worker.workspace).catch(() => undefined);
 }
 
 export function workerTransportIsClosed(worker: ActiveWorkflowWorker): boolean {
