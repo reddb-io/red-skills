@@ -29,7 +29,7 @@ export type ImplementerSpawnConstraint =
           "dev@red-skills" | "memory@red-skills" | "brain@red-skills",
           boolean
         >;
-        mcpServers: Record<"red-memory" | "brain" | "red-ui", boolean>;
+        mcpServers: Record<"redskilled" | "red-memory" | "brain" | "red-ui", boolean>;
         hooks: false;
         rsp: boolean;
       };
@@ -38,7 +38,7 @@ export type ImplementerSpawnConstraint =
       kind: "opencode-config";
       config: {
         plugins: ImplementerEnabledSurfaces["plugins"];
-        mcp: Record<"red-memory" | "brain" | "red-ui", { enabled: boolean }>;
+        mcp: Record<"redskilled" | "red-memory" | "brain" | "red-ui", { enabled: boolean }>;
         pluginEvents: readonly [];
         rsp: boolean;
       };
@@ -123,6 +123,10 @@ const codexImplementerEnvironment: ImplementerProjector = (enabled) => ({
       "brain@red-skills": enabled.plugins.includes("brain"),
     },
     mcpServers: {
+      // `dev` stays enabled for the inner agent, so its one declared server is
+      // switched off by NAME here rather than by omission — a map that stops
+      // mentioning it hands the inner agent a daemon client nobody granted.
+      redskilled: false,
       "red-memory": enabled.mcp.includes("red-memory"),
       brain: enabled.mcp.includes("brain"),
       "red-ui": enabled.mcp.includes("red-ui"),
@@ -137,6 +141,7 @@ const openCodeImplementerEnvironment: ImplementerProjector = (enabled) => ({
   config: {
     plugins: [...enabled.plugins],
     mcp: {
+      redskilled: { enabled: false },
       "red-memory": { enabled: enabled.mcp.includes("red-memory") },
       brain: { enabled: enabled.mcp.includes("brain") },
       "red-ui": { enabled: enabled.mcp.includes("red-ui") },
