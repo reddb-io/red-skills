@@ -152,6 +152,20 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every shipped SKILL.md must declare exactly one of ADR 0150's four Working modes (#4012); the skills span every plugin, but their ratchet lives in apps/dev",
   },
   {
+    name: "invariants:domain-vocabulary",
+    scope: "apps/dev",
+    script: "test:invariants",
+    // The four retired nouns are deliberately NOT spelled here: this file is
+    // swept, and `RETIRED_OWNERSHIP_TERMS` is the one place that names them.
+    why: "the ownership nouns ADR 0143 and the Dev glossary retired may not return to live source (#3897); the swept trees span apps/dev, apps/redskilled, packages/worker and packages/protocol-acp, and the declaration and its suite live in apps/dev",
+  },
+  {
+    name: "invariants:acp-ci-posture",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "the focused ACP suites must stay wired and the broad RSP/redskilled/engine pull-request gates must stay removed (#3878, #3897); the posture lives in .github/workflows and apps/redskilled, the suite lives in apps/dev",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/dev",
     script: "test:invariants",

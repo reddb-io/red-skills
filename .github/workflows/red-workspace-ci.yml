@@ -401,6 +401,14 @@ jobs:
         if: env.RUN_ACP == 'true'
         run: pnpm -C apps/redskilled test:acp-local-transport
 
+      # The broad `apps/redskilled` gate is deliberately absent from this
+      # workflow (#3878), so the five supported Agents need a focused suite of
+      # their own: without it, a sixth Agent, a dropped Agent, or one admitted
+      # without the baseline capability probe would reach main unseen.
+      - name: Test the focused ACP Agent conformance matrix
+        if: env.RUN_ACP == 'true'
+        run: pnpm -C apps/redskilled test:acp-agent-conformance
+
       - name: Report narrowed scope
         if: env.RUN_ACP != 'true'
         run: echo "apps/redskilled is not in the affected cone — no local ACP transport check to run."
