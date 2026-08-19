@@ -420,6 +420,38 @@ describe("sole-claimant verification (#2385)", () => {
     expect(gh.conceded).toHaveLength(0);
   });
 
+  // #4049: an empty read-back is a read that cannot be believed, not a race.
+  it("classifies an always-empty read-back as an infrastructure failure", async () => {
+    const gh = fakeGh([]);
+    gh.listClaims = async () => []; // a cache serving the list from before our POST
+    const error = await acquireClaim(gh, { worker: "h:me" }, 5, {
+      sleep: async () => undefined,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ClaimVerificationError);
+    expect((error as ClaimVerificationError).kind).toBe("infrastructure");
+    expect((error as Error).message).toMatch(/cannot be believed rather than a lost race/);
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("keeps a populated-but-stale read-back classified as propagation", async () => {
+    const gh = fakeGh([]);
+    // Someone else's marker is visible, ours is not yet: an ordinary race we
+    // waited too little for, and the one case where conceding is meaningful.
+    gh.listClaims = async () => [
+      {
+        id: 987_654,
+        body: renderClaimComment({ worker: "h:other" }, "claim"),
+        createdAt: "2026-08-19T00:00:00Z",
+      },
+    ];
+    const error = await acquireClaim(gh, { worker: "h:me" }, 5, {
+      sleep: async () => undefined,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ClaimVerificationError);
+    expect((error as ClaimVerificationError).kind).toBe("propagation");
+    expect(gh.conceded).toHaveLength(0);
+  });
+
   it("fails loudly when every read-back attempt throws", async () => {
     const gh = fakeGh([]);
     gh.listClaims = async () => {

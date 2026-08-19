@@ -532,14 +532,21 @@ export function completeRedskilledReplacement(
   }
   if (options.successor != null) {
     options.successor.commit();
-    return prepared;
+    // **An incumbent that has handed over must LEAVE.** The socket is unlinked
+    // and the successor holds the endpoint, so staying alive serves nothing
+    // while still counting as the host's daemon: on 2026-08-19 one sat exactly
+    // so for 25 minutes and no Worker was born (#4047).
+    (io.exit ?? defaultExit)(REDSKILLED_REPLACE_EXIT_CODE);
+    return { ...prepared, exitCode: REDSKILLED_REPLACE_EXIT_CODE };
   }
   const argv = [
     ...prepared.entry.args,
     ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
   ];
   (io.spawnSuccessor ?? defaultSpawnSuccessor(io.env, target))(prepared.entry, argv);
-  return prepared;
+  // Same rule on the bare-spawn path: the detached successor owns the endpoint.
+  (io.exit ?? defaultExit)(REDSKILLED_REPLACE_EXIT_CODE);
+  return { ...prepared, exitCode: REDSKILLED_REPLACE_EXIT_CODE };
 }
 
 function defaultSpawnSuccessor(env: NodeJS.ProcessEnv | undefined, target: RedskilledServeTarget) {

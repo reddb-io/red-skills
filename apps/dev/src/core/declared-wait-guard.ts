@@ -770,7 +770,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { sink: "onWait" },
   },
   {
-    path: "packages/worker/src/engine/tracker/claim.ts",
+    path: "packages/worker/src/engine/tracker/claim-verification.ts",
     fn: "listVerifiedClaims",
     subject: "our own claim marker becoming visible in the issue's comments",
     deadline: "`verifyAttempts` × `verifyDelayMs`, default 1s apart",
