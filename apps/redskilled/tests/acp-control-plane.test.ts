@@ -22,6 +22,7 @@ import { readRedskilledEvents } from "../src/event-lane.js";
 import { createRedskilledMajorHandover } from "../src/major-handover.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
 import { requestWorkflowTurn, type ActiveWorkflowWorker } from "../src/acp-worker-lifecycle.js";
+import { workerWorkspaceRoot } from "../src/worker-workspace.js";
 
 const require_ = createRequire(import.meta.url);
 const tsxLoader = require_.resolve("tsx");
@@ -573,7 +574,12 @@ describe("the public RedSkills ACP v1 control plane", () => {
 
     const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
     expect(firstBirth.project_label).toBe(project.projectId);
-    expect(firstBirth.workspace_path).toBe(project.workspacePath);
+    // ADR 0149 §1: the Worker stands in its OWN workspace in OS temporary
+    // storage, forked from the Project workspace rather than sharing it.
+    expect(firstBirth.workspace_path).not.toBe(project.workspacePath);
+    expect(firstBirth.workspace_path).toBe(
+      join(workerWorkspaceRoot(), firstBirth.worker_id, "worktree"),
+    );
     expect(firstBirth.pid).toBeGreaterThan(0);
     const liveBetweenTurns = await connection.agent.request<{ workers: Array<{ worker_id: string }> }>(
       "_redskills/host_state",
@@ -826,7 +832,9 @@ describe("the public RedSkills ACP v1 control plane", () => {
     });
     const projectBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
     expect(projectBirth.project_label).toBe(firstProject.projectId);
-    expect(projectBirth.workspace_path).toBe(firstProject.workspacePath);
+    expect(projectBirth.workspace_path).toBe(
+      join(workerWorkspaceRoot(), projectBirth.worker_id, "worktree"),
+    );
     const liveScoped = await first.agent.request<{ workers: Array<{ project_label: string }> }>(
       "_redskills/host_state",
       {},

@@ -14,7 +14,7 @@ unit name and rehydrates identity and budget from its own append-only event lane
 
 ## Why its own app
 
-The vendored `packages/red-castle` cannot *be* this daemon: every checkout
+The vendored `packages/worker` cannot *be* this daemon: every checkout
 carries its own copy, so a host-scoped singleton living there would be N
 singletons. The rsp core is repository-scoped and deliberately minimal, so the
 daemon does not belong inside it either. It lives here and consumes the shared
@@ -466,6 +466,7 @@ plugins:
       memory_ceiling: 8G
       validation_ceiling: 2
       idle_ms: 300000
+      evidence_ttl_ms: 2592000000
 ```
 
 Resolution is `serve` flag > environment > home config > derived default.
@@ -475,9 +476,45 @@ counterparts are `REDSKILLED_WORKER_CEILING` and `REDSKILLED_MEMORY_CEILING`.
 full-suite semaphore. When absent, its capacity is the tightest of half the
 available CPU count, the resolved memory ceiling in 2 GiB shares, and the
 Worker ceiling; every dimension retains a minimum capacity of one.
-`REDSKILLED_IDLE_MS` follows the same precedence for idle time. `host-state`
+`REDSKILLED_IDLE_MS` follows the same precedence for idle time.
+`evidence_ttl_ms` (or `REDSKILLED_EVIDENCE_TTL_MS`) is how long a dead Worker's
+evidence lane under `~/.red/tmp/workers/<id>/` survives — its log, the runner's
+session artifact and the daemon's verdict — and defaults to thirty days. `0`
+keeps nothing; a live Worker's lane is never pruned at any TTL. The daemon's own
+log stays in `~/.red/redskilled/`, which this TTL never touches. `host-state`
 reports the resolved `ceiling` and the `memory_source` / `worker_source` that won,
 so a restart or an auto-spawn from another project remains directly auditable.
+
+### Counters, and where they may be pushed
+
+The daemon counts what its own event lane already records — Worker births,
+Worker deaths and budget kills by project label, its own decisions by kind — plus
+the public Workflow turns it served, by outcome. An administrative ACP endpoint
+reads them as a cumulative snapshot through the `metrics` extension method; an
+ordinary project-scoped connection is refused, because the counters are
+host-wide and their labels would name every other project on the machine.
+
+Exporting them is **off by default**: with no block below, the daemon starts with
+no receiver, no timer and no outbound socket. Naming an endpoint turns it on.
+
+```yaml
+plugins:
+  dev:
+    redskilled:
+      telemetry:
+        otlp:
+          endpoint: http://127.0.0.1:4318
+          interval_ms: 60000
+          headers:
+            authorization: Bearer <collector token>
+```
+
+`endpoint` is the only key that enables anything — an interval or headers with no
+endpoint is a cadence for nowhere and stays off. The base URL gains `/v1/metrics`
+unless it already ends in it, every series is exported as a cumulative monotonic
+sum in OTLP/HTTP JSON, and a push is a notification rather than a veto: a
+collector that is down, slow or hostile changes nothing about the Workers this
+daemon is running.
 
 ## Commands
 

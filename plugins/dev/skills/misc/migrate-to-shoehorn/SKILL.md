@@ -1,5 +1,6 @@
 ---
 name: migrate-to-shoehorn
+working-mode: interactive
 description: Migrate test files from `as` type assertions to @total-typescript/shoehorn. Use when user mentions shoehorn, wants to replace `as` in tests, or needs partial test data.
 ---
 

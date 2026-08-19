@@ -1,0 +1,434 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`engine runner registry > projects the exact claude implementer constraint for one activation gate 1`] = `
+{
+  "flags": [
+    "--bare",
+    "--strict-mcp-config",
+  ],
+  "kind": "claude-settings",
+  "settings": {
+    "hooks": [],
+    "mcpServers": [],
+    "plugins": [
+      "dev",
+    ],
+    "rsp": false,
+  },
+}
+`;
+
+exports[`engine runner registry > projects the exact claude implementer constraint for one activation gate 2`] = `
+{
+  "flags": [
+    "--bare",
+    "--strict-mcp-config",
+  ],
+  "kind": "claude-settings",
+  "settings": {
+    "hooks": [],
+    "mcpServers": [
+      "red-memory",
+    ],
+    "plugins": [
+      "dev",
+      "memory",
+    ],
+    "rsp": false,
+  },
+}
+`;
+
+exports[`engine runner registry > projects the exact claude implementer constraint for one activation gate 3`] = `
+{
+  "flags": [
+    "--bare",
+    "--strict-mcp-config",
+  ],
+  "kind": "claude-settings",
+  "settings": {
+    "hooks": [],
+    "mcpServers": [
+      "brain",
+    ],
+    "plugins": [
+      "dev",
+      "brain",
+    ],
+    "rsp": false,
+  },
+}
+`;
+
+exports[`engine runner registry > projects the exact claude implementer constraint for one activation gate 4`] = `
+{
+  "flags": [
+    "--bare",
+    "--strict-mcp-config",
+  ],
+  "kind": "claude-settings",
+  "settings": {
+    "hooks": [],
+    "mcpServers": [
+      "red-ui",
+    ],
+    "plugins": [
+      "dev",
+    ],
+    "rsp": false,
+  },
+}
+`;
+
+exports[`engine runner registry > projects the exact claude implementer constraint for one activation gate 5`] = `
+{
+  "flags": [
+    "--bare",
+    "--strict-mcp-config",
+  ],
+  "kind": "claude-settings",
+  "settings": {
+    "hooks": [],
+    "mcpServers": [],
+    "plugins": [
+      "dev",
+    ],
+    "rsp": true,
+  },
+}
+`;
+
+exports[`engine runner registry > projects the exact codex implementer constraint for one activation gate 1`] = `
+{
+  "config": {
+    "hooks": false,
+    "mcpServers": {
+      "brain": false,
+      "red-memory": false,
+      "red-ui": false,
+      "redskilled": false,
+    },
+    "plugins": {
+      "brain@red-skills": false,
+      "dev@red-skills": true,
+      "memory@red-skills": false,
+    },
+    "rsp": false,
+  },
+  "kind": "codex-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact codex implementer constraint for one activation gate 2`] = `
+{
+  "config": {
+    "hooks": false,
+    "mcpServers": {
+      "brain": false,
+      "red-memory": true,
+      "red-ui": false,
+      "redskilled": false,
+    },
+    "plugins": {
+      "brain@red-skills": false,
+      "dev@red-skills": true,
+      "memory@red-skills": true,
+    },
+    "rsp": false,
+  },
+  "kind": "codex-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact codex implementer constraint for one activation gate 3`] = `
+{
+  "config": {
+    "hooks": false,
+    "mcpServers": {
+      "brain": true,
+      "red-memory": false,
+      "red-ui": false,
+      "redskilled": false,
+    },
+    "plugins": {
+      "brain@red-skills": true,
+      "dev@red-skills": true,
+      "memory@red-skills": false,
+    },
+    "rsp": false,
+  },
+  "kind": "codex-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact codex implementer constraint for one activation gate 4`] = `
+{
+  "config": {
+    "hooks": false,
+    "mcpServers": {
+      "brain": false,
+      "red-memory": false,
+      "red-ui": true,
+      "redskilled": false,
+    },
+    "plugins": {
+      "brain@red-skills": false,
+      "dev@red-skills": true,
+      "memory@red-skills": false,
+    },
+    "rsp": false,
+  },
+  "kind": "codex-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact codex implementer constraint for one activation gate 5`] = `
+{
+  "config": {
+    "hooks": false,
+    "mcpServers": {
+      "brain": false,
+      "red-memory": false,
+      "red-ui": false,
+      "redskilled": false,
+    },
+    "plugins": {
+      "brain@red-skills": false,
+      "dev@red-skills": true,
+      "memory@red-skills": false,
+    },
+    "rsp": true,
+  },
+  "kind": "codex-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact opencode implementer constraint for one activation gate 1`] = `
+{
+  "config": {
+    "mcp": {
+      "brain": {
+        "enabled": false,
+      },
+      "red-memory": {
+        "enabled": false,
+      },
+      "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
+        "enabled": false,
+      },
+    },
+    "pluginEvents": [],
+    "plugins": [
+      "dev",
+    ],
+    "rsp": false,
+  },
+  "kind": "opencode-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact opencode implementer constraint for one activation gate 2`] = `
+{
+  "config": {
+    "mcp": {
+      "brain": {
+        "enabled": false,
+      },
+      "red-memory": {
+        "enabled": true,
+      },
+      "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
+        "enabled": false,
+      },
+    },
+    "pluginEvents": [],
+    "plugins": [
+      "dev",
+      "memory",
+    ],
+    "rsp": false,
+  },
+  "kind": "opencode-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact opencode implementer constraint for one activation gate 3`] = `
+{
+  "config": {
+    "mcp": {
+      "brain": {
+        "enabled": true,
+      },
+      "red-memory": {
+        "enabled": false,
+      },
+      "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
+        "enabled": false,
+      },
+    },
+    "pluginEvents": [],
+    "plugins": [
+      "dev",
+      "brain",
+    ],
+    "rsp": false,
+  },
+  "kind": "opencode-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact opencode implementer constraint for one activation gate 4`] = `
+{
+  "config": {
+    "mcp": {
+      "brain": {
+        "enabled": false,
+      },
+      "red-memory": {
+        "enabled": false,
+      },
+      "red-ui": {
+        "enabled": true,
+      },
+      "redskilled": {
+        "enabled": false,
+      },
+    },
+    "pluginEvents": [],
+    "plugins": [
+      "dev",
+    ],
+    "rsp": false,
+  },
+  "kind": "opencode-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact opencode implementer constraint for one activation gate 5`] = `
+{
+  "config": {
+    "mcp": {
+      "brain": {
+        "enabled": false,
+      },
+      "red-memory": {
+        "enabled": false,
+      },
+      "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
+        "enabled": false,
+      },
+    },
+    "pluginEvents": [],
+    "plugins": [
+      "dev",
+    ],
+    "rsp": true,
+  },
+  "kind": "opencode-config",
+}
+`;
+
+exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 1`] = `
+{
+  "extensions": [],
+  "flags": [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+  ],
+  "kind": "pi-flags",
+  "rsp": false,
+  "skills": [
+    "dev",
+  ],
+}
+`;
+
+exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 2`] = `
+{
+  "extensions": [
+    "red-memory",
+  ],
+  "flags": [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+  ],
+  "kind": "pi-flags",
+  "rsp": false,
+  "skills": [
+    "dev",
+    "memory",
+  ],
+}
+`;
+
+exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 3`] = `
+{
+  "extensions": [
+    "brain",
+  ],
+  "flags": [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+  ],
+  "kind": "pi-flags",
+  "rsp": false,
+  "skills": [
+    "dev",
+    "brain",
+  ],
+}
+`;
+
+exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 4`] = `
+{
+  "extensions": [
+    "red-ui",
+  ],
+  "flags": [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+  ],
+  "kind": "pi-flags",
+  "rsp": false,
+  "skills": [
+    "dev",
+  ],
+}
+`;
+
+exports[`engine runner registry > projects the exact pi implementer constraint for one activation gate 5`] = `
+{
+  "extensions": [],
+  "flags": [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+  ],
+  "kind": "pi-flags",
+  "rsp": true,
+  "skills": [
+    "dev",
+  ],
+}
+`;

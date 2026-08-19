@@ -8,7 +8,7 @@ import {
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { workerPidFile } from "../../core/worker-paths.js";
 import { makeClaimLock } from "./claim-lease.js";
-import { Output } from "@reddb-io/red-castle";
+import { Output } from "@reddb-io/worker";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
@@ -42,7 +42,7 @@ import {
 } from "../../core/issue-classifier.js";
 import { toAgentRunner } from "../../core/runner-spec.js";
 import { LABEL_READY_FOR_REVIEW } from "../../core/triage-labels.js";
-import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
+import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/worker/engine";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";

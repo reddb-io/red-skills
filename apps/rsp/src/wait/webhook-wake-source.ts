@@ -7,7 +7,7 @@ import {
   type SingletonEventLane,
   type SingletonLease,
   type SingletonLeaseStore,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import {
   deliveryMatchesPr,
   deliveryMatchesRun,

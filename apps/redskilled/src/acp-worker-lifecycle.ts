@@ -7,7 +7,14 @@ import {
   type PromptResponse,
 } from "@agentclientprotocol/sdk";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
-import { removeAcpEndpoint } from "./acp-socket.js";
+import { removeAcpEndpoint } from "@reddb-io/protocol-acp";
+import { redskilledMetrics } from "./telemetry-metrics.js";
+import {
+  pruneWorkerEvidence,
+  retainWorkerEvidence,
+  type WorkerEvidencePlan,
+} from "./worker-evidence.js";
+import { releaseWorkerWorkspace, type MaterializedWorkerWorkspace } from "./worker-workspace.js";
 
 export interface ActiveWorkflowWorker {
   readonly workerId: string;
@@ -17,6 +24,22 @@ export interface ActiveWorkflowWorker {
   readonly endpoint: string;
   readonly publicSessionId: string;
   readonly notify: AgentConnection["client"]["notify"];
+  /**
+   * The OS-temporary workspace this Worker stands in, released when it dies.
+   *
+   * Held on the handle rather than looked up at cleanup time: the daemon is the
+   * only thing that knows this directory exists, so a Worker whose handle is
+   * dropped without it is bytes nobody will ever attribute again (ADR 0149 §1).
+   */
+  readonly workspace?: MaterializedWorkerWorkspace;
+  /**
+   * Where this Worker's cheap, irreplaceable bytes go when it dies.
+   *
+   * Held here for the same reason the workspace is, and it is the SAME fact
+   * seen from the other side: the workspace is what death may take, the
+   * evidence is what death must keep (ADR 0149 §2).
+   */
+  readonly evidence?: WorkerEvidencePlan;
   readonly dispatch?: AcpTargetedDispatchIntent;
   idleTimer?: NodeJS.Timeout;
   cancelled: boolean;
@@ -42,7 +65,7 @@ export async function reapWorkflowWorker(
   reason: string,
 ): Promise<void> {
   await notifyWorkerLifecycle(worker, "reaping", reason).catch(() => undefined);
-  cleanupWorkflowWorker(sessionId, worker, active);
+  cleanupWorkflowWorker(sessionId, worker, active, reason);
 }
 
 export async function notifyWorkerLifecycle(
@@ -84,6 +107,7 @@ export function cleanupWorkflowWorker(
   sessionId: string,
   worker: ActiveWorkflowWorker,
   active: Map<string, ActiveWorkflowWorker>,
+  outcome = "cleanup",
 ): void {
   if (worker.cleaned) return;
   worker.cleaned = true;
@@ -92,6 +116,51 @@ export function cleanupWorkflowWorker(
   worker.connection.close();
   worker.socket.destroy();
   void removeAcpEndpoint(worker.endpoint);
+  // The live set is snapshotted HERE, synchronously, while it is still true.
+  // Reading it inside the prune's continuation would judge a later host: a
+  // Worker admitted in the meantime would be absent from a set captured before
+  // it existed, and the prune would be free to take its lane.
+  const stillLive = [...active.values()].map((held) => held.workerId);
+  // Evidence is retained BEFORE the workspace goes, because a Worker's log may
+  // be inside the directory about to be deleted.
+  const retained = worker.evidence == null
+    ? Promise.resolve()
+    : retainWorkerEvidence(evidenceFor(worker, worker.evidence, outcome)).then(() => undefined);
+  void retained
+    .catch(() => undefined)
+    .then(async () => {
+      // The workspace goes with the Worker. It is expensive and regenerable, and
+      // deleting it costs no conscience precisely because everything a human
+      // returns to has already been copied out (ADR 0149 §1/§2).
+      if (worker.workspace != null) await releaseWorkerWorkspace(worker.workspace).catch(() => undefined);
+      if (worker.evidence == null) return;
+      await pruneWorkerEvidence({
+        root: worker.evidence.root,
+        ttlMs: worker.evidence.ttlMs,
+        live: stillLive,
+      }).catch(() => undefined);
+    })
+    .catch(() => undefined);
+}
+
+/** What this death asks the evidence lane to keep. PURE. */
+function evidenceFor(
+  worker: ActiveWorkflowWorker,
+  plan: WorkerEvidencePlan,
+  outcome: string,
+): Parameters<typeof retainWorkerEvidence>[0] {
+  return {
+    root: plan.root,
+    ...(plan.logPath == null ? {} : { logPath: plan.logPath }),
+    verdict: {
+      workerId: worker.workerId,
+      outcome,
+      diedAt: new Date().toISOString(),
+      publicSessionId: worker.publicSessionId,
+      ...(worker.workspace == null ? {} : { workspacePath: worker.workspace.workspacePath }),
+      ...(plan.sessionArtifact == null ? {} : { sessionArtifact: plan.sessionArtifact }),
+    },
+  };
 }
 
 export function workerTransportIsClosed(worker: ActiveWorkflowWorker): boolean {
@@ -127,10 +196,13 @@ export async function requestWorkflowTurn(
     });
   };
   try {
-    return { worker, response: await request(worker) };
+    const response = await request(worker);
+    redskilledMetrics().observeTurn("completed");
+    return { worker, response };
   } catch (error) {
     if (!workerTransportIsClosed(worker)) {
       scheduleIdleCleanup(publicSessionId, worker, active);
+      redskilledMetrics().observeTurn("refused");
       throw error;
     }
     cleanupWorkflowWorker(publicSessionId, worker, active);
@@ -140,9 +212,12 @@ export async function requestWorkflowTurn(
   active.set(publicSessionId, replacement);
   await notifyWorkerLifecycle(replacement, "replacement");
   try {
-    return { worker: replacement, response: await request(replacement) };
+    const response = await request(replacement);
+    redskilledMetrics().observeTurn("completed");
+    return { worker: replacement, response };
   } catch (error) {
     cleanupWorkflowWorker(publicSessionId, replacement, active);
+    redskilledMetrics().observeTurn("refused");
     throw error;
   }
 }

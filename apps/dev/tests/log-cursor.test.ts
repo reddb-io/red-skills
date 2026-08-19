@@ -8,7 +8,7 @@ import {
   readLogLineCursors,
 } from "../src/runtime/log-cursor.js";
 import { appendRecordToonlTaggedRow } from "../src/core/jsonl-log.js";
-import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/red-castle/engine";
+import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/worker/engine";
 
 describe("monitor log cursor", () => {
   it("counts only appended log lines after the first read", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { reconcileDeadWorkerClaim } from "../src/core/supervisor.js";
-import type { HealLedgerState, HealLedgerStore } from "@reddb-io/red-castle/engine";
+import type { HealLedgerState, HealLedgerStore } from "@reddb-io/worker/engine";
 import { makeDeps } from "./supervisor-test-helpers.js";
 import type { IterDirInfo } from "../src/core/supervisor.js";
 

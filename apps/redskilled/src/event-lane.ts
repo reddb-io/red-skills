@@ -29,6 +29,7 @@
  */
 import { appendFile, mkdir, open, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { encodeToonlLines } from "@reddb-io/toon";
 import {
   buildDaemonDeathEvent,
@@ -257,11 +258,17 @@ export type RedskilledPublicHostEvent = RedskilledHostEvent & {
 /** The daemon's one structured log, inside its host-scoped home. */
 export const REDSKILLED_EVENT_LANE_FILE = "redskilled.log.toonl";
 
-/** The most history one daemon generation asks every successor to replay. */
-export const DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * The most history one daemon generation asks every successor to replay, and
+ * the free half a full lane leaves so its next rewrite amortizes. Both come
+ * from the shared lane registry: a ceiling only this writer knew is one the
+ * lane census could not audit (#3645).
+ */
+export const DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES =
+  LANE_RETENTION_REGISTRY["redskilled-events"].maxBytes;
 
-/** Keep half a generation free so a full lane amortizes its next rewrite. */
-const REDSKILLED_EVENT_LANE_COMPACTION_TARGET_RATIO = 0.5;
+const REDSKILLED_EVENT_LANE_COMPACTION_TARGET_RATIO =
+  LANE_RETENTION_REGISTRY["redskilled-events"].targetRatio;
 
 export interface RecordEventInput {
   readonly event: RedskilledEventKind;

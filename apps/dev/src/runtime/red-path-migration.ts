@@ -5,7 +5,7 @@
 // left where it is (a later reader's legacy fallback still finds it).
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { appendCastleHistoryRecord } from "@reddb-io/red-castle/engine";
+import { appendCastleHistoryRecord } from "@reddb-io/worker/engine";
 import {
   migrationActionFor,
   planDevDurablePathMigration,
@@ -55,7 +55,11 @@ async function convertLegacyJsonlHistoryIfSafe(root: string): Promise<boolean> {
     await mkdir(dirname(current), { recursive: true });
     const tmp = `${current}.tmp.${process.pid}.${Date.now()}`;
     await writeFile(tmp, "", "utf8");
-    for (const record of records) await appendCastleHistoryRecord(tmp, record);
+    // Replay with retention OFF: a per-record line check would re-read the whole
+    // ledger n times, and boot's own `historyTrim` bounds the result once.
+    for (const record of records) {
+      await appendCastleHistoryRecord(tmp, record, { retentionPolicy: {} });
+    }
     await rename(tmp, current);
     await rm(legacy, { force: true });
     return true;

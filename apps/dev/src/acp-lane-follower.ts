@@ -2,7 +2,7 @@ import type {
   CastleLaneRecord,
   LaneEventListener,
   LaneFollower,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 
 type AcpInvoke = (method: string, input: Record<string, unknown>) => Promise<unknown>;
 

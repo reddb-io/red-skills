@@ -31,7 +31,9 @@ const stdioAdapterProgram = `
   process.exitCode = await runRedskillsAcpAdapter(resolveRedskilledPaths());
 `;
 const workerProgram = `
-  import { runNativeAcpWorker } from ${JSON.stringify(pathToFileURL(resolve(__dirname, "..", "src", "acp-native-worker.ts")).href)};
+  import { runNativeAcpWorker } from ${JSON.stringify(pathToFileURL(resolve(
+    __dirname, "..", "..", "..", "packages", "worker", "src", "acp", "native-worker.ts",
+  )).href)};
   const endpoint = process.env.REDSKILLED_TEST_WORKER_ENDPOINT;
   if (endpoint == null || endpoint === "") throw new Error("missing test Worker endpoint");
   process.exitCode = await runNativeAcpWorker(endpoint, {

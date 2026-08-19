@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   birthHaltMap,
+  describeBirthLatch,
   EMPTY_BIRTH_HEALTH,
   foldWorkerDeath,
   planHostDemand,
@@ -15,6 +16,7 @@ import {
   REDSKILLED_SHORT_LIFE_STREAK,
   type RedskilledDemandProject,
 } from "../src/demand-loop.js";
+import { workerTerminalOutcome } from "../src/daemon/birth-outcome.js";
 
 const NOW_MS = Date.parse("2026-08-02T23:00:00.000Z");
 
@@ -65,6 +67,99 @@ describe("foldWorkerDeath", () => {
 
   it("treats a lifetime exactly at the threshold as long enough", () => {
     expect(foldWorkerDeath(EMPTY_BIRTH_HEALTH, REDSKILLED_SHORT_LIFE_MS, NOW_MS)).toEqual(EMPTY_BIRTH_HEALTH);
+  });
+});
+
+// The 2026-08-19 incident: the queue emptied while four Tickets were
+// quarantined, so the Workers already running found nothing to do, said so and
+// exited 0 seconds after birth. The breaker read three clean exits as three
+// losses and then refused every birth that would have consumed the queue once
+// it was repaired.
+describe("a Worker that reported no eligible work", () => {
+  it("does not increment the streak", () => {
+    const health = foldWorkerDeath(EMPTY_BIRTH_HEALTH, 4_000, NOW_MS, "no-eligible-work");
+    expect(health.shortLifeStreak).toBe(0);
+    expect(health.haltUntilMs).toBeNull();
+  });
+
+  it("leaves the breaker closed after three in a row", () => {
+    let health = EMPTY_BIRTH_HEALTH;
+    for (let i = 0; i < REDSKILLED_SHORT_LIFE_STREAK; i += 1) {
+      health = foldWorkerDeath(health, 4_000, NOW_MS, "no-eligible-work");
+    }
+    expect(health).toEqual(EMPTY_BIRTH_HEALTH);
+    expect(birthHaltMap({ drained: health }, NOW_MS)).toEqual({});
+  });
+
+  it("clears a streak the losses before it built", () => {
+    // Proof the chain works, delivered in seconds. Carrying forward failures
+    // from before it would halt a project that has already recovered — the same
+    // reason a long life clears the streak outright.
+    const nearly = streak(REDSKILLED_SHORT_LIFE_STREAK - 1, 13_000);
+    expect(foldWorkerDeath(nearly, 4_000, NOW_MS, "no-eligible-work")).toEqual(EMPTY_BIRTH_HEALTH);
+  });
+
+  it("closes a latched breaker when the half-open probe reports it", () => {
+    const halted = streak(REDSKILLED_SHORT_LIFE_STREAK, 13_000);
+    const probed = { ...halted, probeWorkerId: "w9" };
+    expect(foldWorkerDeath(probed, 4_000, NOW_MS + 1, "no-eligible-work")).toEqual(EMPTY_BIRTH_HEALTH);
+  });
+
+  it("still halts a project whose Workers die unreported — the original job", () => {
+    const health = streak(REDSKILLED_SHORT_LIFE_STREAK, 13_000);
+    expect(health.haltUntilMs).toBe(NOW_MS + REDSKILLED_BIRTH_HALT_MS);
+    expect(health.lossOutcome).toBe("unreported");
+  });
+});
+
+describe("workerTerminalOutcome", () => {
+  it("reads the Worker protocol's own sentinel out of a clean exit", () => {
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: "<promise>NO MORE TASKS</promise>" }))
+      .toBe("no-eligible-work");
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: "x <promise>DONE</promise>" }))
+      .toBe("work-reported");
+  });
+
+  it("is unreported when nothing terminal was said", () => {
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: "booting" })).toBe("unreported");
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: null })).toBe("unreported");
+  });
+
+  it("takes the exit status over the claim", () => {
+    // A Worker that printed its sentinel and then crashed on the way out did
+    // not end cleanly, whatever the last line says.
+    expect(workerTerminalOutcome({ exitCode: 1, signal: null, tail: "<promise>NO MORE TASKS</promise>" }))
+      .toBe("unreported");
+    expect(workerTerminalOutcome({ exitCode: 0, signal: "SIGKILL", tail: "<promise>DONE</promise>" }))
+      .toBe("unreported");
+  });
+});
+
+describe("the refusal an operator reads", () => {
+  it("names the outcome class that armed the latch", () => {
+    const health = streak(REDSKILLED_SHORT_LIFE_STREAK, 13_000);
+    const plan = planHostDemand({
+      projects: [project("looping")],
+      queue: { looping: 5 },
+      live: { looping: 0 },
+      nowMs: NOW_MS,
+      birthHealth: { looping: health },
+    });
+    const detail = plan.intents[0]?.detail ?? "";
+    expect(detail).toContain("unreported");
+    expect(detail).toContain("died before reporting any terminal outcome");
+    expect(describeBirthLatch("looping", health, NOW_MS)?.reason).toContain("unreported");
+  });
+
+  it("says the class is unstated when the caller passed only a halt instant", () => {
+    const plan = planHostDemand({
+      projects: [project("looping")],
+      queue: { looping: 5 },
+      live: { looping: 0 },
+      nowMs: NOW_MS,
+      birthHaltUntilMs: { looping: NOW_MS + REDSKILLED_BIRTH_HALT_MS },
+    });
+    expect(plan.intents[0]?.detail).toContain("unstated");
   });
 });
 

@@ -6,16 +6,22 @@ import {
   type AgentConnection,
 } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
+import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import {
+  acpNoParams,
+  redskillsAcpMethod,
+  type RedskillsAcpMethodDomain,
+} from "./acp-method-registry.js";
 import type { RedskilledDemandOutcome } from "./demand-loop.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { REDSKILLED_QUEUE_STALENESS_MS } from "./queue-discovery.js";
 
 export const PROJECT_CONTROL_METHODS = [
-  "_redskills/project_drain",
-  "_redskills/project_stop",
-  "_redskills/project_status",
+  REDSKILLS_ACP_METHODS.projectDrain,
+  REDSKILLS_ACP_METHODS.projectStop,
+  REDSKILLS_ACP_METHODS.projectStatus,
 ] as const;
 
 export type ProjectControlOperation = "drain" | "stop";
@@ -377,4 +383,30 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value != null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+export interface AcpProjectControlDomainDeps {
+  /** Apply drain or stop to the Project this connection bound. */
+  mutate: (operation: ProjectControlOperation) => Promise<unknown>;
+  /** Read the Project's control status, custody included when observable. */
+  read: () => Promise<unknown>;
+}
+
+/**
+ * The `project` domain: drain, stop, and the status projection.
+ *
+ * Order matters and is pinned by {@link PROJECT_CONTROL_METHODS}: the same
+ * array is what `initialize` advertises, so a method bound here and missing
+ * there would be a capability a client cannot discover.
+ */
+export function projectControlMethodDomain(deps: AcpProjectControlDomainDeps): RedskillsAcpMethodDomain {
+  return {
+    domain: "project",
+    bindings: [
+      redskillsAcpMethod(PROJECT_CONTROL_METHODS[0], acpNoParams, () => deps.mutate("drain")),
+      redskillsAcpMethod(PROJECT_CONTROL_METHODS[1], acpNoParams, () => deps.mutate("stop")),
+      redskillsAcpMethod(PROJECT_CONTROL_METHODS[2], acpNoParams, () => deps.read()),
+    ],
+    capability: { projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS } },
+  };
 }

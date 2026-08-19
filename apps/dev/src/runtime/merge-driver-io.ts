@@ -1,4 +1,4 @@
-import type { MergeDriverIo, MergeDriverPrView } from "@reddb-io/red-castle/engine";
+import type { MergeDriverIo, MergeDriverPrView } from "@reddb-io/worker/engine";
 import { planGithubWrite } from "@reddb-io/github";
 import type { GithubMergeRead } from "../core/github-merge-read.js";
 import { apiPath, runGh, type GhContext } from "./gh/common.js";

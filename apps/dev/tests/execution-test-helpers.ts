@@ -1,4 +1,4 @@
-import type { RunOptions, RunResult } from "@reddb-io/red-castle";
+import type { RunOptions, RunResult } from "@reddb-io/worker";
 import {
   DONE_SIGNAL,
   type RunAgentInput,

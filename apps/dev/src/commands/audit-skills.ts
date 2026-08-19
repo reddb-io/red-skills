@@ -13,7 +13,7 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { Output } from "@reddb-io/red-castle";
+import { Output } from "@reddb-io/worker";
 import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";

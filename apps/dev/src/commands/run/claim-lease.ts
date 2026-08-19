@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { createFsIssueLeaseStore } from "@reddb-io/red-castle";
+import { createFsIssueLeaseStore } from "@reddb-io/worker";
 import { workerIdentity } from "../../core/host-identity.js";
 import * as fsx from "../../runtime/fs.js";
 

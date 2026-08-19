@@ -77,7 +77,7 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     name: "invariants:declared-waits",
     scope: "apps/dev",
     script: "test:invariants",
-    why: "every wait loop in the engine must declare its subject, deadline and escalation (#3024); the loops span apps/dev and packages/red-castle, the suite lives in apps/dev",
+    why: "every wait loop in the engine must declare its subject, deadline and escalation (#3024); the loops span apps/dev and packages/worker, the suite lives in apps/dev",
   },
   {
     name: "invariants:bare-invocations",
@@ -95,7 +95,7 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     name: "invariants:lane-run-mode",
     scope: "apps/dev",
     script: "test:invariants",
-    why: "every lane the castle drain isolates must declare the run mode it implies (#3026); the lane set lives in packages/red-castle, the claim that enforces it in apps/dev",
+    why: "every lane the castle drain isolates must declare the run mode it implies (#3026); the lane set lives in packages/worker, the claim that enforces it in apps/dev",
   },
   {
     name: "invariants:asked-balance",
@@ -107,7 +107,7 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     name: "invariants:github-read-routing",
     scope: "apps/dev",
     script: "test:invariants",
-    why: "raw GitHub reads must shrink toward @reddb-io/github across apps/dev, apps/redskilled and packages/red-castle (#3451); the inventory suite lives in apps/dev",
+    why: "raw GitHub reads must shrink toward @reddb-io/github across apps/dev, apps/redskilled and packages/worker (#3451); the inventory suite lives in apps/dev",
   },
   {
     name: "invariants:toon-catalog-pin",
@@ -125,13 +125,25 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     name: "invariants:structured-repairs",
     scope: "apps/dev",
     script: "test:invariants",
-    why: "every structured castle refusal must carry a callable repair or an argued none (#3260); the refusal surfaces span apps/dev and packages/red-castle, the suite lives in apps/dev",
+    why: "every structured castle refusal must carry a callable repair or an argued none (#3260); the refusal surfaces span apps/dev and packages/worker, the suite lives in apps/dev",
   },
   {
     name: "invariants:truecolor-extinction",
     scope: "apps/dev",
     script: "test:invariants",
     why: "ADR 0137 forbids literal truecolor escapes across the dev statusline, VS Code dashboard, herdr panes, and the shared redskilled render; the painted surfaces span three apps and one package, but their ratchet lives in apps/dev",
+  },
+  {
+    name: "invariants:lane-retention",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "every registered TOONL lane must be enforced by a writer and observable by the census (#3645); the lanes span apps/dev, apps/redskilled, apps/rsp, packages/github, packages/worker and packages/shared, the suite lives in apps/dev",
+  },
+  {
+    name: "invariants:working-mode",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "every shipped SKILL.md must declare exactly one of ADR 0150's four Working modes (#4012); the skills span every plugin, but their ratchet lives in apps/dev",
   },
   {
     name: "invariants:codex-skill-sidecars",

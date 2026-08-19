@@ -125,7 +125,7 @@ function stripDotSlash(file) {
 }
 
 function packageDirFor(file, graph) {
-  // Longest-prefix match, so packages/red-castle wins over a shorter sibling.
+  // Longest-prefix match, so packages/worker wins over a shorter sibling.
   let best;
   for (const pkg of graph) {
     if (!file.startsWith(`${pkg.dir}/`)) continue;

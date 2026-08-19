@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { castleLanePath, createEnginePaths, readCastleLaneRecords } from "@reddb-io/red-castle/engine";
+import { castleLanePath, createEnginePaths, readCastleLaneRecords } from "@reddb-io/worker/engine";
 import { buildProcessDeps } from "../src/commands/run.js";
 import { makeFeedbackWorktree } from "../src/runtime/feedback-worktree.js";
 import { deleteLocalBranch } from "../src/runtime/git.js";

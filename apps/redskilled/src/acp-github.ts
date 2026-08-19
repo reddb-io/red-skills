@@ -1,5 +1,6 @@
 import { RequestError } from "@agentclientprotocol/sdk";
 import { GithubBackpressureError } from "@reddb-io/github";
+import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import {
   RedskilledGithubAuthorityError,
   type RedskilledGithubGatewayRegistration,
@@ -11,6 +12,10 @@ import {
   type RedskilledGithubUpdate,
   type RedskilledGithubWriteRequest,
 } from "./github-gateway.js";
+import {
+  redskillsAcpMethod,
+  type RedskillsAcpMethodDomain,
+} from "./acp-method-registry.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 
@@ -18,7 +23,15 @@ type GithubReadParams = { readonly read: RedskilledGithubRead };
 type GithubWriteParams = RedskilledGithubWriteRequest;
 type GithubCustodyHandoffParams = RedskilledGithubCustodyHandoff;
 
-export const REDSKILLED_GITHUB_UPDATE_METHOD = "_redskills/github_update";
+export const REDSKILLED_GITHUB_UPDATE_METHOD = REDSKILLS_ACP_METHODS.githubUpdate;
+
+export interface AcpGithubDomainDeps {
+  readonly gateway: RedskilledGithubGatewayRegistration | undefined;
+  /** The Project this ACP connection bound; every method is scoped to it. */
+  readonly scopedProject: () => AcpProjectWorkspace;
+  /** Observe the reader the first read resolves, to stream its updates. */
+  readonly onReader?: (reader: unknown) => void;
+}
 
 export interface AcpGithubUpdateObserver {
   close(): void;
@@ -299,4 +312,44 @@ export function githubCustodyHandoffParams(value: unknown): GithubCustodyHandoff
     );
   }
   return params as unknown as GithubCustodyHandoffParams;
+}
+
+/**
+ * The `github` domain: the Project-bound gateway's three request methods and
+ * the one notification it advertises.
+ *
+ * The domain is only present when the daemon actually registered a gateway.
+ * Advertising the methods with no gateway behind them would answer every call
+ * with the same authorization refusal, which reads to a client as "your
+ * credentials are wrong" when the truth is "this daemon has no forge at all".
+ */
+export function githubMethodDomain(deps: AcpGithubDomainDeps): RedskillsAcpMethodDomain {
+  const readGithub = bindAcpProjectGithubRead(deps.gateway, deps.scopedProject, deps.onReader);
+  const writeGithub = bindAcpProjectGithubWrite(deps.gateway, deps.scopedProject);
+  const handoffCustody = bindAcpProjectGithubCustodyHandoff(deps.gateway, deps.scopedProject);
+  return {
+    domain: "github",
+    bindings: [
+      redskillsAcpMethod(REDSKILLS_ACP_METHODS.githubRead, githubReadParams, readGithub),
+      redskillsAcpMethod(REDSKILLS_ACP_METHODS.githubWrite, githubWriteParams, writeGithub),
+      redskillsAcpMethod(
+        REDSKILLS_ACP_METHODS.githubCustodyHandoff,
+        githubCustodyHandoffParams,
+        handoffCustody,
+      ),
+    ],
+    ...(deps.gateway == null ? {} : {
+      capability: {
+        githubGateway: {
+          version: 1,
+          methods: [
+            REDSKILLS_ACP_METHODS.githubRead,
+            REDSKILLS_ACP_METHODS.githubWrite,
+            REDSKILLS_ACP_METHODS.githubCustodyHandoff,
+          ],
+          notifications: [REDSKILLED_GITHUB_UPDATE_METHOD],
+        },
+      },
+    }),
+  };
 }

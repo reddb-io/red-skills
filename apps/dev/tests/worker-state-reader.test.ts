@@ -12,7 +12,7 @@ import {
   isRenderableLive,
 } from "../src/core/worker-state-reader.js";
 import { initStateSync, WORKER_STATE_FILENAME, workerStatePath } from "../src/core/state.js";
-import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { LIVENESS_LANE_FILENAME } from "@reddb-io/worker";
 
 const NOW = Date.UTC(2026, 5, 22, 12, 0, 0);
 const fresh = new Date(NOW - 5_000).toISOString();

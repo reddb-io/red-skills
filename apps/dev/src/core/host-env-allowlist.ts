@@ -1,4 +1,4 @@
-import type { AgentRunner } from "@reddb-io/red-castle/engine";
+import type { AgentRunner } from "@reddb-io/worker/engine";
 
 /**
  * Host-env allowlist for the no-sandbox agent process (issue #1368).

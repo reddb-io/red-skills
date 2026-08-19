@@ -8,7 +8,7 @@
 // stall, a cap names itself, and a cap hands its branch/PR forward.
 
 import { describe, expect, it, vi } from "vitest";
-import { evaluateLiveness } from "@reddb-io/red-castle";
+import { evaluateLiveness } from "@reddb-io/worker";
 import {
   buildWallClockCapEnvelope,
   config,

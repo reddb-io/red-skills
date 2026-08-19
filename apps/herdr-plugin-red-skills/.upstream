@@ -1,6 +1,6 @@
 # The source this directory was absorbed from, at the commit it was absorbed at.
 #
-# Same marker convention as `packages/red-castle/.upstream`: this is NOT a
+# Same marker convention as `packages/worker/.upstream`: this is NOT a
 # submodule, a subtree or a fork. The code below is ordinary in-repo source and
 # every change to it is an ordinary one-PR change here. The line records where
 # it came from so a reader can diff the absorption against its origin once, and

@@ -1,5 +1,6 @@
 ---
 name: guard-serialization
+working-mode: interactive
 description: Keeps default structured data on TOON snapshots, TOONL streams, and TOON wire frames. Use when changing JavaScript or TypeScript source under apps or packages that reads, writes, or transports structured data.
 paths:
   - "{apps,packages}/**/*.{js,cjs,mjs,ts,cts,mts,tsx}"

@@ -22,7 +22,7 @@
 // envelope status, so the multi-enum-desync bug class becomes impossible.
 
 import type { AttemptStatus } from "./envelope.js";
-import type { SpinPattern } from "@reddb-io/red-castle/engine";
+import type { SpinPattern } from "@reddb-io/worker/engine";
 import {
   LABEL_QUOTA,
   LABEL_RUNNER_TRANSIENT,

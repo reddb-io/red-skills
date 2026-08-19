@@ -26,12 +26,15 @@ import {
 } from "./event-lane.js";
 import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledHostEventSinks } from "./host-event-sink.js";
+import { DEFAULT_WORKER_EVIDENCE_TTL_MS } from "./worker-evidence.js";
+import type { RedskilledTelemetryConfig } from "./telemetry-otlp.js";
 import type {
   RedskilledGithubCredentialProfileDeclaration,
   RedskilledGithubCredentialProfiles,
 } from "./github-credential-profiles.js";
 
 export const REDSKILLED_IDLE_MS_ENV = "REDSKILLED_IDLE_MS";
+export const REDSKILLED_EVIDENCE_TTL_MS_ENV = "REDSKILLED_EVIDENCE_TTL_MS";
 export const REDSKILLED_HOST_CONFIG_PATH = ".red/config.yaml";
 
 export interface RedskilledHostConfig {
@@ -39,12 +42,16 @@ export interface RedskilledHostConfig {
   readonly memoryCeiling?: string;
   readonly validationCeiling?: string;
   readonly idleMs?: string;
+  /** How long a dead Worker's evidence lane survives (ADR 0149 §2). */
+  readonly evidenceTtlMs?: string;
   /** Operator-scoped programs fired for public Worker lifecycle changes. */
   readonly hooks?: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>>;
   /** Public Worker lifecycle changes also surfaced through the native desktop sink. */
   readonly notifications?: readonly RedskilledPublicHostEventKind[];
   /** Named daemon-owned GitHub authentication backends. */
   readonly githubProfiles?: RedskilledGithubCredentialProfiles;
+  /** Where this host's counters are pushed; absent is the default, which is nowhere. */
+  readonly telemetry?: RedskilledTelemetryConfig;
 }
 
 /** A credential backend declaration that must fail closed at daemon boot. */
@@ -60,12 +67,16 @@ export interface RedskilledHostSettingFlags {
   readonly memoryCeiling?: string;
   readonly validationCeiling?: string;
   readonly idleMs?: number;
+  readonly evidenceTtlMs?: number;
 }
 
 export interface RedskilledHostSettings {
   readonly ceiling: RedskilledHostCeiling;
   readonly idleMs: number;
   readonly idleMsSource: RedskilledHostSettingSource;
+  /** How long a dead Worker's evidence lane survives, and who said so. */
+  readonly evidenceTtlMs: number;
+  readonly evidenceTtlMsSource: RedskilledHostSettingSource;
 }
 
 /** Attach persistent operator policy to one daemon invocation. */
@@ -132,9 +143,11 @@ export async function readRedskilledHostConfig(
       ...scalarAt(redskilled, "memory_ceiling", "memoryCeiling"),
       ...scalarAt(redskilled, "validation_ceiling", "validationCeiling"),
       ...scalarAt(redskilled, "idle_ms", "idleMs"),
+      ...scalarAt(redskilled, "evidence_ttl_ms", "evidenceTtlMs"),
       ...hooksAt(redskilled),
       ...notificationsAt(redskilled),
       ...githubProfilesAt(redskilled),
+      ...telemetryAt(redskilled),
     };
   } catch (error) {
     if (error instanceof RedskilledGithubProfileConfigError) throw error;
@@ -143,6 +156,40 @@ export async function readRedskilledHostConfig(
     warn(`redskilled: malformed host config ${JSON.stringify(path)}; using environment and defaults instead: ${errorMessage(error)}`);
     return {};
   }
+}
+
+/**
+ * `telemetry.otlp` from operator policy, or nothing.
+ *
+ * Malformed reads as ABSENT rather than as a throw, which is this reader's
+ * standing rule for optional measurement (see the GitHub App block above): a
+ * daemon that refused to boot over a mistyped collector URL would trade the
+ * whole host for a counter nobody is watching yet.
+ */
+function telemetryAt(
+  redskilled: Readonly<Record<string, unknown>>,
+): Pick<RedskilledHostConfig, "telemetry"> | Record<never, never> {
+  const telemetry = redskilled.telemetry;
+  if (!isMapping(telemetry) || !isMapping(telemetry.otlp)) return {};
+  const otlp = telemetry.otlp;
+  const endpoint = typeof otlp.endpoint === "string" ? otlp.endpoint.trim() : "";
+  if (endpoint === "") return {};
+  const intervalMs = Number(otlp.interval_ms);
+  const headers: Record<string, string> = {};
+  if (isMapping(otlp.headers)) {
+    for (const [name, value] of Object.entries(otlp.headers)) {
+      if (typeof value === "string" || typeof value === "number") headers[name] = String(value);
+    }
+  }
+  return {
+    telemetry: {
+      otlp: {
+        endpoint,
+        ...(Number.isSafeInteger(intervalMs) && intervalMs > 0 ? { intervalMs } : {}),
+        ...(Object.keys(headers).length === 0 ? {} : { headers }),
+      },
+    },
+  };
 }
 
 function githubProfilesAt(
@@ -210,6 +257,21 @@ function optionalScalar(value: unknown, profile: string, field: string): string 
   return String(value).trim();
 }
 
+/**
+ * The resolved host policy one daemon boot is started with. PURE.
+ *
+ * One namer for "which resolved setting becomes a daemon option", so the next
+ * host-wide value reaches the daemon by being RESOLVED rather than by every
+ * caller remembering to forward it by hand.
+ */
+export function redskilledDaemonPolicy(settings: RedskilledHostSettings): {
+  readonly idleMs: number;
+  readonly ceiling: RedskilledHostCeiling;
+  readonly evidenceTtlMs: number;
+} {
+  return { idleMs: settings.idleMs, ceiling: settings.ceiling, evidenceTtlMs: settings.evidenceTtlMs };
+}
+
 /** Resolve every daemon-owned setting under one explicit precedence table. */
 export function resolveRedskilledHostSettings(input: {
   readonly flags?: RedskilledHostSettingFlags;
@@ -225,19 +287,52 @@ export function resolveRedskilledHostSettings(input: {
     config,
     ...(input.availableParallelism == null ? {} : { availableParallelism: input.availableParallelism }),
   });
+  const evidence = resolveEvidenceTtl(input.flags, env, config);
   const idle = select(input.flags?.idleMs == null ? undefined : String(input.flags.idleMs), env[REDSKILLED_IDLE_MS_ENV], config.idleMs);
   if (idle == null) {
-    return { ceiling, idleMs: DEFAULT_REDSKILLED_IDLE_MS, idleMsSource: "derived-default" };
+    return { ceiling, idleMs: DEFAULT_REDSKILLED_IDLE_MS, idleMsSource: "derived-default", ...evidence };
   }
   const parsed = Number(idle.value);
   if (Number.isSafeInteger(parsed) && parsed > 0) {
-    return { ceiling, idleMs: parsed, idleMsSource: idle.source };
+    return { ceiling, idleMs: parsed, idleMsSource: idle.source, ...evidence };
   }
   warn(
     `redskilled: ${describeSource(idle.source)} idle_ms=${JSON.stringify(idle.value)} is not a positive integer; ` +
       `using the default ${DEFAULT_REDSKILLED_IDLE_MS}ms instead.`,
   );
-  return { ceiling, idleMs: DEFAULT_REDSKILLED_IDLE_MS, idleMsSource: "derived-default" };
+  return { ceiling, idleMs: DEFAULT_REDSKILLED_IDLE_MS, idleMsSource: "derived-default", ...evidence };
+}
+
+/**
+ * How long dead Workers' evidence survives, under the same precedence as idle.
+ *
+ * **Zero is a legal answer, so the bound is `>= 0` and not `> 0`.** An operator
+ * who sets `evidence_ttl_ms: 0` is saying "keep nothing", and rejecting it as a
+ * typo would silently retain thirty days of somebody's transcripts on a machine
+ * where that was the whole objection.
+ */
+function resolveEvidenceTtl(
+  flags: RedskilledHostSettingFlags | undefined,
+  env: NodeJS.ProcessEnv,
+  config: RedskilledHostConfig,
+): Pick<RedskilledHostSettings, "evidenceTtlMs" | "evidenceTtlMsSource"> {
+  const declared = select(
+    flags?.evidenceTtlMs == null ? undefined : String(flags.evidenceTtlMs),
+    env[REDSKILLED_EVIDENCE_TTL_MS_ENV],
+    config.evidenceTtlMs,
+  );
+  if (declared == null) {
+    return { evidenceTtlMs: DEFAULT_WORKER_EVIDENCE_TTL_MS, evidenceTtlMsSource: "derived-default" };
+  }
+  const parsed = Number(declared.value);
+  if (Number.isSafeInteger(parsed) && parsed >= 0) {
+    return { evidenceTtlMs: parsed, evidenceTtlMsSource: declared.source };
+  }
+  warn(
+    `redskilled: ${describeSource(declared.source)} evidence_ttl_ms=${JSON.stringify(declared.value)} is not a ` +
+      `non-negative integer; using the default ${DEFAULT_WORKER_EVIDENCE_TTL_MS}ms instead.`,
+  );
+  return { evidenceTtlMs: DEFAULT_WORKER_EVIDENCE_TTL_MS, evidenceTtlMsSource: "derived-default" };
 }
 
 function select(

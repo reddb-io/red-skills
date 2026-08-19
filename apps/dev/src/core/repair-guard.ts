@@ -36,17 +36,17 @@ export interface DeclaredRepairSite {
  */
 export const DECLARED_REPAIR_SITES: readonly DeclaredRepairSite[] = [
   {
-    path: "packages/red-castle/src/mcp/posture.ts",
+    path: "packages/worker/src/mcp/posture.ts",
     fn: "refusal",
     surface: "refusal",
   },
   {
-    path: "packages/red-castle/src/mcp/worker.ts",
+    path: "packages/worker/src/mcp/worker.ts",
     fn: "workerInputRefusal",
     surface: "refusal",
   },
   {
-    path: "packages/red-castle/src/mcp/help.ts",
+    path: "packages/worker/src/mcp/help.ts",
     fn: "invoke",
     surface: "empty-state",
   },
@@ -71,7 +71,7 @@ export type RepairDeclarationViolation =
  * surviving stdio adapter translates every invocation into ACP.
  */
 export const REPAIR_SCAN_ROOTS = [
-  "packages/red-castle/src/mcp",
+  "packages/worker/src/mcp",
 ] as const;
 
 export function readRepairScanFiles(

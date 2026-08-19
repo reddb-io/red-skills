@@ -9,7 +9,8 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
-import { projectImplementerEnvironment } from "@reddb-io/red-castle/engine";
+import { projectImplementerEnvironment } from "@reddb-io/worker/engine";
+import { pluginMcpDeclaration } from "@reddb-io/shared/optional-mcp.js";
 import {
   IMPLEMENTER_PLUGIN_NAMES,
   buildImplementerMetrics,
@@ -212,7 +213,8 @@ interface McpManifest {
 }
 
 function mcpPlugin(name: string, pluginRoots: ImplementerPluginRoots): ImplementerPluginName | undefined {
-  if (name === "navigator" || name === "rsp") return "dev";
+  // `dev` declares one server and never enables it for an inner agent, so the
+  // three names below are the whole projectable set (ADR 0147 §4).
   if (name === "red-memory") return "memory";
   if (name === "brain") return "brain";
   if (name === "red-ui") return pluginRoots.memory ? "memory" : pluginRoots.brain ? "brain" : undefined;
@@ -223,6 +225,7 @@ function projectedMcpServers(
   names: readonly string[],
   runtimeRoot: string,
   pluginRoots: ImplementerPluginRoots,
+  values: Readonly<Record<string, string>>,
 ): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {};
   for (const name of names) {
@@ -238,7 +241,12 @@ function projectedMcpServers(
       throw new Error(`enabled implementer MCP '${name}' declares no transport: ${declaration} is absent`);
     }
     const manifest = JSON.parse(readFileSync(declaration, "utf8")) as McpManifest;
-    const server = manifest.mcpServers?.[name];
+    // The shipped file plus whatever `.red/config.yaml` opted into: `red-ui`
+    // left memory and brain's `.mcp.json` in ADR 0147 §4, so a projection that
+    // read only the file would refuse a viewer the project explicitly asked for.
+    const server = pluginMcpDeclaration(plugin, manifest.mcpServers ?? {}, values)[name] as
+      | Record<string, unknown>
+      | undefined;
     if (!server) throw new Error(`enabled implementer MCP '${name}' has no transport`);
     servers[name] = {
       ...server,
@@ -266,7 +274,7 @@ function codexOverrides(
     "plugins={}",
     "marketplaces={}",
     "hooks={}",
-    `mcp_servers=${tomlValue(projectedMcpServers(surfaces.mcp, runtimeRoot, pluginRoots))}`,
+    `mcp_servers=${tomlValue(projectedMcpServers(surfaces.mcp, runtimeRoot, pluginRoots, values))}`,
   ];
   const projectedSkillPaths = projection.skills.map((skill) => {
     const sourceRoot = pluginRoots[skill.plugin];

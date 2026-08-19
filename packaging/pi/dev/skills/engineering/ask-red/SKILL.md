@@ -1,5 +1,6 @@
 ---
 name: ask-red
+working-mode: interactive
 description: Ask which RedSkills flow fits the current situation. Use when the operator asks what to do now, which command to run, or how to route a task through RedSkills.
 disable-model-invocation: true
 ---

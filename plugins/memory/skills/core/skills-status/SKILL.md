@@ -1,5 +1,6 @@
 ---
 name: skills-status
+working-mode: interactive
 description: Diagnose Skill telemetry status and recent Skill usage events. Use when checking whether self-improvement telemetry is enabled, whether skills are being observed, or before running the report-only Skill curator. Graph mode with `--skill-telemetry` provides full output; all other states explain what is missing.
 ---
 

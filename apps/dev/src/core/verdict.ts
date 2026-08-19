@@ -11,7 +11,7 @@ import type { GeneratedSurfaceDeclaration } from "./config.js";
 import { onlyGeneratedPaths } from "./generated-surfaces.js";
 import { VALIDATION_TARGET_MISSING_MARKER } from "./validation-command.js";
 import { baseMoved, type BaseMovement } from "./stale-base-drift.js";
-import type { SpinPattern } from "@reddb-io/red-castle/engine";
+import type { SpinPattern } from "@reddb-io/worker/engine";
 
 export const DEFAULT_ENVIRONMENT_ROUNDS = 2;
 export const ENVIRONMENT_ROUNDS_ENV = "RED_GATE_ENVIRONMENT_ROUNDS";

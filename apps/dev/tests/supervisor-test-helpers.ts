@@ -35,7 +35,7 @@ import {
 } from "../src/core/supervisor.js";
 import { parkedSlotWorkFor } from "../src/runtime/supervisor-fs.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
-import type { LivenessVerdict } from "@reddb-io/red-castle";
+import type { LivenessVerdict } from "@reddb-io/worker";
 
 export {
   mkdtempSync,

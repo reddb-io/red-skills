@@ -2,8 +2,9 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import { execFile } from "node:child_process";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
+import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
-import { appendCastleHistoryRecord, readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
+import { appendCastleHistoryRecord, readCastleHistoryRecords } from "@reddb-io/worker/engine";
 
 // Port of lib/history.sh — the afk-history.jsonl ledger. The pure parts (the
 // JSONL record shape, the 48h `done`-event bucketing, and the sparkline glyph
@@ -12,7 +13,8 @@ import { appendCastleHistoryRecord, readCastleHistoryRecords } from "@reddb-io/r
 // scope — every timestamp is passed in as a parameter, mirroring how the bash
 // Module stamps ts/epoch from its only ambient input.
 
-export const HISTORY_MAX_LINES_DEFAULT = 10000;
+/** One ceiling, declared in the lane registry and shared with the append path. */
+export const HISTORY_MAX_LINES_DEFAULT = LANE_RETENTION_REGISTRY["castle-history"].maxLines;
 export const HISTORY_TQ_TRIM_TIMEOUT_MS = 1000;
 
 export const SPARKLINE_BUCKETS_DEFAULT = 48;

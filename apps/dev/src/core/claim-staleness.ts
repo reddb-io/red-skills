@@ -1,5 +1,5 @@
 // Stale-claim classification shim — the implementation crossed into red-castle
-// (`packages/red-castle/src/engine/tracker/claim-staleness.ts`, per the ADR
+// (`packages/worker/src/engine/tracker/claim-staleness.ts`, per the ADR
 // 0113 module map: claim-staleness is castle substrate). This re-export keeps
 // every dev call site stable.
 export {
@@ -20,7 +20,7 @@ export {
   planStaleClaimSweep,
   resolveClaimStalenessConfig,
   resolveClaimReaperConfig,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 export type {
   ClaimStalenessConfig,
   ClaimReaperConfig,
@@ -29,4 +29,4 @@ export type {
   IssueClaimState,
   ClaimedIssue,
   StaleClaimRelease,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";

@@ -42,11 +42,23 @@
  * back a healthy neighbour, and a host-wide backoff would make it do exactly
  * that.
  *
+ * **A clean "nothing to do" is not a loss.** The breaker asks whether a Worker
+ * can boot HERE, and one that booted, read the queue, found it empty and said so
+ * answered that question with a yes. Counting it as a loss inverted the meaning:
+ * on 2026-08-19 a drained queue emptied three Workers within seconds of birth,
+ * the latch armed, and when the queue was repaired nothing was born to consume
+ * it until an operator cleared the latch by hand. The streak therefore folds an
+ * OUTCOME CLASS beside the lifetime — see
+ * {@link RedskilledWorkerBirthOutcome} — and only a death that reached no
+ * terminal outcome counts.
+ *
  * **Rule 3 survives.** A selector and an argv are carried and handed back; not
  * one branch here turns on what either of them says. The planner reads a depth,
  * a target, a count of live Workers and a streak of short-lived deaths — four
- * integers — and nothing else. It never learns WHY a Worker died; a lifetime in
- * milliseconds is not a reason, and the daemon is not owed one.
+ * integers — and nothing else. The outcome class is a closed vocabulary of three
+ * words the Worker protocol already speaks, never a repository's reason: this
+ * module learns THAT a Worker reached a terminal outcome, never what the work
+ * was, and the daemon is owed no more than that.
  *
  * PURE.
  */
@@ -166,6 +178,19 @@ export interface PlanHostDemandInput {
 }
 
 /**
+ * How a refusal says which loss armed the latch. PURE.
+ *
+ * An unstated class is reported as unstated rather than assumed to be the
+ * crashloop: a caller that passed only a halt instant told us when, not why, and
+ * a sentence that guessed would be the confusion this whole change removes.
+ */
+function lossPhrase(outcome: RedskilledWorkerBirthOutcome | null | undefined): string {
+  return outcome == null
+    ? "outcome class unstated by the caller"
+    : `outcome class ${JSON.stringify(outcome)}: ${describeBirthOutcome(outcome)}`;
+}
+
+/**
  * Decide what every registered project may ask for this tick. PURE.
  *
  * **Births are spread one apiece before a second**, so the project that happens
@@ -214,8 +239,8 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
         detail:
           `project ${JSON.stringify(project.project_label)} lost ` +
           `${REDSKILLED_SHORT_LIFE_STREAK} Workers in a row inside ` +
-          `${REDSKILLED_SHORT_LIFE_MS}ms of birth, so it is not asked for another before ` +
-          `${new Date(haltUntilMs).toISOString()} — a Worker that cannot survive boot will not ` +
+          `${REDSKILLED_SHORT_LIFE_MS}ms of birth (each ${lossPhrase(health?.lossOutcome)}), so it is not asked ` +
+          `for another before ${new Date(haltUntilMs).toISOString()} — a Worker that cannot survive boot will not ` +
           `survive the next one either, and every birth spends host quota shared with every project`,
       });
       continue;
@@ -356,6 +381,35 @@ export function isRedskilledDemandTick(value: unknown): value is RedskilledDeman
 }
 
 /**
+ * What one dead Worker managed to REPORT before it ended. PURE vocabulary.
+ *
+ * Three words, and every one of them is the Worker protocol's own — a
+ * `<promise>` sentinel — rather than a repository's account of its work. The
+ * distinction the breaker needs is exactly this coarse: a Worker that reached
+ * any terminal outcome proved boot works here, and a Worker that reached none is
+ * the shape the breaker exists to stop.
+ */
+export type RedskilledWorkerBirthOutcome =
+  /** Exited cleanly having reported the queue held nothing eligible for it. */
+  | "no-eligible-work"
+  /** Exited cleanly having reported a terminal verdict on work it took. */
+  | "work-reported"
+  /** Ended without reaching any terminal outcome — the loss the breaker counts. */
+  | "unreported";
+
+/** How an operator reading one line should hear an outcome class. PURE. */
+export function describeBirthOutcome(outcome: RedskilledWorkerBirthOutcome): string {
+  switch (outcome) {
+    case "no-eligible-work":
+      return "exited cleanly reporting no eligible work";
+    case "work-reported":
+      return "exited cleanly reporting a terminal outcome on its work";
+    default:
+      return "died before reporting any terminal outcome";
+  }
+}
+
+/**
  * One project's record of Workers that died before they could work.
  *
  * The streak, not a rate: a project that loses one Worker an hour is not
@@ -372,6 +426,14 @@ export interface RedskilledBirthHealth {
   readonly openedAtMs: number | null;
   /** The sole half-open Worker; while present no second birth is admitted. */
   readonly probeWorkerId: string | null;
+  /**
+   * The outcome class of the deaths in the current streak; `null` with no streak.
+   *
+   * Carried so the refusal an operator reads names WHICH loss armed the latch —
+   * a crashloop and a drained queue produced the same sentence before, and only
+   * one of them is a project to distrust.
+   */
+  readonly lossOutcome: RedskilledWorkerBirthOutcome | null;
 }
 
 /** A project with no history — never halted, no streak. */
@@ -380,6 +442,7 @@ export const EMPTY_BIRTH_HEALTH: RedskilledBirthHealth = {
   haltUntilMs: null,
   openedAtMs: null,
   probeWorkerId: null,
+  lossOutcome: null,
 };
 
 /** The structured cure carried beside every visible birth latch. */
@@ -409,6 +472,16 @@ export interface RedskilledBirthLatch {
  * that did is a complete answer — carrying forward failures from before a
  * working boot would halt a project that has already recovered.
  *
+ * **A reported terminal outcome clears the streak exactly as a long life does,
+ * however short the Worker lived.** A Worker that boots, reads the queue, finds
+ * nothing eligible and says so is not a Worker that failed to boot — it is the
+ * proof the chain works, delivered in seconds. Counting it armed the breaker on
+ * a drained queue and then refused every birth that would have consumed the
+ * queue once it was refilled. Only `unreported` — an end with no terminal
+ * outcome behind it — is a loss, which leaves the guard's original job whole: a
+ * probe that refuses, a workspace that will not materialise and a runner that is
+ * not installed all end that way.
+ *
  * The halt is armed on the death that completes the streak and re-armed by
  * every short death after it, so a project probed after the window and still
  * broken goes quiet again immediately instead of leaking one birth per window
@@ -418,18 +491,21 @@ export function foldWorkerDeath(
   health: RedskilledBirthHealth,
   lifetimeMs: number,
   nowMs: number,
+  outcome: RedskilledWorkerBirthOutcome = "unreported",
 ): RedskilledBirthHealth {
+  if (outcome !== "unreported") return EMPTY_BIRTH_HEALTH;
   if (lifetimeMs >= REDSKILLED_SHORT_LIFE_MS) return EMPTY_BIRTH_HEALTH;
   const shortLifeStreak = health.shortLifeStreak + 1;
   const wasLatched = health.haltUntilMs != null || health.probeWorkerId != null;
   if (!wasLatched && shortLifeStreak < REDSKILLED_SHORT_LIFE_STREAK) {
-    return { shortLifeStreak, haltUntilMs: null, openedAtMs: null, probeWorkerId: null };
+    return { shortLifeStreak, haltUntilMs: null, openedAtMs: null, probeWorkerId: null, lossOutcome: outcome };
   }
   return {
     shortLifeStreak,
     haltUntilMs: nowMs + REDSKILLED_BIRTH_HALT_MS,
     openedAtMs: nowMs,
     probeWorkerId: null,
+    lossOutcome: outcome,
   };
 }
 
@@ -460,7 +536,7 @@ export function describeBirthLatch(
     opened_at: new Date(health.openedAtMs).toISOString(),
     reason:
       `${health.shortLifeStreak} Workers from this project died before surviving ` +
-      `${REDSKILLED_SHORT_LIFE_MS}ms`,
+      `${REDSKILLED_SHORT_LIFE_MS}ms (${lossPhrase(health.lossOutcome)})`,
     closes: halfOpen
       ? health.probeWorkerId == null
         ? "the next demand tick admits one probe Worker; surviving the short-life window closes the latch"

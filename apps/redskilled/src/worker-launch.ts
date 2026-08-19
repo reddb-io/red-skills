@@ -18,11 +18,11 @@
  * verdict" is a property of this function instead of a convention every future
  * call site has to remember.
  */
-import { randomInt } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { encodeToonlLines } from "@reddb-io/toon";
+import { credentialFreeEnv } from "@reddb-io/shared/credential-free-env.js";
 import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -156,24 +156,80 @@ export interface LaunchWorkerOptions {
   readonly openLog?: boolean;
 }
 
-const HOST_WORKER_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const HOST_WORKER_ID_RANDOM_LENGTH = 4;
-const HOST_WORKER_ID_SPACE = HOST_WORKER_ID_ALPHABET.length ** HOST_WORKER_ID_RANDOM_LENGTH;
+/**
+ * The alphabet is in ASCII order on purpose — `'0' < 'A' < 'a'` byte-wise — so a
+ * plain lexicographic sort of two fixed-width ids is a sort by birth instant.
+ * That is the whole point of the encoding: `sort` on a directory listing is a
+ * timeline, and pruning births older than a cutoff is a prefix scan.
+ */
+const HOST_WORKER_ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const HOST_WORKER_ID_WIDTH = 7;
+/**
+ * The first birth instant that no longer fits the width — 62^7 ms after the
+ * epoch, some time in 2081. An id allowed to grow a character would sort BEFORE
+ * every shorter one, which is the one failure the fixed width exists to refuse,
+ * so the encoder throws rather than widening.
+ */
+const HOST_WORKER_ID_CEILING = HOST_WORKER_ID_ALPHABET.length ** HOST_WORKER_ID_WIDTH;
 
-/** Mint the host's short, human-facing Worker handle without colliding with a live Worker. */
+/**
+ * Encode a birth instant as the host's Worker id (ADR 0149 §3).
+ *
+ * Fixed-width, zero-padded base62: compact, no character that needs escaping in
+ * a path or a shell, and **its own birth time** — a reader that holds only the
+ * name still knows when the Worker was born and which of two came first.
+ */
+export function encodeHostWorkerId(epochMs: number): string {
+  if (!Number.isFinite(epochMs) || epochMs < 0 || epochMs >= HOST_WORKER_ID_CEILING) {
+    throw new RedskilledWorkerSpecError(
+      `redskilled cannot encode a Worker id for birth instant ${epochMs}: only 0 <= ms < ` +
+        `${HOST_WORKER_ID_CEILING} fits ${HOST_WORKER_ID_WIDTH} base62 characters`,
+    );
+  }
+  const base = HOST_WORKER_ID_ALPHABET.length;
+  let remaining = Math.floor(epochMs);
+  let workerId = "";
+  for (let index = 0; index < HOST_WORKER_ID_WIDTH; index += 1) {
+    workerId = HOST_WORKER_ID_ALPHABET[remaining % base]! + workerId;
+    remaining = Math.floor(remaining / base);
+  }
+  return workerId;
+}
+
+/**
+ * Whether `value` is a well-formed host Worker id. PURE.
+ *
+ * Asked by anything that reads a DIRECTORY NAME back as an id — the evidence
+ * lane's prune, above all. A name that is not one of these ids carries no birth
+ * instant, so judging its age would be a guess; the caller retains it and says
+ * so instead (ADR 0149 §3).
+ */
+export function isHostWorkerId(value: string): boolean {
+  return value.length === HOST_WORKER_ID_WIDTH &&
+    [...value].every((character) => HOST_WORKER_ID_ALPHABET.includes(character));
+}
+
+/**
+ * Mint the host's Worker handle: the birth epoch in milliseconds, base62.
+ *
+ * **A collision walks the birth instant forward by 1 ms rather than redrawing.**
+ * Two Workers born inside one millisecond still have to come out in the order
+ * they were born, and a redraw — the random `h`+4 scheme this replaced — would
+ * return an id that sorts wherever chance put it. The walk terminates because
+ * the live set is finite and each step is strictly larger than the last.
+ */
 export function mintHostWorkerId(
   liveWorkerIds: Iterable<string>,
-  draw: (maxExclusive: number) => number = randomInt,
+  now: () => number = Date.now,
 ): string {
   const live = new Set(liveWorkerIds);
-  for (let attempt = 0; attempt < HOST_WORKER_ID_SPACE; attempt += 1) {
-    let workerId = "h";
-    for (let index = 0; index < HOST_WORKER_ID_RANDOM_LENGTH; index += 1) {
-      workerId += HOST_WORKER_ID_ALPHABET[draw(HOST_WORKER_ID_ALPHABET.length)]!;
-    }
-    if (!live.has(workerId)) return workerId;
+  let bornAtMs = Math.floor(now());
+  let workerId = encodeHostWorkerId(bornAtMs);
+  while (live.has(workerId)) {
+    bornAtMs += 1;
+    workerId = encodeHostWorkerId(bornAtMs);
   }
-  throw new RedskilledWorkerSpecError("redskilled exhausted the host Worker id space");
+  return workerId;
 }
 
 /** What preparing a Worker's log actually did, and what to say when it failed. */
@@ -282,8 +338,13 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   assertLaunchableSpec(spec);
 
   const env = options.env ?? process.env;
-  const ambientWorkerEnv = credentialFreeWorkerEnv(env);
-  const declaredWorkerEnv = credentialFreeWorkerEnv(spec.env ?? {});
+  // Disposable Workers use the ACP gateway, never ambient GitHub or Git
+  // authentication: the daemon strips both secret values and credential-agent
+  // doors from its own environment and from caller-declared overrides before
+  // placement sees them. `@reddb-io/shared` owns the list, because the Worker
+  // strips the same names again when it births the process that runs the model.
+  const ambientWorkerEnv = credentialFreeEnv(env);
+  const declaredWorkerEnv = credentialFreeEnv(spec.env ?? {});
   const clock = options.clock ?? (() => new Date().toISOString());
   const workerId = (spec.worker_id ?? options.workerId)?.trim()
     || mintHostWorkerId(options.liveWorkerIds ?? []);
@@ -441,34 +502,6 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     child,
     ...(placed?.job != null ? { job: placed.job } : {}),
   };
-}
-
-/**
- * Disposable Workers use the ACP gateway, never ambient GitHub or Git
- * authentication. Strip both secret values and credential-agent doors from the
- * daemon environment and from caller-declared overrides before placement sees
- * them.
- */
-function credentialFreeWorkerEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const kept: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value == null || isGithubCredentialEnvironmentName(name)) continue;
-    kept[name] = value;
-  }
-  return kept;
-}
-
-function isGithubCredentialEnvironmentName(name: string): boolean {
-  const normalized = name.toUpperCase();
-  if (["SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND"].includes(normalized)) {
-    return true;
-  }
-  if (normalized === "REDSKILLED_HOST_TOKEN") return true;
-  if (/^(?:GH|GITHUB)(?:_[A-Z0-9]+)*_(?:TOKEN|SECRET|KEY|APP_ID|INSTALLATION)$/.test(normalized)) return true;
-  if (/^RED_GITHUB_(?:APP_ID|APP_INSTALLATION|APP_KEY)$/.test(normalized)) return true;
-  // A daemon-side authenticated git invocation may use these transiently. No
-  // inherited git config is allowed to become a Worker's authentication path.
-  return /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/.test(normalized);
 }
 
 /** Read Linux `/proc/<pid>/stat` field 22, omitting it on every unavailable host. */

@@ -1,11 +1,12 @@
 {
   "name": "@reddb-io/redskilled",
-  "version": "3.19.5",
+  "version": "3.20.0",
   "private": true,
   "type": "module",
   "exports": {
     "./acp-client": "./src/acp-client.ts",
     "./acp-agent-catalog": "./src/acp-agent-catalog.ts",
+    "./acp-worktree": "./src/acp-worktree.ts",
     "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
     "./daemon": "./src/daemon.ts",
@@ -33,6 +34,7 @@
     "./supervision": "./src/supervision.ts",
     "./worker-display": "./src/worker-display.ts",
     "./worker-launch": "./src/worker-launch.ts",
+    "./worker-workspace": "./src/worker-workspace.ts",
     "./statusline-command": "./src/statusline-command.ts"
   },
   "description": "redskilled — the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
@@ -56,7 +58,8 @@
     "@agentclientprotocol/sdk": "1.3.0",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
-    "@reddb-io/red-castle": "workspace:*",
+    "@reddb-io/protocol-acp": "workspace:*",
+    "@reddb-io/worker": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",

@@ -101,6 +101,7 @@ export {
 export * from "./engine-node.js";
 export * from "./red-paths.js";
 export * from "./repo-root.js";
+export * from "./optional-mcp.js";
 export * from "./outcome-event.js";
 export * from "./resident-client.js";
 export * from "./resident-protocol.js";

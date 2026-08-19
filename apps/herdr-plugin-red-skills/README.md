@@ -29,7 +29,7 @@ It answers, in one pane, the question the daemon exists to make answerable:
 ─ WORKERS ────────────────────────────────────────────────────────────────────────────────────────────────────
    worker         project                    state           up      rss/budget  used          %
  ▸ w-2f91a        reddb-io/red-skills        running     18m00s     900M/2.00G   ████░░░░░░  44%
-     ⤷ gate: vitest packages/red-castle …
+     ⤷ gate: vitest packages/worker …
    w-idle         reddb-io/red-dev           reattached   2m00s        —/—       ░░░░░░░░░░    —  ⚠ no unit
 ─ PROJECTS ───────────────────────────────────────────────────────────────────────────────────────────────────
    project                        workers  declared  observed  registration

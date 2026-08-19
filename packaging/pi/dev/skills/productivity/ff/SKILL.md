@@ -1,5 +1,6 @@
 ---
 name: ff
+working-mode: interactive
 description: Reframes the user's message into one chosen framing through a two-step interaction — first asks which framing to rewrite into, then generates that single rewrite and asks whether to dispatch (execute) it. Use when the user invokes `/ff`, says fast-forward, asks to rewrite their own message, or wants to clarify intent before acting.
 argument-hint: "[--dispatch|-d] [text to reframe]"
 disable-model-invocation: true

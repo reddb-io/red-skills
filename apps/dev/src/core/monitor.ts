@@ -21,4 +21,4 @@ export {
   type SlotDetail,
   type SparklineResult,
   type WorkerFields,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";

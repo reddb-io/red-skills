@@ -1,5 +1,6 @@
 ---
 name: search
+working-mode: interactive
 description: Search Brain artifacts for captured knowledge before answering questions about prior captures, decisions, people, open questions, or plans. Use when the user asks "what do we know about X", "search the brain", or "find what was captured about Y". Routes to Brain, not Memory.
 ---
 

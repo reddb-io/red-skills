@@ -198,7 +198,7 @@ the reads that would refill it.
 `apps/dev` (the read boundary, the migrated single-object reads and the reserved
 band in `runtime/gh/band.ts`), `apps/redskilled` (the daemon's conditional REST
 pollers), `apps/rsp` (the independent resident-owned proxy reads), and
-`packages/red-castle` (the tracker adapter) all import this package. One policy,
+`packages/worker` (the tracker adapter) all import this package. One policy,
 because two implementations of one routing rule drift — and one authoritative
 token answer, however many declared owners observe it.
 

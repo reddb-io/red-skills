@@ -1,0 +1,29 @@
+{
+  "name": "@reddb-io/protocol-acp",
+  "version": "3.20.0",
+  "private": true,
+  "type": "module",
+  "description": "The shared RedSkills ACP wire (ADR 0148, ADR 0145 §2-3, ADR 0153): ACP v1/v2 compat and draft-revision gating, the RedSkills wire major, the Unix-socket / Named Pipe local transport, and the `_redskills/*` method schemas. Depended on by the daemon, the Worker and the stateless adapters.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.ts",
+    "./compat.js": "./compat.ts",
+    "./endpoint.js": "./endpoint.ts",
+    "./github-write.js": "./github-write.ts",
+    "./go-dispatch.js": "./go-dispatch.ts",
+    "./methods.js": "./methods.ts",
+    "./session-recovery.js": "./session-recovery.ts",
+    "./transport.js": "./transport.ts",
+    "./worktree.js": "./worktree.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

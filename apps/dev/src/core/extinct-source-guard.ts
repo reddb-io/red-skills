@@ -25,11 +25,15 @@
 //     crossing has not cleared yet, with a count. A slice may clear a location;
 //     a slice that adds a reference beyond the declared count fails, so the
 //     inventory can never be rewritten to hide a reintroduction.
-//  2. AN EMPTY BASELINE MEANS PROMOTED. While the crossing ran, the baseline
-//     carried the retained locations and the check stayed outside the normal
-//     set. The last source cleared, so the baseline is empty and the invariant
-//     is declared in `REPO_INVARIANT_SUITES` — it runs in EVERY gate run,
-//     including a cone-scoped one that touched a single unrelated package.
+//  2. THE RATCHET RUNS EVERY GATE, MID-CROSSING OR NOT. The ADR 0130 crossing
+//     ran to zero, which promoted this invariant into `REPO_INVARIANT_SUITES`:
+//     it runs in EVERY gate run, including a cone-scoped one that touched a
+//     single unrelated package. A SECOND crossing now runs on the same ratchet
+//     — ADRs 0147/0148/0149, declared in `./extinct-execution-chain.ts` — and it
+//     starts at today's counts rather than at zero, because its surfaces are
+//     still standing. The promotion is not undone by that: a baseline entry
+//     tolerates exactly its declared count, so the check is green today and
+//     reds the moment a reference is added.
 //  3. PROSE IS NOT A READER. Comments explaining what was removed — including
 //     this one — are the migration's own documentation, so comments are stripped
 //     before matching. A reference in code or in a path/tool-name literal counts.
@@ -44,9 +48,25 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import {
+  EXECUTION_CHAIN_BASELINE,
+  EXECUTION_CHAIN_NAMES,
+  EXECUTION_CHAIN_SOURCES,
+} from "./extinct-execution-chain.js";
 
 /** The noun an extinct source belonged to. */
-export type ExtinctNoun = "fleet" | "attempt" | "supervisor" | "alias" | "manual-landing";
+export type ExtinctNoun =
+  | "fleet"
+  | "attempt"
+  | "supervisor"
+  | "alias"
+  | "manual-landing"
+  // ADRs 0147/0148/0149 — the execution-chain crossing, declared in `./extinct-execution-chain.ts`.
+  | "dev-cli"
+  | "dev-worker-body"
+  | "janitor"
+  | "resident"
+  | "red-castle";
 
 /** One artifact ADR 0130 removed, with the route that replaced it. */
 export interface ExtinctSource {
@@ -68,7 +88,7 @@ export interface ExtinctSource {
  * attribute; `RED_AFK_FLEET_SCOPE` is the placement kill-switch of #2697; the
  * work selector outlived the fleet that owned it).
  */
-export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
+const ADR_0130_SOURCES: readonly ExtinctSource[] = [
   {
     id: "feedback-classification-hook",
     noun: "alias",
@@ -122,7 +142,7 @@ export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
     id: "fleet-mcp-tools",
     noun: "fleet",
     what: "the `fleet_*` MCP tool domain",
-    replacement: "the `project_*` tools that took its slot (`packages/red-castle/src/mcp/project.ts`)",
+    replacement: "the `project_*` tools that took its slot (`packages/worker/src/mcp/project.ts`)",
     pattern: /\bcreateFleetTools\b|\bmcp\/fleet(?:\.js)?["']|\bfleet_(?:create|edit|register|list|stop|status)\b/,
   },
   {
@@ -196,6 +216,14 @@ export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
 ];
 
 /**
+ * Every declared extinct source, both crossings. One list so a finding, a
+ * baseline key and a failure message have one shape regardless of which ADR
+ * retired the surface — a second mechanism would be a second thing to keep
+ * green.
+ */
+export const EXTINCT_SOURCES: readonly ExtinctSource[] = [...ADR_0130_SOURCES, ...EXECUTION_CHAIN_SOURCES];
+
+/**
  * One NAME an extinct concept owned. A source entry names an artifact a reader
  * can reach for; a name entry names the concept's own vocabulary, matched
  * against a module basename and against every identifier and path token in the
@@ -230,7 +258,7 @@ export interface ExtinctName {
  * overrides are deliberately NOT matched — they are the published operator
  * contract, and renaming a key is a breaking change of its own, not a rename.
  */
-export const EXTINCT_NAMES: readonly ExtinctName[] = [
+const ADR_0130_NAMES: readonly ExtinctName[] = [
   {
     id: "manual-landing-mode",
     noun: "manual-landing",
@@ -292,6 +320,9 @@ export const EXTINCT_NAMES: readonly ExtinctName[] = [
   },
 ];
 
+/** Every declared extinct name, both crossings — the name half of `EXTINCT_SOURCES`. */
+export const EXTINCT_NAMES: readonly ExtinctName[] = [...ADR_0130_NAMES, ...EXECUTION_CHAIN_NAMES];
+
 /** What made a location a finding — a source being read, or a name being carried. */
 export type ExtinctFindingKind = "source" | "module-name" | "symbol-name";
 
@@ -322,13 +353,16 @@ export interface ExtinctSourceBaselineEntry {
 }
 
 /**
- * The retained locations, declared. **EMPTY: the last source cleared**, which is
- * what promoted this invariant into the normal check set (see the header). An
- * entry may only ever be REMOVED or have its `count` LOWERED — raising a count
+ * The retained locations, declared. The ADR 0130 crossing contributes NOTHING —
+ * its last source cleared, which is what promoted this invariant into the normal
+ * check set — and every entry belongs to the execution-chain crossing of ADRs
+ * 0147/0148/0149, declared at today's counts in `./extinct-execution-chain.ts`.
+ *
+ * An entry may only ever be REMOVED or have its `count` LOWERED. Raising a count
  * to admit a new reference is the regression the ratchet exists to refuse, and a
  * review that sees a count go up is reading a reintroduction.
  */
-export const EXTINCT_SOURCE_BASELINE: readonly ExtinctSourceBaselineEntry[] = [];
+export const EXTINCT_SOURCE_BASELINE: readonly ExtinctSourceBaselineEntry[] = [...EXECUTION_CHAIN_BASELINE];
 
 /** Where a human edits the baseline, named in the failure message. */
 export const EXTINCT_SOURCE_BASELINE_DECLARATION =
@@ -360,11 +394,16 @@ const SKIP_DIRS = new Set([
   "fixtures",
 ]);
 /**
- * The inventory is the declaration of what is extinct, not a reader of it. It is
- * the ONLY self-exemption: every other file in `apps/` and `packages/` is
- * scanned, so the exemption cannot be widened by moving code into a friend.
+ * The inventory modules DECLARE what is extinct; they do not read it. Both are
+ * exempt, and the exemption is a CLOSED list of exact paths: every other file in
+ * `apps/` and `packages/` is scanned, so it cannot be widened by moving code
+ * into a friend module, and a copy of either file at any other path is a reader
+ * again.
  */
-const GUARD_SELF_PATH = "apps/dev/src/core/extinct-source-guard.ts";
+export const EXTINCT_INVENTORY_PATHS: readonly string[] = [
+  "apps/dev/src/core/extinct-source-guard.ts",
+  "apps/dev/src/core/extinct-execution-chain.ts",
+];
 const SNIPPET_LIMIT = 160;
 
 export function collectExtinctSourceReport(root: string): ExtinctSourceGuardReport {
@@ -381,7 +420,7 @@ export function collectExtinctSourceFindingsFromFiles(
   names: readonly ExtinctName[] = EXTINCT_NAMES,
 ): ExtinctSourceFinding[] {
   return files
-    .filter((file) => file.relativePath !== GUARD_SELF_PATH)
+    .filter((file) => !EXTINCT_INVENTORY_PATHS.includes(file.relativePath))
     .flatMap((file) => [...collectFileFindings(file, sources), ...collectFileNameFindings(file, names)])
     .sort((a, b) => a.locationKey.localeCompare(b.locationKey) || a.line - b.line || a.column - b.column);
 }
@@ -455,8 +494,10 @@ export function formatExtinctSourceFailureMessage(
 }
 
 /**
- * True when the crossing is over: no location is still declared, so the ratchet
- * is green on an empty tolerance and belongs in the normal check set. PURE.
+ * True when a crossing is over: no location of it is still declared, so the
+ * ratchet is green on an empty tolerance. The ADR 0130 crossing answers `true`;
+ * the execution-chain crossing answers `false` until its last count is paid.
+ * PURE.
  */
 export function extinctSourceCrossingComplete(
   baseline: readonly ExtinctSourceBaselineEntry[] = EXTINCT_SOURCE_BASELINE,

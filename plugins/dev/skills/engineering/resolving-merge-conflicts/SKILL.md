@@ -1,5 +1,6 @@
 ---
 name: resolving-merge-conflicts
+working-mode: interactive
 description: Guided merge-conflict resolution loop. Inspect state → find each side's intent → resolve every hunk preserving both intents → run the project's checks. Never abort. Use when a merge, rebase, or cherry-pick leaves conflict markers in tracked files.
 ---
 

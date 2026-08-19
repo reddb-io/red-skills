@@ -12,7 +12,7 @@
 import { Writable } from "node:stream";
 import { planGithubWrite, routeGithubArgs } from "@reddb-io/github";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { Output } from "@reddb-io/red-castle";
+import { Output } from "@reddb-io/worker";
 import { execTool } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";

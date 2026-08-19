@@ -220,6 +220,77 @@ describe("opencode-host generate (CLI smoke)", () => {
     }
   });
 
+  it("defers navigator to the host's native LSP for --host redcode (#3972)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-host-"));
+    const config = join(dir, "config.yaml");
+    const out = join(dir, "opencode.json");
+    writeFileSync(config, "plugins:\n  dev:\n    enabled: true\n", "utf8");
+    try {
+      // A fixture tree that still DECLARES navigator. ADR 0147 §4 switched it
+      // off in the shipped `plugins/`, and a deferral test run against a tree
+      // with nothing to defer passes for the wrong reason.
+      const realPlugins = join(dir, "plugins");
+      mkdirSync(join(realPlugins, "dev", ".claude-plugin"), { recursive: true });
+      mkdirSync(join(realPlugins, "dev", "hooks"), { recursive: true });
+      writeFileSync(join(realPlugins, "dev", ".claude-plugin", "plugin.json"), "{}\n", "utf8");
+      writeFileSync(
+        join(realPlugins, "dev", ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            navigator: { command: "sh", args: ["-c", 'exec bash "$root/hooks/code-nav-mcp.sh"'] },
+            redskilled: { command: "sh", args: ["-c", 'exec bash "$root/hooks/redskilled-mcp.sh"'] },
+          },
+        }),
+        "utf8",
+      );
+      for (const launcher of ["code-nav-mcp.sh", "redskilled-mcp.sh"]) {
+        writeFileSync(join(realPlugins, "dev", "hooks", launcher), "#!/usr/bin/env bash\n", "utf8");
+      }
+
+      const redcode = runGenerate(
+        ["--config", config, "--plugins-root", realPlugins, "--out", out, "--host", "redcode", "--no-slice-2"],
+        {},
+      );
+      expect(redcode.status).toBe(0);
+      const redcodeJson = readFileSync(out, "utf8");
+      const redcodeMcp = JSON.parse(redcodeJson.slice(redcodeJson.indexOf("{"))).mcp as Record<string, unknown>;
+      expect(Object.keys(redcodeMcp)).not.toContain("navigator");
+      expect(Object.keys(redcodeMcp)).toContain("redskilled");
+      expect(redcode.stdout).toMatch(/navigator deferred to redcode native LSP/);
+
+      const opencode = runGenerate(
+        ["--config", config, "--plugins-root", realPlugins, "--out", out, "--host", "opencode", "--no-slice-2"],
+        {},
+      );
+      expect(opencode.status).toBe(0);
+      const opencodeJson = readFileSync(out, "utf8");
+      const opencodeMcp = JSON.parse(opencodeJson.slice(opencodeJson.indexOf("{"))).mcp as Record<string, unknown>;
+      expect(Object.keys(opencodeMcp)).toContain("navigator");
+      expect(opencode.stdout).not.toMatch(/deferred/);
+
+      const noNative = runGenerate(
+        [
+          "--config", config, "--plugins-root", realPlugins, "--out", out,
+          "--host", "redcode", "--no-native-lsp", "--no-slice-2",
+        ],
+        {},
+      );
+      expect(noNative.status).toBe(0);
+      const noNativeJson = readFileSync(out, "utf8");
+      const noNativeMcp = JSON.parse(noNativeJson.slice(noNativeJson.indexOf("{"))).mcp as Record<string, unknown>;
+      expect(Object.keys(noNativeMcp)).toContain("navigator");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unknown --host with a non-zero exit naming the ones it emits for", () => {
+    const r = runGenerate(["--host", "vscode"], {});
+    expect([1, 2]).toContain(r.status);
+    expect(r.stderr).toMatch(/unsupported --host 'vscode'/);
+    expect(r.stderr).toMatch(/opencode, redcode/);
+  });
+
   it("emits the Slice 2 dist tree by default and allows opting out", () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-host-"));
     const config = join(dir, "config.yaml");

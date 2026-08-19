@@ -1,5 +1,6 @@
 ---
 name: hitl
+working-mode: spec-driven
 description: Resolve one ready-for-human issue by extracting the pending human decision, recording the maintainer answer as Human guidance, and moving the issue back to ready-for-agent when it becomes delegable. Use when the queue has ready-for-human issues, when a blocked issue needs a decision from you, or to drain pending human-in-the-loop gates.
 argument-hint: "[--issue N | --skip N,N]"
 ---

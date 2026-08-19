@@ -8,29 +8,15 @@ import {
   githubUpstreamRefusal,
   responseValue,
 } from "./github-transport.js";
+import type {
+  RedskilledGithubWrite,
+  RedskilledGithubWriteRequest,
+} from "@reddb-io/protocol-acp";
 
-export type RedskilledGithubWrite =
-  | { readonly kind: "repository-push"; readonly ref: string; readonly sha: string }
-  | {
-      readonly kind: "pull-request";
-      readonly head: string;
-      readonly base: string;
-      readonly title: string;
-      readonly body: string;
-    }
-  | {
-      readonly kind: "issue-publication";
-      /** Absent to open a Ticket; present to publish a comment on that Ticket. */
-      readonly issue?: number;
-      readonly title?: string;
-      readonly body: string;
-    };
-
-export interface RedskilledGithubWriteRequest {
-  /** Stable caller-minted identity. Reusing it returns the durable receipt. */
-  readonly idempotency_key: string;
-  readonly write: RedskilledGithubWrite;
-}
+// The request a caller sends is wire (ADR 0148): a Worker composes one without
+// holding a credential. Everything below — custody, the durable receipt, the
+// upstream call — is the gateway that answers it, and stays here.
+export type { RedskilledGithubWrite, RedskilledGithubWriteRequest };
 
 export interface RedskilledGithubWriteUpstreamInput {
   readonly project: RedskilledGithubProjectAuthority;
@@ -120,7 +106,11 @@ function apiWriteRequest(
   return {
     lookup: `repos/${repository}/issues?state=all&per_page=100`,
     path: `repos/${repository}/issues`,
-    body: { title: write.title, body: marked(write.body) },
+    body: {
+      title: write.title,
+      body: marked(write.body),
+      ...(write.labels == null || write.labels.length === 0 ? {} : { labels: [...write.labels] }),
+    },
   };
 }
 

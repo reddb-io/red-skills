@@ -25,9 +25,11 @@ import {
   type RedskilledClientConfig,
 } from "./client.js";
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
+import { startRedskilledHostOtlpExport } from "./telemetry-otlp.js";
 import {
   readRedskilledHostConfig,
   readRedskilledHostGithubApp,
+  redskilledDaemonPolicy,
   resolveRedskilledHostEventSinks,
   resolveRedskilledHostSettings,
 } from "./host-config.js";
@@ -77,7 +79,7 @@ import {
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
 import { stabilizeRedskilledEntry } from "./stable-bundle.js";
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
-import { runAcpWorkerCommand } from "./acp-worker-command.js";
+import { runAcpWorkerCommand } from "@reddb-io/worker/acp";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 
 /**
@@ -483,6 +485,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       hostConfig,
       redskilledHomeDir(homedir()),
     );
+    startRedskilledHostOtlpExport(hostConfig.telemetry);
     // The daemon's own black box (Spec #3022, slice #3023). The event lane carries
     // chosen stops; this records unchosen deaths in the shared launcher/worker shape,
     // on a lane that outlives the runtime directory containing the event lane.
@@ -531,8 +534,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       daemon = await startRedskilledDaemon({
         paths,
         ...(hostEventSinks == null ? {} : { hostEventSinks }),
-        idleMs: hostSettings.idleMs,
-        ceiling: hostSettings.ceiling,
+        ...redskilledDaemonPolicy(hostSettings),
         // The artifact states what it IS. Absent, the daemon reports the version
         // baked into this build rather than a placeholder, because "what version is
         // answering" is the first fact a skew investigation needs.

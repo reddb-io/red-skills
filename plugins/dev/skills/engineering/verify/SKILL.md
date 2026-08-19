@@ -1,5 +1,6 @@
 ---
 name: verify
+working-mode: interactive
 description: "Verify that a code change does what it's supposed to by driving a live app with the CDP driver and checking ground-truth snapshots. Use when asked to verify a PR, confirm a fix works, test a change manually, or validate that a feature is visible/functional before closing an issue."
 ---
 

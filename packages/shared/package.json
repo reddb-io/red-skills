@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/shared",
-  "version": "3.19.5",
+  "version": "3.20.0",
   "private": true,
   "type": "module",
   "description": "Code shared across RedSkills runtime apps (ADR 0034): CLI arg parsing over cli-args-parser, and the dynamic plugin-bundle fetch.",
@@ -11,6 +11,7 @@
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./canonical-invocation.js": "./canonical-invocation.ts",
     "./channel.js": "./channel.ts",
+    "./credential-free-env.js": "./credential-free-env.ts",
     "./death-attribution.js": "./death-attribution.ts",
     "./death-presence.js": "./death-presence.ts",
     "./death-record.js": "./death-record.ts",
@@ -23,6 +24,7 @@
     "./kill-tree.js": "./kill-tree.ts",
     "./lane-retention.js": "./lane-retention.ts",
     "./log.js": "./log.ts",
+    "./optional-mcp.js": "./optional-mcp.ts",
     "./outcome-event.js": "./outcome-event.ts",
     "./plugin-gate.js": "./plugin-gate.ts",
     "./project-identity-resolve.js": "./project-identity-resolve.ts",
@@ -41,7 +43,8 @@
     "./self-update.js": "./self-update.ts",
     "./toon-migration.js": "./toon-migration.ts",
     "./worker-scope.js": "./worker-scope.ts",
-    "./worker-workspace.js": "./worker-workspace.ts"
+    "./worker-workspace.js": "./worker-workspace.ts",
+    "./working-mode.js": "./working-mode.ts"
   },
   "dependencies": {
     "@reddb-io/toon": "catalog:",

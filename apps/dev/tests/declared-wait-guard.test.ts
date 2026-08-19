@@ -66,7 +66,7 @@ describe("the live engine declares every wait it holds (#3024)", () => {
   it("declares the landing waits by name", () => {
     const keys = DECLARED_WAITS.map((wait) => `${wait.path} ${wait.fn}`);
 
-    expect(keys).toContain("packages/red-castle/src/engine/land-lock.ts acquire");
+    expect(keys).toContain("packages/worker/src/engine/land-lock.ts acquire");
     expect(keys).toContain("apps/dev/src/core/merge.ts waitForMergeReadyWithEvidence");
     expect(keys).toContain("apps/dev/src/core/merge.ts waitForQueuedMerge");
     expect(keys).toContain("apps/dev/src/core/merge.ts waitForReviewCheck");
@@ -96,8 +96,9 @@ describe("the live engine declares every wait it holds (#3024)", () => {
     expect(WAIT_SCAN_ROOTS).toEqual([
       "apps/dev/src",
       "apps/redskilled/src",
+      "packages/protocol-acp",
       "packages/shared/kill-tree.ts",
-      "packages/red-castle/src",
+      "packages/worker/src",
     ]);
   });
 });
@@ -279,7 +280,7 @@ describe("every declared wait speaks, or argues its silence (#3024, generalizing
     const landing = DECLARED_WAITS.filter(
       (wait) =>
         wait.path === "apps/dev/src/core/merge.ts" ||
-        wait.path === "packages/red-castle/src/engine/land-lock.ts",
+        wait.path === "packages/worker/src/engine/land-lock.ts",
     );
 
     expect(landing.length).toBeGreaterThanOrEqual(4);

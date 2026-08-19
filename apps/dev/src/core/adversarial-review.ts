@@ -1,5 +1,5 @@
 import type { AgentEffort, AgentRunner } from "./execution.js";
-import type { RunOptions } from "@reddb-io/red-castle";
+import type { RunOptions } from "@reddb-io/worker";
 import { defaultTier, type AfkModelTier } from "./config.js";
 import {
   scoredReviewFindingsSchema,

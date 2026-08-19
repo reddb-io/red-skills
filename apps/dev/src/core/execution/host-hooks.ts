@@ -1,4 +1,4 @@
-import type { RunOptions } from "@reddb-io/red-castle";
+import type { RunOptions } from "@reddb-io/worker";
 
 /** The sandcastle `host.onWorktreeReady` hook command shape. */
 export type HostHookCommand = NonNullable<NonNullable<NonNullable<RunOptions["hooks"]>["host"]>["onWorktreeReady"]>[number];

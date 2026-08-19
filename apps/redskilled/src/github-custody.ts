@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import type {
   RedskilledGithubCredential,
   RedskilledGithubProjectAuthority,
@@ -44,7 +45,7 @@ export interface RedskilledGithubCustodyFault {
   readonly threshold_ms: number;
   readonly age_ms: number;
   readonly repair: {
-    readonly method: "_redskills/github_custody_handoff";
+    readonly method: typeof REDSKILLS_ACP_METHODS.githubCustodyHandoff;
     readonly params: RedskilledGithubCustodyHandoff;
   };
 }
@@ -309,7 +310,7 @@ function publicRecord(
       threshold_ms: threshold,
       age_ms: Math.max(0, age),
       repair: {
-        method: "_redskills/github_custody_handoff",
+        method: REDSKILLS_ACP_METHODS.githubCustodyHandoff,
         params: {
           pull_request: record.pull_request,
           owner_ticket: record.owner_ticket,

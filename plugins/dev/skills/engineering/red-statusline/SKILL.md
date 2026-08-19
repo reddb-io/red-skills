@@ -1,5 +1,6 @@
 ---
 name: red-statusline
+working-mode: interactive
 description: Install or inspect the RedSkills statusline for the active host. RedSkills has one shared `statusline` producer in the dev bundle; Claude Code wires it through `.claude/settings.json` as a command-backed statusLine, while Codex configures the built-in `tui.status_line` footer and the dev plugin's SessionStart self-heal hook. Preserves existing config unless replacement is explicitly requested.
 disable-model-invocation: true
 ---

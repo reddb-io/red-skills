@@ -177,6 +177,26 @@ extend the same source-of-truth to skills and hooks, so a user running
 `opencode .` on a reddb.io repo sees the same model, the same 56
 skills, and the same lifecycle hooks Claude Code and Codex see.
 
+## Semantic navigation is the host's when the host has an LSP
+
+RedCode runs a language-server stack natively. Projecting the `navigator` MCP
+onto it would birth a **second** stack over the same tree — double the memory,
+double the indexing wall-clock, and two answers that can disagree while both
+look authoritative. So `--host redcode` omits `navigator` from the emitted
+`mcp:` block entirely (the entry is dropped, not emitted `enabled: false`: an
+entry carrying the launcher command is one flag away from the duplicate it
+exists to prevent), and the generator says on stdout what it deferred and why.
+
+The deferral is conditional on the native authority actually being available.
+`--host opencode`, Claude Code, and Codex have no LSP of their own and keep
+`navigator`; `--host redcode --no-native-lsp` puts it back for a RedCode install
+whose native LSP is switched off. Every other MCP the plugins ship is untouched
+— RedCode still receives `redskilled` and `rsp`.
+
+The rule lives in `src/semantic-authority.ts` as a host table plus the operator
+override, so the standalone Slice 1 file and the Slice 2 dist tree defer the
+same way instead of each emit path re-deciding.
+
 ## Hook coverage notes
 
 OpenCode does not expose a Claude-style `SubagentStop` event in the plugin

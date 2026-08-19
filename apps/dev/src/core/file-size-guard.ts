@@ -74,7 +74,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   // into modules that each take a sixty-field context object would satisfy this
   // number and leave the code worse. The entry states the debt with a ceiling;
   // paying it means decomposing the function, not moving its lines.
-  { path: "apps/redskilled/src/daemon/lifecycle.ts", lines: 2489 },
+  { path: "apps/redskilled/src/daemon/lifecycle.ts", lines: 2475 },
   { path: "apps/redskilled/src/cli.ts", lines: 1036 },
   { path: "apps/redskilled/src/client.ts", lines: 1003 },
   { path: "apps/redskilled/src/statusline-payload.ts", lines: 864 },
@@ -82,15 +82,15 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/rsp/src/two-axis-benchmark.ts", lines: 878 },
   { path: "apps/rsp/tests/cli.helpers.ts", lines: 828 },
   { path: "packages/github/balance.ts", lines: 907 },
-  { path: "packages/red-castle/src/AgentProvider.ts", lines: 1184 },
-  { path: "packages/red-castle/src/InitService.ts", lines: 1086 },
-  { path: "packages/red-castle/src/Orchestrator.ts", lines: 827 },
-  { path: "packages/red-castle/src/cli.ts", lines: 811 },
-  { path: "packages/red-castle/src/createSandbox.ts", lines: 1151 },
-  { path: "packages/red-castle/src/createWorktree.ts", lines: 823 },
-  { path: "packages/red-castle/src/engine/monitor.ts", lines: 805 },
-  { path: "packages/red-castle/src/engine/tracker/claim.ts", lines: 1026 },
-  { path: "packages/red-castle/src/run.ts", lines: 1023 },
+  { path: "packages/worker/src/AgentProvider.ts", lines: 1184 },
+  { path: "packages/worker/src/InitService.ts", lines: 1086 },
+  { path: "packages/worker/src/Orchestrator.ts", lines: 827 },
+  { path: "packages/worker/src/cli.ts", lines: 811 },
+  { path: "packages/worker/src/createSandbox.ts", lines: 1151 },
+  { path: "packages/worker/src/createWorktree.ts", lines: 823 },
+  { path: "packages/worker/src/engine/monitor.ts", lines: 805 },
+  { path: "packages/worker/src/engine/tracker/claim.ts", lines: 1026 },
+  { path: "packages/worker/src/run.ts", lines: 1023 },
 ];
 
 export type FileSizeFindingKind = "over-threshold" | "over-baseline" | "stale-baseline";

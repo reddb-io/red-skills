@@ -90,7 +90,7 @@ test("an unmeasured Worker reads as unmeasured, never as idle", () => {
 test("a Worker's published line is shown under its row, and only when there is one", () => {
   const payload = statuslinePayload();
   const busy = text(renderWorkerRow(payload.workers[0], { columns: 120, selected: true, verbose: true, localProject: null }));
-  assert.match(busy, /vitest packages\/red-castle/);
+  assert.match(busy, /vitest packages\/worker/);
 
   const quiet = renderWorkerRow(payload.workers[1], { columns: 120, selected: false, verbose: true, localProject: null });
   assert.equal(quiet.length, 1, "a Worker that published nothing gets no second line at all");

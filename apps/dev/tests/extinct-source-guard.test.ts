@@ -3,12 +3,16 @@
  * fails here, and so does a module or symbol merely NAMED for one (issue #2795,
  * issue #2850, Spec #2772, ADR 0130).
  *
- * Deleting the code was the crossing; this keeps it deleted. The migration is
- * over — `EXTINCT_SOURCE_BASELINE` is empty — so the ratchet runs in the normal
- * check set and its tolerance is zero. Four properties are load-bearing: a new
- * reference FAILS and names its location, a NAME fails the same way a source
- * does, findings only ever DECREASE, and prose describing what was removed is
+ * Deleting the code was the crossing; this keeps it deleted. That migration is
+ * over — no ADR 0130 location is tolerated — which is what promoted the ratchet
+ * into the normal check set. Four properties are load-bearing: a new reference
+ * FAILS and names its location, a NAME fails the same way a source does,
+ * findings only ever DECREASE, and prose describing what was removed is
  * documentation rather than a reader.
+ *
+ * A SECOND crossing now rides the same ratchet — the execution chain of ADRs
+ * 0147/0148/0149 (Spec #4007, issue #4009) — declared at today's counts BEFORE
+ * its surfaces are deleted. Its own describe block is at the foot of this file.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,15 +29,21 @@ import {
   EXTINCT_SOURCE_BASELINE,
   EXTINCT_SOURCE_BASELINE_DECLARATION,
   stripComments,
+  EXTINCT_INVENTORY_PATHS,
   type ExtinctSourceBaselineEntry,
 } from "../src/core/extinct-source-guard.js";
+import {
+  EXECUTION_CHAIN_BASELINE,
+  EXECUTION_CHAIN_NAMES,
+  EXECUTION_CHAIN_SOURCES,
+} from "../src/core/extinct-execution-chain.js";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
 /** A file that reads the extinct named-fleet registry — the shape ADR 0130 removed. */
 const FLEET_READER = `
-  import { readFleetProfiles } from "@reddb-io/red-castle/engine";
+  import { readFleetProfiles } from "@reddb-io/worker/engine";
 
   export async function attributeWorker(root: string, name: string) {
     const profiles = await readFleetProfiles(root + "/.red/state/castle/fleets.toonl");
@@ -43,7 +53,7 @@ const FLEET_READER = `
 
 /** A file that reads the extinct attempt record. */
 const ATTEMPT_READER = `
-  import { readCastleAttemptRecords } from "@reddb-io/red-castle/engine";
+  import { readCastleAttemptRecords } from "@reddb-io/worker/engine";
 
   export async function lastTry(root: string, worker: string) {
     const records = await readCastleAttemptRecords(root);
@@ -98,7 +108,7 @@ describe("the live tree carries no fleet or attempt source (#2795)", () => {
 
     expect(files.length).toBeGreaterThan(500);
     expect(files.some((file) => file.relativePath === "apps/dev/src/core/repo-invariants.ts")).toBe(true);
-    expect(files.some((file) => file.relativePath === "packages/red-castle/src/engine/paths.ts")).toBe(true);
+    expect(files.some((file) => file.relativePath === "packages/worker/src/engine/paths.ts")).toBe(true);
   });
 
   it("carries no attempt-keyed accounting module at all (#2850)", () => {
@@ -116,7 +126,7 @@ describe("a newly added source fails, naming the offending location (#2795)", ()
   it("rejects reintroducing an expired status alias as an MCP tool", () => {
     const findings = collectExtinctSourceFindingsFromFiles([
       {
-        relativePath: "packages/red-castle/src/mcp/legacy-status.ts",
+        relativePath: "packages/worker/src/mcp/legacy-status.ts",
         sourceText: `
 export const tools = [
   { name: "worker_status", invoke: () => readWorkers() },
@@ -158,12 +168,17 @@ export const tools = [
 
   it("names a reintroduced attempt source and the Worker that replaced it", () => {
     const findings = collectExtinctSourceFindingsFromFiles([
-      { relativePath: "packages/red-castle/src/engine/replay.ts", sourceText: ATTEMPT_READER },
+      { relativePath: "packages/worker/src/engine/replay.ts", sourceText: ATTEMPT_READER },
     ]);
     const message = formatExtinctSourceFailureMessage(formatExtinctSourceViolations({ findings, baseline: [] }));
 
-    expect(findings.every((finding) => finding.noun === "attempt")).toBe(true);
-    expect(message).toContain("packages/red-castle/src/engine/replay.ts");
+    // The fixture imports from `@reddb-io/worker/engine`, a specifier the
+    // execution-chain crossing also names, so the attempt half is what is
+    // asserted here rather than every finding the file produces.
+    const attempt = findings.filter((finding) => finding.sourceId.startsWith("attempt-"));
+    expect(attempt.length).toBeGreaterThan(0);
+    expect(attempt.every((finding) => finding.noun === "attempt")).toBe(true);
+    expect(message).toContain("packages/worker/src/engine/replay.ts");
     expect(message).toContain("liveness-anchor");
   });
 
@@ -421,11 +436,17 @@ describe("promoted into the normal check set (#2795)", () => {
     expect(script).toContain("tests/extinct-source-guard.test.ts");
   });
 
-  it("earned the promotion: the crossing is complete, so the tolerance is empty", () => {
-    expect(extinctSourceCrossingComplete()).toBe(true);
-    expect(EXTINCT_SOURCE_BASELINE).toEqual([]);
+  it("earned the promotion: the ADR 0130 crossing ran to zero, and stays there", () => {
+    // The promotion is not handed back when a second crossing opens. Every
+    // baseline id belongs to the execution chain, so no fleet, attempt or
+    // supervisor location is tolerated anywhere in the tree.
+    const chain = new Set([...EXECUTION_CHAIN_SOURCES, ...EXECUTION_CHAIN_NAMES].map((entry) => entry.id));
+    const adr0130 = EXTINCT_SOURCE_BASELINE.filter((entry) => !chain.has(entry.id.split(":")[0]!));
+
+    expect(adr0130, "an ADR 0130 location is tolerated again").toEqual([]);
+    expect(extinctSourceCrossingComplete(adr0130)).toBe(true);
     // And the rule is executable rather than remembered: a non-empty baseline
-    // means the crossing is still running.
+    // means a crossing is still running.
     expect(extinctSourceCrossingComplete([{ id: "x:y.ts", count: 1, reason: "mid-crossing" }])).toBe(false);
   });
 });
@@ -448,6 +469,14 @@ function probeTextFor(id: string): string {
     "project-supervisor-entrypoint": `if (argv[0] === "__supervise") return superviseCommand(argv.slice(1));`,
     "project-supervisor-spawn": `const pid = await spawnSupervisor({ root, target });`,
     "project-supervisor-payload-key": `return { supervisor: publishSupervisorLiveness(anchor) };`,
+    "dev-cli-binary": `const bin = "red-skills-dev";`,
+    "dev-cli-router": `const parsed: CliCommand = parseCli(argv).command;`,
+    "dev-worker-run-command": `const flags = parseRunFlags(argv);`,
+    "dev-bundle-supervisor": `import { readSlotState } from "./supervisor/state.js";`,
+    "project-launch-template": `const launch = buildProjectLaunchTemplate(input);`,
+    "tmp-janitor": `const plan = planTmpJanitorSweep(root);`,
+    "client-checkout-reclaim": `import { planWorkerReclaim } from "./worker-reclaim.js";`,
+    "castle-resident-resource-kind": `const target = { kind: "castle-resident" };`,
   };
   const probe = probes[id];
   if (!probe) throw new Error(`no probe for extinct source ${id} — add one when adding an inventory entry`);
@@ -463,6 +492,10 @@ function nameProbeFor(id: string): string {
     "project-supervisor-tick": `export async function superviseTick(): Promise<void> {}`,
     "project-supervisor-loop": `export async function runSupervisor(): Promise<void> {}`,
     "manual-landing-mode": `export async function handoffForManualLanding(c: StageCommon): Promise<void> {}`,
+    // The probe keeps the RETIRED specifier on purpose: after #4013 nothing in
+    // the tree imports it, so only this line still proves the pattern is live.
+    "red-castle-naming": `import { Orchestrator } from "@reddb-io/red-castle";`,
+    "castle-resident-naming": `export function startCastleResident(root: string): void {}`,
   };
   const probe = probes[id];
   if (!probe) throw new Error(`no probe for extinct name ${id} — add one when adding an inventory entry`);
@@ -549,7 +582,138 @@ export const PROJECT_LANE = "project";
     ).toEqual([]);
   });
 
-  it("keeps the tolerance empty: this crossing shrinks the baseline, never grows it", () => {
-    expect(EXTINCT_SOURCE_BASELINE).toEqual([]);
+  it("keeps its own tolerance empty: this crossing shrinks the baseline, never grows it", () => {
+    const supervisor = [...EXTINCT_SOURCES, ...EXTINCT_NAMES]
+      .filter((entry) => entry.noun === "supervisor")
+      .map((entry) => entry.id);
+
+    expect(EXTINCT_SOURCE_BASELINE.filter((entry) => supervisor.includes(entry.id.split(":")[0]!))).toEqual([]);
+  });
+});
+
+/**
+ * THE SECOND CROSSING (ADRs 0147/0148/0149, Spec #4007, issue #4009). The first
+ * one declared its inventory while deleting; this one declares it BEFORE, at
+ * today's counts, because `red-skills-dev` still routes 36 commands, the dev
+ * bundle is still a Worker body and the janitor still sweeps a human's checkout.
+ * The `red-castle` specifier is the first debt paid: issue #4013 renamed the
+ * package to `@reddb-io/worker` under `packages/worker`, clearing 72 declared
+ * locations. Four properties are load-bearing: the
+ * declared counts ARE the tree's counts, one extra reference at ANY declared
+ * location reds the guard, each entry names the route that replaced it, and the
+ * surfaces that SURVIVE the redesign are not reddened by mistake.
+ */
+describe("the execution-chain crossing is declared at today's counts (#4009)", () => {
+  const inventory = [...EXECUTION_CHAIN_SOURCES, ...EXECUTION_CHAIN_NAMES];
+  const findings = collectExtinctSourceFindingsFromFiles(
+    readExtinctSourceFiles(ROOT),
+    EXECUTION_CHAIN_SOURCES,
+    EXECUTION_CHAIN_NAMES,
+  );
+
+  it("names every surface the Spec asked it to name", () => {
+    expect(inventory.map((entry) => entry.id)).toEqual([
+      "dev-cli-binary",
+      "dev-cli-router",
+      "dev-worker-run-command",
+      "dev-bundle-supervisor",
+      "project-launch-template",
+      "tmp-janitor",
+      "client-checkout-reclaim",
+      "castle-resident-resource-kind",
+      "red-castle-naming",
+      "castle-resident-naming",
+    ]);
+  });
+
+  it("is green: the declared counts are the counts the tree actually carries", () => {
+    const violations = formatExtinctSourceViolations({ findings, baseline: EXECUTION_CHAIN_BASELINE });
+
+    expect(violations, formatExtinctSourceFailureMessage(violations)).toEqual([]);
+  });
+
+  it("declares no tolerance it cannot see — an over-declared count is slack nobody paid for", () => {
+    // A baseline entry larger than the tree is a reference budget a later slice
+    // can spend without anything failing, which is the ratchet leaking.
+    const counted = new Map<string, number>();
+    for (const finding of findings) counted.set(finding.locationKey, (counted.get(finding.locationKey) ?? 0) + 1);
+    const drifted = EXECUTION_CHAIN_BASELINE.filter((entry) => counted.get(entry.id) !== entry.count).map(
+      (entry) => `${entry.id} declares ${entry.count}, the tree carries ${counted.get(entry.id) ?? 0}`,
+    );
+
+    expect(drifted, drifted.join("\n")).toEqual([]);
+    // The inventory's SIZE is itself a debt, so it is bounded from ABOVE and the
+    // bound only ever comes down. It opened at 157 locations and #4013's rename
+    // paid 72 of them; a slice that needs the ceiling RAISED is adding a
+    // location, which is the reintroduction the entry-level counts already
+    // refuse. Lower this number when a slice clears more.
+    expect(EXECUTION_CHAIN_BASELINE.length).toBeLessThanOrEqual(85);
+  });
+
+  it("fails when ANY declared location gains one reference (the ratchet itself)", () => {
+    // Raising a baseline is exactly what a reintroduction needs, so one extra
+    // reference at each declared location must red the guard on its own — all
+    // 85 of them, not a sampled few.
+    const survived = EXECUTION_CHAIN_BASELINE.filter((entry) => {
+      const seed = findings.find((finding) => finding.locationKey === entry.id)!;
+      const violations = formatExtinctSourceViolations({
+        findings: [...findings, seed],
+        baseline: EXECUTION_CHAIN_BASELINE,
+      });
+      return violations.length !== 1 || !violations[0]!.includes(seed.relativePath);
+    }).map((entry) => entry.id);
+
+    expect(survived, survived.join("\n")).toEqual([]);
+  });
+
+  it("names the route that replaced each surface, not only the refusal", () => {
+    for (const entry of inventory) {
+      expect(entry.replacement, `${entry.id} names no route a worker can act on`).toMatch(
+        /\brs_(?:dev|memory|brain|github)\b|@reddb-io\/(?:worker|protocol-acp)|packages\/worker|\bredskilled\b|~\/\.red\/tmp\/workers/,
+      );
+      // The failure teaches the route, so the entry must also say what the
+      // surface OWNED — a bare noun would red a word rather than a concept.
+      expect(entry.what.length, `${entry.id} says too little about what it owned`).toBeGreaterThan(60);
+    }
+  });
+
+  it("leaves the surfaces the redesign KEEPS alone", () => {
+    // A ratchet that reds the replacement teaches the next slice to rename the
+    // wrong thing: the `redskilled` binary and its own CLI, the daemon's launch
+    // template and its reclaim over what it births, and rsp's resident
+    // vocabulary whose code ADR 0147 keeps for the fold-in.
+    const surviving = [
+      `import { isPidAlive } from "@reddb-io/shared/resident-core.js";`,
+      `import { ResidentRspClient, resolveResidentPaths } from "@reddb-io/shared/resident-client.js";`,
+      `export const CLI_USAGE = "Usage: redskilled <command> [options]";`,
+      `export type RedskilledLaunchTemplate = { argv: readonly string[] };`,
+      `export function planDaemonReclaim(root: string): string[] { return []; }`,
+      `export class RspResidentServer {}`,
+    ].join("\n");
+
+    expect(
+      collectExtinctSourceFindingsFromFiles([{ relativePath: "apps/redskilled/src/daemon/x.ts", sourceText: surviving }]),
+    ).toEqual([]);
+  });
+
+  it("exempts the second inventory module, and only by its exact path", () => {
+    const declaration = readFileSync(join(ROOT, "apps/dev/src/core/extinct-execution-chain.ts"), "utf8");
+
+    expect(EXTINCT_INVENTORY_PATHS).toEqual([
+      "apps/dev/src/core/extinct-source-guard.ts",
+      "apps/dev/src/core/extinct-execution-chain.ts",
+    ]);
+    expect(
+      collectExtinctSourceFindingsFromFiles([
+        { relativePath: "apps/dev/src/core/extinct-execution-chain.ts", sourceText: declaration },
+      ]),
+    ).toEqual([]);
+    // Copied anywhere else the same text is a reader again, so the exemption
+    // cannot be widened by moving the inventory into a friend module.
+    expect(
+      collectExtinctSourceFindingsFromFiles([
+        { relativePath: "apps/dev/src/core/extinct-execution-chain.copy.ts", sourceText: declaration },
+      ]),
+    ).not.toEqual([]);
   });
 });

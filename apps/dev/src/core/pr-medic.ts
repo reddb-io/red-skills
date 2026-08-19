@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
-import type { EnginePaths } from "@reddb-io/red-castle/engine";
+import type { EnginePaths } from "@reddb-io/worker/engine";
 
 /**
  * PR medic (Spec #2511 slice 2, #2513): when the merge driver classifies a PR

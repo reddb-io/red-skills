@@ -161,6 +161,7 @@ EOF
 cat > "$SKILL_DIR/SKILL.md" <<EOF
 ---
 name: $SKILL_NAME
+working-mode: interactive
 description: Use when verifying that the scaffolded $PLUGIN plugin is installed, discoverable, and ready for repository-specific implementation.
 ---
 

@@ -1,4 +1,4 @@
-import type { HealLedgerState, HealLedgerStore } from "@reddb-io/red-castle/engine";
+import type { HealLedgerState, HealLedgerStore } from "@reddb-io/worker/engine";
 import { describe, expect, it, vi } from "vitest";
 import { makeDeps, options, runBoot } from "./boot.helpers.js";
 

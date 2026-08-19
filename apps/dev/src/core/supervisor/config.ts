@@ -1,7 +1,7 @@
 import { SLOT_CIRCUIT_DEFAULTS } from "../slot-circuit.js";
 import { resolveWorkerBudgets, type WorkerBudgets } from "../worker-budget.js";
 
-import type { CastleLaneRecord } from "@reddb-io/red-castle/engine";
+import type { CastleLaneRecord } from "@reddb-io/worker/engine";
 
 // ---------- tunables ----------
 

@@ -9,7 +9,7 @@
 // never pushes code and the workflow requests no `contents: write`.
 
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { Output } from "@reddb-io/red-castle";
+import { Output } from "@reddb-io/worker";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { defaultSandcastleDeps, type AgentRunner } from "../core/execution.js";

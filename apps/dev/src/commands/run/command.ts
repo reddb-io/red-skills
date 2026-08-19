@@ -52,7 +52,7 @@ import {
   type CastleSessionHookName,
   type CastleWorkerDrainDeps,
   type HostCapabilityProfile,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { rmSync, writeFileSync } from "node:fs";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock } from "../../core/runner-spawn.js";

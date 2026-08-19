@@ -20,10 +20,10 @@
 // documented legacy fallback, a non-issue surface like PR review labels, or a
 // human/manual command surface) add it to the allowlist WITH a reason.
 //
-// This lint owns the HOST tree only. The planner itself lives in red-castle's
-// `engine/state-transition.ts` since #2666, and castle's tree is scanned by
-// castle's own suite (`src/engine/state-transition-contract.test.ts`) with an
-// EMPTY allowlist — never re-add castle paths here.
+// This lint owns the HOST tree only. The planner itself lives in the Worker
+// package's `engine/state-transition.ts` since #2666, and that tree is scanned by
+// its own suite (`src/engine/state-transition-contract.test.ts`) with an
+// EMPTY allowlist — never re-add those paths here.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -37,7 +37,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * migration quietly loses its contract. */
 const SCAN_ROOTS: readonly { readonly label: string; readonly dir: string }[] = [
   { label: "apps/dev/src", dir: join(HERE, "..", "src") },
-  { label: "red-castle/engine", dir: join(HERE, "..", "..", "..", "packages", "red-castle", "src", "engine") },
+  { label: "worker/engine", dir: join(HERE, "..", "..", "..", "packages", "worker", "src", "engine") },
 ];
 
 /** The transition API's own sources: they DEFINE the state vocabulary and the
@@ -266,7 +266,7 @@ describe("transition-API contract lint (#2528, #2664)", () => {
 
     // The castle-side writer shape (`tracker.editIssueLabels(n, {remove, add})`).
     const castleWriter = scanSource(
-      "red-castle/engine/synthetic.ts",
+      "worker/engine/synthetic.ts",
       ["await input.tracker.editIssueLabels(issue.number, {", '  remove: ["quarantine"],', '  add: ["ready-for-agent"],', "});"].join("\n"),
     );
     expect(castleWriter).toHaveLength(1);

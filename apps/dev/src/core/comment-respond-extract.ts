@@ -1,11 +1,11 @@
 // core/comment-respond-extract.ts — the structured-output half of `/dev explain`
 // (issue #750). Drives the agent through the vendored sandcastle `run()` +
 // `Output.object`, returning the validated answer text the responder posts back
-// in-thread. Mirrors review-extract.ts so the heavy `@reddb-io/red-castle`
+// in-thread. Mirrors review-extract.ts so the heavy `@reddb-io/worker`
 // import (and a live agent run) is confined to the production wiring and the
 // pure responder routing (comment-respond.ts) stays test-stubbable.
 
-import type { RunOptions, RunResult } from "@reddb-io/red-castle";
+import type { RunOptions, RunResult } from "@reddb-io/worker";
 import { resolveMaxRetries, type StandardSchemaLike } from "./review.js";
 import type { CommentEvent } from "./comment-respond.js";
 import type { DevDirective } from "./comment-classification.js";

@@ -1,5 +1,6 @@
 ---
 name: to-tickets
+working-mode: spec-driven
 description: Break a plan or Spec into independently-grabbable Tickets on the project issue tracker using tracer-bullet vertical slices. Use when user wants to convert a plan into Tickets, create implementation Tickets, or break down work into Tickets.
 argument-hint: "[--tags a,b]"
 ---

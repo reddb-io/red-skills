@@ -22,7 +22,7 @@ import {
   type CastleLaneRecord,
   type CastleStateSnapshot,
   type EnginePaths,
-} from "@reddb-io/red-castle/engine";
+} from "@reddb-io/worker/engine";
 import { createFileBootBreakerStore, isBreakerOpen } from "../../core/supervisor/boot-breaker.js";
 import {
   readAllWorkerStates,

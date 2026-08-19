@@ -23,7 +23,7 @@ is configuration, not a sniff).
 
 ## Spawn
 
-OpenCode is a first-class sandcastle agent (`@reddb-io/red-castle` ships
+OpenCode is a first-class sandcastle agent (`@reddb-io/worker` ships
 `opencode(model, options)`), so AFK does **not** assemble a CLI invocation itself —
 it injects the provider through the `agentFor` seam (ADR 0033) and sandcastle owns
 the spawn, the worktree, the sandbox, and completion-signal detection. The wiring

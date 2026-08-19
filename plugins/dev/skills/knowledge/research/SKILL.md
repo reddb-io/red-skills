@@ -1,5 +1,6 @@
 ---
 name: research
+working-mode: interactive
 description: Performs deep official-source research on a technical topic and saves a structured Markdown report under `.red/researches/<YYYY-MM-DD>-<slug>.md`. Use when the user invokes `/research`, asks for official documentation, primary-source research, repository/wiki documentation, specs, or high-depth source-backed notes.
 argument-hint: "<topic> [--deep] [--save-as slug]"
 ---

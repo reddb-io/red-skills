@@ -49,8 +49,26 @@ defaults):
 CODE_NAV_SERVERS='{"clangd":{"command":"clangd","args":[],"extensions":[".c",".cpp",".h"],"languageId":"cpp"}}'
 ```
 
-`CODE_NAV_ROOT` sets the workspace root (defaults to the process cwd, which Claude
-Code sets to the project directory).
+## Workspace root
+
+The root the language servers index follows the **opened project**, not the
+plugin the launcher lives in. Precedence:
+
+1. `CODE_NAV_ROOT` — the operator's own word, obeyed as written.
+2. The project the host announces: `RED_SKILLS_PROJECT_ROOT`,
+   `CLAUDE_PROJECT_DIR`, `CODEX_PROJECT_DIR`, `OPENCODE_PROJECT_DIR`.
+3. The process cwd.
+
+A candidate that is recognisably a plugin installation — it carries a plugin
+manifest, sits in a host's plugin cache, or is the plugin root the host itself
+announced — is skipped at steps 2 and 3. The navigator is launched from a script
+inside the installed plugin, so an unguarded cwd indexed the plugin instead of
+the repository and every lookup answered "not found" as if a language server
+were missing. When the plugin directory is genuinely all that is left, the root
+is used anyway and the ready line on stderr says so, naming `CODE_NAV_ROOT` as
+the fix.
+
+The ready line carries both: `navigator MCP ready (root=…, root-source=…, languages=…)`.
 
 ## Build
 

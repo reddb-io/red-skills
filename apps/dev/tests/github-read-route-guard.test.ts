@@ -151,8 +151,8 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
 
   it("routes the red-castle tracker and CLI through packages/github (#3733)", () => {
     const paths = [
-      "packages/red-castle/src/engine/tracker/github/adapter.ts",
-      "packages/red-castle/src/cli.ts",
+      "packages/worker/src/engine/tracker/github/adapter.ts",
+      "packages/worker/src/cli.ts",
     ];
     const readReport = collectGithubReadRouteReport(ROOT);
     const writeReport = collectGithubWriteRouteReport(ROOT);
@@ -168,7 +168,7 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
   it("rejects a new gh write and points it at the shared client", () => {
     const findings = collectGithubWriteShelloutsFromFiles([
       {
-        relativePath: "packages/red-castle/src/engine/new-writer.ts",
+        relativePath: "packages/worker/src/engine/new-writer.ts",
         sourceText: `\nexport async function merge(runGh: any) {\n  return runGh(["pr", "merge", "42", "--merge"]);\n}\n`,
       },
     ]);
@@ -177,7 +177,7 @@ describe("GitHub reads route through @reddb-io/github (#3451)", () => {
     const failure = formatGithubWriteRouteFailure(report, violations);
 
     expect(violations).toHaveLength(1);
-    expect(failure).toContain("packages/red-castle/src/engine/new-writer.ts:3");
+    expect(failure).toContain("packages/worker/src/engine/new-writer.ts:3");
     expect(failure).toContain("createGithubClient");
   });
 
