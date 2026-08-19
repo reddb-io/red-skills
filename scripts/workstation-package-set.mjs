@@ -53,8 +53,9 @@ export const WORKSTATION_PAYLOADS = [
   { asset: "dist/install-hermes-skills.mjs", kind: "host-generator" },
 
   // Runtime bundles, each with the checksum manifest its dynamic fetch verifies.
-  { asset: "dist/dev.bundle.min.mjs", kind: "runtime-bundle" },
-  { asset: "dist/dev.manifest.json", kind: "runtime-bundle" },
+  // No `dev.bundle.min.mjs`: #4031 deleted the dev CLI (ADR 0147 §1) and the
+  // dev plugin now reaches its MCP through the npm package. A set that still
+  // demanded it would sign a payload the release cannot build.
   { asset: "dist/redskilled-mcp.bundle.min.mjs", kind: "runtime-bundle" },
   { asset: "dist/code-nav.bundle.min.mjs", kind: "runtime-bundle" },
   { asset: "dist/code-nav.manifest.json", kind: "runtime-bundle" },
