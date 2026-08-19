@@ -15,11 +15,6 @@ const OPTED_OUT_CONFIGS = [
 ];
 const RATCHETED_CONFIGS = ["apps/dev/tsconfig.json"];
 const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
-  "src/commands/activity-review.ts": 1,
-  "src/commands/requeue.ts": 1,
-  "src/commands/retake.ts": 1,
-  "src/commands/route-model-tier.ts": 1,
-  "src/commands/statusline.ts": 1,
   "src/core/dashboard.ts": 1,
   "src/core/process-issue/lifecycle.ts": 56,
   "src/core/process-issue/recovery.ts": 90,
@@ -28,10 +23,6 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/core/review-extract.ts": 1,
   "src/core/session.ts": 3,
   "src/core/skill-audit-extract.ts": 1,
-  "src/core/supervisor/budget.ts": 1,
-  "src/core/supervisor/config.ts": 1,
-  "src/core/supervisor/envelopes.ts": 1,
-  "src/core/supervisor/slot-actions.ts": 2,
   "src/runtime/review-gh.ts": 1,
 };
 

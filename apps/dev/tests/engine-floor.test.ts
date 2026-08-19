@@ -77,7 +77,7 @@ describe("the engine floor judges the engine a dispatch would run", () => {
   it("hands the operator one executable repair command with the exact version", () => {
     const repair = engineFloorRepair("3.4.1");
     expect(repair).toContain("@reddb-io/red-skills@3.4.1");
-    expect(repair).toContain("red-skills-dev reconcile-engine");
+    expect(repair).toContain("red-skills-redskilled provision");
     expect(repair).not.toContain("<version>");
   });
 

@@ -1,3 +1,7 @@
+// #4031 deleted `commands/red-doctor.ts` with the router. The classifier
+// REACHABILITY case read that file to walk from the command to each
+// classifier, so it went with the command; every doc-contract case below
+// asserts the SKILL.md itself and is untouched.
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -78,32 +82,6 @@ function classifiersNamedBySkill(skill: string): string[] {
   }
   return [...named].sort();
 }
-
-describe("doctor classifier reachability", () => {
-  it("names at least the classifiers this contract was written for", async () => {
-    const named = classifiersNamedBySkill(await readDoctorSkill());
-
-    // Guards the extractor itself: a regex that matched nothing would make the
-    // reachability assertion below vacuously green.
-    expect(named).toEqual(expect.arrayContaining([
-      "apps/dev/src/core/ask-red-router-doctor.ts",
-      "apps/dev/src/core/dependency-edge-doctor.ts",
-      "apps/dev/src/core/hook-doctor.ts",
-      "apps/dev/src/core/hook-registry.ts",
-      "apps/dev/src/core/host-binary-doctor.ts",
-      "apps/dev/src/core/red-taxonomy-doctor.ts",
-      "apps/dev/src/core/runtime-doctor.ts",
-      "apps/dev/src/core/unlanded-docs-doctor.ts",
-    ]));
-  });
-
-  it("reaches every classifier the SKILL.md names from the doctor command", async () => {
-    const named = classifiersNamedBySkill(await readDoctorSkill());
-    const reachable = reachableFromDoctorCommand();
-
-    expect(named.filter((module) => existsSync(join(ROOT, module)) && !reachable.has(module))).toEqual([]);
-  });
-});
 
 describe("doctor docs contract", () => {
   it("checks Development-workflow adoption read-only with red-setup as the fix-home", async () => {

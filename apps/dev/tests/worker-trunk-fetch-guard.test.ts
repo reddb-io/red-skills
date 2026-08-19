@@ -9,10 +9,11 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "../src/core/extinct-source-guard.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
-const WORKER_FETCH_ROOTS = [
-  "apps/dev/src/commands/run",
-  "apps/dev/src/core/process-issue",
-] as const;
+// #4031 deleted `commands/run` with the dev CLI; the Worker body it held moved
+// to @reddb-io/worker. What remains under `apps/dev` that a Worker still reaches
+// is process-issue, so that is what this guard sweeps — the rule (ADR 0138: the
+// Worker never fetches the Trunk) is unchanged, only the surface it can hide in.
+const WORKER_FETCH_ROOTS = ["apps/dev/src/core/process-issue"] as const;
 const WORKER_TRUNK_FETCH = /\b(?:fetchBase|resolveFreshBase)\b|\[\s*["']fetch["']/g;
 
 interface Finding {
@@ -57,7 +58,7 @@ describe("the Worker cannot fetch the Trunk (ADR 0138, #3354)", () => {
   });
 
   it("names the offending file and line when the extinct surface returns", () => {
-    expect(findingsInSource("apps/dev/src/commands/run/new-worker.ts", "\n\nawait git.fetchBase(trunk);\n"))
-      .toEqual([{ offender: "apps/dev/src/commands/run/new-worker.ts:3", match: "fetchBase" }]);
+    expect(findingsInSource("apps/dev/src/core/process-issue/new-worker.ts", "\n\nawait git.fetchBase(trunk);\n"))
+      .toEqual([{ offender: "apps/dev/src/core/process-issue/new-worker.ts:3", match: "fetchBase" }]);
   });
 });
