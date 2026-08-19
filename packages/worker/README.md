@@ -44,6 +44,34 @@ they stay — and `CONTROL_PLANE_DESPITE_THE_NAME` says so out loud, because a
 reader counting them against ADR 0148's seven-module list should not have to
 guess.
 
+## The inner agent only edits and commits (ADR 0148, ADR 0144 §3)
+
+The child coding Agent mounts no MCP and holds no credential, so every command
+it wants to run arrives as a `terminal/create` request on the ACP wire.
+`acp/terminal-policy.ts` judges it and `acp/terminal-host.ts` runs what survives,
+in the Worktree, with the Worker's already credential-free environment.
+
+Three families are refused, each named for the authority that owns it rather
+than for the binary: `publication-is-parent-owned` (`git push`),
+`forge-cli-is-parent-owned` (`gh`, `glab`, `hub`) and
+`credentialed-remote-is-parent-owned` (`git fetch`/`pull`/`clone`/`remote`/
+`credential`, `ssh`, `scp`, `sftp`). The refusal carries the reason, the command
+and the route as a typed `_meta.redskills.terminalPolicy` payload, because an
+agent that learns the contract stops inventing workarounds and an agent that
+only sees a missing credential does not. `git add`, `git commit`, `git status`
+and `pnpm test` are the work, and stay allowed — including through a shell,
+where the policy opens `bash -lc` scripts but respects their quoting, so a commit
+message mentioning `git push` is still a commit.
+
+**The policy is the teacher; the credential-free environment is the guard.** A
+sufficiently creative pipeline still reaches `git push` and still finds nothing
+to push with.
+
+Refusing publication only teaches a contract if something keeps its promise, so
+when a prompt turn ends `acp/publish-request.ts` reads the branch and commit the
+turn produced and asks the ACP parent to publish them — exactly once per turn,
+never twice for the same commit, and never after a cancelled turn.
+
 The source is vendored from [`mattpocock/sandcastle`](https://github.com/mattpocock/sandcastle)
 under the MIT License; `.upstream` records the reviewed SHA and `NOTICE` carries
 the attribution (ADR 0101). The sandcastle documentation below is kept verbatim

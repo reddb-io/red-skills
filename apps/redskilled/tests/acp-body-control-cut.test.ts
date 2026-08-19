@@ -66,6 +66,7 @@ describe("what runs inside the Worker lives in the package (#4015)", () => {
     const strays: string[] = [];
 
     for (const body of WORKER_BODY_MODULES) {
+      if (body.formerDaemonModule == null) continue;
       for (const [path, source] of daemon) {
         if (path.endsWith(`${body.formerDaemonModule}`)) {
           strays.push(`${body.formerDaemonModule} is back under the daemon; it is body (${body.runs})`);

@@ -22,6 +22,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { encodeToonlLines } from "@reddb-io/toon";
+import { credentialFreeEnv } from "@reddb-io/shared/credential-free-env.js";
 import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -324,8 +325,13 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   assertLaunchableSpec(spec);
 
   const env = options.env ?? process.env;
-  const ambientWorkerEnv = credentialFreeWorkerEnv(env);
-  const declaredWorkerEnv = credentialFreeWorkerEnv(spec.env ?? {});
+  // Disposable Workers use the ACP gateway, never ambient GitHub or Git
+  // authentication: the daemon strips both secret values and credential-agent
+  // doors from its own environment and from caller-declared overrides before
+  // placement sees them. `@reddb-io/shared` owns the list, because the Worker
+  // strips the same names again when it births the process that runs the model.
+  const ambientWorkerEnv = credentialFreeEnv(env);
+  const declaredWorkerEnv = credentialFreeEnv(spec.env ?? {});
   const clock = options.clock ?? (() => new Date().toISOString());
   const workerId = (spec.worker_id ?? options.workerId)?.trim()
     || mintHostWorkerId(options.liveWorkerIds ?? []);
@@ -483,34 +489,6 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     child,
     ...(placed?.job != null ? { job: placed.job } : {}),
   };
-}
-
-/**
- * Disposable Workers use the ACP gateway, never ambient GitHub or Git
- * authentication. Strip both secret values and credential-agent doors from the
- * daemon environment and from caller-declared overrides before placement sees
- * them.
- */
-function credentialFreeWorkerEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const kept: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value == null || isGithubCredentialEnvironmentName(name)) continue;
-    kept[name] = value;
-  }
-  return kept;
-}
-
-function isGithubCredentialEnvironmentName(name: string): boolean {
-  const normalized = name.toUpperCase();
-  if (["SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND"].includes(normalized)) {
-    return true;
-  }
-  if (normalized === "REDSKILLED_HOST_TOKEN") return true;
-  if (/^(?:GH|GITHUB)(?:_[A-Z0-9]+)*_(?:TOKEN|SECRET|KEY|APP_ID|INSTALLATION)$/.test(normalized)) return true;
-  if (/^RED_GITHUB_(?:APP_ID|APP_INSTALLATION|APP_KEY)$/.test(normalized)) return true;
-  // A daemon-side authenticated git invocation may use these transiently. No
-  // inherited git config is allowed to become a Worker's authentication path.
-  return /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/.test(normalized);
 }
 
 /** Read Linux `/proc/<pid>/stat` field 22, omitting it on every unavailable host. */

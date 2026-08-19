@@ -18,8 +18,11 @@ import {
   REDSKILLS_WIRE_MAJOR,
   type AcpEndpoint,
 } from "@reddb-io/protocol-acp";
+import { credentialFreeEnv } from "@reddb-io/shared/credential-free-env.js";
 import type { SpinPattern } from "../engine/spin-evaluator.js";
 import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./child-spin.js";
+import { createWorkerTerminalHost, type WorkerTerminalHost } from "./terminal-host.js";
+import type { WorkerTerminalDenial } from "./terminal-policy.js";
 
 export interface ChildAgentSessionOptions {
   readonly endpoint: AcpEndpoint;
@@ -48,12 +51,20 @@ const DELEGATION_SCOPE = {
 /** One Workflow Worker may retain one child Agent, but never replace it more than once per turn. */
 export class WorkflowChildAgent {
   readonly #options: ChildAgentSessionOptions;
+  readonly #terminals: WorkerTerminalHost;
   #active: ActiveChildAgent | undefined;
   #spinEpisode: ChildAcpSpinEpisode | undefined;
   #spinUpdates: Promise<void> = Promise.resolve();
 
   constructor(options: ChildAgentSessionOptions) {
     this.#options = options;
+    // One host per child Agent, not per child PROCESS: a replacement inherits
+    // the terminals its predecessor opened rather than orphaning them.
+    this.#terminals = createWorkerTerminalHost({
+      cwd: options.cwd,
+      env: credentialFreeEnv(process.env),
+      onDenial: (denial) => void this.#terminalDenial(denial),
+    });
   }
 
   async prompt(params: PromptRequest): Promise<PromptResponse> {
@@ -120,14 +131,18 @@ export class WorkflowChildAgent {
   }
 
   close(): void {
+    this.#terminals.closeAll();
     if (this.#active != null) this.#cleanup(this.#active);
   }
 
   async #admit(event: "child-admission" | "child-replacement"): Promise<ActiveChildAgent> {
     const endpoint = this.#options.endpoint;
+    // The process that runs the model receives no credential (ADR 0144 §3).
+    // The daemon already stripped them from the Worker's own environment; this
+    // strips them again rather than trusting a hop it cannot see.
     const child = spawn(endpoint.command, endpoint.args, {
       cwd: this.#options.cwd,
-      env: process.env,
+      env: credentialFreeEnv(process.env),
       stdio: ["pipe", "pipe", "ignore"],
     });
     if (child.stdin == null || child.stdout == null) throw new Error("child ACP Agent did not expose stdio");
@@ -148,7 +163,14 @@ export class WorkflowChildAgent {
       .onRequest(methods.client.session.requestPermission, ({ params }) => this.#options.parent.request(
         methods.client.session.requestPermission,
         { ...params, sessionId: this.#options.publicSessionId },
-      ) as Promise<RequestPermissionResponse>);
+      ) as Promise<RequestPermissionResponse>)
+      // The Worker answers `terminal/*` itself: the policy refuses publication
+      // and every credentialed remote, and what survives runs in the Worktree.
+      .onRequest(methods.client.terminal.create, ({ params }) => this.#terminals.create(params))
+      .onRequest(methods.client.terminal.output, ({ params }) => this.#terminals.output(params))
+      .onRequest(methods.client.terminal.waitForExit, ({ params }) => this.#terminals.waitForExit(params))
+      .onRequest(methods.client.terminal.kill, ({ params }) => this.#terminals.kill(params))
+      .onRequest(methods.client.terminal.release, ({ params }) => this.#terminals.release(params));
     const connection = app.connect(ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
@@ -156,7 +178,7 @@ export class WorkflowChildAgent {
     try {
       const initialized = await connection.agent.request(methods.agent.initialize, {
         protocolVersion: ACP_PROTOCOL_VERSION,
-        clientCapabilities: {},
+        clientCapabilities: { terminal: true },
         clientInfo: { name: "RedSkills Workflow Worker", version: "1" },
         _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
       });
@@ -205,6 +227,26 @@ export class WorkflowChildAgent {
     if (this.#active === active) this.#active = undefined;
     active.connection.close();
     if (active.child.exitCode == null && active.child.signalCode == null) active.child.kill();
+  }
+
+  /** Tell the parent what the policy refused, so the Worker log holds the lesson. */
+  #terminalDenial(denial: WorkerTerminalDenial): Promise<void> {
+    return this.#options.parent.notify(methods.client.session.update, {
+      sessionId: this.#options.publicSessionId,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } },
+      _meta: {
+        redskills: {
+          lifecycle: { event: "child-terminal-denied", agent: this.#options.endpoint.agent },
+          terminalPolicy: {
+            decision: "deny",
+            reason: denial.reason,
+            command: denial.command,
+            what: denial.what,
+            remedy: denial.remedy,
+          },
+        },
+      },
+    });
   }
 
   #lifecycle(event: string, pattern?: SpinPattern): Promise<void> {
