@@ -2381,6 +2381,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       hostState,
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
+      // The one registration path, handed to the endpoint that now needs it
+      // (#4101): a drain that carries its work registers through the same
+      // function `project-register` does, sweep, breaker and all.
+      registerProject: (request) => registerProject(request),
     });
   } catch (error) {
     await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);

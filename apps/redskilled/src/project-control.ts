@@ -517,6 +517,18 @@ function record(value: unknown): Record<string, unknown> | undefined {
 export interface ProjectControlRequest {
   readonly target?: number;
   readonly runner?: string;
+  /**
+   * The work this project wants drained, authored by the project (#4101).
+   *
+   * **A drain intent nobody registered polls nothing.** The demand loop births
+   * for a registration — the record carrying the query, the workspace, the argv
+   * and the prompt — and until a drain could carry one, every drain recorded an
+   * intention and produced no Worker. The daemon reads none of it: the fields
+   * are the ones `project-register` already carries, and they arrive here
+   * because a client that says "drain" is exactly the client that knows what
+   * its work is.
+   */
+  readonly registration?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -537,9 +549,14 @@ export function projectControlRequest(value: unknown): ProjectControlRequest {
   if (runner !== undefined && !(typeof runner === "string" && runner.length > 0)) {
     throw RequestError.invalidParams("runner must be a non-empty string");
   }
+  const registration = params.registration;
+  if (registration !== undefined && record(registration) == null) {
+    throw RequestError.invalidParams("registration must be an object");
+  }
   return {
     ...(target === undefined ? {} : { target: target as number }),
     ...(runner === undefined ? {} : { runner: runner as string }),
+    ...(registration === undefined ? {} : { registration: registration as Readonly<Record<string, unknown>> }),
   };
 }
 
@@ -572,10 +589,22 @@ export function bindProjectControl(deps: {
   readonly hostState: () => RedskilledHostState;
   readonly clock: () => string;
   readonly readGithubCustody: () => Promise<unknown>;
+  /** The daemon's own registration path; absent means this endpoint cannot register. */
+  readonly registerProject?: (request: Readonly<Record<string, unknown>>) => unknown;
 }) {
   return {
     mutateProjectControl: async (operation: ProjectControlOperation, request: ProjectControlRequest = {}) => {
       const project = deps.scopedProject();
+      // Registered BEFORE the intent is written: a drain that recorded
+      // "draining" and then failed to register would be exactly the dead end
+      // #4094 had to announce, with the announcement now saying the opposite of
+      // what the caller was told.
+      if (operation === "drain" && request.registration != null) {
+        if (deps.registerProject == null) {
+          throw new Error("this endpoint cannot register a project: the daemon handed it no registration path");
+        }
+        deps.registerProject({ ...request.registration, project_label: project.projectLabel });
+      }
       const answer = await applyProjectControl(
         project,
         operation,
