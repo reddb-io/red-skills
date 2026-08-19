@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   methods,
+  RequestError,
   type AgentConnection,
 } from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
@@ -76,6 +77,10 @@ export interface ProjectControlState {
   readonly drainIntent: ProjectDrainIntent;
   readonly revision: number;
   readonly updates: readonly ProjectControlUpdate[];
+  /** The width the caller asked for, carried and echoed, never interpreted. */
+  readonly target?: number;
+  /** The runner the caller named, opaque in exactly the sense the argv is. */
+  readonly runner?: string;
 }
 
 interface ProjectControlStoreSnapshot {
@@ -111,6 +116,11 @@ export function projectControlSnapshot(
     workspace_path: project.workspacePath,
     drain_intent: control.drainIntent,
     revision: control.revision,
+    // Echoed so a caller can SEE that the width it asked for arrived. A control
+    // call whose argument vanished silently is indistinguishable from one that
+    // was honoured.
+    requested_target: control.target ?? null,
+    requested_runner: control.runner ?? null,
     updates: [...control.updates],
   };
 }
@@ -189,6 +199,7 @@ export async function applyProjectControl(
   operation: ProjectControlOperation,
   projectControls: Map<string, ProjectControlState>,
   persist: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
+  request: { readonly target?: number; readonly runner?: string } = {},
 ) {
   const held = projectControls.get(project.projectId);
   if (held == null && operation === "stop") {
@@ -200,7 +211,10 @@ export async function applyProjectControl(
     updates: [],
   };
   const requestedIntent = operation === "drain" ? "draining" as const : "stopped" as const;
-  if (observed.drainIntent === requestedIntent) {
+  const target = request.target ?? observed.target;
+  const runner = request.runner ?? observed.runner;
+  const restated = target !== observed.target || runner !== observed.runner;
+  if (observed.drainIntent === requestedIntent && !restated) {
     const status = operation === "drain" ? "already-draining" as const : "already-stopped" as const;
     return { ...projectControlSnapshot(project, projectControls), status };
   }
@@ -210,6 +224,8 @@ export async function applyProjectControl(
     drainIntent: requestedIntent,
     revision,
     updates: [...observed.updates, { sequence: revision, operation, drain_intent: requestedIntent }],
+    ...(target == null ? {} : { target }),
+    ...(runner == null ? {} : { runner }),
   });
   await persist(next);
   projectControls.set(project.projectId, next.get(project.projectId)!);
@@ -256,12 +272,65 @@ export function createProjectControlStore(path: string): ProjectControlStore {
   };
 }
 
+/**
+ * The verb a control prompt names, and the arguments it carries.
+ *
+ * **A verb and its arguments arrive on one line, so the matcher must read
+ * both.** The client renders every parameterised call as `/<verb> {json}`
+ * (`project-acp-adapter.ts`), while this matcher used to demand a BARE verb —
+ * so `/drain {"target":2}` matched nothing, fell through to "execute this
+ * prompt in a Worker", and came back as narration with no answer in it. Two
+ * halves of one wire disagreeing is not a Worker failure; it reads like one.
+ *
+ * Arguments stay OPAQUE in the sense rule 3 requires: the daemon carries a
+ * target width and a runner name, and asks nothing about what either means.
+ */
+export interface ProjectControlInvocation {
+  readonly operation: ProjectControlCommand;
+  readonly target?: number;
+  readonly runner?: string;
+}
+
+const CONTROL_VERB: ReadonlyMap<string, ProjectControlCommand> = new Map([
+  ["drain", "drain"],
+  ["project_drain", "drain"],
+  ["stop", "stop"],
+  ["project_stop", "stop"],
+  ["status", "status"],
+  ["project_status", "status"],
+]);
+
 export function coreProjectOperation(prompt: unknown): ProjectControlCommand | undefined {
-  const text = promptBlocksText(prompt).trim().toLowerCase();
-  if (text === "/drain" || text === "drain") return "drain";
-  if (text === "/stop" || text === "stop" || text === "/project_stop") return "stop";
-  if (text === "/status" || text === "status" || text === "/project_status") return "status";
-  return undefined;
+  return coreProjectInvocation(prompt)?.operation;
+}
+
+/** The verb plus whatever the caller passed with it. PURE. */
+export function coreProjectInvocation(prompt: unknown): ProjectControlInvocation | undefined {
+  const text = promptBlocksText(prompt).trim();
+  const brace = text.indexOf("{");
+  const head = (brace < 0 ? text : text.slice(0, brace)).trim().toLowerCase();
+  const operation = CONTROL_VERB.get(head.startsWith("/") ? head.slice(1) : head);
+  if (operation == null) return undefined;
+  if (brace < 0) return { operation };
+  const args = record(parseJson(text.slice(brace)));
+  if (args == null) return { operation };
+  const target = typeof args.target === "number" && Number.isInteger(args.target) && args.target >= 0
+    ? args.target
+    : undefined;
+  const runner = typeof args.runner === "string" && args.runner.length > 0 ? args.runner : undefined;
+  return {
+    operation,
+    ...(target == null ? {} : { target }),
+    ...(runner == null ? {} : { runner }),
+  };
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function promptBlocksText(prompt: unknown): string {
@@ -304,20 +373,58 @@ export async function notifyV1ProjectControl(
   });
 }
 
+/**
+ * Answer one v1 prompt that IS a control verb, or `null` when it is not.
+ *
+ * The v1 twin of {@link runV2ProjectControlTurn}, and it lives beside it for
+ * the same reason: a control verb is answered by the control surface, never by
+ * birthing a Worker to read the prompt back to the caller.
+ */
+export async function runV1ProjectControlTurn(
+  params: { readonly sessionId: string; readonly prompt: unknown },
+  upstream: AgentConnection["client"],
+  project: AcpProjectWorkspace,
+  control: {
+    readonly mutate: (
+      operation: ProjectControlOperation,
+      request: ProjectControlRequest,
+    ) => Promise<{ readonly drain_intent: ProjectDrainIntent; readonly revision: number }>;
+    readonly read: (project: AcpProjectWorkspace) => Promise<
+      { readonly drain_intent: ProjectDrainIntent; readonly revision: number }
+    >;
+  },
+): Promise<{ stopReason: "end_turn"; _meta: Record<string, unknown> } | null> {
+  const invocation = coreProjectInvocation(params.prompt);
+  if (invocation == null) return null;
+  const operation = invocation.operation;
+  const answer = operation === "status"
+    ? await control.read(project)
+    : await control.mutate(operation, { target: invocation.target, runner: invocation.runner });
+  await notifyV1ProjectControl(upstream, params.sessionId, operation, answer);
+  return {
+    stopReason: "end_turn",
+    _meta: { redskills: { authority: "redskilled", projectControl: answer } },
+  };
+}
+
 export async function runV2ProjectControlTurn(
   sessions: ReadonlyMap<string, ProjectControlSession>,
   params: acpV2.PromptRequest,
   upstream: acpV2.AgentContext,
-  operation: ProjectControlCommand,
+  invocation: ProjectControlInvocation,
   projectControls: Map<string, ProjectControlState>,
   persist: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
   readStatus: (project: AcpProjectWorkspace) => Promise<ReturnType<typeof projectStatusSnapshot>>,
 ): Promise<void> {
   const session = sessions.get(params.sessionId);
   if (session == null) return;
+  const operation = invocation.operation;
   const control = operation === "status"
     ? await readStatus(session.project)
-    : await applyProjectControl(session.project, operation, projectControls, persist);
+    : await applyProjectControl(session.project, operation, projectControls, persist, {
+        target: invocation.target,
+        runner: invocation.runner,
+      });
   await upstream.notify(acpV2.methods.client.session.update, {
     sessionId: params.sessionId,
     update: {
@@ -385,9 +492,71 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/** What a control method may be asked for. Shape is checked; meaning never is. */
+export interface ProjectControlRequest {
+  readonly target?: number;
+  readonly runner?: string;
+}
+
+/**
+ * Read a control request off the wire.
+ *
+ * Permissive in the same way `acpNoParams` is — an unknown key is not an error,
+ * because tightening a method that has accepted any object is its own slice —
+ * but a `target` or `runner` that IS present must be usable, or the caller
+ * would read a healthy answer for a width that never arrived.
+ */
+export function projectControlRequest(value: unknown): ProjectControlRequest {
+  const params = record(value);
+  if (params == null) return {};
+  const { target, runner } = params;
+  if (target !== undefined && !(typeof target === "number" && Number.isInteger(target) && target >= 0)) {
+    throw RequestError.invalidParams("target must be a non-negative integer");
+  }
+  if (runner !== undefined && !(typeof runner === "string" && runner.length > 0)) {
+    throw RequestError.invalidParams("runner must be a non-empty string");
+  }
+  return {
+    ...(target === undefined ? {} : { target: target as number }),
+    ...(runner === undefined ? {} : { runner: runner as string }),
+  };
+}
+
+/**
+ * Bind one connection's Project control pair: the mutation and the status read.
+ *
+ * Both close over the same scoped Project, the same control map and the same
+ * persistence, so they belong beside the record they operate on rather than in
+ * the connection assembler — which is a wiring file, not a control surface.
+ */
+export function bindProjectControl(deps: {
+  readonly scopedProject: () => AcpProjectWorkspace;
+  readonly projectControls: Map<string, ProjectControlState>;
+  readonly persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>;
+  readonly hostState: () => RedskilledHostState;
+  readonly clock: () => string;
+  readonly readGithubCustody: () => Promise<unknown>;
+}) {
+  return {
+    mutateProjectControl: (operation: ProjectControlOperation, request: ProjectControlRequest = {}) =>
+      applyProjectControl(
+        deps.scopedProject(),
+        operation,
+        deps.projectControls,
+        deps.persistProjectControls,
+        request,
+      ),
+    readProjectStatus: async (project: AcpProjectWorkspace) => {
+      const control = projectStatusSnapshot(project, deps.projectControls, deps.hostState(), deps.clock());
+      const mergeCustody = await deps.readGithubCustody();
+      return mergeCustody == null ? control : { ...control, merge_custody: mergeCustody };
+    },
+  };
+}
+
 export interface AcpProjectControlDomainDeps {
-  /** Apply drain or stop to the Project this connection bound. */
-  mutate: (operation: ProjectControlOperation) => Promise<unknown>;
+  /** Apply drain or stop to the Project this connection bound, as asked. */
+  mutate: (operation: ProjectControlOperation, request: ProjectControlRequest) => Promise<unknown>;
   /** Read the Project's control status, custody included when observable. */
   read: () => Promise<unknown>;
 }
@@ -403,8 +572,10 @@ export function projectControlMethodDomain(deps: AcpProjectControlDomainDeps): R
   return {
     domain: "project",
     bindings: [
-      redskillsAcpMethod(PROJECT_CONTROL_METHODS[0], acpNoParams, () => deps.mutate("drain")),
-      redskillsAcpMethod(PROJECT_CONTROL_METHODS[1], acpNoParams, () => deps.mutate("stop")),
+      redskillsAcpMethod(PROJECT_CONTROL_METHODS[0], projectControlRequest, ({ params }) =>
+        deps.mutate("drain", params)),
+      redskillsAcpMethod(PROJECT_CONTROL_METHODS[1], projectControlRequest, ({ params }) =>
+        deps.mutate("stop", params)),
       redskillsAcpMethod(PROJECT_CONTROL_METHODS[2], acpNoParams, () => deps.read()),
     ],
     capability: { projectControl: { version: 1, methods: PROJECT_CONTROL_METHODS } },

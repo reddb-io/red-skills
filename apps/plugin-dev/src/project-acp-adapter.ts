@@ -6,10 +6,20 @@ import type {
 
 const CONTROL_TOOL = new Map<string, "drain" | "stop" | "status">([
   ["drain", "drain"],
+  ["project_drain", "drain"],
   ["project_stop", "stop"],
   ["project_status", "status"],
   ["status", "status"],
 ]);
+
+/**
+ * What a control call may carry. **A control tool with arguments must still be
+ * a control call**: routing it to a prompt instead turned `drain {target:2}`
+ * into the text `/drain {"target":2}`, which the daemon's verb matcher did not
+ * recognise, so the whole thing became "run this prompt in a Worker" and came
+ * back as narration with no answer in it.
+ */
+const CONTROL_ARGUMENTS = new Set(["target", "runner", "scope"]);
 
 /** Project MCP calls are projections; the adapter never executes a workflow. */
 export async function invokeProjectMcp(
@@ -18,9 +28,18 @@ export async function invokeProjectMcp(
   input: Readonly<Record<string, unknown>>,
 ): Promise<unknown> {
   const operation = CONTROL_TOOL.get(tool);
-  if (operation != null && Object.keys(input).length === 0) {
+  if (operation != null) {
+    const unsupported = Object.keys(input).filter((key) => !CONTROL_ARGUMENTS.has(key));
+    if (unsupported.length > 0) {
+      // Refuse loudly rather than degrade to prose. A caller that asked for
+      // something the control surface cannot express deserves to be told, not
+      // to read a healthy-looking answer that dropped its request.
+      throw new Error(
+        `the Project control surface cannot express ${JSON.stringify(unsupported.sort())} for ${JSON.stringify(tool)}`,
+      );
+    }
     if (operation === "status") return await session.control("status");
-    return await session.control(operation);
+    return await session.control(operation, controlRequest(input));
   }
   if (!isPublicCapability(tool)) {
     throw new Error(`unsupported ACP Project capability ${JSON.stringify(tool)}`);
@@ -53,6 +72,18 @@ export function invokeRedcodeProject(
   prompt: string,
 ): Promise<RedskillsProjectPromptResult> {
   return session.prompt(prompt);
+}
+
+function controlRequest(input: Readonly<Record<string, unknown>>): {
+  target?: number;
+  runner?: string;
+} {
+  const target = input.target;
+  const runner = input.runner;
+  return {
+    ...(typeof target === "number" && Number.isInteger(target) && target >= 0 ? { target } : {}),
+    ...(typeof runner === "string" && runner.length > 0 ? { runner } : {}),
+  };
 }
 
 function renderCapabilityPrompt(tool: string, input: Readonly<Record<string, unknown>>): string {

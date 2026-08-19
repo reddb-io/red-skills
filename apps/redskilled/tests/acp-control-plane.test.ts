@@ -965,7 +965,11 @@ describe("the public RedSkills ACP v1 control plane", () => {
     });
     await second.agent.request(methods.agent.session.new, { cwd: root, mcpServers: [] });
     const observed = await second.agent.request<ProjectControlSnapshot>("_redskills/project_status", {});
-    expect(observed).toEqual(projectControlMeta(coreDrain._meta));
+    // A status answer is a drain answer PLUS its projections (`context`, and
+    // merge custody when observable). What survives the daemon replacement is
+    // the control record, so this compares the record and lets status carry
+    // what only status has.
+    expect(observed).toMatchObject(projectControlMeta(coreDrain._meta));
 
     const stopped = await second.agent.request<ProjectControlOperationResult>("_redskills/project_stop", {});
     expect(stopped).toMatchObject({
@@ -1008,7 +1012,9 @@ describe("the public RedSkills ACP v1 control plane", () => {
       ],
     });
     expect(await third.agent.request<ProjectControlSnapshot>("_redskills/project_status", {}))
-      .toEqual(projectControlMeta(coreDrainAgain._meta));
+      // Same reason as above: status carries its projections, the record is
+      // what must survive.
+      .toMatchObject(projectControlMeta(coreDrainAgain._meta));
 
     third.close();
     thirdAdapter.stdin?.end();
