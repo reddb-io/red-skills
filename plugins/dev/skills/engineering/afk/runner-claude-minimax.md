@@ -2,7 +2,7 @@
 
 How `/afk` invokes the Claude Code CLI against MiniMax's Anthropic-compatible endpoint as the inner agent for one issue (PRD #788).
 
-`claude-minimax` reuses the **unchanged** `claude-code` red-castle provider, but overrides two environment variables in the inner spawn so the Claude Code CLI talks to MiniMax instead of real Anthropic:
+`claude-minimax` reuses the **unchanged** `claude-code` Worker provider, but overrides two environment variables in the inner spawn so the Claude Code CLI talks to MiniMax instead of real Anthropic:
 
 | variable | value |
 |---|---|
