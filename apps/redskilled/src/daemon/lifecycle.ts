@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
+import { servedVersionPathIn, writeServedVersionTo } from "@reddb-io/shared/served-version.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { startRedskillsAcpControlPlane, type RedskillsAcpControlPlane } from "../acp-control-plane.js";
@@ -216,6 +217,20 @@ export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
 export async function startRedskilledDaemon(options: RedskilledDaemonOptions): Promise<RedskilledDaemon> {
   const { paths } = options;
   const daemonVersion = options.daemonVersion ?? "0.0.0-dev";
+  // **Say which version this host serves** (ADR 0151). The launcher reads this
+  // pointer instead of resolving a bundle from its own cache, which is what let
+  // one machine hold three versions at once. Written on every boot, so a
+  // handover updates it without anything else having to notice; a failure is
+  // swallowed because a daemon that cannot write a hint must still serve.
+  try {
+    writeServedVersionTo(servedVersionPathIn(dirname(paths.eventLanePath)), {
+      version: daemonVersion,
+      observed_at: new Date().toISOString(),
+      pid: process.pid,
+    });
+  } catch {
+    /* the pointer is an optimisation; its absence is a supported state */
+  }
   const hostTopology = options.hostTopology ?? detectRedskilledHostTopology();
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;

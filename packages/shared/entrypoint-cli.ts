@@ -50,6 +50,7 @@ import {
   resolveActiveVersionDetailed,
   type SelfUpdateIO,
 } from "./self-update.js";
+import { readServedVersion } from "./served-version.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
 
@@ -339,11 +340,19 @@ async function runMode(plan: RunPlan): Promise<never> {
     cacheDir,
     channel,
   });
-  const version = resolution.version;
+  // **Ask the daemon, because the daemon owns the version** (ADR 0151). Three
+  // caches deciding for themselves is how one machine held 3.17.1, 3.18.12 and
+  // 3.19.3 at once. The pointer is a local file the daemon writes, so this stays
+  // fetch-free on the hook path; absent means no daemon, and the locally
+  // resolved version is then exactly the right answer. A pinned channel still
+  // wins — an operator asking for canary is not asking what the daemon serves.
+  const served = channel === "stable" ? readServedVersion() : null;
+  const version = served?.version ?? resolution.version;
   // Audit line so a fleet's channel is visible in its boot output (ADR 0058).
+  const servedNote = served == null ? "" : `; served by the daemon (pid ${served.pid})`;
   const resolutionNote = resolution.logNotes.length > 0 ? `; ${resolution.logNotes.join("; ")}` : "";
   process.stderr.write(
-    `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})${resolutionNote}\n`,
+    `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})${servedNote}${resolutionNote}\n`,
   );
 
   let bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
