@@ -162,3 +162,50 @@ describe("auditMarketplaceSources", () => {
     expect(toon).toContain("standalone-source");
   });
 });
+
+/**
+ * The retired half of this doctor, pinned as a contract rather than left as an
+ * absence nobody asserts. `applyMarketplaceSourceFixes` and `repointRecipe`
+ * re-registered a Directory source at the GitHub repository — the exact move
+ * that tore out red-dev's wiring and installed a second owner (#3978). The
+ * capability is gone, so what the tests now hold is that it cannot come back:
+ * a doctor whose worst act is a sentence cannot heal a machine into conflict.
+ */
+describe("the marketplace doctor reports and never writes", () => {
+  it("exports no apply, repoint, or heal surface", async () => {
+    const surface = await import("../src/core/marketplace-source-doctor.js");
+
+    expect(Object.keys(surface).filter((name) => /apply|repoint|heal|fix|install/i.test(name))).toEqual([]);
+  });
+
+  it("never remediates by writing a registration, whatever the finding", () => {
+    const report = auditMarketplaceSources([
+      facts({ kind: "github", detail: "reddb-io/red-skills" }),
+      facts({ host: "codex", kind: "unknown" }),
+    ]);
+
+    expect(report.findings.map((finding) => finding.kind)).toEqual([
+      "standalone-source",
+      "source-unknown",
+    ]);
+    for (const finding of report.findings) {
+      // Reading a transcript back is fair; `marketplace add`/`remove` is the
+      // write that made this doctor a second owner of the machine.
+      expect(finding.remediation).not.toMatch(/marketplace\s+(?:add|remove)\b/i);
+    }
+    // The leftover standalone registration is cured by the bootstrap alone.
+    expect(report.findings[0]!.remediation).toBe(bootstrapRecipe());
+  });
+
+  it("leaves a Directory registration untouched even when other hosts are dirty", () => {
+    const report = auditMarketplaceSources([
+      facts({ host: "claude", kind: "directory", detail: "/home/user/.red-dev/state/red-skills" }),
+      facts({ host: "codex", kind: "github", detail: "reddb-io/red-skills" }),
+    ]);
+
+    expect(report.findings.map((finding) => finding.host)).toEqual(["codex"]);
+    const directoryRow = report.rows.find((row) => row.source === "directory")!;
+    expect(directoryRow.verdict).toBe("ok");
+    expect(directoryRow.detail).toBe("/home/user/.red-dev/state/red-skills");
+  });
+});
