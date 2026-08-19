@@ -119,6 +119,12 @@ describe("Gemini dev extension projection", () => {
         redskilled: { args: ["${extensionPath}${/}dist${/}redskilled-mcp.bundle.min.mjs"] },
       },
     });
+    // ADR 0147 §4 switched `navigator` and `rsp` off at the dev declaration, so
+    // the extension projects exactly one server. `toMatchObject` above would
+    // pass with either back, which is why the key set is pinned exactly and the
+    // bundles they shipped are pinned absent from the extension entirely.
+    expect(Object.keys(manifest.mcpServers)).toEqual(["redskilled"]);
+    expect(await readdir(join(output, "dist"))).toEqual(["redskilled-mcp.bundle.min.mjs"]);
     expect(JSON.parse(await readFile(join(output, "hooks/hooks.json"), "utf8"))).toMatchObject({
       hooks: {
         BeforeTool: [
