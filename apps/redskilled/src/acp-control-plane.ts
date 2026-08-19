@@ -50,9 +50,15 @@ import { resolvePermission } from "./acp-permission.js";
 import {
   demandTurnRunnerFor,
   type DemandTurnRecord,
-  type DemandTurnRequest,
   type DemandTurnResult,
 } from "./acp-demand-turn.js";
+
+/** One demand birth's turn, named the way the demand loop holds a project. */
+export interface DemandBirthTurn {
+  readonly workspacePath: string;
+  readonly prompt: string;
+  readonly workItem?: string;
+}
 import {
   bindProjectControl,
   createProjectControlStore,
@@ -102,7 +108,7 @@ export interface PublicSession {
 export interface RedskillsAcpControlPlane {
   readonly socketPath: string;
   /** Run one turn for a Worker nobody is watching (#4100, `acp-demand-turn.ts`). */
-  runDemandTurn(request: DemandTurnRequest): Promise<DemandTurnResult>;
+  runDemandTurn(request: DemandBirthTurn): Promise<DemandTurnResult>;
   close(): Promise<void>;
 }
 
@@ -178,7 +184,14 @@ export async function startRedskillsAcpControlPlane(
   });
   await listen(server, paths.acpSocketPath);
 
-  const runDemandTurn = demandTurnRunnerFor(options, sessionJournal);  let closed = false;
+  const runTurn = demandTurnRunnerFor(options, sessionJournal);
+  // The demand loop holds a label and a path, never a bound Project: resolving
+  // here keeps the one workspace resolver in the one place that owns it.
+  const runDemandTurn = async (request: DemandBirthTurn): Promise<DemandTurnResult> => runTurn({
+    project: await workspaceFor(await resolveAcpProjectIdentity(request.workspacePath)),
+    prompt: request.prompt,
+    ...(request.workItem == null ? {} : { workItem: request.workItem }),
+  });  let closed = false;
   return {
     socketPath: paths.acpSocketPath,
     runDemandTurn,

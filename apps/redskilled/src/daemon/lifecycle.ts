@@ -71,6 +71,7 @@ import {
 } from "../machine-scope.js";
 import { createRedskilledOrphanReaperRuntime } from "../orphan-reaper.js";
 import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "../launch-template.js";
+import { demandTurnForBirth } from "../acp-demand-turn.js";
 import { createRedskilledRegistrationIntentStore } from "../registration-intent-store.js";
 import {
   buildRegistrationLapse,
@@ -1009,12 +1010,39 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       let refusal: string | null = null;
       for (const birth of plan.births) {
         let launched: LaunchedWorker;
+        const registered = registrations.get(birth.project_label);
+        // **A birth nobody speaks to does nothing** (#4100). A project that
+        // stated a prompt gets the daemon's own unattended turn: admission,
+        // session and prompt, exactly as an attached client would drive it.
+        // The turn is not awaited — it is the Worker's whole life, and a demand
+        // tick that blocked on one would stop planning for every other project
+        // on the host.
+        if (registered?.prompt != null && acpControlPlane != null) {
+          try {
+            const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()))!;
+            void acpControlPlane.runDemandTurn(turn).catch(async (error: unknown) => {
+              await eventLane.recordDemandRefusal({
+                ts: clock(),
+                projectLabel: birth.project_label,
+                detail: `the unattended turn for project ${JSON.stringify(birth.project_label)} failed: ` +
+                  `${error instanceof Error ? error.message : String(error)}`,
+              }).catch(() => undefined);
+            });
+          } catch (err) {
+            // A template naming a fact this birth does not have is refused
+            // before anything is spawned, and stated where a stall is read.
+            refusal = err instanceof Error ? err.message : String(err);
+            demandBackoffUntilMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) + demandBackoffMs;
+            break;
+          }
+          continue;
+        }
         // The id is minted HERE rather than inside the launch, because the launch
         // template may mention it: an id substituted into an argv, an env or a log
         // path and a different id on the record would be one Worker the host and
         // the work disagree about.
         const workerId = mintHostWorkerId(workers.keys());
-        const registration = registrations.get(birth.project_label);
+        const registration = registered;
         const spec = workerSpecFromLaunch(
           // The argv comes from the plan (it is the registration's, copied), and
           // the env and the log path from the registration itself: the planner
