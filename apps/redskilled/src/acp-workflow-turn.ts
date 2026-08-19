@@ -15,6 +15,7 @@ import {
   workflowOutcome,
   type ActiveWorkflowWorker,
 } from "./acp-worker-lifecycle.js";
+import { redskilledMetrics } from "./telemetry-metrics.js";
 
 export interface RunAcpWorkflowTurnInput {
   readonly sessionId: string;
@@ -59,6 +60,7 @@ export async function runAcpWorkflowTurn(input: RunAcpWorkflowTurnInput): Promis
         ...(input.meta == null ? {} : { _meta: input.meta }),
       });
       const outcome = workflowOutcome(response);
+      redskilledMetrics().observeTurn("completed");
       await input.checkpoint?.(response, outcome);
       if (outcome != null) {
         await notifyWorkerLifecycle(worker, "terminal-outcome", outcome);
@@ -88,6 +90,7 @@ export async function runAcpWorkflowTurn(input: RunAcpWorkflowTurnInput): Promis
         } else {
           scheduleIdleCleanup(input.sessionId, dead, input.active);
         }
+        redskilledMetrics().observeTurn("refused");
         throw error;
       }
       cleanupWorkflowWorker(input.sessionId, dead, input.active);
@@ -107,6 +110,10 @@ export async function runAcpWorkflowTurn(input: RunAcpWorkflowTurnInput): Promis
 }
 
 async function notifyRefusal(input: RunAcpWorkflowTurnInput, error: unknown): Promise<void> {
+  // Counted here rather than at the two `throw`s it stands in front of: a turn
+  // that admitted no Worker and a turn whose replacement also died are the same
+  // refusal to whoever reads the counter.
+  redskilledMetrics().observeTurn("refused");
   if (input.dispatch == null) return;
   await notifySessionLifecycle(input.notify, input.sessionId, {
     event: "refusal",

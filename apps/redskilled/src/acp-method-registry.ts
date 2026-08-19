@@ -35,6 +35,7 @@ export type RedskillsAcpMethodDomainName =
   | "budget"
   | "go"
   | "worktree"
+  | "telemetry"
   | "worker";
 
 /** One domain's contribution: its bindings and what `initialize` advertises. */
@@ -149,6 +150,7 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
     methods: ["worktreeAdd", "worktreeList"],
     served: true,
   },
+  { domain: "telemetry", module: "acp-telemetry.ts", methods: ["metrics"], served: true },
   {
     domain: "worker",
     module: "acp-worker-budget-grace.ts",

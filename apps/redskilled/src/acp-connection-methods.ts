@@ -28,6 +28,7 @@ import {
   type GoWorkerAdmission,
 } from "./acp-go-dispatch.js";
 import { hostStateMethodDomain } from "./acp-host-methods.js";
+import { telemetryMethodDomain } from "./acp-telemetry.js";
 import {
   redskillsAcpMethodTable,
   type RedskillsAcpMethodTable,
@@ -103,6 +104,7 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
       registeredCheckout: () => registeredCheckout(deps),
       workerWorktrees: () => workerWorktrees(deps),
     }),
+    telemetryMethodDomain({ hostAdministration: deps.hostAdministration }),
   ]);
   return { v1: table(admitThroughV1(deps)), v2: table(admitThroughV2(deps)) };
 }

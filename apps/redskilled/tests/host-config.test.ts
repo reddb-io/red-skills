@@ -32,6 +32,45 @@ async function fakeHome(): Promise<string> {
 }
 
 describe("the daemon-owned host config", () => {
+  it("reads the OTLP telemetry block, and reports absence as off", async () => {
+    const home = await fakeHome();
+    await mkdir(join(home, ".red"), { recursive: true });
+    await writeFile(join(home, ".red", "config.yaml"), [
+      "plugins:",
+      "  dev:",
+      "    redskilled:",
+      "      telemetry:",
+      "        otlp:",
+      "          endpoint: http://127.0.0.1:4318",
+      "          interval_ms: 15000",
+      "          headers:",
+      "            authorization: Bearer t",
+      "",
+    ].join("\n"), "utf8");
+
+    expect((await readRedskilledHostConfig(home)).telemetry).toEqual({
+      otlp: {
+        endpoint: "http://127.0.0.1:4318",
+        intervalMs: 15_000,
+        headers: { authorization: "Bearer t" },
+      },
+    });
+
+    const bare = await fakeHome();
+    await mkdir(join(bare, ".red"), { recursive: true });
+    await writeFile(join(bare, ".red", "config.yaml"), [
+      "plugins:",
+      "  dev:",
+      "    redskilled:",
+      "      worker_ceiling: 6",
+      "",
+    ].join("\n"), "utf8");
+
+    // Nothing declared is exporting OFF, which is the daemon's default.
+    expect((await readRedskilledHostConfig(bare)).telemetry).toBeUndefined();
+  });
+
+
   it("reads host settings only from ~/.red/config.yaml", async () => {
     const home = await fakeHome();
     await mkdir(join(home, ".red"), { recursive: true });

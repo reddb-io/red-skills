@@ -25,6 +25,7 @@ import {
   type RedskilledClientConfig,
 } from "./client.js";
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
+import { startRedskilledHostOtlpExport } from "./telemetry-otlp.js";
 import {
   readRedskilledHostConfig,
   readRedskilledHostGithubApp,
@@ -483,6 +484,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       hostConfig,
       redskilledHomeDir(homedir()),
     );
+    startRedskilledHostOtlpExport(hostConfig.telemetry);
     // The daemon's own black box (Spec #3022, slice #3023). The event lane carries
     // chosen stops; this records unchosen deaths in the shared launcher/worker shape,
     // on a lane that outlives the runtime directory containing the event lane.

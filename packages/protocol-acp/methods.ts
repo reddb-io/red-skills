@@ -36,6 +36,7 @@ export const REDSKILLS_ACP_METHODS = {
   goDispatch: "_redskills/go_dispatch",
   worktreeAdd: "_redskills/worktree_add",
   worktreeList: "_redskills/worktree_list",
+  metrics: "_redskills/metrics",
 } as const;
 
 /** Any name the registry declares. */
