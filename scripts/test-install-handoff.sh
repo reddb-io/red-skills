@@ -59,6 +59,12 @@ bin="$tmp/bin"
 mkdir -p "$bin"
 export PATH="$bin:$PATH"
 
+# The installer runs against a PATH holding the stubs, node, and the system
+# tools — never the operator's own red-dev, mise or npm, or a scenario that
+# poses one of them as absent would silently exercise the real thing.
+node_dir="$(dirname "$(command -v node)")"
+installer_path="$bin:$node_dir:/usr/bin:/bin"
+
 # A minimal source checkout: the escape hatch validates the two marketplace
 # manifests before wiring a host.
 source_dir="$tmp/source"
@@ -153,7 +159,7 @@ run_installer() {
 run_installer_in_home() {
   : >"$tmp/log"
   status=0
-  HOME="$home" STUB_LOG="$tmp/log" STUB_LIST="$tmp/list" \
+  HOME="$home" PATH="$installer_path" STUB_LOG="$tmp/log" STUB_LIST="$tmp/list" \
     scripts/install.sh "$@" >"$tmp/stdout" 2>&1 || status=$?
 }
 
@@ -187,7 +193,7 @@ run_installer
   fail "handoff with red-dev present exited $status:"
   show "$tmp/stdout"
 }
-assert_contains "handoff" "red-dev bootstrap" "$tmp/log"
+assert_contains "handoff" "red-dev install" "$tmp/log"
 assert_contains "handoff" "red-dev --version" "$tmp/log"
 assert_no_path "handoff" "$home/.red-skills"
 assert_absent "handoff" "npm " "$tmp/log"
@@ -234,12 +240,13 @@ run_installer
   show "$tmp/stdout"
 }
 assert_contains "mise handoff" "mise use --global red-dev@" "$tmp/log"
-assert_contains "mise handoff" "red-dev bootstrap" "$tmp/log"
+assert_contains "mise handoff" "red-dev install" "$tmp/log"
 assert_no_path "mise handoff" "$home/.red-skills"
 assert_absent "mise handoff" "npm " "$tmp/log"
 
 # The pin is overridable for a red-dev pre-release, and the override is what
-# gets installed.
+# mise is asked for.
+remove_stub red-dev
 run_installer --red-dev-spec "red-dev@2.0.0-rc.1"
 assert_contains "pinned override" "mise use --global red-dev@2.0.0-rc.1" "$tmp/log"
 
