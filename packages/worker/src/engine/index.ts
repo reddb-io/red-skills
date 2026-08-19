@@ -29,7 +29,6 @@ export * from "./workflow-webhook.js";
 export * from "./config.js";
 export * from "./drain.js";
 export * from "./work-selector.js";
-export * from "./extinct-nouns.js";
 export * from "./host-capability-profile.js";
 export * from "./issue-state-curator.js";
 export * from "./merge-driver.js";

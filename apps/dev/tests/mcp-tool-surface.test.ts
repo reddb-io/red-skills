@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { createRedskilledMcpServer } from "../src/mcp-server.js";
 import {
   createCastleMcpTools,
+  RS_DEV_MCP_SERVER_NAME,
   type CastleMcpDependencies,
-} from "./mcp-server.js";
+} from "../src/mcp-tools/index.js";
 
 /**
  * Frozen snapshot of the aggregated redskilled MCP tool surface.
@@ -350,7 +352,7 @@ const SURFACE: ReadonlyArray<{
   },
 ];
 
-describe("aggregated redskilled MCP tool surface", () => {
+describe("aggregated rs_dev MCP tool surface", () => {
   const tools = createCastleMcpTools({} as CastleMcpDependencies);
 
   it("composes the frozen tool surface in order", () => {
@@ -376,5 +378,32 @@ describe("aggregated redskilled MCP tool surface", () => {
       expect(tool.name).not.toMatch(/federat/i);
       expect(tool.description).not.toMatch(/cross-host|per-host/i);
     }
+  });
+
+  // ADR 0147 rule 2: a plugin ships ONE Plugin MCP, named `rs_<plugin>`. The
+  // name is part of the published surface — a host addresses every tool through
+  // it — so it is frozen here beside the tool table rather than left to whatever
+  // string the server happened to be constructed with (#4023).
+  it("publishes the surface under the `rs_dev` server name", () => {
+    expect(RS_DEV_MCP_SERVER_NAME).toBe("rs_dev");
+
+    const server = createRedskilledMcpServer(process.cwd(), async () => ({}));
+    const { name } = (server.server as unknown as {
+      _serverInfo: { name: string; version: string };
+    })._serverInfo;
+
+    expect(name).toBe(RS_DEV_MCP_SERVER_NAME);
+  });
+
+  // The rename moved the schemas out of the Worker package and changed no tool
+  // (ADR 0148): the adapter registers exactly the composed surface, in order.
+  it("registers every composed tool and nothing else", () => {
+    const registered = (
+      createRedskilledMcpServer(process.cwd(), async () => ({})) as unknown as {
+        _registeredTools: Record<string, unknown>;
+      }
+    )._registeredTools;
+
+    expect(Object.keys(registered)).toEqual(SURFACE.map((tool) => tool.name));
   });
 });

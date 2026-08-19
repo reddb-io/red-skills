@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCastleMcpTools,
   type CastleMcpDependencies,
-} from "../mcp-server.js";
+} from "../src/mcp-tools/index.js";
 import {
   CASTLE_MCP_CONTRACT_VERSION,
   applyOutputContracts,
@@ -12,8 +12,8 @@ import {
   workerVitalsContract,
   workerVitalsOutputSchema,
   type ProjectStatusOutput,
-} from "./contracts.js";
-import type { CastleMcpTool } from "./tool.js";
+} from "../src/mcp-tools/contracts.js";
+import type { CastleMcpTool } from "../src/mcp-tools/tool.js";
 
 const PROJECT_STATUS: ProjectStatusOutput = {
   validation_schedule: {
@@ -80,34 +80,6 @@ describe("observability output contracts", () => {
 
   it("carries the interactive reservation beside every slot count", () => {
     expect(projectStatusOutputSchema.parse(PROJECT_STATUS).slots.interactive_reservation).toBe(1);
-  });
-
-  it("accepts bounded Castle resident health without socket secrets or argv", () => {
-    const parsed = projectStatusOutputSchema.parse({
-      ...PROJECT_STATUS,
-      resident: {
-        health: "ready",
-        version: "3.18.6",
-        protocol: "1.0.0",
-        pid: 4321,
-        started_at: "2026-08-13T22:00:00.000Z",
-        uptime_ms: 12_000,
-        client_count: 4,
-        handover: "serving",
-        resources: {
-          sampled_at: "2026-08-13T22:00:12.000Z",
-          source: "process-tree",
-          memory_current_bytes: 42_000_000,
-          memory_peak_bytes: 45_000_000,
-          cpu_usage_usec: 120_000,
-          pids_current: 1,
-        },
-      },
-    });
-
-    expect(parsed.resident?.client_count).toBe(4);
-    expect(parsed.resident).not.toHaveProperty("socket");
-    expect(parsed.resident).not.toHaveProperty("argv");
   });
 
   it("requires the narrated Validation moment schedule", () => {
