@@ -57,7 +57,7 @@ describe("parseMarketplaceSource", () => {
     Source: GitHub (anthropics/claude-plugins-official)
 
   ❯ red-skills
-    Source: Directory (/home/user/.red-skills/versions/v3.3.0)
+    Source: Directory (/home/user/.red/skills/versions/v3.3.0)
 `;
 
     expect(parseMarketplaceSource(output, "red-skills").kind).toBe("directory");

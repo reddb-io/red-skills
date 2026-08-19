@@ -116,7 +116,7 @@ export interface ParsedMarketplaceSource {
  * Configured marketplaces:
  *
  *   ❯ red-skills
- *     Source: Directory (/home/…/.red-skills/current)
+ *     Source: Directory (/home/…/.red/skills/current)
  * ```
  */
 export function parseMarketplaceSource(

@@ -43,9 +43,13 @@ The VS Code extension and the vendored herdr plugin become artifacts CI
 publishes. They were the only reason an operator's machine needed the workspace
 source at all, and building a `.vsix` on that machine is work CI does once.
 
-**The installed tree answers before npm.** `~/.red-skills/versions/<version>/`
+**The installed tree answers before npm.** `~/.red/skills/versions/<version>/`
 stays the on-disk layout and becomes the launcher's first stop, with `current`
-naming the newest. The launcher matches the version **exactly** — the version it
+naming the newest. (Amended 2026-08-19: the root is `~/.red/skills`, inside the
+`.red` namespace with the rest of what red-dev keeps for a person; it was
+`~/.red-skills` when this was written, and red-dev moves a machine across. The
+layout beneath the root is unchanged, and `RED_SKILLS_INSTALL_ROOT` still
+overrides it.) The launcher matches the version **exactly** — the version it
 already reads from the nearest `.claude-plugin/plugin.json` — and falls back to
 npm when the tree holds no such version. `distBundlePath()`'s `findUp` from the
 launcher module stays what it is, a source-checkout fallback that cannot see

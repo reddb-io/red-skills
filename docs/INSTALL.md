@@ -47,8 +47,8 @@ installer's leftover and names the bootstrap as the cure; it never adds,
 removes, or repoints a registration itself.
 
 The standalone `scripts/install.sh` remains as a handoff to that bootstrap and
-as the way to retire what it used to install (`--uninstall`, plus `--purge` for
-the `~/.red-skills` tree). `--local-dev --source-dir <checkout>` is the
+as the way to take RedSkills off a machine (`--uninstall`, plus `--purge` for
+the tree red-dev keeps at `~/.red/skills`). `--local-dev --source-dir <checkout>` is the
 development escape hatch: it wires the detected hosts from a checkout, says out
 loud that it is not a production installation, and acquires nothing.
 

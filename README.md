@@ -424,11 +424,10 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/inst
 It checks the platform, installs the pinned `red-dev@1` through mise when it is
 missing, verifies the entry point answers, and runs `red-dev install`. It
 acquires no packages, registers no marketplace, writes no version tree and keeps
-no cache. A machine that still carries the retired `~/.red-skills` tree is told
-how to retire it:
+no cache. To take RedSkills off a machine entirely:
 
 ```bash
-# unwire the detected hosts, then remove the retired standalone tree
+# unwire the detected hosts, then remove the tree red-dev keeps at ~/.red/skills
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --uninstall --purge
 ```
 
