@@ -89,7 +89,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "packages/worker/src/createSandbox.ts", lines: 1151 },
   { path: "packages/worker/src/createWorktree.ts", lines: 823 },
   { path: "packages/worker/src/engine/monitor.ts", lines: 805 },
-  { path: "packages/worker/src/engine/tracker/claim.ts", lines: 1026 },
+  { path: "packages/worker/src/engine/tracker/claim.ts", lines: 991 },
   { path: "packages/worker/src/run.ts", lines: 1023 },
 ];
 
