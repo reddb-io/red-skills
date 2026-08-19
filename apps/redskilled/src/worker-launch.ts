@@ -18,7 +18,6 @@
  * verdict" is a property of this function instead of a convention every future
  * call site has to remember.
  */
-import { randomInt } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -156,24 +155,67 @@ export interface LaunchWorkerOptions {
   readonly openLog?: boolean;
 }
 
-const HOST_WORKER_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const HOST_WORKER_ID_RANDOM_LENGTH = 4;
-const HOST_WORKER_ID_SPACE = HOST_WORKER_ID_ALPHABET.length ** HOST_WORKER_ID_RANDOM_LENGTH;
+/**
+ * The alphabet is in ASCII order on purpose — `'0' < 'A' < 'a'` byte-wise — so a
+ * plain lexicographic sort of two fixed-width ids is a sort by birth instant.
+ * That is the whole point of the encoding: `sort` on a directory listing is a
+ * timeline, and pruning births older than a cutoff is a prefix scan.
+ */
+const HOST_WORKER_ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const HOST_WORKER_ID_WIDTH = 7;
+/**
+ * The first birth instant that no longer fits the width — 62^7 ms after the
+ * epoch, some time in 2081. An id allowed to grow a character would sort BEFORE
+ * every shorter one, which is the one failure the fixed width exists to refuse,
+ * so the encoder throws rather than widening.
+ */
+const HOST_WORKER_ID_CEILING = HOST_WORKER_ID_ALPHABET.length ** HOST_WORKER_ID_WIDTH;
 
-/** Mint the host's short, human-facing Worker handle without colliding with a live Worker. */
+/**
+ * Encode a birth instant as the host's Worker id (ADR 0149 §3).
+ *
+ * Fixed-width, zero-padded base62: compact, no character that needs escaping in
+ * a path or a shell, and **its own birth time** — a reader that holds only the
+ * name still knows when the Worker was born and which of two came first.
+ */
+export function encodeHostWorkerId(epochMs: number): string {
+  if (!Number.isFinite(epochMs) || epochMs < 0 || epochMs >= HOST_WORKER_ID_CEILING) {
+    throw new RedskilledWorkerSpecError(
+      `redskilled cannot encode a Worker id for birth instant ${epochMs}: only 0 <= ms < ` +
+        `${HOST_WORKER_ID_CEILING} fits ${HOST_WORKER_ID_WIDTH} base62 characters`,
+    );
+  }
+  const base = HOST_WORKER_ID_ALPHABET.length;
+  let remaining = Math.floor(epochMs);
+  let workerId = "";
+  for (let index = 0; index < HOST_WORKER_ID_WIDTH; index += 1) {
+    workerId = HOST_WORKER_ID_ALPHABET[remaining % base]! + workerId;
+    remaining = Math.floor(remaining / base);
+  }
+  return workerId;
+}
+
+/**
+ * Mint the host's Worker handle: the birth epoch in milliseconds, base62.
+ *
+ * **A collision walks the birth instant forward by 1 ms rather than redrawing.**
+ * Two Workers born inside one millisecond still have to come out in the order
+ * they were born, and a redraw — the random `h`+4 scheme this replaced — would
+ * return an id that sorts wherever chance put it. The walk terminates because
+ * the live set is finite and each step is strictly larger than the last.
+ */
 export function mintHostWorkerId(
   liveWorkerIds: Iterable<string>,
-  draw: (maxExclusive: number) => number = randomInt,
+  now: () => number = Date.now,
 ): string {
   const live = new Set(liveWorkerIds);
-  for (let attempt = 0; attempt < HOST_WORKER_ID_SPACE; attempt += 1) {
-    let workerId = "h";
-    for (let index = 0; index < HOST_WORKER_ID_RANDOM_LENGTH; index += 1) {
-      workerId += HOST_WORKER_ID_ALPHABET[draw(HOST_WORKER_ID_ALPHABET.length)]!;
-    }
-    if (!live.has(workerId)) return workerId;
+  let bornAtMs = Math.floor(now());
+  let workerId = encodeHostWorkerId(bornAtMs);
+  while (live.has(workerId)) {
+    bornAtMs += 1;
+    workerId = encodeHostWorkerId(bornAtMs);
   }
-  throw new RedskilledWorkerSpecError("redskilled exhausted the host Worker id space");
+  return workerId;
 }
 
 /** What preparing a Worker's log actually did, and what to say when it failed. */
