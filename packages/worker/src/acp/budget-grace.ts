@@ -1,5 +1,7 @@
-import type { RedskilledGithubWriteRequest } from "./github-write.js";
-import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
+import {
+  REDSKILLS_ACP_METHODS,
+  type RedskilledGithubWriteRequest,
+} from "@reddb-io/protocol-acp";
 
 /** ACP control delivered to a Worker after the daemon records its budget verdict. */
 export const REDSKILLED_WORKER_BUDGET_GRACE_METHOD = REDSKILLS_ACP_METHODS.workerBudgetGrace;

@@ -120,7 +120,14 @@ export function redskillsAcpMethodTable(
  */
 export interface RedskillsAcpMethodDomainDeclaration {
   readonly domain: RedskillsAcpMethodDomainName;
-  /** Repo-relative module, under `apps/redskilled/src/`, that owns the domain. */
+  /**
+   * Repo-relative path of the module that owns the domain.
+   *
+   * Repo-relative rather than daemon-relative because a domain may be answered
+   * from the OTHER side of ADR 0148's body-versus-control cut: `worker` is
+   * served by the Worker body in `packages/worker`, and a path that could only
+   * spell `apps/redskilled/src/` would have had to hide that.
+   */
   readonly module: string;
   /** Keys of `REDSKILLS_ACP_METHODS` this domain owns. */
   readonly methods: readonly (keyof typeof REDSKILLS_ACP_METHODS)[];
@@ -129,31 +136,46 @@ export interface RedskillsAcpMethodDomainDeclaration {
 }
 
 export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDeclaration[] = [
-  { domain: "host", module: "acp-host-methods.ts", methods: ["hostState"], served: true },
+  {
+    domain: "host",
+    module: "apps/redskilled/src/acp-host-methods.ts",
+    methods: ["hostState"],
+    served: true,
+  },
   {
     domain: "project",
-    module: "project-control.ts",
+    module: "apps/redskilled/src/project-control.ts",
     methods: ["projectDrain", "projectStop", "projectStatus"],
     served: true,
   },
   {
     domain: "github",
-    module: "acp-github.ts",
+    module: "apps/redskilled/src/acp-github.ts",
     methods: ["githubRead", "githubWrite", "githubUpdate", "githubCustodyHandoff"],
     served: true,
   },
-  { domain: "budget", module: "acp-budget.ts", methods: ["projectBudget", "hostBudgets"], served: true },
-  { domain: "go", module: "acp-go-dispatch.ts", methods: ["goDispatch"], served: true },
+  {
+    domain: "budget",
+    module: "apps/redskilled/src/acp-budget.ts",
+    methods: ["projectBudget", "hostBudgets"],
+    served: true,
+  },
+  {
+    domain: "go",
+    module: "apps/redskilled/src/acp-go-dispatch.ts",
+    methods: ["goDispatch"],
+    served: true,
+  },
   {
     domain: "worktree",
-    module: "acp-worktree.ts",
+    module: "apps/redskilled/src/acp-worktree.ts",
     methods: ["worktreeAdd", "worktreeList"],
     served: true,
   },
   { domain: "telemetry", module: "acp-telemetry.ts", methods: ["metrics"], served: true },
   {
     domain: "worker",
-    module: "acp-worker-budget-grace.ts",
+    module: "packages/worker/src/acp/budget-grace.ts",
     methods: ["workerBudgetGrace"],
     served: false,
   },

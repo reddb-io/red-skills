@@ -9,43 +9,33 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import {
-  methods,
-  type AgentConnection,
-  type NewSessionRequest,
-  type PromptRequest,
-  type PromptResponse,
-  type RequestPermissionRequest,
-  type SessionNotification,
+import type {
+  PromptRequest,
+  PromptResponse,
+  RequestPermissionRequest,
+  SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import {
+  notifySessionRecovery,
+  replacementRecoveryMeta,
+  sessionRecoveryFromMeta,
+  type AcpSessionJournalEntry,
+  type AcpSessionRecoveryCheckpoint,
+} from "@reddb-io/protocol-acp";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 
-export type AcpSessionJournalEntry =
-  | { readonly sequence: number; readonly kind: "prompt"; readonly prompt: PromptRequest["prompt"] }
-  | { readonly sequence: number; readonly kind: "plan"; readonly update: SessionNotification["update"] }
-  | {
-    readonly sequence: number;
-    readonly kind: "workflow-pointer";
-    readonly worker_id: string;
-    readonly worker_session_id: string;
-    readonly replacement: boolean;
-  }
-  | {
-    readonly sequence: number;
-    readonly kind: "checkpoint";
-    readonly stop_reason: PromptResponse["stopReason"];
-    readonly workflow_outcome?: string;
-  }
-  | {
-    readonly sequence: number;
-    readonly kind: "permission";
-    readonly tool_call_id: string;
-    readonly policy_key: string;
-    readonly decision: "attached-approved" | "attached-denied" | "policy-pre-authorized" | "hitl-required";
-    readonly option_id?: string;
-    readonly option_kind?: "allow_once" | "allow_always" | "reject_once" | "reject_always";
-  };
+// The entry union and the replacement checkpoint travel to a Worker inside
+// `_meta`, so they are declared on the shared wire (ADR 0148) and re-exported
+// here. The journal itself — the durable file, its snapshot and its append
+// path — is control plane and stays behind the daemon.
+export {
+  notifySessionRecovery,
+  replacementRecoveryMeta,
+  sessionRecoveryFromMeta,
+  type AcpSessionJournalEntry,
+  type AcpSessionRecoveryCheckpoint,
+};
 
 type WithoutSequence<T> = T extends unknown ? Omit<T, "sequence"> : never;
 type AcpSessionJournalEntryInput = WithoutSequence<AcpSessionJournalEntry>;
@@ -82,14 +72,6 @@ export interface AcpRetakeEvidenceProjection {
 interface AcpSessionJournalSnapshot {
   readonly version: 1;
   readonly sessions: readonly AcpSessionJournalRecord[];
-}
-
-export interface AcpSessionRecoveryCheckpoint {
-  readonly version: 1;
-  readonly source: "redskilled-public-journal";
-  readonly public_session_id: string;
-  readonly completed_turns: number;
-  readonly entries: readonly AcpSessionJournalEntry[];
 }
 
 export interface AcpSessionJournal {
@@ -243,42 +225,6 @@ export function providerSessionEvidenceFromMeta(meta: unknown): ProviderSessionE
     availability,
     ...(reference == null ? {} : { reference }),
   };
-}
-
-export function replacementRecoveryMeta(
-  meta: NewSessionRequest["_meta"],
-  recovery: AcpSessionRecoveryCheckpoint,
-): NonNullable<NewSessionRequest["_meta"]> {
-  const redskills = (meta as { redskills?: object } | undefined)?.redskills ?? {};
-  return {
-    ...(meta ?? {}),
-    redskills: { ...redskills, recovery },
-  };
-}
-
-export function sessionRecoveryFromMeta(meta: NewSessionRequest["_meta"]): AcpSessionRecoveryCheckpoint | undefined {
-  const recovery = (meta as { redskills?: { recovery?: AcpSessionRecoveryCheckpoint } } | undefined)
-    ?.redskills?.recovery;
-  return recovery?.source === "redskilled-public-journal" ? recovery : undefined;
-}
-
-export async function notifySessionRecovery(
-  parent: AgentConnection["client"],
-  downstreamSessionId: string,
-  recovery: AcpSessionRecoveryCheckpoint,
-): Promise<void> {
-  const turns = recovery.completed_turns;
-  await parent.notify(methods.client.session.update, {
-    sessionId: downstreamSessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: {
-        type: "text",
-        text: `native Worker resumed ${turns} completed turn${turns === 1 ? "" : "s"} from the public journal\n`,
-      },
-    },
-    _meta: { redskills: { lifecycle: { event: "checkpoint-resume" } } },
-  });
 }
 
 async function readSnapshot(path: string): Promise<Map<string, AcpSessionJournalRecord>> {

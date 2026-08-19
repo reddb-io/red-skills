@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./acp": "./src/acp/index.ts",
     "./mcp-server": "./src/mcp-server.ts",
     "./engine": "./src/engine/index.ts",
     "./engine/spin-evaluator": "./src/engine/spin-evaluator.ts",
@@ -43,11 +44,13 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0",
     "@clack/prompts": "^1.1.0",
     "@effect/cli": "^0.74.0",
     "@effect/platform": "^0.95.0",
     "@effect/platform-node": "^0.105.0",
     "@reddb-io/github": "workspace:*",
+    "@reddb-io/protocol-acp": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",
     "@standard-schema/spec": "^1.0.0",

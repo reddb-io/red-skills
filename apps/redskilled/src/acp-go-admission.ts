@@ -20,7 +20,7 @@ import type { PublicSession } from "./acp-control-plane.js";
 import { createAcpSessionJournal as createAcpDispatchJournal } from "./acp-dispatch-intent.js";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 import type { GoWorkerAdmission } from "./acp-go-dispatch.js";
-import { admitNativeAcpWorker } from "./acp-native-worker.js";
+import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import type { ActiveWorkflowWorker } from "./acp-worker-lifecycle.js";
 import type { AcpSessionJournal } from "./acp-session-journal.js";
 import type { RedskilledPaths } from "./paths.js";

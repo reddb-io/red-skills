@@ -622,6 +622,9 @@ importers:
 
   packages/worker:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 1.3.0
+        version: 1.3.0(zod@4.4.3)
       '@clack/prompts':
         specifier: ^1.1.0
         version: 1.7.0
@@ -637,6 +640,9 @@ importers:
       '@reddb-io/github':
         specifier: workspace:*
         version: link:../github
+      '@reddb-io/protocol-acp':
+        specifier: workspace:*
+        version: link:../protocol-acp
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../shared

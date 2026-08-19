@@ -8,8 +8,11 @@
   "exports": {
     ".": "./index.ts",
     "./compat.js": "./compat.ts",
+    "./endpoint.js": "./endpoint.ts",
+    "./github-write.js": "./github-write.ts",
     "./go-dispatch.js": "./go-dispatch.ts",
     "./methods.js": "./methods.ts",
+    "./session-recovery.js": "./session-recovery.ts",
     "./transport.js": "./transport.ts",
     "./worktree.js": "./worktree.ts"
   },

@@ -1,13 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { REDSKILLS_ACP_METHODS, REDSKILLS_ACP_METHOD_NAMES } from "@reddb-io/protocol-acp";
 
 import { REDSKILLS_ACP_METHOD_DOMAINS } from "../src/acp-method-registry.js";
 
+const repoRoot = join(__dirname, "..", "..", "..");
 const sourceRoot = join(__dirname, "..", "src");
-const wirePackage = join(__dirname, "..", "..", "..", "packages", "protocol-acp");
+const workerAcp = join(repoRoot, "packages", "worker", "src", "acp");
+const wirePackage = join(repoRoot, "packages", "protocol-acp");
 
 describe("the ACP control-plane module boundary", () => {
   it("keeps the public control plane at or below its headroom target", async () => {
@@ -34,7 +36,7 @@ describe("the ACP control-plane module boundary", () => {
     const [controlPlane, workflowTurn, childAgent] = await Promise.all([
       readFile(join(sourceRoot, "acp-control-plane.ts"), "utf8"),
       readFile(join(sourceRoot, "acp-workflow-turn.ts"), "utf8"),
-      readFile(join(sourceRoot, "acp-child-agent.ts"), "utf8"),
+      readFile(join(workerAcp, "child-agent.ts"), "utf8"),
     ]);
 
     expect(controlPlane).not.toMatch(/evaluateSpin|createChildAcpSpinEpisode|SpinPattern/);
@@ -71,7 +73,7 @@ describe("the `_redskills/*` method domains", () => {
   it("spells each domain's method keys in that domain's module and nowhere else", async () => {
     const sources = new Map<string, string>();
     for (const domain of REDSKILLS_ACP_METHOD_DOMAINS) {
-      sources.set(domain.module, await readFile(join(sourceRoot, domain.module), "utf8"));
+      sources.set(domain.module, await readFile(join(repoRoot, domain.module), "utf8"));
     }
 
     const misplaced: string[] = [];
@@ -101,7 +103,7 @@ describe("the `_redskills/*` method domains", () => {
     const composed = await readFile(join(sourceRoot, "acp-connection-methods.ts"), "utf8");
 
     for (const domain of REDSKILLS_ACP_METHOD_DOMAINS.filter((entry) => entry.served)) {
-      const specifier = `from "./${domain.module.replace(/\.ts$/, ".js")}"`;
+      const specifier = `from "./${basename(domain.module).replace(/\.ts$/, ".js")}"`;
       expect(composed, `the ${domain.domain} domain is never composed`).toContain(specifier);
     }
     expect(composed).toContain("v1: table(");

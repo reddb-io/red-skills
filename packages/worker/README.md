@@ -1,10 +1,48 @@
 # `@reddb-io/worker` — the Worker body
 
 **This package is what runs INSIDE one admitted Worker process, and nothing
-else.** Agent and sandbox providers, worktree materialisation, the gate runner
-and the turn loop live here; whether, when and where a Worker exists belongs to
-the `redskilled` daemon (ADR 0148). A Worker is cattle — it performs bounded
-work in an isolated worktree and carries no durable project-control authority.
+else.** Agent and sandbox providers, worktree materialisation, the gate runner,
+the turn loop and the Worker's own ACP surface (`@reddb-io/worker/acp`) live
+here. A Worker is cattle — it performs bounded work in an isolated worktree and
+carries no durable project-control authority.
+
+## The cut (ADR 0148)
+
+**What runs inside the Worker is the body**, and it lives here.
+**Whether, when and where a Worker exists is the control plane**, and it stays
+behind the `redskilled` daemon.
+
+| Question | Answer | Home |
+| --- | --- | --- |
+| Should a Worker exist at all? | admission | `redskilled` |
+| How much may it spend, and when is it killed? | budget | `redskilled` |
+| Which host, unit or container runs it? | placement | `redskilled` |
+| What survives it? | journal | `redskilled` |
+| Who holds the GitHub credential? | gateway | `redskilled` |
+| What does the running process actually do? | body | this package |
+
+The daemon re-execs its own binary as `acp-worker` and that entry loads the
+body from `@reddb-io/worker/acp`; the dependency runs one way only, and the
+package never imports the daemon. Shapes both ends must agree on — the child
+Agent endpoint, the public-journal recovery checkpoint, the governed GitHub
+write request — belong to neither and live in `@reddb-io/protocol-acp`.
+
+The rule drifts because the two halves meet in the middle of single files: one
+module once held both the function that DECIDED a Worker should exist and the
+function the resulting process RAN. So the cut is declared as data in
+`apps/redskilled/src/acp-body-control-cut.ts` and refused in both directions by
+`apps/redskilled/tests/acp-body-control-cut.test.ts`. It is pinned by
+identifier, never by word: a Worker running out of budget checkpoints itself in
+`acp/budget-grace.ts`, and that is body — the daemon decided the verdict, set
+the deadline, and performs the kill.
+
+The same reading keeps two daemon modules that are NAMED for the Worker.
+`acp-worker-lifecycle.ts` and `acp-workflow-turn.ts` run in the daemon process,
+holding its map of live Workers: they admit one when a turn needs it, replace a
+dead one and reap an idle one. That is whether and when a Worker exists, so
+they stay — and `CONTROL_PLANE_DESPITE_THE_NAME` says so out loud, because a
+reader counting them against ADR 0148's seven-module list should not have to
+guess.
 
 The source is vendored from [`mattpocock/sandcastle`](https://github.com/mattpocock/sandcastle)
 under the MIT License; `.upstream` records the reviewed SHA and `NOTICE` carries

@@ -13,10 +13,13 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import type { AcpEndpoint } from "./acp-agent-catalog.js";
-import { ACP_PROTOCOL_VERSION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
-import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./acp-child-spin.js";
-import type { SpinPattern } from "@reddb-io/worker/engine/spin-evaluator";
+import {
+  ACP_PROTOCOL_VERSION,
+  REDSKILLS_WIRE_MAJOR,
+  type AcpEndpoint,
+} from "@reddb-io/protocol-acp";
+import type { SpinPattern } from "../engine/spin-evaluator.js";
+import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./child-spin.js";
 
 export interface ChildAgentSessionOptions {
   readonly endpoint: AcpEndpoint;
