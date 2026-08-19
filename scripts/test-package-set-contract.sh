@@ -405,7 +405,7 @@ tar -czf "$set_dir/marketplace-manifests.tgz" -C "$ROOT" \
   .claude-plugin/marketplace.json \
   .agents/plugins/marketplace.json \
   .gemini-plugin/marketplace.json
-tar -czf "$set_dir/zellij-dashboard.tgz" -C "$ROOT/apps" zellij-plugin-dashboard
+tar -czf "$set_dir/zellij-dashboard.tgz" -C "$ROOT/apps" zellij-plugin-redskilled
 mkdir -p "$tmp/opencode-source/dist/opencode"
 printf 'stub opencode projection\n' >"$tmp/opencode-source/dist/opencode/.release-generated"
 tar -czf "$set_dir/opencode-host.generated.tgz" -C "$tmp/opencode-source" dist/opencode
@@ -454,7 +454,7 @@ for materialised in \
   plugins/internal/package.json \
   .claude-plugin/marketplace.json \
   gemini/dev/gemini-extension.json \
-  zellij-plugin-dashboard/layouts/red-dashboard.kdl \
+  zellij-plugin-redskilled/layouts/red-dashboard.kdl \
   dist/opencode/.release-generated; do
   [ -e "$expanded/$materialised" ] || fail "expansion did not materialise $materialised"
 done

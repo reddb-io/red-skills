@@ -724,7 +724,7 @@ jobs:
             .claude-plugin/marketplace.json \
             .agents/plugins/marketplace.json \
             .gemini-plugin/marketplace.json
-          tar -czf dist/zellij-dashboard.tgz -C apps zellij-plugin-dashboard
+          tar -czf dist/zellij-dashboard.tgz -C apps zellij-plugin-redskilled
           # Generate the self-contained Gemini dev extension from this tree's
           # plugin payload plus the bundles built above, and run the
           # generated-path validator BEFORE the bytes can enter the signed set:
