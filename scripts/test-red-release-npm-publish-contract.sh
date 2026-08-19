@@ -190,7 +190,7 @@ while IFS= read -r plugin_json; do
   : > "$plugin_tree/skills/core/example/SKILL.md"
   # A plugin carries a bundle iff its app EMITS one — the same question
   # check-npm-tarball-boundaries.mjs asks. `internal` is skills-only, and since
-  # #4031 `apps/dev` exists without emitting `dev.bundle.min.mjs`, so the mere
+  # #4031 `apps/plugin-dev` exists without emitting `dev.bundle.min.mjs`, so the mere
   # presence of the app directory stopped being the answer.
   if [ -f "apps/$plugin/package.json" ] && node -e '
     const fs = require("node:fs");

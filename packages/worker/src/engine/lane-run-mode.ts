@@ -42,7 +42,7 @@ export interface LaneRunModeContract {
  * `laneIsolated` set the castle drain selects by) needs an entry here, even
  * when its answer is "no mode required" — an undeclared lane is a pair nobody
  * agreed to, which is exactly how `lane:scout` and `run_mode=scout` drifted
- * apart. The guard (`apps/dev/tests/lane-run-mode-guard.test.ts`) pins the table
+ * apart. The guard (`apps/plugin-dev/tests/lane-run-mode-guard.test.ts`) pins the table
  * against that set so the next lane/mode pair cannot drift.
  */
 export const LANE_RUN_MODE_CONTRACT: readonly LaneRunModeContract[] = [

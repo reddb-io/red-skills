@@ -249,12 +249,12 @@ host_binaries:
 #                                 # Named entries e0, e1, e2 … are read in order until the
 #                                 # first gap.
 #       e0:
-#         pattern: apps/dev/tests/supervisor.test.ts
+#         pattern: apps/plugin-dev/tests/supervisor.test.ts
 #         issue: "https://github.com/reddb-io/red-skills/issues/1063"
 #         since: "2026-07-02"
 #         reason: "OOM under AFK fleet=2 concurrent load (exit 137 / SIGKILL)"
 #       e1:
-#         pattern: apps/brain/tests/dashboard.test.ts
+#         pattern: apps/plugin-brain/tests/dashboard.test.ts
 #         issue: "https://github.com/reddb-io/red-skills/issues/1064"
 #         since: "2026-07-02"
 #         reason: "tsx spawn timeout under concurrent AFK load (40 s ceiling)"

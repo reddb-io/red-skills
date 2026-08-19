@@ -45,11 +45,11 @@ describe("reading the Worktree's package topology", () => {
     const { layout, graph } = readWorkspace(root);
 
     expect(layout.hasPackage(".")).toBe(true);
-    expect(layout.hasPackage("apps/dev")).toBe(true);
+    expect(layout.hasPackage("apps/plugin-dev")).toBe(true);
     expect(layout.hasPackage("apps/absent")).toBe(false);
-    expect(layout.hasScript("apps/dev", "typecheck")).toBe(true);
-    expect(layout.hasScript("apps/dev", "test")).toBe(false);
-    expect(graph.packages.find((pkg) => pkg.dir === "apps/dev")?.dependsOn).toEqual(["packages/lib"]);
+    expect(layout.hasScript("apps/plugin-dev", "typecheck")).toBe(true);
+    expect(layout.hasScript("apps/plugin-dev", "test")).toBe(false);
+    expect(graph.packages.find((pkg) => pkg.dir === "apps/plugin-dev")?.dependsOn).toEqual(["packages/lib"]);
   });
 
   it("reads the packages list without a YAML decoder", () => {
@@ -65,7 +65,7 @@ describe("running the declared stages", () => {
     const result = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      changedFiles: async () => ["apps/dev/src/index.ts"],
+      changedFiles: async () => ["apps/plugin-dev/src/index.ts"],
       feedbackExec: async (args) => {
         commands.push(args);
         return { code: 0, stdout: "", stderr: "" };
@@ -85,7 +85,7 @@ describe("running the declared stages", () => {
     const result = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      changedFiles: async () => ["apps/dev/src/index.ts"],
+      changedFiles: async () => ["apps/plugin-dev/src/index.ts"],
       feedbackExec: async () => ({ code: 2, stdout: "", stderr: "TS2532: Object is possibly undefined" }),
     });
 
@@ -102,8 +102,8 @@ describe("running the declared stages", () => {
     const blocked = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      backpressureCommands: ["pnpm -C apps/dev test:invariants"],
-      changedFiles: async () => ["apps/dev/src/index.ts"],
+      backpressureCommands: ["pnpm -C apps/plugin-dev test:invariants"],
+      changedFiles: async () => ["apps/plugin-dev/src/index.ts"],
       feedbackExec: async () => ({ code: 1, stdout: "", stderr: "red" }),
       backpressureExec: async ({ command }) => {
         ran.push(command);
@@ -116,8 +116,8 @@ describe("running the declared stages", () => {
     const green = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      backpressureCommands: ["pnpm -C apps/dev test:invariants"],
-      changedFiles: async () => ["apps/dev/src/index.ts"],
+      backpressureCommands: ["pnpm -C apps/plugin-dev test:invariants"],
+      changedFiles: async () => ["apps/plugin-dev/src/index.ts"],
       feedbackExec: async () => ({ code: 0, stdout: "", stderr: "" }),
       backpressureExec: async ({ command }) => {
         ran.push(command);
@@ -125,7 +125,7 @@ describe("running the declared stages", () => {
       },
     });
     expect(gateVerdict(green.stages).ok).toBe(true);
-    expect(ran).toEqual(["pnpm -C apps/dev test:invariants"]);
+    expect(ran).toEqual(["pnpm -C apps/plugin-dev test:invariants"]);
   });
 
   it("reads the real diff when the caller names no seam", async () => {
@@ -133,7 +133,7 @@ describe("running the declared stages", () => {
     await writeFile(join(root, "apps", "dev", "added.ts"), "export const added = 1;\n");
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
     git("checkout", "-b", "afk/4020");
-    git("add", "--", "apps/dev/added.ts");
+    git("add", "--", "apps/plugin-dev/added.ts");
     git("commit", "-m", "Refs #4020");
 
     const commands: string[][] = [];

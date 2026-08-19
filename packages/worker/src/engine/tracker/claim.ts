@@ -3,7 +3,7 @@
 //
 // This module is the ONE owner of the claim wire format. The battle-proven
 // implementation absorbed here previously lived in the consuming host
-// (`apps/dev/src/core/claim.ts`, now a re-export shim); the earlier
+// (`apps/plugin-dev/src/core/claim.ts`, now a re-export shim); the earlier
 // tracker-local twin (`renderTrackerClaimComment`/`parseTrackerClaimRecords`/
 // `reconcileTrackerClaims`) is deleted — it had no production callers and
 // predated the #2385 fail-loud hardening. The castle-only local FS lease layer

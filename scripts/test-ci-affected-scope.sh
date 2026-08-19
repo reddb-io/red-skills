@@ -43,7 +43,7 @@ docs="$(scope_of '.red/adr/0130-example.md
 
 assert_field "$docs" "s.mode" "cone" "docs-only change stays in cone mode"
 assert_field "$docs" "s.runTypecheck" "false" "docs-only change does not typecheck"
-assert_field "$docs" "s.testPackages" "apps/dev" "docs-only change tests only apps/dev (the doc-contract suite)"
+assert_field "$docs" "s.testPackages" "apps/plugin-dev" "docs-only change tests only apps/plugin-dev (the doc-contract suite)"
 
 researches="$(scope_of '.red/researches/notes.md')"
 assert_field "$researches" "s.testPackages.length" "0" "untested doc lane runs no package tests"
@@ -51,9 +51,9 @@ assert_field "$researches" "s.runTypecheck" "false" "untested doc lane does not 
 
 # ---------- single-package changes ----------
 
-leaf="$(scope_of 'apps/afk-container/src/entry.ts')"
+leaf="$(scope_of 'apps/worker-container/src/entry.ts')"
 assert_field "$leaf" "s.mode" "cone" "leaf-package change stays in cone mode"
-assert_field "$leaf" "s.testPackages" "apps/afk-container" "leaf-package change tests only that package"
+assert_field "$leaf" "s.testPackages" "apps/worker-container" "leaf-package change tests only that package"
 assert_field "$leaf" "s.runTypecheck" "true" "source change typechecks"
 
 # ---------- shared-package changes fan out to dependents ----------
@@ -61,15 +61,15 @@ assert_field "$leaf" "s.runTypecheck" "true" "source change typechecks"
 shared="$(scope_of 'packages/shared/src/args.ts')"
 assert_field "$shared" "s.mode" "cone" "shared-package change stays in cone mode"
 assert_field "$shared" "s.testPackages.includes('packages/shared')" "true" "shared cone includes the touched package"
-assert_field "$shared" "s.testPackages.includes('apps/dev')" "true" "shared cone includes apps/dev (a dependent)"
-assert_field "$shared" "s.testPackages.includes('apps/opencode-host')" "true" "shared cone includes apps/opencode-host (a dependent)"
+assert_field "$shared" "s.testPackages.includes('apps/plugin-dev')" "true" "shared cone includes apps/plugin-dev (a dependent)"
+assert_field "$shared" "s.testPackages.includes('apps/host-opencode')" "true" "shared cone includes apps/host-opencode (a dependent)"
 # red-browser, not afk-container: the "unrelated" example has to be a package
 # with no path to packages/shared in the workspace graph, and afk-container
 # stopped being one when packages/github (its dependency) took a dependency on
 # shared. red-browser's workspace deps are the browser-bridge/cdp-driver pair,
 # neither of which reaches shared. If this assertion trips, first check whether
 # the example rotted the same way before suspecting the cone computation.
-assert_field "$shared" "s.testPackages.includes('apps/red-browser')" "false" "shared cone excludes an unrelated package"
+assert_field "$shared" "s.testPackages.includes('apps/mcp-browser')" "false" "shared cone excludes an unrelated package"
 
 # ---------- unclassifiable / global-blast-radius changes ----------
 
@@ -86,7 +86,7 @@ for global_path in \
 done
 
 whole="$(scope_of 'pnpm-lock.yaml')"
-assert_field "$whole" "s.testPackages.includes('apps/dev')" "true" "whole-workspace mode lists every tested package (apps/dev)"
+assert_field "$whole" "s.testPackages.includes('apps/plugin-dev')" "true" "whole-workspace mode lists every tested package (apps/plugin-dev)"
 assert_field "$whole" "s.testPackages.includes('packages/worker')" "true" "whole-workspace mode lists every tested package (packages/worker)"
 
 empty="$(scope_of '')"
@@ -97,20 +97,20 @@ assert_field "$empty" "s.mode" "whole-workspace" "an empty changed-file set fall
 plugin="$(scope_of 'plugins/dev/skills/engineering/red-setup/SKILL.md')"
 assert_field "$plugin" "s.runManifestChecks" "true" "a plugin doc change re-checks the generated manifests"
 assert_field "$plugin" "s.runTypecheck" "false" "a plugin doc change does not typecheck"
-assert_field "$plugin" "s.testPackages" "apps/dev" "a plugin doc change tests apps/dev"
+assert_field "$plugin" "s.testPackages" "apps/plugin-dev" "a plugin doc change tests apps/plugin-dev"
 
-leaf_manifests="$(scope_of 'apps/afk-container/src/entry.ts')"
+leaf_manifests="$(scope_of 'apps/worker-container/src/entry.ts')"
 assert_field "$leaf_manifests" "s.runManifestChecks" "false" "an unrelated source change skips the manifest checks"
 
 # ---------- GitHub Actions output rendering ----------
 
 gh_out="$(mktemp)"
 trap 'rm -f "$gh_out"' EXIT
-printf 'apps/afk-container/src/entry.ts\n' |
+printf 'apps/worker-container/src/entry.ts\n' |
   GITHUB_OUTPUT="$gh_out" node scripts/ci-affected-scope.mjs --files-stdin --github-output >/dev/null
 grep -q '^mode=cone$' "$gh_out" || fail "--github-output must write mode="
 grep -q '^run_typecheck=true$' "$gh_out" || fail "--github-output must write run_typecheck="
-grep -q '^test_packages=\["apps/afk-container"\]$' "$gh_out" ||
+grep -q '^test_packages=\["apps/worker-container"\]$' "$gh_out" ||
   fail "--github-output must write test_packages= as a JSON array (fromJSON-consumable)"
 pass "--github-output emits GitHub-Actions-consumable outputs"
 
@@ -160,11 +160,11 @@ for (const job of ['typecheck', 'test-shard', 'test-packages']) {
   need(!/^ {4}if:/m.test(body), `${job} has no job-level if (it must always report)`);
 }
 
-// The apps/dev suite is the critical path, so it fans out across a shard matrix
+// The apps/plugin-dev suite is the critical path, so it fans out across a shard matrix
 // rather than running as one serial step.
 const shard = jobBody('test-shard');
 need(/^\s+matrix:\n\s+shard: \[1, 2, 3, 4\]$/m.test(shard),
-  'test-shard fans the apps/dev suite out over a 4-way matrix');
+  'test-shard fans the apps/plugin-dev suite out over a 4-way matrix');
 need(/--shard=\$\{\{ matrix\.shard \}\}\/4/.test(shard),
   'test-shard passes its matrix index to vitest');
 // pnpm forwards a `--` separator VERBATIM, so vitest reads the flag behind it

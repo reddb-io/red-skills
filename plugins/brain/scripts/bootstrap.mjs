@@ -12,7 +12,7 @@
  * place of built output — fetches those artifacts once per plugin version into a
  * version-keyed cache that survives `autoUpdate`, then delegates the call.
  *
- * A repo checkout (where `apps/brain/dist-bundle/*` or the TS source exists)
+ * A repo checkout (where `apps/plugin-brain/dist-bundle/*` or the TS source exists)
  * falls back to the local artifacts when the release fetch fails, so the plugin
  * stays runnable in this repo before its first release.
  *
@@ -436,7 +436,7 @@ function localCandidate(kind) {
   const source = kind === "mcp" ? "src/mcp-server.ts" : "src/cli.ts";
   const candidates = [
     { command: process.execPath, args: [join(REPO_ROOT, "dist", file)] },
-    { command: process.execPath, args: ["--import", "tsx", join(REPO_ROOT, "apps/brain", source)] },
+    { command: process.execPath, args: ["--import", "tsx", join(REPO_ROOT, "apps/plugin-brain", source)] },
   ];
   for (const c of candidates) {
     if (existsSync(c.args[c.args.length - 1])) return c;

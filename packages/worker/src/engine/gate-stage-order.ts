@@ -7,7 +7,7 @@
 // Worker process, before it asks the daemon to publish (issue #4020, ADR 0148).
 // Restating the order there would be two tables that agree only until someone
 // edits one, so the order moved down here — to the package both bodies embed —
-// and `apps/dev/src/core/shared-gate.ts` re-exports it for its own callers.
+// and `apps/plugin-dev/src/core/shared-gate.ts` re-exports it for its own callers.
 //
 // **The order is the contract, not the evaluation sequence.** A caller may
 // evaluate stages in whatever sequence its plumbing makes convenient and may

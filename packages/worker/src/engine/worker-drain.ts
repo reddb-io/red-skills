@@ -26,7 +26,7 @@ export type CastleSelectionFilter =
 
 /** True when a candidate falls inside a producer's work scope. Every facet
  * the selector declares must hold; an empty selector matches everything.
- * Keep in sync with `matchesSelector` in the consuming `apps/dev`
+ * Keep in sync with `matchesSelector` in the consuming `apps/plugin-dev`
  * `core/session.ts` — this copy drives the live drain; the dev copy backs the
  * dev-side previews. */
 export function matchesWorkSelector(

@@ -1,6 +1,7 @@
 # Root workspace for all RedSkills runtime apps and shared packages.
 packages:
   - "apps/*"
+  - "benchmarks/*"
   - "packages/*"
 
 # Single source of truth for versions shared across workspaces (ADR 0060).

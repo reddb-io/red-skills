@@ -735,7 +735,7 @@ describe("tracker dual lease", () => {
 });
 
 // The FS lease store rebuilt on dev's mkdir-lock semantics (#434 atomic claim,
-// #568 atomic-rename recovery). Assertions ported from apps/dev/tests/fs-sweep.test.ts.
+// #568 atomic-rename recovery). Assertions ported from apps/plugin-dev/tests/fs-sweep.test.ts.
 describe("createFsIssueLeaseStore (dev mkdir-lock semantics)", () => {
   const DEAD_PID = 999999;
   // pid predicate: only DEAD_PID is dead; every other pid is treated as alive.

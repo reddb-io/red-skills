@@ -117,7 +117,7 @@ function pluginManifests(root) {
  * A plugin ships a runtime bundle iff its app actually EMITS one.
  *
  * The presence of `apps/<name>/` was a good enough proxy until #4031 deleted the
- * dev CLI bundle: `apps/dev` still exists — it holds the MCP adapter and the
+ * dev CLI bundle: `apps/plugin-dev` still exists — it holds the MCP adapter and the
  * cores — but it no longer emits `dev.bundle.min.mjs`, so the proxy demanded a
  * file nothing builds. Reading the app's own `bundle` script for the emitted
  * name keeps this check honest as apps gain and lose bundles.

@@ -7,7 +7,7 @@ this doc plus the proposed implementation slices at the end, ready for
 
 This is the **review-surface half** (the "lavish-half"). Per the human decision
 it is scoped and sequenced **before** the browser-automation half (#992, whose
-scope lives in `apps/red-browser/DESIGN.md`).
+scope lives in `apps/mcp-browser/DESIGN.md`).
 
 ## Decision inputs (already settled)
 
@@ -38,7 +38,7 @@ The package is functionally complete today:
 | `inject.ts` — additive, self-guarding, byte-reversible SDK injection | built + tested |
 | `annotation-sdk.ts` / `layout-audit-sdk.ts` — browser-side probes | built |
 | `layout-audit.ts` — `auditLayout` / `assertLayoutClean` (`horizontal-overflow`, `clipped-text`, `text-overlap`) | built + tested |
-| `apps/red-browser` `annotate` CLI command | built |
+| `apps/mcp-browser` `annotate` CLI command | built |
 | `/review` skill (`plugins/dev/skills/engineering/review`) consuming `annotate` | shipped |
 
 So the review-surface half is **~90 % built**. This slice therefore scopes the
@@ -193,7 +193,7 @@ satisfies the ordering constraint and unblocks both halves.
    `/verify`) at `/review`. Register per repo Rule 1 (README + plugin manifests);
    say in the commit what was removed and why.
 
-> **Corrects #992's plan.** `apps/red-browser/DESIGN.md` slice 6 proposes
+> **Corrects #992's plan.** `apps/mcp-browser/DESIGN.md` slice 6 proposes
 > *"graduate `browser-review`"* as a separate skill and pushes `annotate → TOON`
 > to the end. The #993 human decision overrides both: there is **one review
 > verb** (`/review`), so `browser-review` is consolidated and removed (slice 4

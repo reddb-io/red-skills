@@ -30,7 +30,7 @@ on:
       - plugins/*/hooks/**
       - plugins/*/scripts/**
       - apps/*/package.json
-      - apps/opencode-host/**
+      - apps/host-opencode/**
       - .github/workflows/red-publish.yml
       - .github/workflows/red-release-rehearsal.yml
   workflow_dispatch:

@@ -183,7 +183,7 @@ const MEMORY_ENGINE_MODULE = "@reddb-io/memory/mcp-server/serve.js";
  *     an ordering nobody can satisfy and a cycle a workspace only warns about.
  *
  * The shape it must have is declared above and pinned from the producer's side
- * by `apps/memory/tests/mcp-serve-contract.test.ts` — a rename there fails that
+ * by `apps/plugin-memory/tests/mcp-serve-contract.test.ts` — a rename there fails that
  * test rather than surviving to fail here, on a host, at the first memory call
  * of the day.
  */

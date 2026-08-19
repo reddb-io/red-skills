@@ -13,7 +13,7 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 (`/afk` recall, `/triage` dedup, `/diagnose` root-cause history, `/zoom-out`
 orientation). Installing `memory` requires `dev`.
 
-> **Runtime model.** The implementation now lives in `apps/memory/`
+> **Runtime model.** The implementation now lives in `apps/plugin-memory/`
 > (monorepo `domains/` layout); only the plugin *definition* (hooks, skills,
 > docs) stays under `plugins/memory/`. The built runtime ships as a GitHub
 > Release bundle (ADR 0034), not as committed `dist/` output. Examples below
@@ -82,8 +82,8 @@ The plugin ships source-only. From a checkout of `red-skills`, build the local
 CLI first; `dist/` and `node_modules/` are intentionally not committed.
 
 ```bash
-pnpm --dir apps/memory install
-pnpm --dir apps/memory build
+pnpm --dir apps/plugin-memory install
+pnpm --dir apps/plugin-memory build
 ```
 
 For the smallest useful setup, initialize markdown-only mode in the repo whose
@@ -761,7 +761,7 @@ is backed by executable assertions instead of marketing copy:
 pnpm --filter @reddb-io/benchmark-memory references:eval
 pnpm --filter @reddb-io/benchmark-memory references:interop
 pnpm --filter @reddb-io/benchmark-memory references:baseline
-pnpm --dir apps/memory test -- competitive-baseline
+pnpm --dir apps/plugin-memory test -- competitive-baseline
 ```
 
 `references:eval` runs entirely against checked-in fixtures and emits JSON plus
@@ -844,7 +844,7 @@ baseline and is reported as unmeasured by the claim guard.
 `benchmark-memory bench eval` runs a checked-in deterministic QA corpus through
 RedDB governed recall, markdown embedding-RAG, Neo4j term traversal, and a
 Graphify-style adapter. The default corpus
-(`apps/memory/bench/eval/structured/`) reports aggregate scores plus
+(`apps/plugin-memory/bench/eval/structured/`) reports aggregate scores plus
 per-category rows for `single-hop`, `multi-hop`, `temporal-as-of`, and
 `unanswerable`.
 
@@ -1048,8 +1048,8 @@ The plugin ships **source only**; `dist/` and `node_modules/` are gitignored and
 built on your machine at init time (needs only node + pnpm):
 
 ```bash
-pnpm --dir apps/memory install
-pnpm --dir apps/memory build
+pnpm --dir apps/plugin-memory install
+pnpm --dir apps/plugin-memory build
 ```
 
 Then drive it directly if you like (swap `--mode graph` for the graph store):
@@ -1066,10 +1066,10 @@ bundled `red` binary); markdown-only needs only node.
 ## Develop
 
 ```bash
-pnpm --dir apps/memory test              # fast, deterministic vitest gate
-pnpm --dir apps/memory test:integration  # heavy RedDB real-server / CLI suite
-pnpm --dir apps/memory typecheck         # tsc --noEmit
-pnpm --dir apps/memory build             # tsc → dist/
+pnpm --dir apps/plugin-memory test              # fast, deterministic vitest gate
+pnpm --dir apps/plugin-memory test:integration  # heavy RedDB real-server / CLI suite
+pnpm --dir apps/plugin-memory typecheck         # tsc --noEmit
+pnpm --dir apps/plugin-memory build             # tsc → dist/
 ```
 
 `test` is the AFK feedback gate: in-process tests only, run with file

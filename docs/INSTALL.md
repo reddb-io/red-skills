@@ -225,7 +225,7 @@ opencode .
 
 Use `/connect` inside OpenCode or export one of `OPENAI_API_KEY`,
 `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`. Generated config never stores auth
-secrets. Details live in [apps/opencode-host](../apps/opencode-host/README.md).
+secrets. Details live in [apps/host-opencode](../apps/host-opencode/README.md).
 
 ## Manual: Pi
 

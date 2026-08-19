@@ -13,7 +13,7 @@
     }
   ],
   "changed_files": [
-    "apps/dev/src/core/codex-monitor-agent.ts"
+    "apps/plugin-dev/src/core/codex-monitor-agent.ts"
   ],
   "verification_commands": [
     "pnpm --filter @reddb-io/dev test"
@@ -62,7 +62,7 @@
     ],
     "fixes_applied": [
       {
-        "file": "apps/dev/src/core/codex-monitor-agent.ts",
+        "file": "apps/plugin-dev/src/core/codex-monitor-agent.ts",
         "description": "removed obsolete wrapper",
         "in_scope_justification": "repo default cleanup"
       }

@@ -126,7 +126,7 @@ nothing: measured, six consecutive calls moved `core` by exactly zero.
 `fetchGithubBalance` asks it; `GithubBalance.origin` is the single literal
 `"asked"`, so a counting path cannot construct one without declaring an origin
 that does not exist. The ratchet that refuses the accumulator itself lives in
-`apps/dev/src/core/asked-balance-guard.ts` and runs in every gate run.
+`apps/plugin-dev/src/core/asked-balance-guard.ts` and runs in every gate run.
 
 **Free of *primary* quota only.** GitHub's secondary limits on request rate and
 concurrency apply to `/rate_limit` like any other endpoint, so the cadence stays
@@ -195,7 +195,7 @@ the reads that would refill it.
 
 ## Consumers
 
-`apps/dev` (the read boundary, the migrated single-object reads and the reserved
+`apps/plugin-dev` (the read boundary, the migrated single-object reads and the reserved
 band in `runtime/gh/band.ts`), `apps/redskilled` (the daemon's conditional REST
 pollers), `apps/rsp` (the independent resident-owned proxy reads), and
 `packages/worker` (the tracker adapter) all import this package. One policy,

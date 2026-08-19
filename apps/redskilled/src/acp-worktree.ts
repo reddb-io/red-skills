@@ -40,7 +40,7 @@ const GIT_TIMEOUT_MS = 30_000;
  * The lane an interactive worktree lands in.
  *
  * `manual` and nothing else, because it is the ONE lane ADR 0098 registers for
- * work a human returns to — and `apps/dev/tests/worktree-lane-doctor.test.ts`
+ * work a human returns to — and `apps/plugin-dev/tests/worktree-lane-doctor.test.ts`
  * pins this constant against that registry, so a daemon that started writing
  * into a lane the dev command proxy refuses fails in the gate rather than in a
  * human's checkout.

@@ -104,7 +104,7 @@ jobs:
           TARGET_VERSION: ${{ steps.release.outputs.target_version }}
         run: |
           set -euo pipefail
-          pnpm -C apps/dev dev toon-bump "$TARGET_VERSION"
+          pnpm -C apps/plugin-dev dev toon-bump "$TARGET_VERSION"
           # `--no-frozen-lockfile` is not a loosening: pnpm turns frozen ON by
           # itself when CI=true, so the one command whose whole job is to WRITE
           # the lockfile ran forbidden from writing it. A full install, not
@@ -139,7 +139,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$TOON_BUMP_BRANCH"
-          git add -- pnpm-workspace.yaml pnpm-lock.yaml apps/dev/src/core/host-toolchain-doctor.ts .github/workflows/red-workspace-ci.yml .github/workflows/red-rsp-benchmark-ci.yml plugins/dev/skills/engineering/red-setup/INTERVIEW.md plugins/dev/skills/engineering/red-setup/REFERENCE.md plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md plugins/dev/skills/engineering/red-setup/config-template.yaml plugins/dev/skills/engineering/red-doctor/SKILL.md packaging/pi
+          git add -- pnpm-workspace.yaml pnpm-lock.yaml apps/plugin-dev/src/core/host-toolchain-doctor.ts .github/workflows/red-workspace-ci.yml .github/workflows/red-rsp-benchmark-ci.yml plugins/dev/skills/engineering/red-setup/INTERVIEW.md plugins/dev/skills/engineering/red-setup/REFERENCE.md plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md plugins/dev/skills/engineering/red-setup/config-template.yaml plugins/dev/skills/engineering/red-doctor/SKILL.md packaging/pi
           git commit -m "chore: bump toon to $TRIGGER_TAG"
           git push --force-with-lease origin "$TOON_BUMP_BRANCH"
 

@@ -40,7 +40,7 @@ describe("the Worker's terminal policy", () => {
   // `git` would refuse the work rather than the authority.
   it("allows the ordinary work of a turn", () => {
     expect(allows("pnpm", "test")).toBe(true);
-    expect(allows("pnpm", "-C", "apps/dev", "test:invariants")).toBe(true);
+    expect(allows("pnpm", "-C", "apps/plugin-dev", "test:invariants")).toBe(true);
     expect(allows("git", "add", "--", "src/index.ts")).toBe(true);
     expect(allows("git", "commit", "-m", "Refs #4016")).toBe(true);
     expect(allows("git", "status", "--short")).toBe(true);

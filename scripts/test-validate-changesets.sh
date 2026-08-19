@@ -25,7 +25,7 @@ trap 'rm -rf "$TMP"' EXIT
 # scoped package name, and a root manifest whose name is NOT a workspace member.
 new_fixture() {
   local dir="$TMP/$1"
-  mkdir -p "$dir/.changeset" "$dir/apps/dev" "$dir/apps/bundle" "$dir/packages/shared"
+  mkdir -p "$dir/.changeset" "$dir/apps/plugin-dev" "$dir/apps/bundle" "$dir/packages/shared"
   cat > "$dir/pnpm-workspace.yaml" <<'YAML'
 packages:
   - "apps/*"
@@ -35,7 +35,7 @@ catalog:
   typescript: ^5.6.0
 YAML
   printf '{"name":"red-skills","private":true}\n' > "$dir/package.json"
-  printf '{"name":"@reddb-io/dev"}\n' > "$dir/apps/dev/package.json"
+  printf '{"name":"@reddb-io/dev"}\n' > "$dir/apps/plugin-dev/package.json"
   printf '{"name":"@reddb-io/red-skills"}\n' > "$dir/apps/bundle/package.json"
   printf '{"name":"@reddb-io/shared"}\n' > "$dir/packages/shared/package.json"
   printf 'Changesets live here.\n' > "$dir/.changeset/README.md"

@@ -2,7 +2,7 @@
 name: good
 description: Use when testing a valid skill frontmatter fixture.
 paths:
-  - apps/dev/**/*.{ts,tsx}
+  - apps/plugin-dev/**/*.{ts,tsx}
 allowed-tools:
   - Bash
   - Read

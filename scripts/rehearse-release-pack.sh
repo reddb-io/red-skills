@@ -61,7 +61,7 @@ export RED_BUILD_GIT_SHA RED_BUILD_TIME
 if [ "${REHEARSAL_SKIP_BUNDLE:-}" != "1" ]; then
   step "building runtime bundles"
   pnpm bundle >"$work/bundle.log" 2>&1 || { cat "$work/bundle.log"; fail "pnpm bundle failed"; }
-  (cd apps/dev && pnpm bundle:mcp >"$work/bundle-mcp.log" 2>&1) || { cat "$work/bundle-mcp.log"; fail "apps/dev bundle:mcp failed"; }
+  (cd apps/plugin-dev && pnpm bundle:mcp >"$work/bundle-mcp.log" 2>&1) || { cat "$work/bundle-mcp.log"; fail "apps/plugin-dev bundle:mcp failed"; }
 fi
 # `dev` is absent by design since #4031: the dev CLI bundle was deleted with the
 # binary it backed, and `redskilled` is the execution chain's only shipped one.

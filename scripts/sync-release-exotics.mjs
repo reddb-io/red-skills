@@ -10,12 +10,12 @@ if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
 }
 
 rewrite(
-  "apps/herdr-plugin-red-skills/herdr-plugin.toml",
+  "apps/herdr-plugin-redskilled/herdr-plugin.toml",
   /^version = "[^"]+"$/m,
   `version = "${version}"`,
 );
 rewrite(
-  "apps/herdr-plugin-red-skills/bin/red-skills-herdr.mjs",
+  "apps/herdr-plugin-redskilled/bin/red-skills-herdr.mjs",
   /^const CHECKOUT_VERSION = "[^"]+";$/m,
   `const CHECKOUT_VERSION = "${version}";`,
 );

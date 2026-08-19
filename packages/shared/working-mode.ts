@@ -2,7 +2,7 @@
 // exports so a skill can tell which one it is running inside (ADR 0150 §1–§2).
 //
 // The vocabulary was already written down once, as a guard over shipped skill
-// headers (`apps/dev/src/core/working-mode-guard.ts`). It lives HERE now because
+// headers (`apps/plugin-dev/src/core/working-mode-guard.ts`). It lives HERE now because
 // a second reader needs it: the daemon, which exports the marker. Two hand-kept
 // copies of a four-value closed set is the shape a fifth value gets added to one
 // of them, and the marker a Worker exports must be the SAME string a skill

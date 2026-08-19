@@ -39,7 +39,7 @@ classified, and `toon-json-guard.test.ts` passes.
 <supporting-info>
 
 The ratchet and its file/wire detection rules live in
-`apps/dev/src/core/toon-json-guard.ts`. ADR 0097 owns the TOON and TOONL storage
+`apps/plugin-dev/src/core/toon-json-guard.ts`. ADR 0097 owns the TOON and TOONL storage
 formats; the shared resident-wire helpers own cross-process framing.
 
 </supporting-info>

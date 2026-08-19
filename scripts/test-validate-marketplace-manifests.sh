@@ -108,7 +108,7 @@ malformed_skill_paths() {
     'name: do-thing' \
     'description: Exercise the malformed marketplace path-brief fixture.' \
     'paths:' \
-    '  - apps/dev/[broken.ts' \
+    '  - apps/plugin-dev/[broken.ts' \
     '---' \
     > "$1/plugins/alpha/skills/core/do-thing/SKILL.md"
 }

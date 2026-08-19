@@ -25,11 +25,11 @@ else
   fail "bundle-app must guard missing --entry/--outfile/--asset"
 fi
 
-# 2 — Single version anchor: apps/dev/package.json (not cwd package.json)
-if grep -qF 'PRODUCT_VERSION_ANCHOR' "$SCRIPT" && grep -qF 'apps/dev/package.json' "$SCRIPT"; then
-  pass "bundle-app anchors version at apps/dev/package.json"
+# 2 — Single version anchor: apps/plugin-dev/package.json (not cwd package.json)
+if grep -qF 'PRODUCT_VERSION_ANCHOR' "$SCRIPT" && grep -qF 'apps/plugin-dev/package.json' "$SCRIPT"; then
+  pass "bundle-app anchors version at apps/plugin-dev/package.json"
 else
-  fail "bundle-app must anchor version at apps/dev/package.json (PRODUCT_VERSION_ANCHOR)"
+  fail "bundle-app must anchor version at apps/plugin-dev/package.json (PRODUCT_VERSION_ANCHOR)"
 fi
 
 if grep -qF 'resolve("package.json")' "$SCRIPT" && grep -qF 'PRODUCT_VERSION_ANCHOR' "$SCRIPT"; then
@@ -110,7 +110,7 @@ else
 fi
 
 # 10 — Memory tokenizer ranks are a lazy, package-owned sibling asset (#3956)
-MEMORY_PACKAGE="apps/memory/package.json"
+MEMORY_PACKAGE="apps/plugin-memory/package.json"
 MEMORY_BUNDLE="dist/memory.bundle.min.mjs"
 MEMORY_TOKENIZER="dist/memory-tokenizer.asset.cjs"
 MEMORY_BUNDLE_BEFORE=10698895
@@ -139,7 +139,7 @@ else
   fail "memory bundle must declare the lazy tokenizer entry and sibling asset"
 fi
 
-if pnpm -C apps/memory bundle:cli >/dev/null; then
+if pnpm -C apps/plugin-memory bundle:cli >/dev/null; then
   pass "memory CLI bundle and tokenizer asset build"
 else
   fail "memory CLI bundle and tokenizer asset must build"

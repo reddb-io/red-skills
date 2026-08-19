@@ -13,7 +13,7 @@
     }
   ],
   "changed_files": [
-    "apps/dev/tests/codex-monitor-agent.test.ts"
+    "apps/plugin-dev/tests/codex-monitor-agent.test.ts"
   ],
   "verification_commands": [
     "pnpm --filter @reddb-io/dev test"
@@ -49,7 +49,7 @@
     "stub_findings": [
       {
         "kind": "skipped_test",
-        "location": "apps/dev/tests/codex-monitor-agent.test.ts",
+        "location": "apps/plugin-dev/tests/codex-monitor-agent.test.ts",
         "evidence": "it.skip"
       }
     ],

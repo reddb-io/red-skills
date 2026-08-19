@@ -35,7 +35,7 @@ import { flatConfigValue } from "./plugin-gate.js";
  * dev, memory and brain plugins in one repository, so it belongs to none of
  * them. Because the loader treats an unsanctioned root key as off-contract, the
  * sanction is explicit — see `SANCTIONED_ROOT_CONFIG_KEYS` in
- * `apps/dev/src/core/config.ts`.
+ * `apps/plugin-dev/src/core/config.ts`.
  */
 export const PROJECT_NAME_CONFIG_KEY = "project.name";
 

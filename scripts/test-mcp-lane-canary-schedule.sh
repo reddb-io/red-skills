@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 WORKFLOW=".github/workflows/red-mcp-lane-canary.yml"
-PACKAGE="apps/dev/package.json"
+PACKAGE="apps/plugin-dev/package.json"
 failures=0
 
 fail() {
@@ -55,11 +55,11 @@ grep -qE '^permissions:[[:space:]]*$|^permissions:[[:space:]]*\{' "$WORKFLOW" ||
   fail "$WORKFLOW has no explicit top-level permissions: block"
 
 # 3) It actually runs the canary, through the one script operators run too.
-grep -qF 'pnpm -C apps/dev test:canary' "$WORKFLOW" ||
-  fail "$WORKFLOW does not run 'pnpm -C apps/dev test:canary'"
+grep -qF 'pnpm -C apps/plugin-dev test:canary' "$WORKFLOW" ||
+  fail "$WORKFLOW does not run 'pnpm -C apps/plugin-dev test:canary'"
 
 CANARY_SCRIPT="$(node -e '
-  const pkg = require("./apps/dev/package.json");
+  const pkg = require("./apps/plugin-dev/package.json");
   process.stdout.write(pkg.scripts?.["test:canary"] ?? "");
 ')"
 if [ -z "$CANARY_SCRIPT" ]; then

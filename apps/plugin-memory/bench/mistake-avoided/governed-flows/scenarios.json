@@ -1,0 +1,138 @@
+[
+  {
+    "id": "validation-retry",
+    "title": "Validation retry uses remembered package-local failure context",
+    "category": "validation_retry",
+    "mistake_kind": "wrong_validation_scope",
+    "expected_answer": "rerun apps/plugin-memory vitest after fixing the deterministic extractor vocabulary",
+    "baseline": {
+      "flow": "broad_read",
+      "tokens": 12600,
+      "files_read": 44,
+      "commands_run": 8,
+      "answer": "rerun the full repository test suite before changing code",
+      "policy": {
+        "decision": "allowed",
+        "reason": "read-only broad repository scan"
+      }
+    },
+    "governed": {
+      "flow": "governed_write_recall_capsule",
+      "tokens": 3900,
+      "files_read": 9,
+      "commands_run": 4,
+      "answer": "rerun apps/plugin-memory vitest after fixing the deterministic extractor vocabulary",
+      "policy": {
+        "decision": "stored",
+        "reason": "low-risk validation evidence with source_ref and citation excerpt"
+      },
+      "memory_actions": ["governed_write", "recall"],
+      "capsule": {
+        "included": false,
+        "tokens": 0
+      }
+    }
+  },
+  {
+    "id": "cross-agent-recall",
+    "title": "Second agent recalls a prior governed decision without rereading the repo",
+    "category": "cross_agent_recall",
+    "mistake_kind": "missed_prior_decision",
+    "expected_answer": "keep branch-lock scoped to primary-checkout git operations only",
+    "baseline": {
+      "flow": "broad_read",
+      "tokens": 18400,
+      "files_read": 71,
+      "commands_run": 10,
+      "answer": "apply the branch lock to every worktree checkout",
+      "policy": {
+        "decision": "allowed",
+        "reason": "read-only broad repository scan"
+      }
+    },
+    "governed": {
+      "flow": "governed_write_recall_capsule",
+      "tokens": 5200,
+      "files_read": 12,
+      "commands_run": 5,
+      "answer": "keep branch-lock scoped to primary-checkout git operations only",
+      "policy": {
+        "decision": "stored",
+        "reason": "decision evidence is cited and low blast-radius"
+      },
+      "memory_actions": ["governed_write", "recall"],
+      "capsule": {
+        "included": false,
+        "tokens": 0
+      }
+    }
+  },
+  {
+    "id": "capsule-handoff",
+    "title": "Capsule handoff preserves blocker context across an agent boundary",
+    "category": "capsule_handoff",
+    "mistake_kind": "lost_blocker_context",
+    "expected_answer": "resume from the blocked validation gate after the maintainer chooses the migration policy",
+    "baseline": {
+      "flow": "broad_read",
+      "tokens": 9100,
+      "files_read": 32,
+      "commands_run": 6,
+      "answer": "restart the implementation from issue discovery",
+      "policy": {
+        "decision": "allowed",
+        "reason": "handoff reconstructed from repository state"
+      }
+    },
+    "governed": {
+      "flow": "governed_write_recall_capsule",
+      "tokens": 2800,
+      "files_read": 6,
+      "commands_run": 3,
+      "answer": "resume from the blocked validation gate after the maintainer chooses the migration policy",
+      "policy": {
+        "decision": "stored",
+        "reason": "capsule cites the current blocker and next validation command"
+      },
+      "memory_actions": ["recall", "capsule"],
+      "capsule": {
+        "included": true,
+        "tokens": 700
+      }
+    }
+  },
+  {
+    "id": "governed-rejection",
+    "title": "Governed write rejects unsupported high-blast-radius memory",
+    "category": "governed_rejection",
+    "mistake_kind": "unsupported_memory_write",
+    "expected_answer": "reject the unsupported production-failure claim",
+    "baseline": {
+      "flow": "broad_read",
+      "tokens": 7600,
+      "files_read": 25,
+      "commands_run": 4,
+      "answer": "store the production-failure claim as learned memory",
+      "policy": {
+        "decision": "allowed",
+        "reason": "ungoverned note append has no evidence review"
+      }
+    },
+    "governed": {
+      "flow": "governed_write_recall_capsule",
+      "tokens": 2100,
+      "files_read": 4,
+      "commands_run": 2,
+      "answer": "reject the unsupported production-failure claim",
+      "policy": {
+        "decision": "rejected",
+        "reason": "high blast-radius claim lacks source_ref and citation excerpt"
+      },
+      "memory_actions": ["governed_write"],
+      "capsule": {
+        "included": false,
+        "tokens": 0
+      }
+    }
+  }
+]
