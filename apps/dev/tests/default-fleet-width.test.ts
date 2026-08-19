@@ -33,7 +33,7 @@ describe("the default fleet width", () => {
     // names the shared constant, which is what stops it drifting — a runtime
     // check would pass just as well against a hardcoded 1 that later becomes 2.
     const schema = readFileSync(
-      join(REPO_ROOT, "packages/worker/src/mcp/project.ts"),
+      join(REPO_ROOT, "apps/dev/src/mcp-tools/project.ts"),
       "utf8",
     );
     expect(schema).toContain("default(DEFAULT_FLEET_WIDTH)");

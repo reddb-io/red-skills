@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCastleMcpTools,
   type CastleMcpDependencies,
-} from "@reddb-io/worker/mcp-server";
+} from "../src/mcp-tools/index.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const AFK = "plugins/dev/skills/engineering/afk";
@@ -39,7 +39,7 @@ function documentedTools(doc: string): DocumentedTool[] {
   }));
 }
 
-describe("redskilled MCP client docs contract", () => {
+describe("rs_dev MCP client docs contract", () => {
   it("documents every canonical execution intent exactly once in MCP.md", async () => {
     const doc = await readRepoFile(MCP_DOC);
     const documented = documentedTools(doc).map((entry) => entry.name);
@@ -60,15 +60,15 @@ describe("redskilled MCP client docs contract", () => {
   it("names the server, the host prefix rule, and the CLI fallback", async () => {
     const doc = await readRepoFile(MCP_DOC);
 
-    expect(doc).toContain("`redskilled` MCP");
+    expect(doc).toContain("`rs_dev` MCP");
     expect(doc).toContain("mcp__");
     expect(doc).toContain("red-skills-dev");
   });
 
-  it("makes /afk drive execution through the redskilled MCP tools", async () => {
+  it("makes /afk drive execution through the rs_dev MCP tools", async () => {
     const skill = await readRepoFile(`${AFK}/SKILL.md`);
 
-    expect(skill).toContain("`redskilled` MCP");
+    expect(skill).toContain("`rs_dev` MCP");
     expect(skill).toContain("[`MCP.md`](./MCP.md)");
     for (const tool of ["queue_status", "worker_dispatch"]) {
       expect(skill, `/afk should route through ${tool}`).toContain(`\`${tool}\``);
@@ -79,7 +79,7 @@ describe("redskilled MCP client docs contract", () => {
   it("makes /go dispatch through the same MCP surface", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/go/SKILL.md");
 
-    expect(skill).toContain("`redskilled` MCP");
+    expect(skill).toContain("`rs_dev` MCP");
     expect(skill).toContain("../afk/MCP.md");
     expect(skill).toContain("`worker_dispatch`");
   });
@@ -98,7 +98,7 @@ describe("redskilled MCP client docs contract", () => {
     }
     expect(monitor).not.toContain("`worker_status`");
     expect(monitor).not.toContain("`worker_vitals`");
-    expect(monitor).not.toContain("redskilled `monitor` tool");
+    expect(monitor).not.toContain("rs_dev `monitor` tool");
   });
 
   it("makes every execution-verb skill an MCP-first client of its tools", async () => {
@@ -115,7 +115,7 @@ describe("redskilled MCP client docs contract", () => {
       const skill = await readRepoFile(
         `plugins/dev/skills/engineering/${skillName}/SKILL.md`,
       );
-      expect(skill, `/${skillName} should name the redskilled MCP`).toContain("`redskilled` MCP");
+      expect(skill, `/${skillName} should name the rs_dev MCP`).toContain("`rs_dev` MCP");
       expect(skill, `/${skillName} should link the tool surface doc`).toContain("../afk/MCP.md");
       for (const tool of skillTools) {
         expect(skill, `/${skillName} should route through ${tool}`).toContain(`\`${tool}\``);
@@ -149,29 +149,38 @@ describe("redskilled MCP client docs contract", () => {
     }
   });
 
-  it("keeps the ask-red router pointing at the redskilled MCP", async () => {
+  it("keeps the ask-red router pointing at the rs_dev MCP", async () => {
     const askRed = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
 
-    expect(askRed).toContain("`redskilled` MCP");
+    expect(askRed).toContain("`rs_dev` MCP");
     expect(askRed).toContain(MCP_DOC);
   });
 
-  it("keeps every published skill and disclosed reference off the retired castle MCP name", async () => {
+  // Two retired MCP names now, not one. `castle` left with ADR 0142; `redskilled`
+  // left with ADR 0147 rule 2 (#4023) — it is still the daemon, the binary and
+  // the host service, so only the spellings that address it AS A SERVER are
+  // reddened. "hands the queue to redskilled" is the daemon and stays.
+  it("keeps every published skill and disclosed reference off a retired MCP name", async () => {
     const paths = await markdownFiles("plugins");
     const stale: string[] = [];
-    let redskilledReferences = 0;
+    let rsDevReferences = 0;
     const retired = [
       /`castle`\s+MCP/i,
       /(?<!red-)\bcastle\s+MCP\b/i,
       /(?<!red-)\bcastle\s+`[a-z][a-z_]*(?:\s+\{[^`]*\})?`/i,
       /mcp__[^\s`]*castle/i,
       /(?<!sand)castle:(?:drain|diagnose|configure|stop)\b/i,
+      /`redskilled`\s+MCP/i,
+      /\bredskilled\s+MCP\b/i,
+      /\bredskilled\s+`[a-z][a-z_]*(?:\s+\{[^`]*\})?`/i,
+      /mcp__[^\s`]*_redskilled__/i,
+      /\bredskilled:(?:drain|diagnose|configure|stop)\b/i,
     ];
 
     for (const path of paths) {
       const source = await readRepoFile(path);
-      if (/`redskilled`\s+MCP|\bredskilled\s+`[a-z][a-z_]*`/i.test(source)) {
-        redskilledReferences += 1;
+      if (/`rs_dev`\s+MCP|\brs_dev\s+`[a-z][a-z_]*`/i.test(source)) {
+        rsDevReferences += 1;
       }
       source.split("\n").forEach((line, index) => {
         if (retired.some((pattern) => pattern.test(line))) {
@@ -181,7 +190,7 @@ describe("redskilled MCP client docs contract", () => {
     }
 
     expect(paths.length).toBeGreaterThan(50);
-    expect(redskilledReferences).toBeGreaterThan(8);
+    expect(rsDevReferences).toBeGreaterThan(8);
     expect(stale).toEqual([]);
   });
 

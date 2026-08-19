@@ -11,7 +11,7 @@ argument-hint: "[--issue N | --skip N,N]"
 
 The **HITL queue** is open, non-Spec Issues labelled `ready-for-human`. Specs (`type:spec`) are planning artifacts and are never selected by this workflow. For when to reach for `/retake` instead, see **`/hitl` vs `/retake`** in `<supporting-info>`.
 
-**Mutations go through the `redskilled` MCP; `gh` is for reading.** The queue is
+**Mutations go through the `rs_dev` MCP; `gh` is for reading.** The queue is
 read with `gh issue list`/`view`, but every state transition this skill applies
 is a redskilled tool: `requeue` for the delegable transition, `hitl_resolve` for the
 atomic park/close/retake dispositions with the rationale on the audit trail.

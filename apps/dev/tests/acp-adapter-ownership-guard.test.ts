@@ -10,6 +10,14 @@ const ADAPTERS = [
   "../redskilled/src/acp-client.ts",
 ] as const;
 
+/**
+ * The tool schemas `rs_dev` publishes, moved out of the Worker package by
+ * issue #4023. They travel with the ADAPTERS above: a schema module that
+ * reached the engine would put an engine in every session that mounts the
+ * Plugin MCP, which is the cost ADR 0147 rule 2 was written to remove.
+ */
+const ADAPTER_TOOL_TREE = resolve(__dirname, "..", "src", "mcp-tools");
+
 const FORBIDDEN = [
   // Both spellings: the wire was `@reddb-io/red-castle/resident` before #4013
   // renamed the package, and a reintroduction would reach for the new name.
@@ -23,6 +31,9 @@ const FORBIDDEN = [
   { pattern: /sendRedskilledRequest/, owner: "private daemon protocol" },
   { pattern: /\.(?:socketPath|leasePath|machineClaimPath)\b/, owner: "private daemon endpoint" },
   { pattern: /createProjectControlStore/, owner: "adapter-owned durable Project state" },
+  // ADR 0148's cut: the Worker BODY is a package the daemon embeds, never a
+  // dependency of the stateless client a host starts once per session.
+  { pattern: /@reddb-io\/worker/, owner: "the Worker body" },
 ] as const;
 
 describe("ACP adapter ownership guard", () => {
@@ -32,6 +43,20 @@ describe("ACP adapter ownership guard", () => {
       const source = readFileSync(resolve(__dirname, "..", relative), "utf8");
       for (const rule of FORBIDDEN) {
         if (rule.pattern.test(source)) violations.push(`${relative}: ${rule.owner}`);
+      }
+    }
+    expect(violations, violations.join("\n")).toEqual([]);
+  });
+
+  // The schemas are the adapter's, so they answer to the adapter's rules (#4023).
+  it("keeps the `rs_dev` tool schemas free of the engine they used to live in", () => {
+    const violations: string[] = [];
+    for (const path of sourceFiles(ADAPTER_TOOL_TREE)) {
+      const source = readFileSync(path, "utf8");
+      for (const rule of FORBIDDEN) {
+        if (rule.pattern.test(source)) {
+          violations.push(`${path.slice(path.indexOf("apps/"))}: ${rule.owner}`);
+        }
       }
     }
     expect(violations, violations.join("\n")).toEqual([]);

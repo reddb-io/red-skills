@@ -1,44 +1,53 @@
 #!/usr/bin/env node
-import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
-import { createHelpTools, type HelpDependencies } from "./mcp/help.js";
-import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
-import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
-import type { HostDependencies } from "./mcp/host.js";
-import { applyOutputContracts } from "./mcp/contracts.js";
-import { createProjectTools, type ProjectDependencies } from "./mcp/project.js";
-import { createGateTools, type GateDependencies } from "./mcp/gate.js";
-import { createDeadendTools, type DeadendDependencies } from "./mcp/deadend.js";
-import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
-import { createLandingTools, type LandingDependencies } from "./mcp/landing.js";
+import { createClaimTools, type ClaimDependencies } from "./claim.js";
+import { createHelpTools, type HelpDependencies } from "./help.js";
+import { createMergeTools, type MergeDependencies } from "./merge.js";
+import { createHitlTools, type HitlDependencies } from "./hitl.js";
+import type { HostDependencies } from "./host.js";
+import { applyOutputContracts } from "./contracts.js";
+import { createProjectTools, type ProjectDependencies } from "./project.js";
+import { createGateTools, type GateDependencies } from "./gate.js";
+import { createDeadendTools, type DeadendDependencies } from "./deadend.js";
+import { createHygieneTools, type HygieneDependencies } from "./hygiene.js";
+import { createLandingTools, type LandingDependencies } from "./landing.js";
 import {
   createObservabilityTools,
-  type EventsSinceInput,
   type ObservabilityDependencies,
-} from "./mcp/observability.js";
+} from "./observability.js";
 import {
   createReviewTools,
   type ReviewDependencies,
-} from "./mcp/review.js";
-import { createRunnerTools, type RunnerDependencies } from "./mcp/runner.js";
+} from "./review.js";
+import { createRunnerTools, type RunnerDependencies } from "./runner.js";
 import {
   createStatuslineTools,
   type StatuslineDependencies,
-} from "./mcp/statusline.js";
-import { createStatusTools } from "./mcp/status.js";
-import type { CastleMcpTool } from "./mcp/tool.js";
-import { applyDangerPosture, type DangerPosture } from "./mcp/posture.js";
-import { createWaitTools, type WaitDependencies } from "./mcp/wait.js";
-import { createWorkerTools, type WorkerDependencies } from "./mcp/worker.js";
+} from "./statusline.js";
+import { createStatusTools } from "./status.js";
+import type { CastleMcpTool } from "./tool.js";
+import { applyDangerPosture, type DangerPosture } from "./posture.js";
+import { createWaitTools, type WaitDependencies } from "./wait.js";
+import { createWorkerTools, type WorkerDependencies } from "./worker.js";
 import {
   createWorktreeTools,
   type WorktreeDependencies,
-} from "./mcp/worktree.js";
+} from "./worktree.js";
 
-export type { CastleMcpTool } from "./mcp/tool.js";
-export { CASTLE_MCP_PROMPTS } from "./mcp/prompt.js";
-export type { CastleMcpPrompt } from "./mcp/prompt.js";
-export type { DangerPosture } from "./mcp/posture.js";
-export type { StatusInput, StatusScope } from "./mcp/status.js";
+/**
+ * The published name of the dev plugin's Plugin MCP (ADR 0147 rule 2).
+ *
+ * A plugin ships ONE MCP named `rs_<plugin>` — a thin, stateless ACP client of
+ * the `redskilled` daemon. The `rs_` prefix is visible on purpose: it survives
+ * hosts that do not namespace a server by its plugin, where the bare name of
+ * the daemon would read as the daemon itself rather than as a client of it.
+ */
+export const RS_DEV_MCP_SERVER_NAME = "rs_dev";
+
+export type { CastleMcpTool } from "./tool.js";
+export { CASTLE_MCP_PROMPTS } from "./prompt.js";
+export type { CastleMcpPrompt } from "./prompt.js";
+export type { DangerPosture } from "./posture.js";
+export type { StatusInput, StatusScope } from "./status.js";
 export {
   CASTLE_MCP_CONTRACT_VERSION,
   projectStatusOutputSchema,
@@ -46,7 +55,7 @@ export {
   queueStatusOutputSchema,
   workerVitalsOutputSchema,
   workerVitalsProjectedOutputSchema,
-} from "./mcp/contracts.js";
+} from "./contracts.js";
 export type {
   CastleMcpOutputContract,
   ProjectStatusOutput,
@@ -54,7 +63,7 @@ export type {
   QueueStatusOutput,
   WorkerVitalsOutput,
   WorkerVitalsProjectedOutput,
-} from "./mcp/contracts.js";
+} from "./contracts.js";
 export type {
   WorkSelectorInput,
   ProjectDrainInput,
@@ -62,34 +71,34 @@ export type {
   ProjectResizeInput,
   ProjectResetInput,
   ProjectStopInput,
-} from "./mcp/project.js";
-export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";
-export type { DeadendDependencies } from "./mcp/deadend.js";
+} from "./project.js";
+export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./observability.js";
+export type { DeadendDependencies } from "./deadend.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,
   WorkerStopInput,
-} from "./mcp/worker.js";
+} from "./worker.js";
 export type {
   RunnerDetectInput,
   WorkerSteerInput,
   WorkerSteerStatusInput,
   WorkerRequestInput,
-} from "./mcp/runner.js";
-export type { RequeueToolInput, RetakeToolInput } from "./mcp/hygiene.js";
-export type { GateRunInput } from "./mcp/gate.js";
-export type { LandBranchInput, CascadeStatusInput } from "./mcp/landing.js";
-export type { ClaimIssueInput } from "./mcp/claim.js";
-export type { MergeArmInput } from "./mcp/merge.js";
-export type { HitlResolveInput, HitlDecision } from "./mcp/hitl.js";
-export type { WorktreeRemoveInput } from "./mcp/worktree.js";
-export type { WaitStartInput, WaitStatusInput } from "./mcp/wait.js";
+} from "./runner.js";
+export type { RequeueToolInput, RetakeToolInput } from "./hygiene.js";
+export type { GateRunInput } from "./gate.js";
+export type { LandBranchInput, CascadeStatusInput } from "./landing.js";
+export type { ClaimIssueInput } from "./claim.js";
+export type { MergeArmInput } from "./merge.js";
+export type { HitlResolveInput, HitlDecision } from "./hitl.js";
+export type { WorktreeRemoveInput } from "./worktree.js";
+export type { WaitStartInput, WaitStatusInput } from "./wait.js";
 export type {
   DailyReviewInput,
   WeeklyReviewInput,
   TriageToolInput,
   RespondToolInput,
-} from "./mcp/review.js";
+} from "./review.js";
 
 /**
  * The host adapter implements every capability domain at once, so the

@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 <what-to-do>
 
-**Client of the `redskilled` MCP — the review tools are the primary surface.**
+**Client of the `rs_dev` MCP — the review tools are the primary surface.**
 Call the read tool matching the requested period — `daily_review` (default) or
 `weekly_review`, both `{}` — and present the structured TOON report; the tool
 surface and host prefix rule live in [`../afk/MCP.md`](../afk/MCP.md).

@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "redskilled": {
+    "rs_dev": {
       "command": "sh",
       "args": [
         "-c",
-        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; for launcher in \"$root/hooks/redskilled-mcp.sh\" \"$PWD/plugins/dev/hooks/redskilled-mcp.sh\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/dev/hooks/redskilled-mcp.sh\"; do if [ -f \"$launcher\" ]; then exec bash \"$launcher\"; fi; done; printf 'redskilled: could not locate redskilled MCP launcher\\n' >&2; exit 1"
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; for launcher in \"$root/hooks/redskilled-mcp.sh\" \"$PWD/plugins/dev/hooks/redskilled-mcp.sh\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/dev/hooks/redskilled-mcp.sh\"; do if [ -f \"$launcher\" ]; then exec bash \"$launcher\"; fi; done; printf 'rs_dev: could not locate the rs_dev MCP launcher\\n' >&2; exit 1"
       ]
     }
   }

@@ -13,7 +13,7 @@
 // supervisor the project spawned — the MCP registers, the daemon drives (#2902).
 
 import { z } from "zod/v3";
-import { refuseFleetNaming } from "../extinct-nouns.js";
+import { refuseFleetNaming } from "./extinct-nouns.js";
 import { projectStatusContract, type ProjectStatusOutput } from "./contracts.js";
 import {
   deprecatedStatusAlias,

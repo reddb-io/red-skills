@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod/v3";
-import { applyDangerPosture } from "./posture.js";
-import type { CastleMcpTool } from "./tool.js";
+import { applyDangerPosture } from "../src/mcp-tools/posture.js";
+import type { CastleMcpTool } from "../src/mcp-tools/tool.js";
 
 function safeTool(): CastleMcpTool {
   return {

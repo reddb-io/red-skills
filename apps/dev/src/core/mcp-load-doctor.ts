@@ -52,7 +52,7 @@ export interface McpLoadFacts {
   readonly declarationSource?: string;
   /**
    * The MCP servers the invoking session sees, bare (`redskilled`) or host-prefixed
-   * (`mcp__plugin_dev_redskilled__project_status`). `null` means the doctor was not
+   * (`mcp__plugin_dev_rs_dev__project_status`). `null` means the doctor was not
    * told, which is a warn and never an `ok`.
    */
   readonly sessionServers: readonly string[] | null;
@@ -85,7 +85,7 @@ export interface McpLoadReport {
  * Read the server out of one token the session named.
  *
  * Hosts expose a plugin's MCP tools as `mcp__<slug>__<tool>`, where the slug is
- * derived from the server name (`redskilled` → `plugin_dev_redskilled`). An agent
+ * derived from the server name (`rs_dev` → `plugin_dev_rs_dev`). An agent
  * listing its own tools reads the prefixed form, so accepting only bare names
  * would report every loaded server as missing.
  */

@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import {
   CASTLE_MCP_PROMPTS,
   createCastleMcpTools,
+  RS_DEV_MCP_SERVER_NAME,
   type CastleMcpDependencies,
-} from "@reddb-io/worker/mcp-server";
+} from "./mcp-tools/index.js";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 import { invokeProjectMcp } from "./project-acp-adapter.js";
 import {
@@ -24,7 +25,7 @@ export function createRedskilledMcpServer(
   root = process.cwd(),
   acpInvoke?: (method: string, input: Record<string, unknown>) => Promise<unknown>,
 ): McpServer {
-  const server = new McpServer({ name: "redskilled", version: buildInfo.version });
+  const server = new McpServer({ name: RS_DEV_MCP_SERVER_NAME, version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
     name: string,
     config: {
