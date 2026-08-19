@@ -5,6 +5,7 @@ import {
   auditDomainVocabulary,
   DOMAIN_VOCABULARY_ALLOWANCES,
   DOMAIN_VOCABULARY_ROOTS,
+  DOMAIN_VOCABULARY_SKILL_ROOTS,
   readDomainVocabularyFiles,
   RETIRED_OWNERSHIP_TERMS,
   staleDomainVocabularyAllowances,
@@ -24,6 +25,47 @@ describe("domain vocabulary ratchet — a retired owner named in live source is 
         `the sweep reached nothing under ${root}`,
       ).toBe(true);
     }
+  });
+
+  it("reaches the shipped skills, which are the source for a reader who has no source", () => {
+    for (const root of DOMAIN_VOCABULARY_SKILL_ROOTS) {
+      const swept = LIVE_FILES.filter((file) => file.path.startsWith(`${root}/`));
+      expect(swept.length, `the sweep reached nothing under ${root}`).toBeGreaterThan(0);
+      expect(swept.every((file) => file.kind === "prose" && file.path.endsWith(".md"))).toBe(true);
+    }
+    // A projection is not a second place to fix: the mirrors are generated.
+    expect(LIVE_FILES.some((file) => file.path.startsWith("packaging/pi/"))).toBe(false);
+  });
+
+  it("refuses a retired owner taught by a shipped skill", () => {
+    const skill: DomainVocabularyFile = {
+      path: "plugins/dev/skills/engineering/invented/SKILL.md",
+      sourceText: "The **Castle resident** owns engine state; ask it first.\n",
+      kind: "prose",
+    };
+
+    const [finding] = auditDomainVocabulary([skill]);
+
+    expect(finding?.term).toBe("Castle resident");
+    expect(finding?.reason).toContain("redskilled's Project control state");
+  });
+
+  it("reads prose as prose: an HTML comment is history, a URL is not a comment", () => {
+    const historical: DomainVocabularyFile = {
+      path: "plugins/dev/skills/engineering/invented/HISTORY.md",
+      sourceText: "<!-- the Demand producer was retired by ADR 0147 -->\nThe daemon reaps.\n",
+      kind: "prose",
+    };
+    expect(auditDomainVocabulary([historical])).toEqual([]);
+
+    // `//` inside a link must not swallow the rest of the line, or a skill could
+    // hide a retired owner behind a URL and read clean.
+    const behindAUrl: DomainVocabularyFile = {
+      path: "plugins/dev/skills/engineering/invented/LINK.md",
+      sourceText: "See https://example.test/adr — the Castle resident answers.\n",
+      kind: "prose",
+    };
+    expect(auditDomainVocabulary([behindAUrl])).toHaveLength(1);
   });
 
   it("holds live source to the live ownership vocabulary", () => {
