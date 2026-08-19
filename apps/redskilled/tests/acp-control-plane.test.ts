@@ -1044,7 +1044,10 @@ function projectControlMeta(meta: unknown): ProjectControlSnapshot {
   const control = (meta as { redskills?: { projectControl?: unknown } } | undefined)
     ?.redskills?.projectControl;
   expect(control).toMatchObject({ version: 1, project_id: expect.any(String) });
-  const { status: _status, ...snapshot } = control as ProjectControlOperationResult;
+  // `status` and `warning` belong to the ANSWER a mutation gives, not to the
+  // record it leaves behind: status reports the same dead end as `detail`.
+  const { status: _status, warning: _warning, ...snapshot } =
+    control as ProjectControlOperationResult & { warning?: string };
   return snapshot;
 }
 
