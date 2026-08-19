@@ -120,6 +120,14 @@ export interface RedskilledDaemonOptions {
   /** Registrations proved to remain behind another live daemon beyond this socket. */
   readonly orphanedRegistrations?: readonly RedskilledOrphanedRegistration[];
   readonly idleMs?: number;
+  /**
+   * How long a dead Worker's evidence lane survives (ADR 0149 §2).
+   *
+   * Host policy, resolved once at boot and carried to admission, because every
+   * Worker on this machine must age out on the same clock — a per-repository
+   * answer is the shape the host-scoped daemon exists to refuse.
+   */
+  readonly evidenceTtlMs?: number;
   /** The host-wide ceiling admission is decided against; the host's own by default. */
   readonly ceiling?: RedskilledHostCeiling;
   readonly owner?: RedskilledLeaseOwner;
