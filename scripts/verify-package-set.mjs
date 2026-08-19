@@ -5,10 +5,16 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const SCHEMA = "red.package-set.v1";
+const SCHEMA = "red.package-set.v2";
 const COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const EXPECTED_KEYS = ["schema", "sourceCommit", "artifacts", "wholeSetDigest"];
+const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
+// Mirrored from scripts/build-package-set.mjs on purpose: the verifier an
+// operator downloads must decide alone, with no import of the builder that
+// produced the bytes it is judging.
+const CHANNELS = ["stable", "canary", "next", "pinned"];
+const TARGETS = ["linux-x64", "windows-x64"];
+const EXPECTED_KEYS = ["schema", "sourceCommit", "version", "channel", "targets", "artifacts", "wholeSetDigest"];
 const EXPECTED_ARTIFACT_KEYS = ["name", "sourceCommit", "size", "sha256"];
 const GITHUB_ISSUER = "https://token.actions.githubusercontent.com";
 const RELEASE_IDENTITY =
@@ -77,6 +83,17 @@ function parseAndValidateManifest(manifestPath) {
   if (!sameKeys(manifest, EXPECTED_KEYS)) fail("manifest shape or key order is not canonical");
   if (manifest.schema !== SCHEMA) fail(`unsupported manifest schema: ${String(manifest.schema)}`);
   if (!COMMIT.test(manifest.sourceCommit)) fail("manifest source commit is invalid");
+  if (typeof manifest.version !== "string" || !VERSION.test(manifest.version)) fail("manifest version is invalid");
+  if (!CHANNELS.includes(manifest.channel)) fail(`manifest channel is not a known channel: ${String(manifest.channel)}`);
+  if (!Array.isArray(manifest.targets) || manifest.targets.length === 0) {
+    fail("manifest must declare at least one target");
+  }
+  let priorTarget = "";
+  for (const target of manifest.targets) {
+    if (!TARGETS.includes(target)) fail(`manifest declares an unknown target: ${String(target)}`);
+    if (priorTarget && priorTarget.localeCompare(target, "en") >= 0) fail("targets must be unique and sorted");
+    priorTarget = target;
+  }
   if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length === 0) {
     fail("manifest must declare at least one artifact");
   }
@@ -110,6 +127,9 @@ function parseAndValidateManifest(manifestPath) {
   const identity = {
     schema: manifest.schema,
     sourceCommit: manifest.sourceCommit,
+    version: manifest.version,
+    channel: manifest.channel,
+    targets: manifest.targets,
     artifacts: manifest.artifacts,
   };
   const expectedDigest = sha256(Buffer.from(`${JSON.stringify(identity)}\n`));
@@ -148,6 +168,12 @@ function parseArgs(argv) {
     } else if (argument === "--trusted-root" && value) {
       options.trustedRootPath = resolve(value);
       index += 1;
+    } else if (argument === "--require-target" && value) {
+      // A depot is target-specific: the set it accepts must SAY it was built
+      // for that target. Without this the reader can only refuse an unknown
+      // schema, which is why `targets` moved inside the identity (#4005).
+      options.requireTarget = value;
+      index += 1;
     } else if (argument === "--certificate-identity-regexp" && value) {
       // Smoke/test override only: the release verifier default pins the
       // red-publish workflow identity. A pull-request smoke signs under its
@@ -168,8 +194,13 @@ try {
   if (!existsSync(options.manifestPath)) fail("manifest is missing");
   verifySignature(options);
   const manifest = parseAndValidateManifest(options.manifestPath);
+  if (options.requireTarget && !manifest.targets.includes(options.requireTarget)) {
+    fail(`package set was not built for ${options.requireTarget} (targets: ${manifest.targets.join(", ")})`);
+  }
   verifyArtifacts(manifest, options.manifestPath);
-  process.stdout.write(`verified package set ${manifest.wholeSetDigest}\n`);
+  process.stdout.write(
+    `verified package set ${manifest.wholeSetDigest} (${manifest.version}, ${manifest.channel}, ${manifest.targets.join(" ")})\n`,
+  );
 } catch (error) {
   process.stderr.write(`package-set verification failed: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;

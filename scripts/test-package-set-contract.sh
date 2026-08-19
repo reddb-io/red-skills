@@ -121,11 +121,20 @@ writeFileSync(bundle, `${JSON.stringify({ sha256 })}\n`);
 EOF
 }
 
+# The fixture identity every case that is not ABOUT version/channel/targets
+# builds with, so those cases stay about what they were about (#4005).
+fixture_version="9.9.9"
+fixture_channel="stable"
+fixture_target="linux-x64"
+
 build() {
   local commit="$1" out="$2"
   shift 2
   node scripts/build-package-set.mjs \
     --source-commit "$commit" \
+    --release-version "$fixture_version" \
+    --channel "$fixture_channel" \
+    --target "$fixture_target" \
     --out "$out" \
     "$@"
 }
@@ -198,6 +207,9 @@ manifest.artifacts[0].sourceCommit = otherCommit;
 const identity = {
   schema: manifest.schema,
   sourceCommit: manifest.sourceCommit,
+  version: manifest.version,
+  channel: manifest.channel,
+  targets: manifest.targets,
   artifacts: manifest.artifacts,
 };
 manifest.wholeSetDigest = createHash("sha256").update(`${JSON.stringify(identity)}\n`).digest("hex");
@@ -222,6 +234,9 @@ manifest.artifacts[0].name = "../alpha.bin";
 const identity = {
   schema: manifest.schema,
   sourceCommit: manifest.sourceCommit,
+  version: manifest.version,
+  channel: manifest.channel,
+  targets: manifest.targets,
   artifacts: manifest.artifacts,
 };
 manifest.wholeSetDigest = createHash("sha256").update(`${JSON.stringify(identity)}\n`).digest("hex");
@@ -242,6 +257,107 @@ if grep -Eq 'fetch\(|https?\.request|node:(http|https|net|tls|dns)' scripts/expa
   fail "offline expander must not contain a network client"
 fi
 pass "expander has no network client"
+
+# --- the signed identity carries version, channel and targets (#4005) --------
+#
+# red-dev verifies the published set before it moves `~/.red/skills/current`,
+# and the three facts it must decide on — which version, which channel, which
+# platform the set was built for — used to sit OUTSIDE the bytes anybody signed.
+# A fact a consumer decides on belongs inside the signature.
+
+for field in version channel targets; do
+  case "$field" in
+    version) other=(--release-version 9.9.10 --channel "$fixture_channel" --target "$fixture_target") ;;
+    channel) other=(--release-version "$fixture_version" --channel next --target "$fixture_target") ;;
+    targets) other=(--release-version "$fixture_version" --channel "$fixture_channel" --target windows-x64) ;;
+  esac
+  node scripts/build-package-set.mjs \
+    --source-commit "$source_commit" \
+    "${other[@]}" \
+    --out "$tmp/identity-$field.json" \
+    --asset "$tmp/assets/alpha.bin" \
+    --asset "$tmp/assets/beta.bin" >/dev/null
+  changed="$(node -p "require('$tmp/identity-$field.json').wholeSetDigest")"
+  [ "$first_digest" != "$changed" ] || fail "$field must be inside the whole-set digest"
+done
+pass "version, channel and targets are inside the whole-set digest"
+
+# Tampering with a signed manifest's identity is the failure the digest exists
+# for: re-signing proves the refusal is the schema boundary, not the signature.
+for field in version channel targets; do
+  cp "$tmp/first.json" "$tmp/assets/package-set.manifest.json"
+  node --input-type=module - "$tmp/assets/package-set.manifest.json" "$field" <<'EOF'
+import { readFileSync, writeFileSync } from "node:fs";
+const [, , path, field] = process.argv;
+const manifest = JSON.parse(readFileSync(path, "utf8"));
+if (field === "version") manifest.version = "9.9.10";
+if (field === "channel") manifest.channel = "next";
+if (field === "targets") manifest.targets = ["windows-x64"];
+writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+EOF
+  sign_fixture "$tmp/assets/package-set.manifest.json" "$tmp/assets/identity-tamper.sigstore.json"
+  if verify "$tmp/assets/package-set.manifest.json" "$tmp/assets/identity-tamper.sigstore.json" >/dev/null 2>&1; then
+    fail "an altered $field must be refused"
+  fi
+done
+pass "an altered version, channel or target is refused"
+
+# The builder refuses a value no reader could decide on, at the moment it is
+# cheapest to fix: before anything is signed.
+for bad in "--channel nightly" "--target darwin-arm64" "--release-version v9.9.9"; do
+  # shellcheck disable=SC2086
+  if node scripts/build-package-set.mjs \
+    --source-commit "$source_commit" \
+    --release-version "$fixture_version" \
+    --channel "$fixture_channel" \
+    --target "$fixture_target" \
+    $bad \
+    --out "$tmp/refused.json" \
+    --asset "$tmp/assets/alpha.bin" >/dev/null 2>&1; then
+    fail "the builder must refuse $bad"
+  fi
+done
+pass "the builder refuses an unknown channel, target, or malformed version"
+
+# A depot is target-specific (red-dev ADR 0010): it must be able to refuse a set
+# built for another platform, which is only possible once `targets` is signed.
+cp "$tmp/first.json" "$tmp/assets/package-set.manifest.json"
+sign_fixture "$tmp/assets/package-set.manifest.json" "$tmp/assets/target.sigstore.json"
+node scripts/verify-package-set.mjs \
+  --manifest "$tmp/assets/package-set.manifest.json" \
+  --bundle "$tmp/assets/target.sigstore.json" \
+  --cosign-bin "$tmp/bin/cosign" \
+  --require-target linux-x64 >/dev/null || fail "--require-target must accept a declared target"
+if node scripts/verify-package-set.mjs \
+  --manifest "$tmp/assets/package-set.manifest.json" \
+  --bundle "$tmp/assets/target.sigstore.json" \
+  --cosign-bin "$tmp/bin/cosign" \
+  --require-target windows-x64 >/dev/null 2>&1; then
+  fail "--require-target must refuse a set built for another target"
+fi
+pass "a depot can require the target the set declares"
+
+# A v1 reader must fail CLOSED on v2 rather than read the fields it recognises
+# and ignore the three it does not. The two checks below are v1's whole
+# discrimination — canonical key set, then schema string.
+v1_reads_v2="$(node --input-type=module - "$tmp/first.json" <<'EOF'
+import { readFileSync } from "node:fs";
+const manifest = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const V1_KEYS = ["schema", "sourceCommit", "artifacts", "wholeSetDigest"];
+const sameKeys = JSON.stringify(Object.keys(manifest)) === JSON.stringify(V1_KEYS);
+process.stdout.write(sameKeys && manifest.schema === "red.package-set.v1" ? "accepted" : "refused");
+EOF
+)"
+[ "$v1_reads_v2" = "refused" ] || fail "a v1 reader must fail closed on a v2 manifest"
+pass "a v1 reader fails closed on a v2 manifest"
+
+# The schema a consumer mirrors must be written down beside the verifier it
+# mirrors, or the next reader guesses.
+[ -f scripts/PACKAGE-SET-SCHEMA.md ] || fail "the package-set schema must be documented beside the verifier"
+for documented in red.package-set.v2 version channel targets wholeSetDigest; do
+  grep -Fq "$documented" scripts/PACKAGE-SET-SCHEMA.md || fail "schema doc does not describe $documented"
+done
+pass "the schema is documented beside the verifier"
 
 # --- the complete workstation package set (Ticket #3977) ---------------------
 #

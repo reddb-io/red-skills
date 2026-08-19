@@ -136,6 +136,14 @@ export function githubReleaseAssets(version) {
   ];
 }
 
+/**
+ * The platform tokens a release's package set is built for (#4005). Declared
+ * here, beside the payload enumeration, because the release workflow must
+ * never spell a target in a literal of its own: the set and the targets it
+ * claims come from the same one place.
+ */
+export const WORKSTATION_TARGETS = ["linux-x64", "windows-x64"];
+
 function parseArgs(argv) {
   const options = { mode: "workstation", version: "" };
   for (let index = 0; index < argv.length; index += 1) {
@@ -153,7 +161,8 @@ function parseArgs(argv) {
       argument === "--developer-only" ||
       argument === "--github-release" ||
       argument === "--archives" ||
-      argument === "--plugin-payloads"
+      argument === "--plugin-payloads" ||
+      argument === "--targets"
     ) {
       options.mode = argument.slice(2);
       continue;
@@ -167,6 +176,7 @@ export function render(options) {
   if (options.mode === "developer-only") return DEVELOPER_ONLY_ARTIFACTS.map((artifact) => artifact.asset);
   if (options.mode === "github-release") return githubReleaseAssets(options.version);
   if (options.mode === "plugin-payloads") return pluginPayloads();
+  if (options.mode === "targets") return [...WORKSTATION_TARGETS];
   if (options.mode === "archives") {
     return archivePayloads(options.version).map((payload) => `${payload.asset}\t${payload.expandsTo.join(",")}`);
   }

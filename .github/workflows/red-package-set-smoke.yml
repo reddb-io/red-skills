@@ -54,6 +54,9 @@ jobs:
           cp scripts/verify-package-set.mjs dist/verify-package-set.mjs
           node scripts/build-package-set.mjs \
             --source-commit "$SOURCE_COMMIT" \
+            --release-version 9.9.9 \
+            --channel pinned \
+            --target linux-x64 \
             --out dist/package-set.manifest.json \
             --asset dist/alpha.bin \
             --asset dist/beta.bin \
