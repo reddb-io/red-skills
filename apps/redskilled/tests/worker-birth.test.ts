@@ -10,6 +10,7 @@ import { isRedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import {
+  encodeHostWorkerId,
   launchWorker,
   mintHostWorkerId,
   RedskilledWorkerSpecError,
@@ -59,8 +60,7 @@ describe("worker birth through the socket", () => {
 
     expect(isRedskilledWorkerView(started.worker)).toBe(true);
     expect(started.worker.project_label).toBe("acme/widgets");
-    expect(started.worker.worker_id).toMatch(/^h[A-Z0-9]{4}$/);
-    expect(started.worker.worker_id).toHaveLength(5);
+    expect(started.worker.worker_id).toMatch(/^[0-9A-Za-z]{7}$/);
     expect(started.worker.pid).toBeGreaterThan(0);
     expect(started.worker.workspace_path).toBe(workspace);
 
@@ -161,15 +161,61 @@ describe("worker birth through the socket", () => {
 });
 
 describe("host-minted Worker ids", () => {
-  it("retries a collision against the live set and stays short", () => {
-    const draws = [0, 0, 0, 0, 0, 0, 0, 1];
-    const workerId = mintHostWorkerId(["hAAAA", "wVWHA"], () => draws.shift()!);
+  // ADR 0149 §3: the id IS the birth instant, so the order is readable from the
+  // name and a prune is a prefix scan.
+  const FIXED_WIDTH_BASE62 = /^[0-9A-Za-z]{7}$/;
 
-    expect(workerId).toBe("hAAAB");
-    expect(workerId).toHaveLength(5);
-    expect(workerId.startsWith("h")).toBe(true);
-    expect(workerId.startsWith("w")).toBe(false);
-    expect(draws).toEqual([]);
+  it("mints fixed-width base62 ids that sort lexicographically by birth", () => {
+    const first = mintHostWorkerId([]);
+    const second = mintHostWorkerId([first]);
+
+    expect(first).toMatch(FIXED_WIDTH_BASE62);
+    expect(second).toMatch(FIXED_WIDTH_BASE62);
+    // Strictly less, not merely different: two Workers born inside one
+    // millisecond still have to come out in the order they were born.
+    expect(first < second).toBe(true);
+  });
+
+  it("walks the birth instant forward by 1 ms until the id is not a live one", () => {
+    const bornAtMs = 1_770_000_000_000;
+    const taken = [encodeHostWorkerId(bornAtMs), encodeHostWorkerId(bornAtMs + 1)];
+
+    const workerId = mintHostWorkerId([...taken, "wVWHA"], () => bornAtMs);
+
+    expect(workerId).toBe(encodeHostWorkerId(bornAtMs + 2));
+    expect(taken).not.toContain(workerId);
+    expect(workerId).toMatch(FIXED_WIDTH_BASE62);
+  });
+
+  it("never returns a live id however crowded the millisecond is", () => {
+    const bornAtMs = 1_770_000_000_000;
+    const live = new Set(
+      Array.from({ length: 64 }, (_unused, offset) => encodeHostWorkerId(bornAtMs + offset)),
+    );
+
+    const workerId = mintHostWorkerId(live, () => bornAtMs);
+
+    expect(live.has(workerId)).toBe(false);
+    expect(workerId).toBe(encodeHostWorkerId(bornAtMs + 64));
+  });
+
+  it("encodes the birth epoch so a byte-order sort is a birth-order sort", () => {
+    const instants = [0, 1, 61, 62, 3_843, 1_770_000_000_000, 1_770_000_000_001];
+    const ids = instants.map(encodeHostWorkerId);
+
+    expect(ids[0]).toBe("0000000");
+    expect(ids[1]).toBe("0000001");
+    expect(ids[2]).toBe("000000z");
+    expect(ids[3]).toBe("0000010");
+    expect(ids.every((id) => FIXED_WIDTH_BASE62.test(id))).toBe(true);
+    expect([...ids].sort()).toEqual(ids);
+  });
+
+  it("refuses a birth instant that does not fit the fixed width", () => {
+    // 62^7 ms after the epoch — the first instant a 7-character id would have to
+    // grow for, which would silently break the sort it exists to provide.
+    expect(() => encodeHostWorkerId(62 ** 7)).toThrow(RedskilledWorkerSpecError);
+    expect(() => encodeHostWorkerId(-1)).toThrow(RedskilledWorkerSpecError);
   });
 });
 
