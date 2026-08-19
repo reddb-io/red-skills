@@ -15,14 +15,10 @@ Call the read tool `dashboard` — `{periodDays?}` (default 30) — and present 
 structured TOON result; the tool surface and host prefix rule live in
 [`../afk/MCP.md`](../afk/MCP.md).
 
-When the MCP is unreachable, name that and fall back to the `red-skills-dev`
-CLI — same engine, same cores (see
-[`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run
-shim and output-format rules):
-
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev dashboard [--period 30d] [--json]`
-
-Dev-checkout equivalent: `node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard [--period 30d] [--json]`
+When the MCP is unreachable, name that and repair it — the daemon or the plugin
+load, per [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md), which
+also carries the output-format rules. ADR 0147 rule 1 left no second
+implementation of this report to fall back to.
 
 </what-to-do>
 

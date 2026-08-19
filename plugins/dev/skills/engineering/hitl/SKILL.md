@@ -16,8 +16,9 @@ read with `gh issue list`/`view`, but every state transition this skill applies
 is a redskilled tool: `requeue` for the delegable transition, `hitl_resolve` for the
 atomic park/close/retake dispositions with the rationale on the audit trail.
 The tool surface and prefix rule live in [`../afk/MCP.md`](../afk/MCP.md); when
-the MCP is unreachable, name that and fall back to the `red-skills-dev` CLI —
-same engine, same cores. Never apply the transition by flipping labels by hand.
+the MCP is unreachable, name that and repair the daemon — ADR 0147 rule 1 left no
+second implementation to fall back to. Never apply the transition by flipping
+labels by hand.
 
 <what-to-do>
 
@@ -129,7 +130,6 @@ guidance is the maintainer's answer. It performs the whole transition
 atomically: archives the active `## Current blocker` into `## Resolved
 blockers`, posts the guidance as the auditable Directive comment, removes
 `ready-for-human` and every stale `blocked:*` label, adds `ready-for-agent`.
-CLI fallback: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue N --guidance "..."`.
 
 If non-delegable — the `hitl_resolve` tool (MUTATING),
 `{issue, decision: "park", rationale}` with the next pending decision as the

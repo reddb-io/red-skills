@@ -16,16 +16,23 @@ default lane, one exception lane, and several on-ramps that feed those lanes.
 
 ## 1. Classify The Situation
 
-**Tracked work defaults to `/afk`.** If the work is already a Ticket, should be a
-Ticket, or belongs to a Spec, route it through `/afk`. This is the modus
-operandi. `/afk` boot owns the Docs Sweep, so stranded `.red/` glossary/ADR docs
-auto-land or halt before worker dispatch rather than becoming a separate route.
+**Route by Working mode first** (ADR 0150 §1). Work enters four ways, each skill
+declares which one it serves in its header, and the mode decides whose checkout is
+at stake: **interactive** and **ADR-editing** run in a Worktree under this
+checkout, while **spec-driven** and **ad-hoc** run in workspaces the `redskilled`
+daemon places.
 
-**Ad-hoc work goes to `/go`.** Use `/go` only for a concrete one-off demand that
-does not already belong on the tracker. It still runs on the `red-castle` engine under
-the shared worker root, with `current.kind=go`; read-only investigations use
-`/go --scout` with `current.kind=scout`. If the work is already tracked, keep it
-in `/afk`; if it is parked, use `/retake` or `/hitl`.
+**Tracked work defaults to `/afk`** — the spec-driven entrance. If the work is
+already a Ticket, should be a Ticket, or belongs to a Spec, route it through
+`/afk`. This is the modus operandi. `/afk` is thin: it registers the Project with
+the daemon at a runner and a target, arms the drain, and observes.
+
+**Ad-hoc work goes to `/go`** — one dispatch call carrying one approved demand,
+then observation. Use `/go` only for a concrete one-off demand that does not
+already belong on the tracker; the Worker it returns is stamped
+`current.kind=go`, and read-only investigations are dispatched in `scout` mode
+with `current.kind=scout`. If the work is already tracked, keep it in `/afk`; if
+it is parked, use `/retake` or `/hitl`.
 
 **Ideas become Specs before execution.** For a fuzzy idea that fits in one
 conversation, run `/start`, then `/to-spec`, then `/to-tickets`, then `/afk`.
@@ -73,18 +80,16 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   `.red/tmp/diagnostics/redskilled-debug-<n>-<timestamp>.md`. A Worker the
   daemon refused at birth still gets one. Reconstructing the Ticket's *work*
   state instead — PRs, branches, worktrees, blocker — stays with `/retake`.
-- **A superseded-engine warning** -> run the exact
-  `npx -y -p @reddb-io/red-skills@<version> red-skills-dev reconcile-engine`
-  command printed by the warning, then retry the dispatch. The
-  command warms that published dev bundle and re-points a standing registration
-  in one operation; no separate plugin name, version lookup, or re-registration
-  is required.
+- **A superseded-engine warning** -> call the rs_dev `reconcile_engine` tool
+  (MUTATING) named by the warning, then retry the dispatch. It warms the
+  published engine into the stable cache path and re-points a standing
+  registration in one operation; no separate plugin name, version lookup, or
+  re-registration is required.
 - **Operating project execution** -> the `rs_dev` MCP, not a shell command.
   Call its `help` tool first and follow the pasteable next action it derives
   from live host state; it is the sole runtime source of execution choreography
-  (ADR 0134). The stdio MCP and the `project` CLI namespace exposed by
-  `red-skills-dev` are
-  stateless ACP clients of **redskilled**; the daemon owns Project control state,
+  (ADR 0134). The `rs_dev` MCP is a thin, stateless ACP client of
+  **redskilled** (ADR 0147 rule 2); the daemon owns Project control state,
   GitHub access, and Worker supervision, while generic ACP core retains the same
   workflow without typed RedSkills extensions. Use the ACP-projected response
   for project workflow truth and `/redskilled` for host process/budget truth.

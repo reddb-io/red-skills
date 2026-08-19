@@ -96,20 +96,19 @@ over, or read a pid file for. The steps below are the whole flow.
    rather than silently dropped.
 4. **Attach the best available monitor surface.**
    - Claude Code: no automatic monitor cron. Tell the user to read
-     `status {scope: worker}`, or — without the MCP —
-     to run `/dev:afk monitor` manually.
+     `status {scope: worker}`, or to tail
+     `.red/tmp/workers/*/worker.log.toonl`.
    - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query:
      `spawn agent background monitor`). If available, spawn exactly one read-only
-     Codex monitor agent with `RED_AFK_RUNNER=codex red-skills-dev
-     codex-monitor-agent --project-root "$PWD" --mode fleet`. Its task:
+     Codex monitor agent with the prompt the `codex_monitor_agent` tool returns
+     for `mode: fleet`. Its task:
      periodically read `status {scope: worker}`, report concise progress, and
      auto-close when this project holds no registration and no `[live]` workers
      remain. It must never edit files, claim issues, stop workers, or run merges.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print the registration the daemon handed back — its project
    label, target, selector and renewal deadline — then the monitor line:
-   `monitor: call status {scope: worker};
-   no-MCP fallback: run /dev:afk monitor.`
+   `monitor: call status {scope: worker}.`
 
 ### Stopping — give the registration back
 

@@ -12,19 +12,17 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 
 ## Runtime & Invocation
 
-The skill ships a single committed runtime bundle. Invoke it as:
+**A client calls a tool; it runs no binary** (ADR 0147 rule 1). `/afk` reaches the
+`rs_dev` Plugin MCP, which forwards to the always-on `redskilled` daemon over ACP;
+the daemon admits each Worker and runs the Worker body from `@reddb-io/worker`
+(ADR 0148). The complete tool surface is [`../MCP.md`](../MCP.md).
 
-```
-RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> red-skills-dev <command> [params]
-```
+The runner is the daemon's to resolve unless a call pins one: `runner_detect`
+answers what this host resolves to, and `runner` on a registration or dispatch is
+the pin. Do not infer a runner from binaries on `PATH`.
 
-The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host runner (`codex` from Codex, `claude` from Claude Code). Do not infer a different runner from binaries on `PATH`; use `--runner` only when the user explicitly pinned one.
-
-`afk.mjs` is a **dedicated forwarder** (ADR 0039 entrypoint, build role `run:dev`): every argument is passed straight to the `dev` bundle, whose own command surface (`run`, `monitor`, `fleet`, …) is documented below. So `… afk.mjs run --once`, `… afk.mjs monitor`, and the bare `… afk.mjs --issues 42` all reach the orchestrator. The generic entrypoint verbs (`run <plugin>` / `fetch`) belong to `red-fetch.mjs`, not to this launcher — they do **not** shadow the bundle's commands (#434).
-
-Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface.
-
-The bundle is a single self-contained build (one file, one inlined runtime dependency, no `node_modules`, no install step) and is the public entrypoint. Every command — orchestration, supervisor, statusline, and hooks — executes natively in the bundle.
+The verbs and their parameters are documented in *When To Use* below — that
+section is authoritative for the surface a skill drives.
 
 ## Execution Substrate (ADR 0033)
 

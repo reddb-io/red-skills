@@ -238,10 +238,10 @@ describe("red-setup docs", () => {
     );
 
     expect(skill).toContain("**Section E1 — Runtime launcher");
-    expect(skill).toContain("stable command, not a global fake plugin-root variable");
-    expect(skill).toContain(
-      "warm-cache optimization over the canonical `npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>` form",
-    );
+    // ADR 0147 rule 1 removed the dev-runtime shim: a workflow verb is an rs_dev
+    // tool and process lifecycle is the daemon's own argv (#4030). What survives
+    // is the reason the section exists — a stable command beats a global env var.
+    expect(skill).toContain("Neither needs a host-level");
     expect(skill).toContain("Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally");
     expect(script).toContain("RED_SKILLS_DEV_PLUGIN_ROOT");
     expect(script).toContain("rsp_target=");
@@ -441,7 +441,7 @@ describe("wayfinder docs", () => {
     const config = await readRepoFile("plugins/dev/skills/engineering/afk/docs/CONFIG.md");
 
     for (const doc of [skill, labels, interview, config]) {
-      expect(doc).toContain("install-type-labels");
+      expect(doc).toContain("install_type_labels");
     }
     expect(labels).toContain("ONE protection with two halves");
     expect(skill).toContain("Never create a type label with bare `gh label create`");

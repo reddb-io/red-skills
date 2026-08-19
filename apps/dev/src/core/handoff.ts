@@ -22,7 +22,6 @@
 //   <prev-failure-context> · <thread-discussion> · <agent-notes>
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/worker";
-import { renderAmbientSkill, type RspInstructionRunner } from "../../../rsp/src/ambient-skill.js";
 import { classifyComment, extractDirectives } from "./comment-classification.js";
 import { renderTerseSteeringBlock, type OutputShapingAssignment } from "./output-shaping.js";
 import { isTrustedSource, type SourceTrustLevel } from "./source-trust.js";
@@ -533,17 +532,12 @@ export const AGENT_OUTPUT_INSTRUCTION = [
  * clause spliced in before `</exit-protocol>`; a non-schema runner gets the
  * plain {@link EXIT_PROTOCOL} (text-sentinel-only) — the coexist fallback.
  */
-export function rspInstructionRunner(runner: string | undefined): RspInstructionRunner | undefined {
-  if (runner === "codex") return "codex";
-  if (runner === "claude" || runner === "claude-minimax") return "claude";
-  return undefined;
-}
-
-function withRspInstructions(protocol: string, runner: string | undefined): string {
-  const instructionRunner = rspInstructionRunner(runner);
-  if (!instructionRunner) return protocol;
-  return `${protocol}\n\n${renderAmbientSkill(undefined, { runner: instructionRunner })}`;
-}
+// The token-efficient terminal section used to be appended here, so every Worker
+// on a schema-enabled runner opened with a wrapper table for a surface ADR 0147
+// rule 4 switched off. An instruction block for hooks that no longer fire is worse
+// than no block: it spends the handoff's most expensive real estate teaching a
+// route that will not answer. It leaves with the hooks; the code under `apps/rsp`
+// stays for the fold-in (Spec #4007, issue #4030).
 
 /** Render the experimental feedback-stage checklist without widening its command set. */
 export function buildPreflight(commands: readonly string[] | undefined): string {
@@ -575,5 +569,5 @@ export function exitProtocolFor(opts: {
   const protocol = opts.structuredOutput
     ? EXIT_PROTOCOL.replace(closing, `${AGENT_OUTPUT_INSTRUCTION}\n${closing}`)
     : EXIT_PROTOCOL;
-  return withRspInstructions(withPreflight(protocol, opts.preflightCommands), opts.runner);
+  return withPreflight(protocol, opts.preflightCommands);
 }

@@ -63,7 +63,7 @@ Confirm with the user:
 - Does the `quarantine` label exist? If not, create it idempotently (`gh label create quarantine --color D93F0B --description "Issue-local AFK safety hold; Issue curator releases or parks for HITL"`). ADR 0122 boot probes apply this label instead of halting the drain on one incoherent issue.
 - Does the `runner-error` label exist? If not, create it (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`). The `/afk` fleet supervisor falls back to creating it on the fly during a circuit trip, but provisioning it here keeps colour/description consistent across repos.
 - Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-tickets` (`gh label create req:<n>`) like `spec:N`, so they need no upfront provisioning.
-- Provision the Wayfinder labels `/wayfinder` uses to type map and child Tickets. The map label is plain (`gh label create wayfinder:map --color C5DEF5`); the **ticket TYPE labels go through the installer, never bare `gh label create`** — `npx -y -p @reddb-io/red-skills@<version> red-skills-dev install-type-labels` creates `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, and `wayfinder:task` **and** declares the HUMAN-ONLY ones (`wayfinder:grilling`, `wayfinder:prototype`) in `plugins.dev.afk.labels.hitl_types`. Installing the labels without that declaration leaves the repo looking protected while unblocked decision Tickets enter the autonomous queue (issue #3013) — see triage-labels *HUMAN-ONLY types*. AFK routing still comes only from `ready-for-agent` / `blocked:dependency`, and HITL routing from `ready-for-human`.
+- Provision the Wayfinder labels `/wayfinder` uses to type map and child Tickets. The map label is plain (`gh label create wayfinder:map --color C5DEF5`); the **ticket TYPE labels go through the installer, never bare `gh label create`** — the rs_dev `install_type_labels` tool creates `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, and `wayfinder:task` **and** declares the HUMAN-ONLY ones (`wayfinder:grilling`, `wayfinder:prototype`) in `plugins.dev.afk.labels.hitl_types`. Installing the labels without that declaration leaves the repo looking protected while unblocked decision Tickets enter the autonomous queue (issue #3013) — see triage-labels *HUMAN-ONLY types*. AFK routing still comes only from `ready-for-agent` / `blocked:dependency`, and HITL routing from `ready-for-human`.
 - Provision the typed **blocked-reason** labels `/afk` applies to describe *why* an iteration stopped (it falls back to creating each on the fly, so this only keeps colour/description consistent): `gh label create blocked:quota`, `blocked:runner`, `blocked:runner-transient`, `blocked:merge-conflict`, `blocked:ci`, `blocked:spec`, `blocked:validation`, `blocked:crashed`, `blocked:policy`, `blocked:stalled`, `blocked:infra` (suggested colour `E99695`, descriptions per the *Blocked Reasons* table in triage-labels). These are descriptive (added alongside the routing label) — see triage-labels.
 
 **Autonomous AFK execution lane (opt-in — default NO).** Beyond auto-triage, RedSkills can run `/afk` itself **from GitHub Actions** — one attempt per issue, opening a PR with no human at a terminal (the "offline" / headless lane, ADR 0059/0062). This is a bigger commitment than auto-triage, so it is **off by default**. Offer it, defaulting to no:
@@ -112,32 +112,26 @@ The per-host ambient instruction surface that replaces legacy host-local termina
 
 The full provisioning story — how the binary reaches a host without a global install, the opt-in knobs, the escape hatches (`RSP_NO_PROXY=1` / `RED_SKILLS_RSP_NO_PROXY=1`), and the failure semantics — is documented in `apps/rsp/README.md` under **Provisioning**.
 
-**Section E1 — Runtime launcher (strongly recommended).**
+**Section E1 — Runtime launcher.**
 
-> Explainer: `CLAUDE_PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, and similar variables are plugin/hook environment variables. They are not guaranteed in the interactive shell where an agent runs `/afk`, `/go`, `/dashboard`, or `/retake`. Setting those names globally is brittle because they point at versioned plugin-cache directories and can become stale after an update. The cross-CLI surface should be a stable command, not a global fake plugin-root variable.
+> Explainer: a workflow verb is an `rs_dev` MCP tool, and process lifecycle is the
+> `redskilled` daemon's own argv (ADR 0147 rule 1). Neither needs a host-level
+> shim, so this section no longer offers one for the dev runtime: the launcher it
+> used to install pointed at a binary the execution chain no longer ships.
 
-Offer to install the host-level runtime shim:
+What still wants a stable local command is `rsp`, the repo-local wrapper surface.
+Offer to install just that shim:
 
 ```bash
 bash plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh
 ```
 
-The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev` and `${XDG_BIN_HOME:-$HOME/.local/bin}/rsp`. The `red-skills-dev` shim:
-
-- prefers the active CLI plugin-root env var when the host exposes one;
-- otherwise finds the latest installed dev plugin under `~/.codex/plugins/cache/red-skills/dev/*` or `~/.claude/plugins/cache/red-skills/dev/*`;
-- falls back to the latest warmed dev bundle under `~/.cache/red-skills/bundles/`;
-- forwards all arguments to the dev runtime, so skills reach the same cores rs_dev `status { scope: worker }`, `dashboard`, and `worker_dispatch` drive. The shim is a **warm-cache optimization over the canonical `npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>` form** (ADR 0091), never a replacement for it: the same no-MCP fallbacks are `go ...`, `dashboard`, or `RED_AFK_RUNNER=codex … monitor --once`;
-- stores no secrets and does not replace the `.red/config.yaml` opt-in gate.
-
-The `rsp` shim uses the same local-first shape: active plugin-root env var, installed host plugin cache, then the warmed rsp bundle under `${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}`. It never runs npm, installs a global package, or performs network resolution during session startup.
+The `rsp` shim resolves local-first: active plugin-root env var, installed host plugin cache, then the warmed rsp bundle under `${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}`. It never runs npm, installs a global package, or performs network resolution during session startup, stores no secrets, and does not replace the `.red/config.yaml` opt-in gate.
 
 After installing, verify:
 
 ```bash
-command -v red-skills-dev
 command -v rsp
-npx -y -p @reddb-io/red-skills@<version> red-skills-dev dashboard --json
 rsp git status
 ```
 

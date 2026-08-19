@@ -28,7 +28,7 @@ disable-model-invocation: true
 
 ## 3. Codex
 
-1. Inspect the active `~/.codex/config.toml` footer preference with `npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline`.
+1. Inspect the active `~/.codex/config.toml` footer preference with the rs_dev `codex_statusline` read tool.
 2. **Preserve host preference** — if `tui.status_line` is already custom, leave it alone unless the user explicitly asks to fix or replace it.
 3. **Apply the adapter recipe only on request** — read [HOST-NOTES.md](HOST-NOTES.md#codex-adapter-recipe), then run the explicit fixer or write the recommended global footer. Treat this as host-global config, not repo state.
 4. **Report AFK visibility honestly** — Codex gets native footer widgets plus `/afk monitor`; it cannot inject the shared command-backed producer into the footer yet.

@@ -10,10 +10,15 @@
 //
 // **A SKILL IS THE ONLY WITNESS THAT KEEPS A VERB ALIVE.** Not the router, not the
 // test suite, not a habit: a shipped skill telling an agent to run it. So the
-// named half is DISCOVERED, by sweeping the shipped skill tree, and only the
-// mapping is declared. A verb that appears in a skill tomorrow fails the ratchet
-// until it has a tool — and a verb whose last mention leaves the docs fails it
-// too, because a mapping nobody needs is a tool nobody asked for.
+// named half was DISCOVERED, by sweeping the shipped skill tree, and only the
+// mapping was declared.
+//
+// **The sweep has since run to zero** (issue #4030): every skill that named a verb
+// now names the tool, so the ratchet's live assertion is the stronger one — NO
+// shipped skill names the deleted binary at all. What the discovery produced stays
+// here as the PROMOTION LEDGER: each verb beside the tool that inherited its core,
+// pinned against the composed `rs_dev` surface so a promoted core cannot quietly
+// leave it. Deleting an entry is deleting the capability, not tidying a list.
 //
 // The declaration deliberately does not spell the dying binary: the one literal
 // lives in `bare-invocation-guard.ts` beside the other sweep that hunts it, so the
@@ -33,7 +38,8 @@ export interface SkillNamedVerbTool {
 }
 
 /**
- * Every verb the shipped skill tree still names, paired with its `rs_dev` tool.
+ * The promotion ledger: every verb a shipped skill named when the sweep last found
+ * one, paired with the `rs_dev` tool that inherited its core.
  *
  * A pairing is by CORE, not by spelling: `monitor` becomes `status {scope: worker}`
  * because the monitor contract is exactly what that scope returns, and `go` becomes

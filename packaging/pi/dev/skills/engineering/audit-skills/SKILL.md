@@ -12,11 +12,12 @@ disable-model-invocation: true
 
 **Run the read-only auditor and read the scorecard back — never edit a skill from here.** The audit reports; it has no `--fix`, no git, no gh, no backlog seam by construction.
 
-Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev audit-skills [--mechanical-only] [--json|--human]`
+Call the read tool `audit_skills` — `{mechanical_only?, runner?}` — and present
+its structured TOON scorecard. The tool surface and host prefix rule live in
+[`../afk/MCP.md`](../afk/MCP.md); the runtime contract is
+[`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md).
 
-Dev-checkout equivalent: `node plugins/dev/skills/engineering/afk/bin/afk.mjs audit-skills [--mechanical-only]`
-
-**`--mechanical-only` skips the LLM judge** — objective checks alone, no provider call. Drop it for the full semantic pass (the judge runs on the dev review engine via sandcastle structured output, worst-first).
+**`mechanical_only` skips the LLM judge** — objective checks alone, no provider call. Drop it for the full semantic pass (the judge runs on the dev review engine via sandcastle structured output, worst-first).
 
 </what-to-do>
 

@@ -181,6 +181,17 @@ for now. See `plugins/dev/skills/engineering/red-setup/domain.md`.
 
 ## Development workflow
 
+**Work enters RedSkills exactly four ways, and every skill names which one it serves** (ADR 0150 §1, declared as `working-mode:` in each SKILL.md header). The mode decides where the work RUNS, so a reader who cannot tell the mode cannot tell whose checkout is at stake:
+
+| Working mode | Entrance | Where the work runs |
+| --- | --- | --- |
+| **interactive** | a human drives a coder CLI | a fresh Worktree under this checkout's `.red/tmp/worktrees/manual` |
+| **spec-driven** | `/start` → `/to-spec` → `/to-tickets` → `/afk` | Worker workspaces the `redskilled` daemon places |
+| **ad-hoc** | `/go "<demand>"` | one Worker workspace the daemon places |
+| **ADR-editing** | `/adr-editor` | a fresh Worktree under this checkout's manual lane |
+
+Interactive and ADR-editing Worktrees stay under this checkout because a human returns to them; spec-driven and ad-hoc work is coordinated by the daemon, which is always on and is the only thing that births a Worker — a client that finds no daemon fails closed rather than spawning one.
+
 **`/afk` is the modus operandi; `/go` is the ad-hoc exception.**
 
 - Canonical `.red/` layout follows ADR 0098: tracked knowledge/config stays in `.red/{config.yaml,adr/,contexts/,agents/,contracts/,hooks/}`, plugin stores keep their documented homes (`memory/`, `brain/`, `wiki/`), durable machine state belongs under `.red/state/`, and `.red/tmp/` is 100% disposable scratch. Every writer must use a named lane; do not create loose files directly under `.red/tmp/`. A project's `.red/` never contains `redskilled` daemon logs: the one-per-machine daemon outlives and is shared by projects, so its home is `~/.red/redskilled/` (created by the daemon's provisioner or canonical log writer), its log is `~/.red/redskilled/redskilled.log.toonl`, and its death lane is `~/.red/redskilled/state/deaths/deaths.toonl`.

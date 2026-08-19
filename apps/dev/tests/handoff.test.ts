@@ -12,7 +12,6 @@ import {
   SCOUT_EXIT_PROTOCOL,
   AGENT_OUTPUT_INSTRUCTION,
   exitProtocolFor,
-  rspInstructionRunner,
   UNTRUSTED_PAYLOAD_NOTICE,
   type HandoffComment,
 } from "../src/core/handoff.js";
@@ -418,25 +417,20 @@ describe("buildHandoff", () => {
     expect(exitProtocolFor({ runMode: "scout", structuredOutput: true })).toBe(SCOUT_EXIT_PROTOCOL);
   });
 
-  it("exitProtocolFor adds generated rsp guidance for Codex with safe-loop interception", () => {
-    const p = exitProtocolFor({ runner: "codex", structuredOutput: false });
-    expect(p).toContain("Codex lane");
-    expect(p).toContain("rsp git status");
-    expect(p).toContain("rsp show el:<id>");
-    expect(p).toContain("interception hook collapses recognized run, job, and release loops");
+  // ADR 0147 rule 4 switched the rsp hooks off, so the token-efficient terminal
+  // section left the handoff with them (#4030). An instruction block for hooks
+  // that no longer fire spends the handoff's most expensive real estate teaching
+  // a route that will not answer.
+  it("exitProtocolFor carries no token-efficient terminal section, on any runner", () => {
+    for (const runner of ["codex", "claude", "claude-minimax", "opencode", undefined]) {
+      const p = exitProtocolFor({ runner, structuredOutput: true });
+      expect(p, `${runner ?? "no runner"} gets no wrapper table`).not.toContain("rsp show el:<id>");
+      expect(p).not.toContain("token-efficient command wrappers");
+    }
   });
 
-  it("exitProtocolFor adds generated rsp guidance for Claude and marks interception present", () => {
-    const p = exitProtocolFor({ runner: "claude", structuredOutput: true });
-    expect(p).toContain("Claude lane");
-    expect(p).toContain("pre-execution interception is available");
-    expect(p).toContain("direct calls still help");
-    expect(p).toContain("<agent-output>");
-  });
-
-  it("maps claude-minimax to the Claude rsp instruction lane and leaves other runners alone", () => {
-    expect(rspInstructionRunner("claude-minimax")).toBe("claude");
-    expect(rspInstructionRunner("opencode")).toBeUndefined();
+  it("exitProtocolFor still adds the structured-output clause for a schema runner", () => {
+    expect(exitProtocolFor({ runner: "claude", structuredOutput: true })).toContain("<agent-output>");
   });
 
   it("case5: malformed envelope → no previous-workers, no human-guidance, surfaces in discussion", () => {

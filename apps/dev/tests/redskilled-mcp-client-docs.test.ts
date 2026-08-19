@@ -57,12 +57,14 @@ describe("rs_dev MCP client docs contract", () => {
     }
   });
 
-  it("names the server, the host prefix rule, and the CLI fallback", async () => {
+  it("names the server, the host prefix rule, and the absence of a fallback", async () => {
     const doc = await readRepoFile(MCP_DOC);
 
     expect(doc).toContain("`rs_dev` MCP");
     expect(doc).toContain("mcp__");
-    expect(doc).toContain("red-skills-dev");
+    // ADR 0147 rule 1 deleted the second implementation rather than deprecating
+    // it (#4030): the client contract must say so instead of routing to it.
+    expect(doc).toContain("no second implementation");
   });
 
   it("makes /afk drive execution through the rs_dev MCP tools", async () => {
@@ -140,12 +142,13 @@ describe("rs_dev MCP client docs contract", () => {
       expect(doc, `${path} should name the reload cure`).toContain("/reload-plugins");
       expect(doc, `${path} should name the mid-session install`).toContain("installed or updated in THIS session");
 
-      // Order is the contract: the reload question must precede the CLI
-      // fallback, or the fallback hides the gap it should have caught.
+      // Order is the contract: the reload question must precede the verdict that
+      // the surface is down, or "the daemon is broken" hides the gap it should
+      // have caught. The verdict is now a repair, not a fallback (#4030).
       const reloadAt = doc.indexOf("/reload-plugins");
-      const fallbackAt = doc.indexOf("Only once the reload is ruled out");
-      expect(fallbackAt, `${path} should gate the fallback behind the reload check`).toBeGreaterThan(-1);
-      expect(reloadAt, `${path} should ask about reload before falling back`).toBeLessThan(fallbackAt);
+      const verdictAt = doc.indexOf("the reload is ruled out");
+      expect(verdictAt, `${path} should gate the outage verdict behind the reload check`).toBeGreaterThan(-1);
+      expect(reloadAt, `${path} should ask about reload before declaring an outage`).toBeLessThan(verdictAt);
     }
   });
 

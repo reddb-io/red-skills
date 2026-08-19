@@ -69,10 +69,12 @@ describe("skill progressive-disclosure docs", () => {
     expect(skill).toContain("<supporting-info>");
     expect(skill).toContain("[HOST-NOTES.md](HOST-NOTES.md)");
     expect(skill).not.toContain("Claude Code's `statusLine` renders multiple rows");
-    expect(skill).not.toContain("red-skills-dev codex-statusline --fix");
+    // ADR 0147 rule 1 made the Codex fixer a tool rather than a CLI flag (#4030);
+    // the split this pins is still the point — the recipe lives in HOST-NOTES.
+    expect(skill).not.toContain("an explicit inspector, the `codex_statusline` read tool");
 
     expect(hostNotes).toContain("Claude Code's `statusLine` renders multiple rows");
-    expect(hostNotes).toContain("red-skills-dev codex-statusline --fix");
+    expect(hostNotes).toContain("an explicit inspector, the `codex_statusline` read tool");
     expect(hostNotes).toContain("Every `k=v` key on this line is **exactly 3 letters**");
     expect(hostNotes).toContain('"refreshInterval": 60');
     expect(hostNotes).not.toContain('"refreshInterval": 5');
