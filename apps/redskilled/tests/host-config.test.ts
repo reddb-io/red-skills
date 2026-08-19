@@ -14,9 +14,11 @@ import {
   RedskilledGithubProfileConfigError,
   readRedskilledHostConfig,
   resolveRedskilledHostEventSinks,
+  REDSKILLED_EVIDENCE_TTL_MS_ENV,
   resolveRedskilledHostSettings,
 } from "../src/host-config.js";
 import { provisionRedskilledHome } from "../src/provision.js";
+import { DEFAULT_WORKER_EVIDENCE_TTL_MS } from "../src/worker-evidence.js";
 
 const roots: string[] = [];
 const TOTAL = 16_000_000_000;
@@ -250,6 +252,31 @@ describe("host setting precedence", () => {
       config: { idleMs: "60000" },
       totalMemoryBytes: TOTAL,
     })).toMatchObject({ idleMs: 60_000, idleMsSource: "home-config" });
+  });
+
+  it("resolves the evidence TTL with the same precedence, and lets an operator ask for zero", () => {
+    expect(resolveRedskilledHostSettings({
+      flags: { evidenceTtlMs: 1_000 },
+      env: { [REDSKILLED_EVIDENCE_TTL_MS_ENV]: "2000" },
+      config: { evidenceTtlMs: "3000" },
+      totalMemoryBytes: TOTAL,
+    })).toMatchObject({ evidenceTtlMs: 1_000, evidenceTtlMsSource: "flag" });
+    expect(resolveRedskilledHostSettings({
+      env: { [REDSKILLED_EVIDENCE_TTL_MS_ENV]: "2000" },
+      config: { evidenceTtlMs: "3000" },
+      totalMemoryBytes: TOTAL,
+    })).toMatchObject({ evidenceTtlMs: 2_000, evidenceTtlMsSource: "environment" });
+    expect(resolveRedskilledHostSettings({
+      env: {},
+      config: { evidenceTtlMs: "3000" },
+      totalMemoryBytes: TOTAL,
+    })).toMatchObject({ evidenceTtlMs: 3_000, evidenceTtlMsSource: "home-config" });
+    // ADR 0149 §2's default, for a host that has never said otherwise.
+    expect(resolveRedskilledHostSettings({ env: {}, totalMemoryBytes: TOTAL }))
+      .toMatchObject({ evidenceTtlMs: DEFAULT_WORKER_EVIDENCE_TTL_MS, evidenceTtlMsSource: "derived-default" });
+    // "Keep nothing" is a declaration, not a typo: zero survives the bound.
+    expect(resolveRedskilledHostSettings({ env: {}, config: { evidenceTtlMs: "0" }, totalMemoryBytes: TOTAL }))
+      .toMatchObject({ evidenceTtlMs: 0, evidenceTtlMsSource: "home-config" });
   });
 
   it("derives validation slots from the tightest CPU, memory, and Worker ceiling", () => {
