@@ -45,6 +45,8 @@ function projectSession() {
         // A drained queue is one the daemon actually polls, which it does only
         // for a registration.
         registered: true,
+        // A drained queue listed nothing because there was nothing to list.
+        items: [],
       },
       workers: {
         total: 0,

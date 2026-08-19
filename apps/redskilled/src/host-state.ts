@@ -258,6 +258,13 @@ export interface RedskilledRegistrationPoll {
   /** What that whole interval cost, however many projects it covered. */
   readonly request_count: number;
   readonly detail: string;
+  /**
+   * The identifiers the poll counted, when its transport listed them (#4098).
+   *
+   * Opaque: stored, reported and handed to a birth, never parsed. Absent when
+   * the transport counted without listing — an unknown list is not an empty one.
+   */
+  readonly items?: readonly string[];
 }
 
 /**
@@ -514,6 +521,7 @@ function buildRegistrationViews(input: BuildHostStateInput): readonly Redskilled
               depth: polled.depth,
               request_count: queue.request_count,
               detail: polled.detail,
+              ...(polled.items == null ? {} : { items: [...polled.items] }),
             },
           }),
       };

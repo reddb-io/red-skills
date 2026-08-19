@@ -135,6 +135,7 @@ import { pollRegistrationActivity } from "./registration-activity.js";
 import { REDSKILLED_ACTIVITY_STALENESS_FACTOR } from "../activity-report.js";
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
+  carryQueueItems,
   fetchQueueDiscovery,
   nextQueuePollMs,
   unconfiguredQueueDiscovery,
@@ -911,12 +912,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       lastQueue = unconfiguredQueueDiscovery(projects, now, queueUnconfiguredReason);
       return lastQueue;
     }
-    lastQueue = await remotePoll("queue poll", () => fetchQueueDiscovery({
+    lastQueue = carryQueueItems(
+      await remotePoll("queue poll", () => fetchQueueDiscovery({
         projects,
         transport: queueTransport!,
         now,
         ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
-      }));
+      })),
+      lastQueue,
+    );
     // The depth this poll just counted is the renewal a project with open work
     // gets (Amendment 7), applied here rather than at the next read so a deadline
     // is never judged against a poll the daemon had already superseded.

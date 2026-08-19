@@ -46,6 +46,12 @@ export interface ProjectStatusContext {
     readonly detail: string;
     /** Whether a registration — the thing the demand loop polls — is held. */
     readonly registered: boolean;
+    /**
+     * The identifiers the last poll counted (#4098), when its transport listed
+     * them. Reported so an operator can see WHAT the daemon believes is queued,
+     * not only how much. Opaque here as everywhere: never parsed.
+     */
+    readonly items: readonly string[];
   };
   readonly workers: {
     readonly total: number;
@@ -175,6 +181,7 @@ export function projectStatusSnapshot(
         ? UNREGISTERED_DRAIN_WARNING
         : intent?.detail ?? poll?.detail ?? "the daemon has not observed this Project queue",
       registered: registration != null,
+      items: [...(poll?.items ?? [])],
     },
     workers: {
       total: workers.length,

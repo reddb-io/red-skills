@@ -87,6 +87,70 @@ export interface RedskilledProjectQueue {
   /** How many items the selector matched; `null` for every outcome but `counted`. */
   readonly depth: number | null;
   readonly detail: string;
+  /**
+   * The identifiers this poll counted, when the transport returned them.
+   *
+   * **A poll that counts and then discards has to be asked again.** The REST
+   * lane already holds every item it counted; throwing the identifiers away
+   * left a birth with a depth and nothing to hand a Worker (Spec #4097). These
+   * are OPAQUE strings: carrying what a poll returned is not reading it (ADR
+   * 0130 rule 3), and no code may branch on their content.
+   *
+   * Absent — never `[]` — when the transport counted without listing, because
+   * an unknown list is not an empty one. The GraphQL lane asks for a count and
+   * gets a number, so it says nothing here.
+   */
+  readonly items?: readonly string[];
+}
+
+/**
+ * How many identifiers one poll keeps.
+ *
+ * Enough to feed a target's worth of births with margin, and no more: a record
+ * that grew with the backlog would put an unbounded list in a document every
+ * status read carries.
+ */
+export const REDSKILLED_QUEUE_ITEM_CAP = 32;
+
+/**
+ * Carry the identifiers a previous poll saw across one that could not list.
+ *
+ * **An unreachable queue is not an empty one.** A poll that fails says nothing
+ * about what is queued, so erasing the last list would tell every later reader
+ * that the backlog emptied at the moment the network did. A `counted` poll
+ * always replaces — including with an empty list, which is a real answer. PURE.
+ */
+export function carryQueueItems(
+  next: RedskilledQueueDiscovery,
+  previous: RedskilledQueueDiscovery | null,
+): RedskilledQueueDiscovery {
+  if (previous == null) return next;
+  const held = new Map(previous.projects.map((project) => [project.project_label, project.items]));
+  return {
+    ...next,
+    projects: next.projects.map((project) => {
+      if (project.items != null) return project;
+      const carried = held.get(project.project_label);
+      return carried == null ? project : { ...project, items: [...carried] };
+    }),
+  };
+}
+
+/**
+ * The identifiers a REST answer listed, as opaque strings. PURE.
+ *
+ * An item the transport returned without one is skipped rather than given an
+ * invented name: a birth handed a fabricated identifier is worse than a birth
+ * the daemon declines to plan.
+ */
+export function queueItemIdentifiers(items: readonly Record<string, unknown>[]): readonly string[] {
+  const identifiers: string[] = [];
+  for (const item of items) {
+    if (identifiers.length >= REDSKILLED_QUEUE_ITEM_CAP) break;
+    const number = item.number;
+    if (typeof number === "number" && Number.isInteger(number) && number > 0) identifiers.push(String(number));
+  }
+  return identifiers;
 }
 
 /** What the token had left when the query answered; `null` when it did not say. */
@@ -364,13 +428,15 @@ async function fetchConditionalQueueDiscovery(
         operation: REDSKILLED_QUEUE_REST_OPERATION,
       });
       requestCount += answer.requestCount;
-      const depth = answer.data.filter((item) => !isRecord(item.pull_request)).length;
+      const matched = answer.data.filter((item) => !isRecord(item.pull_request));
+      const depth = matched.length;
       rateLimit = mergeRateLimit(rateLimit, queueRateLimitFromHeaders(answer.headers));
       projects.push({
         project_label: project.project_label,
         outcome: "counted",
         depth,
         detail: `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector`,
+        items: queueItemIdentifiers(matched),
       });
     } catch (error) {
       const rateLimited = isGithubRateLimitError(error);
