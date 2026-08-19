@@ -22,6 +22,7 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { ACP_AGENT_CATALOG, type AcpEndpoint } from "./acp-agent-catalog.js";
+import { publicationMethodDomain } from "./acp-publication.js";
 import {
   ACP_PROTOCOL_VERSION,
   REDSKILLS_WIRE_MAJOR,
@@ -37,6 +38,7 @@ import {
   type AcpSessionJournal,
 } from "./acp-session-journal.js";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
+import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import { workerModeEnv } from "@reddb-io/shared/working-mode.js";
 import { resolveAcpWorkerEndpoint, type RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
@@ -83,6 +85,14 @@ interface NativeWorkerAdmissionOptions {
   readonly evidenceRoot?: string;
   /** How long an expired lane survives. Host policy; thirty days by default. */
   readonly evidenceTtlMs?: number;
+  /**
+   * The Project-bound GitHub gateway this Worker publishes and lands THROUGH.
+   *
+   * Absent is legal and means the Worker's publication requests are refused
+   * with the gateway's own authorization answer — which is the truth when a
+   * daemon has no forge, and better than a Worker discovering it by pushing.
+   */
+  readonly githubGateway?: RedskilledGithubGatewayRegistration;
 }
 
 export async function admitNativeAcpWorker(
@@ -133,6 +143,18 @@ export async function admitNativeAcpWorker(
 
   let downstreamSessionId = "";
   let sessionArtifact: WorkerEvidencePlan["sessionArtifact"];
+  // Filled in once the handle exists, and read on every publication request.
+  // Until then — and after `cleanupWorkflowWorker` marks the handle spent —
+  // there is no Worker for the daemon to publish AS, and the domain refuses.
+  const holding: { worker?: ActiveWorkflowWorker } = {};
+  const publication = publicationMethodDomain({
+    ...(options.githubGateway == null ? { gateway: undefined } : { gateway: options.githubGateway }),
+    held: () => {
+      const worker = holding.worker;
+      if (worker == null || worker.cleaned) return undefined;
+      return { workerId: worker.workerId, worktreePath: workspace.worktreePath, project: session.project };
+    },
+  });
   const downstreamApp = client({ name: "redskilled" })
     .onNotification(methods.client.session.update, async ({ params }) => {
       const downstreamRedskills = (params._meta as {
@@ -165,6 +187,14 @@ export async function admitNativeAcpWorker(
       ...params,
       sessionId: publicSessionId,
     }));
+  // Bound HERE rather than on the public control plane: the socket is what says
+  // which Worker is asking, and no client of the daemon may publish as one.
+  for (const binding of publication.bindings) {
+    // The Worker connection hands a handler no peer of its own: the daemon IS
+    // the peer here, so the context the domain expects is completed with none.
+    downstreamApp.onRequest(binding.method, binding.params, ({ params }) =>
+      binding.handle({ params, client: undefined }));
+  }
   const connection = downstreamApp.connect(socketStream(workerSocket));
   try {
     const initialized = await connection.agent.request(methods.agent.initialize, {
@@ -210,7 +240,7 @@ export async function admitNativeAcpWorker(
     throw error;
   }
 
-  return {
+  const admitted: ActiveWorkflowWorker = {
     workerId: launched.worker.worker_id,
     workspace,
     evidence: {
@@ -229,6 +259,8 @@ export async function admitNativeAcpWorker(
     cancelled: false,
     cleaned: false,
   };
+  holding.worker = admitted;
+  return admitted;
 }
 
 function nativeWorkerSpec(

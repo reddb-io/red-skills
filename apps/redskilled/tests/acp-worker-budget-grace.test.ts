@@ -17,7 +17,7 @@ describe("ACP Worker Budget grace", () => {
       cancelChildAgent: async () => { order.push("cancel"); },
       checkpointLocalWork: async () => {
         order.push("checkpoint");
-        return { ref: "refs/heads/worker-3842", sha: "a".repeat(40) };
+        return { branch: "worker-3842", commit: "a".repeat(40) };
       },
       requestPublication,
       writeEnvelope: async (value) => { order.push("envelope"); envelope = value; },
@@ -35,11 +35,8 @@ describe("ACP Worker Budget grace", () => {
     expect(order).toEqual(["cancel", "checkpoint", "publication", "envelope", "exit"]);
     expect(requestPublication).toHaveBeenCalledWith({
       idempotency_key: "worker-budget-grace:wGRACE",
-      write: {
-        kind: "repository-push",
-        ref: "refs/heads/worker-3842",
-        sha: "a".repeat(40),
-      },
+      branch: "worker-3842",
+      commit: "a".repeat(40),
     });
     expect(requestPublication.mock.calls[0]![0]).not.toHaveProperty("credential");
     expect(requestPublication.mock.calls[0]![0]).not.toHaveProperty("token");

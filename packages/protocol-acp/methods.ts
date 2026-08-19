@@ -32,6 +32,8 @@ export const REDSKILLS_ACP_METHODS = {
   githubWrite: "_redskills/github_write",
   githubUpdate: "_redskills/github_update",
   githubCustodyHandoff: "_redskills/github_custody_handoff",
+  publish: "_redskills/publish",
+  land: "_redskills/land",
   workerBudgetGrace: "_redskills/worker_budget_grace",
   goDispatch: "_redskills/go_dispatch",
   worktreeAdd: "_redskills/worktree_add",

@@ -1,6 +1,6 @@
 import {
   REDSKILLS_ACP_METHODS,
-  type RedskilledGithubWriteRequest,
+  type RedskilledPublishRequest,
 } from "@reddb-io/protocol-acp";
 
 /** ACP control delivered to a Worker after the daemon records its budget verdict. */
@@ -14,9 +14,17 @@ export interface WorkerBudgetGraceControl {
   readonly deadline_at: string;
 }
 
+/**
+ * The recoverable work a dying Worker committed, in the publication's own words.
+ *
+ * A branch rather than a `refs/heads/` ref, and a commit rather than a sha,
+ * because this goes out on `_redskills/publish` (#4019): a checkpoint that
+ * spelled its ref differently from an ordinary post-turn publication would be
+ * two vocabularies for one act, and the daemon would have to guess which.
+ */
 export interface WorkerBudgetGraceCheckpoint {
-  readonly ref: string;
-  readonly sha: string;
+  readonly branch: string;
+  readonly commit: string;
 }
 
 export interface WorkerBudgetExtensionBlocker {
@@ -45,7 +53,7 @@ export interface AcpWorkerBudgetGraceDeps {
   /** Commit recoverable local work and return the ref/commit to publish. */
   checkpointLocalWork(control: WorkerBudgetGraceControl): Promise<WorkerBudgetGraceCheckpoint | null>;
   /** Ask redskilled's Project-bound GitHub gateway to publish; no credential crosses this seam. */
-  requestPublication(request: RedskilledGithubWriteRequest): Promise<unknown>;
+  requestPublication(request: RedskilledPublishRequest): Promise<unknown>;
   writeEnvelope(envelope: WorkerBudgetGraceEnvelope): Promise<void>;
   /** End the Worker. Deadline expiry may independently kill it at any point. */
   terminate(): Promise<void> | void;
@@ -108,7 +116,8 @@ async function runBudgetGrace(
     try {
       publicationReceipt = await deps.requestPublication({
         idempotency_key: `worker-budget-grace:${control.worker_id}`,
-        write: { kind: "repository-push", ref: checkpoint.ref, sha: checkpoint.sha },
+        branch: checkpoint.branch,
+        commit: checkpoint.commit,
       });
     } catch (error) {
       failures.push(`publication: ${reason(error)}`);
