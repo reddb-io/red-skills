@@ -185,6 +185,8 @@ async function servePublicConnection(
   persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
   sessionJournal: DurableAcpSessionJournal,
 ): Promise<void> {
+  /** What this daemon is serving, read fresh so a handover is visible at once. */
+  const servedVersion = (): string => options.hostState().daemon_version;
   const sessions = new Map<string, PublicSession>();
   const active = new Map<string, ActiveWorkflowWorker>();
   const busy = new Set<string>();
@@ -264,10 +266,17 @@ async function servePublicConnection(
           ? params.protocolVersion
           : ACP_PROTOCOL_VERSION,
         agentCapabilities: { promptCapabilities: {} },
-        agentInfo: { name: "RedSkills", version: "1" },
+        agentInfo: { name: "RedSkills", version: servedVersion() },
         _meta: {
           redskills: {
             wireMajor: REDSKILLS_WIRE_MAJOR,
+            // **The daemon says which version it serves** (ADR 0151). A client
+            // that resolves a bundle from its own cache is one of three caches
+            // deciding independently, which is how one machine came to hold
+            // 3.17.1, 3.18.12 and 3.19.3 at once. Announced on the handshake so
+            // a launcher can ask instead of guessing; a differing MINOR is
+            // compatible by contract (ADR 0145 §3) and is not a refusal.
+            servedVersion: servedVersion(),
             workerBacked: true,
             ...v1Methods.capabilities,
           },
@@ -394,11 +403,13 @@ async function servePublicConnection(
       requireSupportedV2Revision(params._meta);
       return {
         protocolVersion: acpV2.PROTOCOL_VERSION,
-        info: { name: "RedSkills", version: "1" },
+        info: { name: "RedSkills", version: servedVersion() },
         capabilities: { session: {} },
         _meta: {
           redskills: {
             wireMajor: REDSKILLS_WIRE_MAJOR,
+            // Same answer on both wires: the daemon owns the version (ADR 0151).
+            servedVersion: servedVersion(),
             workerBacked: true,
             acpDraftRevision: ACP_V2_DRAFT_REVISION,
             ...v2Methods.capabilities,

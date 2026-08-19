@@ -70,7 +70,7 @@ describe("the host-native local ACP authority transport", () => {
     let workerSequence = 0;
     const controlPlane = await startRedskillsAcpControlPlane({
       paths,
-      hostState: () => ({ workers: [] }) as never,
+      hostState: () => ({ workers: [], daemon_version: "9.9.9" }) as never,
       startWorker: (spec) => launchTestWorker(spec, env, assignedWorkerEndpoints, ++workerSequence),
     });
 
@@ -83,6 +83,10 @@ describe("the host-native local ACP authority transport", () => {
       );
 
       const first = await openStdioProjection(env, "first");
+      // #4029 / ADR 0151: the daemon says which version it serves, so a launcher
+      // can ask instead of resolving a bundle from its own cache — the shape
+      // that let one machine hold three versions at once.
+      expect(first.initialized._meta?.redskills?.servedVersion).toBe("9.9.9");
       await exerciseWorkflow(first.connection, root, "first turn");
       await closeStdioProjection(first);
 
@@ -154,6 +158,7 @@ function launchTestWorker(
 async function openStdioProjection(env: NodeJS.ProcessEnv, label: string): Promise<{
   child: ChildProcess;
   connection: ReturnType<ReturnType<typeof client>["connect"]>;
+  initialized: { readonly _meta?: { readonly redskills?: { readonly servedVersion?: string } } };
 }> {
   const child = spawn(process.execPath, [
     "--import", tsxLoader,
@@ -165,12 +170,12 @@ async function openStdioProjection(env: NodeJS.ProcessEnv, label: string): Promi
   });
   children.push(child);
   const connection = client({ name: `${label}-stdio-projection` }).connect(childStream(child));
-  await connection.agent.request(methods.agent.initialize, {
+  const initialized = await connection.agent.request(methods.agent.initialize, {
     protocolVersion: 1,
     clientCapabilities: {},
     clientInfo: { name: `${label}-transport-client`, version: "1" },
   });
-  return { child, connection };
+  return { child, connection, initialized };
 }
 
 async function exerciseWorkflow(
