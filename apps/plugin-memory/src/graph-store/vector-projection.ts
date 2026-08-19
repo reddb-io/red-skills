@@ -247,6 +247,19 @@ function localVectorKey(sourceCollection: string, rid: number): string {
 export class MemoryVectorProjection {
   constructor(private readonly ctx: MemoryVectorProjectionContext) {}
 
+  /**
+   * The aggregate local-vector index, held open while a whole maintenance pass
+   * runs. `null` means "no pass is open — write the index through immediately".
+   *
+   * **A maintenance pass over N vectors must not write the index N times.** The
+   * index names every projected vector, so writing it after each record makes
+   * the pass quadratic in BYTES on a store that keeps every version: a 2233
+   * vector run rewrote a 2233-entry map 2233 times and the graph store grew to
+   * 3.75 GB (#3970). One flush per pass costs one write and describes the same
+   * end state.
+   */
+  private openIndex: Map<string, string> | null = null;
+
   private get db(): RedDB {
     return this.ctx.db;
   }
@@ -470,11 +483,22 @@ export class MemoryVectorProjection {
 
   async maintainVectorProjection(opts: { strict?: boolean } = {}): Promise<VectorStatusReport> {
     const strict = opts.strict === true;
-    for (const node of await this.listNodes()) {
-      await this.projectNodeVector(node.rid, node, strict);
-    }
-    for (const doc of await this.listDocs()) {
-      await this.projectDocVector(doc.rid, doc, strict);
+    // The pass holds the index open and owes exactly one write, even when a
+    // projection throws under --strict: a pass that died halfway still
+    // projected vectors, and an index that forgot them is worse than a large
+    // one — recall would not find records that are physically there.
+    this.openIndex = await this.readLocalVectorIndex();
+    try {
+      for (const node of await this.listNodes()) {
+        await this.projectNodeVector(node.rid, node, strict);
+      }
+      for (const doc of await this.listDocs()) {
+        await this.projectDocVector(doc.rid, doc, strict);
+      }
+    } finally {
+      const index = this.openIndex;
+      this.openIndex = null;
+      if (index != null) await this.writeLocalVectorIndex(index);
     }
     const report = await this.vectorStatus();
     if (strict && report.overall !== "ready") {
@@ -611,12 +635,15 @@ export class MemoryVectorProjection {
       record.source_collection === COLLECTIONS.docs ? record.doc_rid : record.node_rid;
     if (!Number.isFinite(targetRid)) return;
     await this.kv().put(localVectorKey(record.source_collection, Number(targetRid)), record);
-    const index = await this.readLocalVectorIndex();
+    const index = this.openIndex ?? (await this.readLocalVectorIndex());
     index.set(
       vectorTargetKey(record.source_collection, Number(targetRid)),
       localVectorKey(record.source_collection, Number(targetRid)),
     );
-    await this.writeLocalVectorIndex(index);
+    // Inside an open pass the flush is owed at the end, once, by whoever opened
+    // it. A single projection outside a pass still writes through, so nothing
+    // that projects one vector loses its index entry.
+    if (this.openIndex == null) await this.writeLocalVectorIndex(index);
   }
 
   private async readLocalVectorIndex(): Promise<Map<string, string>> {
