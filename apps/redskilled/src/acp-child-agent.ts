@@ -14,7 +14,7 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type { AcpEndpoint } from "./acp-agent-catalog.js";
-import { ACP_PROTOCOL_VERSION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
+import { ACP_PROTOCOL_VERSION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
 import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./acp-child-spin.js";
 import type { SpinPattern } from "@reddb-io/red-castle/engine/spin-evaluator";
 

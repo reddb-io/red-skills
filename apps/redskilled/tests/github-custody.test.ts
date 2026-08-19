@@ -13,7 +13,7 @@ import {
   type RedskilledGithubCustodyStatus,
 } from "../src/github-gateway.js";
 import { startRedskillsAcpControlPlane } from "../src/acp-control-plane.js";
-import { socketStream } from "../src/acp-socket.js";
+import { socketStream } from "@reddb-io/protocol-acp";
 import { resolveRedskilledPaths } from "../src/paths.js";
 
 const roots: string[] = [];

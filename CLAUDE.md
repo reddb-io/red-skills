@@ -43,6 +43,7 @@ red-skills/                         ← repo root + marketplace
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
 │   ├── build-info/                 ← shared build metadata helpers
 │   ├── github/                     ← the one budget-aware GitHub client: cardinality routing, asked balance, cache (ADR 0132)
+│   ├── protocol-acp/               ← the shared ACP wire: v1/v2 compat, the RedSkills wire major, socket transport, `_redskills/*` methods (ADR 0148/0153)
 │   ├── cdp-driver/, browser-bridge/ ← browser transport
 │   └── red-castle/                 ← vendored AFK execution substrate source (@reddb-io/red-castle, ADR 0061/0101)
 ├── dist/                           ← generated release bundles and manifests

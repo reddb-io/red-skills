@@ -96,6 +96,7 @@ describe("the live engine declares every wait it holds (#3024)", () => {
     expect(WAIT_SCAN_ROOTS).toEqual([
       "apps/dev/src",
       "apps/redskilled/src",
+      "packages/protocol-acp",
       "packages/shared/kill-tree.ts",
       "packages/red-castle/src",
     ]);

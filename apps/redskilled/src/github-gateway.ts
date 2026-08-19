@@ -11,6 +11,7 @@ import {
   type GithubLimitFact,
 } from "@reddb-io/github";
 import { isDeepStrictEqual } from "node:util";
+import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import {
   githubCredentialScopeRefusal,
 } from "./github-credential-profiles.js";
@@ -80,9 +81,9 @@ export {
   type RedskilledGithubWriteUpstreamInput,
 } from "./github-write.js";
 
-export const REDSKILLED_GITHUB_READ_METHOD = "_redskills/github_read";
-export const REDSKILLED_GITHUB_WRITE_METHOD = "_redskills/github_write";
-export const REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD = "_redskills/github_custody_handoff";
+export const REDSKILLED_GITHUB_READ_METHOD = REDSKILLS_ACP_METHODS.githubRead;
+export const REDSKILLED_GITHUB_WRITE_METHOD = REDSKILLS_ACP_METHODS.githubWrite;
+export const REDSKILLED_GITHUB_CUSTODY_HANDOFF_METHOD = REDSKILLS_ACP_METHODS.githubCustodyHandoff;
 
 export type {
   RedskilledGithubCustodyFault,

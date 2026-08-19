@@ -1,4 +1,5 @@
 import { RequestError } from "@agentclientprotocol/sdk";
+import { REDSKILLS_ACP_METHODS, emptyRedskillsParams } from "@reddb-io/protocol-acp";
 import {
   type RedskilledGithubBudgetGateway,
   type RedskilledGithubGateway,
@@ -9,8 +10,8 @@ import {
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 
-export const REDSKILLED_PROJECT_BUDGET_METHOD = "_redskills/project_budget";
-export const REDSKILLED_HOST_BUDGET_METHOD = "_redskills/host_budgets";
+export const REDSKILLED_PROJECT_BUDGET_METHOD = REDSKILLS_ACP_METHODS.projectBudget;
+export const REDSKILLED_HOST_BUDGET_METHOD = REDSKILLS_ACP_METHODS.hostBudgets;
 
 type EmptyParams = Record<string, never>;
 
@@ -69,12 +70,9 @@ export function bindAcpHostGithubBudget(
 }
 
 /** Both budget methods accept exactly an empty object; authority is never caller-named. */
-export function emptyBudgetParams(value: unknown): EmptyParams {
-  if (value == null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 0) {
-    throw RequestError.invalidParams({}, "credential-budget requests accept no caller-controlled authority fields");
-  }
-  return {};
-}
+export const emptyBudgetParams: (value: unknown) => EmptyParams = emptyRedskillsParams(
+  "credential-budget requests accept no caller-controlled authority fields",
+);
 
 function budgetGateway(gateway: RedskilledGithubGateway | undefined): RedskilledGithubBudgetGateway | null {
   if (gateway == null || !("projectBudget" in gateway) || !("hostBudget" in gateway)) return null;

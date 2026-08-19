@@ -143,6 +143,7 @@ release:
     - { path: packages/build-info/package.json, format: npm }
     - { path: packages/cdp-driver/package.json, format: npm }
     - { path: packages/github/package.json, format: npm }
+    - { path: packages/protocol-acp/package.json, format: npm }
     - { path: packages/red-castle/package.json, format: npm }
     - { path: packages/redskilled-render/package.json, format: npm }
     - { path: packages/shared/package.json, format: npm }

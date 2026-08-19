@@ -1,3 +1,13 @@
+// transport — the reconnectable local ACP endpoint (ADR 0145 §7).
+//
+// One control endpoint per authority: a Unix socket on Linux, a Named Pipe on
+// Windows. The two differ in exactly one observable way — a Unix socket leaves
+// a filesystem node behind that the next bind must remove, a Named Pipe dies
+// with its server handle — and that difference is spelled ONCE here, in
+// `removeAcpEndpoint`. A second copy is a Windows-only bug nobody sees on the
+// machine that wrote it.
+//
+// Transport changes no method and no ownership: everything here moves bytes.
 import { rm } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";

@@ -21,17 +21,15 @@ import { WorkflowChildAgent } from "./acp-child-agent.js";
 import {
   ACP_PROTOCOL_VERSION,
   REDSKILLS_WIRE_MAJOR,
-  requireCompatibleWireMajor,
-} from "./acp-compat.js";
-import {
   abortableDelay,
   bindWorkerRendezvous,
   connectWithDeadline,
   removeAcpEndpoint,
+  requireCompatibleWireMajor,
   socketStream,
   waitForAbort,
   withTimeout,
-} from "./acp-socket.js";
+} from "@reddb-io/protocol-acp";
 import {
   notifySessionRecovery,
   providerSessionEvidenceFromMeta,

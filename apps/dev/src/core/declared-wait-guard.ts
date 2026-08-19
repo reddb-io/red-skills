@@ -81,13 +81,14 @@ export interface DeclaredWait {
 /**
  * The engine trees the guard enumerates.
  *
- * Scoped to the two packages that hold the orchestrator and its substrate,
- * because those are the waits a stalled AFK run is stuck inside. A tree added
- * here is a tree whose waits must all be declared in the same slice.
+ * Scoped to the trees that hold the orchestrator, its substrate and the shared
+ * ACP wire, because those are the waits a stalled AFK run is stuck inside. A
+ * tree added here is a tree whose waits must all be declared in the same slice.
  */
 export const WAIT_SCAN_ROOTS: readonly string[] = [
   "apps/dev/src",
   "apps/redskilled/src",
+  "packages/protocol-acp",
   "packages/shared/kill-tree.ts",
   "packages/red-castle/src",
 ];
@@ -698,7 +699,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a two-second host drain followed immediately by replacement or bounded refusal" },
   },
   {
-    path: "apps/redskilled/src/acp-socket.ts",
+    path: "packages/protocol-acp/transport.ts",
     fn: "connectWithDeadline",
     subject: "the daemon ACP socket or assigned native Worker ACP socket accepting a local connection",
     deadline: "the caller's `timeoutMs`, 10 seconds for both public and Worker rendezvous",

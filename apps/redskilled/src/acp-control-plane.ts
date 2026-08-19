@@ -26,19 +26,18 @@ import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import {
   ACP_PROTOCOL_VERSION,
   ACP_V2_DRAFT_REVISION,
+  REDSKILLS_ACP_METHODS,
   REDSKILLS_WIRE_MAJOR,
-  requireCompatibleWireMajor,
-  requireSupportedV2Revision,
-  translateV1SessionUpdateToV2,
-} from "./acp-compat.js";
-import {
   closeServer,
   connectWithDeadline,
   listen,
   removeAcpEndpoint,
+  requireCompatibleWireMajor,
+  requireSupportedV2Revision,
   socketStream,
+  translateV1SessionUpdateToV2,
   withTimeout,
-} from "./acp-socket.js";
+} from "@reddb-io/protocol-acp";
 import {
   REDSKILLED_GITHUB_UPDATE_METHOD,
   bindAcpGithubReaderUpdates,
@@ -115,7 +114,7 @@ import { admitNativeAcpWorker } from "./acp-native-worker.js";
 export { runNativeAcpWorker } from "./acp-native-worker.js";
 import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
 
-export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "./acp-compat.js";
+export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
 
 interface PublicSession {
   readonly request: NewSessionRequest;
@@ -404,7 +403,7 @@ async function servePublicConnection(
     })
     // Compatibility spelling, but deliberately a Project projection. Ordinary
     // ACP socket access is not an administrative capability.
-    .onRequest("_redskills/host_state", emptyParams, scopedState)
+    .onRequest(REDSKILLS_ACP_METHODS.hostState, emptyParams, scopedState)
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)
@@ -532,7 +531,7 @@ async function servePublicConnection(
         ...(params._meta == null ? {} : { _meta: params._meta }),
       });
     })
-    .onRequest("_redskills/host_state", emptyParams, scopedState)
+    .onRequest(REDSKILLS_ACP_METHODS.hostState, emptyParams, scopedState)
     .onRequest(PROJECT_CONTROL_METHODS[0], emptyParams, () => mutateProjectControl("drain"))
     .onRequest(PROJECT_CONTROL_METHODS[1], emptyParams, () => mutateProjectControl("stop"))
     .onRequest(PROJECT_CONTROL_METHODS[2], emptyParams, readProjectControl)

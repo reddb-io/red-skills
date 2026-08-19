@@ -1,5 +1,6 @@
 import { RequestError } from "@agentclientprotocol/sdk";
 import { GithubBackpressureError } from "@reddb-io/github";
+import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import {
   RedskilledGithubAuthorityError,
   type RedskilledGithubGatewayRegistration,
@@ -18,7 +19,7 @@ type GithubReadParams = { readonly read: RedskilledGithubRead };
 type GithubWriteParams = RedskilledGithubWriteRequest;
 type GithubCustodyHandoffParams = RedskilledGithubCustodyHandoff;
 
-export const REDSKILLED_GITHUB_UPDATE_METHOD = "_redskills/github_update";
+export const REDSKILLED_GITHUB_UPDATE_METHOD = REDSKILLS_ACP_METHODS.githubUpdate;
 
 export interface AcpGithubUpdateObserver {
   close(): void;
