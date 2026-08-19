@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDemandTurnRunner,
+  demandTurnForBirth,
   DEMAND_TURN_PERMISSION_REFUSAL,
   type DemandTurnAdmission,
   type DemandTurnRecord,
@@ -142,5 +143,32 @@ describe("the daemon's unattended turn", () => {
       _meta: { redskills: { permissionResolution: "unattended-refused", reason: DEMAND_TURN_PERMISSION_REFUSAL } },
     });
     expect(DEMAND_TURN_PERMISSION_REFUSAL).toMatch(/hitl/i);
+  });
+});
+
+describe("what one birth owes its Worker", () => {
+  it("says nothing for a project that stated no prompt — it births as it always did", () => {
+    expect(demandTurnForBirth(undefined, { workspace_path: "/tmp/w", index: 0 }, "W1")).toBeNull();
+    expect(demandTurnForBirth({}, { workspace_path: "/tmp/w", index: 0 }, "W1")).toBeNull();
+  });
+
+  it("writes this birth's facts into the project's prompt", () => {
+    expect(demandTurnForBirth(
+      { prompt: "claim {{work_item}} as {{worker_id}} in {{workspace_path}}" },
+      { workspace_path: "/tmp/w", index: 2, work_item: "4100" },
+      "W7",
+    )).toEqual({
+      workspacePath: "/tmp/w",
+      prompt: "claim 4100 as W7 in /tmp/w",
+      workItem: "4100",
+    });
+  });
+
+  it("refuses a prompt naming a fact this birth does not have, before anything is spawned", () => {
+    expect(() => demandTurnForBirth(
+      { prompt: "claim {{work_item}}" },
+      { workspace_path: "/tmp/w", index: 0 },
+      "W1",
+    )).toThrow(/work_item/);
   });
 });

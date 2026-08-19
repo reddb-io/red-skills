@@ -20,6 +20,7 @@
 import type { AgentConnection, RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk";
 
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
+import { expandLaunchTemplate } from "./launch-template.js";
 import {
   cleanupWorkflowWorker,
   requestWorkflowTurn,
@@ -57,6 +58,33 @@ export interface DemandTurnDeps {
    * only way to learn a drain is working is to watch for commits.
    */
   readonly record?: (line: DemandTurnRecord) => void;
+}
+
+/**
+ * The turn one birth owes, or `null` when this project states no prompt.
+ *
+ * Pure and separate from the loop that calls it, because the interesting part
+ * is not the plumbing: it is that a project which said nothing births exactly
+ * as it always did, and a template naming a fact this birth does not have is
+ * refused BEFORE anything is spawned. PURE.
+ */
+export function demandTurnForBirth(
+  registration: { readonly prompt?: string } | undefined,
+  birth: { readonly workspace_path: string; readonly index: number; readonly work_item?: string },
+  workerId: string,
+): { readonly workspacePath: string; readonly prompt: string; readonly workItem?: string } | null {
+  if (registration?.prompt == null) return null;
+  const expanded = expandLaunchTemplate({ argv: [registration.prompt] }, {
+    worker_id: workerId,
+    slot: birth.index,
+    workspace_path: birth.workspace_path,
+    ...(birth.work_item == null ? {} : { work_item: birth.work_item }),
+  }).argv[0]!;
+  return {
+    workspacePath: birth.workspace_path,
+    prompt: expanded,
+    ...(birth.work_item == null ? {} : { workItem: birth.work_item }),
+  };
 }
 
 /** What one admission needs, whoever performs it. */
