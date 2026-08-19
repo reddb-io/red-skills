@@ -102,8 +102,14 @@ validate_plugin() {
     if [[ "$plugin" == "dev" ]]; then
       [[ -x "$dir/hooks/code-nav-mcp.sh" ]] \
         || fail "$plugin: navigator MCP launcher must exist and be executable"
-      jq -e '.mcpServers["navigator"].args[]? | contains("code-nav-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
-        || fail "$plugin: navigator MCP manifest must use the on-demand launcher"
+      # ADR 0147 §4 switched `navigator` off at the DECLARATION while its code
+      # stays, so the entry is optional and its absence is the shipped state.
+      # Present-but-wrong is still a failure: a manifest that names the server
+      # must reach it through the on-demand launcher, never a bare command.
+      if jq -e '.mcpServers | has("navigator")' "$dir/${codex_mcp_path#./}" >/dev/null; then
+        jq -e '.mcpServers["navigator"].args[]? | contains("code-nav-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
+          || fail "$plugin: navigator MCP manifest must use the on-demand launcher"
+      fi
       [[ -x "$dir/hooks/redskilled-mcp.sh" ]] \
         || fail "$plugin: redskilled MCP launcher must exist and be executable"
       jq -e '.mcpServers["redskilled"].args[]? | contains("redskilled-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
