@@ -415,26 +415,27 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("redskilled provision");
   });
 
-  // #3059: the source a marketplace was registered from is what decides whether
-  // `marketplace update` can ever advance the machine.
-  it("audits the marketplace registration source read-only with a gated repoint", async () => {
+  // #3978: red-dev owns the registration, so this check reports the source and
+  // never rewrites it — the repoint it used to offer tore out red-dev's wiring.
+  it("audits the marketplace registration source read-only, with no repoint of its own", async () => {
     const skill = await readDoctorSkill();
 
     expect(skill).toContain("Marketplace registration source");
-    expect(skill).toContain("re-reads **whatever source the marketplace was registered from**");
-    expect(skill).toContain("frozen-directory-source");
+    expect(skill).toContain("red-dev owns the RedSkills registration");
+    expect(skill).toContain("standalone-source");
     expect(skill).toContain("source-unknown");
-    expect(skill).toContain("an uninstalled host registered nothing, so it can freeze nothing");
+    expect(skill).toContain("mise use --global red-dev@1 && red-dev install");
     expect(skill).toContain("apps/dev/src/core/marketplace-source-doctor.ts");
     expect(skill).toContain("auditMarketplaceSources");
     expect(skill).toContain("never add, remove, or update a registration");
-    expect(skill).toContain("Directory-sourced `red-skills` marketplace (check 26)");
+    expect(skill).toContain("There is no `--fix` here");
 
     const apply = await readDoctorApply();
     expect(apply).toContain("Marketplace registration source (check 26)");
-    expect(apply).toContain("plugin marketplace add reddb-io/red-skills");
-    expect(apply).toContain("Never repoint a `source-unknown` finding");
-    expect(apply).toContain("confirm each");
+    expect(apply).toContain("report it and stop");
+    expect(apply).toContain("mise use --global red-dev@1 && red-dev install");
+    // The one command that must never appear: the heal this change removed.
+    expect(apply).not.toContain("plugin marketplace add reddb-io/red-skills");
   });
 
   // #3062: MCP servers register at plugin load, so a mid-session install writes

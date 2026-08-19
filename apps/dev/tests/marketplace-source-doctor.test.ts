@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyMarketplaceSourceFixes,
   auditMarketplaceSources,
+  bootstrapRecipe,
   parseMarketplaceSource,
   renderMarketplaceSourceReportToon,
-  repointRecipe,
   RED_SKILLS_MARKETPLACE,
   type MarketplaceSourceFacts,
 } from "../src/core/marketplace-source-doctor.js";
 
 /**
  * The observed transcripts (Claude Code 2.1.x) for both registration shapes.
- * The Directory one is what the installer used to write on every machine.
+ * The Directory one is what red-dev writes; the GitHub one is what the retired
+ * standalone installer left behind.
  */
 const DIRECTORY_LIST = `Configured marketplaces:
 
   ❯ red-skills
-    Source: Directory (/home/user/.red-skills/current)
+    Source: Directory (/home/user/.red-dev/state/red-skills)
 `;
 
 const GITHUB_LIST = `Configured marketplaces:
@@ -39,7 +39,7 @@ describe("parseMarketplaceSource", () => {
   it("reads a Directory source and its path", () => {
     expect(parseMarketplaceSource(DIRECTORY_LIST, "red-skills")).toEqual({
       kind: "directory",
-      detail: "/home/user/.red-skills/current",
+      detail: "/home/user/.red-dev/state/red-skills",
     });
   });
 
@@ -76,9 +76,12 @@ describe("parseMarketplaceSource", () => {
 });
 
 describe("auditMarketplaceSources", () => {
-  it("flags a Directory-sourced red-skills marketplace as frozen", () => {
+  // red-dev registers a directory source. Healing one back to the repository is
+  // exactly how the retired installer tore out red-dev's wiring (#3978), so the
+  // audit reports it and proposes nothing.
+  it("passes a Directory-sourced marketplace clean, because red-dev owns it", () => {
     const report = auditMarketplaceSources([
-      facts({ kind: "directory", detail: "/home/user/.red-skills/current" }),
+      facts({ kind: "directory", detail: "/home/user/.red-dev/state/red-skills" }),
     ]);
 
     expect(report.rows).toEqual([
@@ -86,23 +89,29 @@ describe("auditMarketplaceSources", () => {
         host: "claude",
         marketplace: "red-skills",
         source: "directory",
-        detail: "/home/user/.red-skills/current",
-        verdict: "error",
+        detail: "/home/user/.red-dev/state/red-skills",
+        verdict: "ok",
       },
     ]);
-    expect(report.findings).toHaveLength(1);
-    expect(report.findings[0]!.kind).toBe("frozen-directory-source");
-    expect(report.findings[0]!.reason).toContain("can never advance");
-    expect(report.findings[0]!.remediation).toBe(
-      "claude plugin marketplace remove red-skills && claude plugin marketplace add reddb-io/red-skills",
-    );
+    expect(report.findings).toEqual([]);
   });
 
-  it("passes a GitHub-sourced marketplace clean", () => {
+  it("reports a GitHub-sourced registration as the retired standalone installer's leftover", () => {
     const report = auditMarketplaceSources([facts({ detail: "reddb-io/red-skills" })]);
 
-    expect(report.findings).toEqual([]);
-    expect(report.rows[0]!.verdict).toBe("ok");
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]!.kind).toBe("standalone-source");
+    // A leftover still resolves, so it is a warning and never a red.
+    expect(report.findings[0]!.verdict).toBe("warn");
+    expect(report.findings[0]!.reason).toContain("red-dev owns RedSkills acquisition");
+    expect(report.findings[0]!.remediation).toBe("mise use --global red-dev@1 && red-dev install");
+    expect(report.rows[0]!.verdict).toBe("warn");
+  });
+
+  it("reports a git-remote registration the same way", () => {
+    const report = auditMarketplaceSources([facts({ kind: "git", detail: "git@github.com:x/y" })]);
+
+    expect(report.findings[0]!.kind).toBe("standalone-source");
   });
 
   it("never flags a host that is not installed", () => {
@@ -131,112 +140,72 @@ describe("auditMarketplaceSources", () => {
 
   it("audits every host independently", () => {
     const report = auditMarketplaceSources([
-      facts({ host: "claude", kind: "directory", detail: "/snap" }),
+      facts({ host: "claude", kind: "directory", detail: "/managed" }),
       facts({ host: "codex", kind: "github", detail: "reddb-io/red-skills" }),
     ]);
 
-    expect(report.findings.map((finding) => finding.host)).toEqual(["claude"]);
-    expect(repointRecipe("codex")).toContain("codex plugin marketplace add reddb-io/red-skills");
+    expect(report.findings.map((finding) => finding.host)).toEqual(["codex"]);
+  });
+
+  // The cure is the bootstrap, never a registration this doctor writes itself.
+  it("proposes the bootstrap and never a marketplace command", () => {
+    expect(bootstrapRecipe()).toBe("mise use --global red-dev@1 && red-dev install");
+    expect(bootstrapRecipe()).not.toContain("marketplace");
   });
 
   it("renders the report as TOON", () => {
     const toon = renderMarketplaceSourceReportToon(
-      auditMarketplaceSources([facts({ kind: "directory", detail: "/snap" })]),
+      auditMarketplaceSources([facts({ kind: "github", detail: "reddb-io/red-skills" })]),
     );
 
-    expect(toon).toContain("directory");
-    expect(toon).toContain("frozen-directory-source");
+    expect(toon).toContain("github");
+    expect(toon).toContain("standalone-source");
   });
 });
 
-describe("applyMarketplaceSourceFixes", () => {
-  const frozen = auditMarketplaceSources([facts({ kind: "directory", detail: "/snap" })]);
+/**
+ * The retired half of this doctor, pinned as a contract rather than left as an
+ * absence nobody asserts. `applyMarketplaceSourceFixes` and `repointRecipe`
+ * re-registered a Directory source at the GitHub repository — the exact move
+ * that tore out red-dev's wiring and installed a second owner (#3978). The
+ * capability is gone, so what the tests now hold is that it cannot come back:
+ * a doctor whose worst act is a sentence cannot heal a machine into conflict.
+ */
+describe("the marketplace doctor reports and never writes", () => {
+  it("exports no apply, repoint, or heal surface", async () => {
+    const surface = await import("../src/core/marketplace-source-doctor.js");
 
-  it("does nothing without --fix", async () => {
-    const calls: string[] = [];
-    const receipts = await applyMarketplaceSourceFixes(
-      frozen,
-      { fix: false, approved: true },
-      {
-        repoint: async (host) => {
-          calls.push(host);
-          return { code: 0, stdout: "", stderr: "" };
-        },
-      },
-    );
-
-    expect(receipts).toEqual([]);
-    expect(calls).toEqual([]);
+    expect(Object.keys(surface).filter((name) => /apply|repoint|heal|fix|install/i.test(name))).toEqual([]);
   });
 
-  it("skips an unapproved repoint without touching the host", async () => {
-    const calls: string[] = [];
-    const receipts = await applyMarketplaceSourceFixes(
-      frozen,
-      { fix: true, approved: false },
-      {
-        repoint: async (host) => {
-          calls.push(host);
-          return { code: 0, stdout: "", stderr: "" };
-        },
-      },
-    );
-
-    expect(calls).toEqual([]);
-    expect(receipts).toEqual([
-      { host: "claude", marketplace: "red-skills", status: "skipped", reason: "approval required" },
+  it("never remediates by writing a registration, whatever the finding", () => {
+    const report = auditMarketplaceSources([
+      facts({ kind: "github", detail: "reddb-io/red-skills" }),
+      facts({ host: "codex", kind: "unknown" }),
     ]);
+
+    expect(report.findings.map((finding) => finding.kind)).toEqual([
+      "standalone-source",
+      "source-unknown",
+    ]);
+    for (const finding of report.findings) {
+      // Reading a transcript back is fair; `marketplace add`/`remove` is the
+      // write that made this doctor a second owner of the machine.
+      expect(finding.remediation).not.toMatch(/marketplace\s+(?:add|remove)\b/i);
+    }
+    // The leftover standalone registration is cured by the bootstrap alone.
+    expect(report.findings[0]!.remediation).toBe(bootstrapRecipe());
   });
 
-  it("repoints an approved frozen registration at the GitHub source", async () => {
-    const calls: string[] = [];
-    const receipts = await applyMarketplaceSourceFixes(
-      frozen,
-      { fix: true, approved: true },
-      {
-        repoint: async (host, marketplace) => {
-          calls.push(`${host}:${marketplace}`);
-          return { code: 0, stdout: "", stderr: "" };
-        },
-      },
-    );
+  it("leaves a Directory registration untouched even when other hosts are dirty", () => {
+    const report = auditMarketplaceSources([
+      facts({ host: "claude", kind: "directory", detail: "/home/user/.red-dev/state/red-skills" }),
+      facts({ host: "codex", kind: "github", detail: "reddb-io/red-skills" }),
+    ]);
 
-    expect(calls).toEqual(["claude:red-skills"]);
-    expect(receipts[0]!.status).toBe("applied");
-    expect(receipts[0]!.reason).toContain("reddb-io/red-skills");
-  });
-
-  it("records a failed repoint instead of claiming it applied", async () => {
-    const receipts = await applyMarketplaceSourceFixes(
-      frozen,
-      { fix: true, approved: true },
-      { repoint: async () => ({ code: 3, stdout: "", stderr: "boom" }) },
-    );
-
-    expect(receipts[0]).toEqual({
-      host: "claude",
-      marketplace: "red-skills",
-      status: "failed",
-      reason: "repoint exited 3",
-    });
-  });
-
-  // Re-registering a marketplace we could not read would discard whatever the
-  // operator actually configured.
-  it("never repoints a source it could not read", async () => {
-    const calls: string[] = [];
-    const receipts = await applyMarketplaceSourceFixes(
-      auditMarketplaceSources([facts({ kind: "unknown" })]),
-      { fix: true, approved: true },
-      {
-        repoint: async (host) => {
-          calls.push(host);
-          return { code: 0, stdout: "", stderr: "" };
-        },
-      },
-    );
-
-    expect(calls).toEqual([]);
-    expect(receipts[0]!.status).toBe("skipped");
+    expect(report.findings.map((finding) => finding.host)).toEqual(["codex"]);
+    const directoryRow = report.rows.find((row) => row.source === "directory")!;
+    expect(directoryRow.verdict).toBe("ok");
+    expect(directoryRow.detail).toBe("/home/user/.red-dev/state/red-skills");
   });
 });

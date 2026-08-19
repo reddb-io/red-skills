@@ -1,9 +1,9 @@
 # Installing RedSkills
 
-The [universal installer](../README.md#install) is the recommended path for
+The [mise/red-dev bootstrap](../README.md#install) is the recommended path for
 normal installs and upgrades — it detects every supported CLI on the machine and
 writes the right surface for each one. This document is the **per-host manual
-walkthrough** for the cases the installer does not cover: developing against a
+walkthrough** for the cases the bootstrap does not cover: developing against a
 checkout, installing into a single host by hand, or maintaining the generated
 manifests.
 
@@ -20,44 +20,37 @@ manifests.
 
 ## How Updates Reach a Machine
 
-**A marketplace updates from the source it was registered with — register the
-GitHub source and the CLI updates itself.** `/plugin marketplace update
-red-skills` re-reads whatever source the registration names:
-
-| Registered source | What `marketplace update` re-reads | Can it see a new release? |
-|---|---|---|
-| `reddb-io/red-skills` (GitHub) | the repository, pulled from origin | yes — every future release |
-| a local directory | that directory, unchanged | no — frozen at whatever it holds |
-
-The universal installer registers the **GitHub** source, so `/plugin marketplace
-update red-skills` followed by `/plugin update <plugin>` advances a machine to
-the latest published version with no re-install. The local-directory form stays
-available for offline and dev installs through `--local-marketplace`
-(`RED_SKILLS_MARKETPLACE_SOURCE=local`); it pins the machine to the snapshot the
-installer downloaded, which is the point of it.
-
-`--version <tag>` pins the downloaded source cache (what the OpenCode and Pi
-surfaces install from), not the marketplace: a GitHub-sourced marketplace always
-tracks the repository. Pin the Claude/Codex plugins to a specific release by
-combining `--version <tag>` with `--local-marketplace`, which registers exactly
-that snapshot.
-
-Machines installed before this model shipped carry a directory-sourced
-registration and are frozen at their install-day version. Two cures, either one
-is enough:
+**red-dev owns acquisition and wiring; a machine updates by converging again.**
+[mise](https://mise.jdx.dev) installs and pins red-dev, and `red-dev install`
+converges the machine toward its manifest — RedSkills included:
 
 ```bash
-# re-run the one-liner: it detects the Directory source and re-registers it
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
-
-# or repoint by hand
-claude plugin marketplace remove red-skills
-claude plugin marketplace add reddb-io/red-skills
+mise use --global red-dev@1
+red-dev install     # converge; `red-dev update` advances what the managers own
 ```
 
-To check a machine without changing it, `/red-doctor` reports the registered
-source per host CLI and flags a Directory-sourced `red-skills` marketplace;
-`/red-doctor --fix` repoints it after confirmation.
+A marketplace updates from the source it was registered with, and what red-dev
+registers is the **directory** it manages, so converging again is what advances
+the plugins. Nothing repoints that registration at the GitHub repository:
+`scripts/install.sh` used to do exactly that on every re-run, and on a red-dev
+machine the "heal" tore out the wiring it was meant to repair (#3978).
+
+| Registered source | Who wrote it | What updates it |
+|---|---|---|
+| a directory red-dev manages | red-dev | `red-dev update`, then `red-dev install` |
+| `reddb-io/red-skills` (GitHub) | the retired standalone installer | `/plugin marketplace update red-skills` — still resolves; migrate with the bootstrap above |
+| a checkout directory | you, through `install.sh --local-dev` | your own `git pull` |
+
+`/red-doctor` check 26 reports the registered source per host CLI read-only. It
+flags a GitHub- or git-sourced `red-skills` marketplace as the retired
+installer's leftover and names the bootstrap as the cure; it never adds,
+removes, or repoints a registration itself.
+
+The standalone `scripts/install.sh` remains as a handoff to that bootstrap and
+as the way to retire what it used to install (`--uninstall`, plus `--purge` for
+the `~/.red-skills` tree). `--local-dev --source-dir <checkout>` is the
+development escape hatch: it wires the detected hosts from a checkout, says out
+loud that it is not a production installation, and acquires nothing.
 
 ## Manual: Claude Code
 
@@ -199,8 +192,8 @@ on Pi support itself.
 ## Manual: OpenCode
 
 OpenCode support is generated from the same plugin source tree as Claude Code
-and Codex. The installer writes skills, plugin modules, MCP config, provider
-config, and TUI attention config for OpenCode. The universal installer is
+and Codex. The generator writes skills, plugin modules, MCP config, provider
+config, and TUI attention config for OpenCode. The mise/red-dev bootstrap is
 preferred for normal user-scoped installs; use the direct script when developing
 or when installing/removing a checkout in a specific project.
 

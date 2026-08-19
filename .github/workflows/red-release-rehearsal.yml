@@ -3,15 +3,15 @@ name: red-release-rehearsal
 # Prove the package set is installable BEFORE a tag depends on it.
 #
 # red-publish.yml runs the real producer chain (bundles → per-plugin and core
-# npm packages → tarball boundary check) and nobody runs the real consumer
-# (scripts/install.sh) against the result until after publish. v3.19.0..v3.19.2
-# each burnt a release on a fault this rehearsal catches in a pull request:
-# a bundle nothing built, a bundle demanded from a skills-only plugin, scripts
-# that lost their executable bit in the tarball, per-plugin packages the
-# OpenCode generator could not consume. scripts/rehearse-release-pack.sh runs
-# the same producers, packs at a rehearsal version, checks the boundaries, then
-# feeds the tarballs to install.sh through an npm shim and installs a fake
-# OpenCode host into a throwaway config home.
+# npm packages → tarball boundary check) and nobody consumes the result until
+# after publish. v3.19.0..v3.19.2 each burnt a release on a fault this rehearsal
+# catches in a pull request: a bundle nothing built, a bundle demanded from a
+# skills-only plugin, scripts that lost their executable bit in the tarball,
+# per-plugin packages the OpenCode generator could not consume.
+# scripts/rehearse-release-pack.sh runs the same producers, packs at a rehearsal
+# version, checks the boundaries, composes the tarballs into a host-installable
+# tree through an npm shim, then wires a fake OpenCode host through
+# scripts/install.sh --local-dev into a throwaway config home.
 
 on:
   pull_request:

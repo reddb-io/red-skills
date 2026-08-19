@@ -1,49 +1,55 @@
 #!/usr/bin/env bash
-# Universal RedSkills installer.
+# RedSkills standalone installer — a handoff, not an owner.
 #
 # Intended curl entrypoint:
-#   curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
 #
-# The script resolves the published npm packages by default, materialises their
-# runtime tree under ~/.red-skills, detects supported local CLIs, then wires each host:
-#   - Claude Code: marketplace + plugins
-#   - Codex CLI: marketplace + plugins
-#   - Gemini CLI: self-contained dev extension from the local package set
-#   - Hermes: complete dev skills in its user-global skills directory
-#   - OpenCode/RedCode: generated plugin/skill/MCP/statusline surface
+# RedSkills is acquired and wired by red-dev, which mise installs and pins
+# (`red-dev install` converges a machine toward its manifest, RedSkills wiring
+# included). This script exists to put an operator who found the old one-liner
+# on that path: it checks the platform red-dev supports, installs the pinned
+# red-dev entry point through mise when it is missing, verifies that entry point
+# answers, and hands over. It acquires no packages, registers no marketplace,
+# writes no version tree and keeps no cache — a second owner of the same machine
+# is the defect this shape removes.
 #
-# The Claude and Codex marketplaces are registered from the GitHub source
-# (reddb-io/red-skills), not from the materialised tree: `plugin marketplace
-# update` re-reads whatever source was registered, so a directory registration
-# freezes the machine at its install-day version. `--local-marketplace` opts
-# into the directory form for offline and dev installs; re-running the installer
-# on a machine that already carries a directory registration replaces it.
+# What it deliberately never does: heal a Directory-sourced marketplace back to
+# the GitHub source. A directory registration is what red-dev writes, so the
+# heal the previous installer performed on every re-run tore out the wiring this
+# script now hands ownership to.
 #
-# It also supports --uninstall for the same host set. OpenCode-compatible uninstall is
+# `--local-dev --source-dir <checkout>` is the development escape hatch: it
+# wires the hosts from a checkout you already have, says out loud that it is not
+# a production installation, and still owns nothing outside that checkout.
+#
+# `--uninstall` remains, and is how a machine retires the tree and registrations
+# the retired standalone path left behind. OpenCode-compatible uninstall is
 # conservative: manifest-recorded files are removed, generated modules/configs
 # are removed when they still match RedSkills output, and unrelated user files
 # are kept.
 
 set -euo pipefail
 
-REPO="${RED_SKILLS_REPO:-reddb-io/red-skills}"
-VERSION="${RED_SKILLS_VERSION:-latest}"
+# The pinned bootstrap entry point. red-dev owns the acquisition contract, so the
+# spec names a major it guarantees rather than `latest`; mise resolves the exact
+# revision and records it. `--red-dev-spec` overrides it for a pre-release.
+RED_DEV_SPEC="${RED_SKILLS_RED_DEV_SPEC:-red-dev@1}"
+
+# Where the retired standalone path put its tree. Kept for `--uninstall
+# --purge`, which is how that tree leaves a machine, and as the scratch root the
+# escape hatch generates host surfaces into.
 INSTALL_ROOT="${RED_SKILLS_INSTALL_ROOT:-$HOME/.red-skills}"
+LOCAL_DEV_ROOT="$INSTALL_ROOT/local-dev"
+
 ONLY="${RED_SKILLS_ONLY:-auto}"
 CLAUDE_SCOPE="${RED_SKILLS_CLAUDE_SCOPE:-user}"
 PI_SCOPE="${RED_SKILLS_PI_SCOPE:-user}"
 PI_PROJECT_DIR=""
 SOURCE_DIR="${RED_SKILLS_SOURCE_DIR:-}"
-# Where the host CLIs register the marketplace FROM. `github` is the only shape
-# that can ever update: `plugin marketplace update` re-reads the registered
-# source, so a `local` registration re-reads the install-day snapshot under
-# ~/.red-skills/versions/<tag> forever and freezes the machine at that version.
-# `local` stays available for offline and dev installs that want exactly that.
-MARKETPLACE_SOURCE="${RED_SKILLS_MARKETPLACE_SOURCE:-github}"
 ACTION="${RED_SKILLS_ACTION:-install}"
+LOCAL_DEV="${RED_SKILLS_LOCAL_DEV:-false}"
 FORCE="${RED_SKILLS_FORCE:-false}"
 PURGE="${RED_SKILLS_PURGE:-false}"
-REFRESH="${RED_SKILLS_REFRESH:-false}"
 DRY_RUN="false"
 OPENCODE_COPY="${RED_SKILLS_OPENCODE_COPY:-false}"
 
@@ -51,43 +57,39 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [options]
 
-Installs RedSkills into every detected supported CLI:
-  claude   -> Claude Code marketplace + dev/memory/brain plugins
-  codex    -> Codex marketplace + dev/memory/brain plugins
-  gemini   -> generated, self-contained dev extension from the local package set
-  hermes   -> complete dev skills in $HERMES_HOME/skills (default: ~/.hermes/skills)
-  opencode -> generated OpenCode plugins, skills, MCP config, and TUI config
-  redcode  -> generated RedCode plugins, skills, MCP config, and TUI config
-  pi       -> per-plugin Pi packages installed via `pi install`, registered in
-              ~/.pi/agent/settings.json (or .pi/settings.json with --project)
+Hands this machine to the canonical mise/red-dev bootstrap (`mise use --global
+red-dev@<pin>`, then `red-dev install`), which owns RedSkills acquisition and
+host wiring. This script installs nothing of its own.
 
 Options:
-  --version <tag>       Install a specific release tag (default: latest release).
-                        Pins the materialised npm packages, not the marketplace;
-                        combine with --local-marketplace to pin Claude/Codex too.
-  --install-root <dir>  Install versioned runtime trees here (default: ~/.red-skills)
-  --only <list>         Comma list: claude,codex,gemini,hermes,opencode,redcode,pi (default: auto-detect)
+  --red-dev-spec <spec> mise spec for the bootstrap entry point
+                        (default: red-dev@1)
+  --local-dev           Development escape hatch: wire the detected hosts from a
+                        checkout instead of handing off. Requires --source-dir.
+                        Not a production installation.
+  --source-dir <dir>    The red-skills checkout --local-dev wires from, and the
+                        one --uninstall reads its host-unwiring scripts from.
+  --only <list>         Comma list: claude,codex,gemini,hermes,opencode,redcode,pi
+                        (default: auto-detect). Applies to --local-dev and
+                        --uninstall.
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
-  --source-dir <dir>    Use an existing red-skills checkout instead of npm packages
-  --local-marketplace   Register the Claude/Codex marketplace from the local
-                        source directory instead of the GitHub source. Offline
-                        and dev installs only: a directory-sourced marketplace
-                        can never see a release published after install day.
+  --install-root <dir>  Where the retired standalone tree lives, for --purge
+                        (default: ~/.red-skills)
   --uninstall           Remove RedSkills from detected/specified CLIs
-  --force               Reinstall plugins where the host supports removal
-  --purge               With --uninstall, also remove the RedSkills install tree
-  --refresh             Re-materialise the selected npm packages
+  --force               With --local-dev: reinstall plugins, and replace a
+                        directory-sourced marketplace registration this script
+                        would otherwise leave to red-dev
+  --purge               With --uninstall, also remove the standalone install tree
   --opencode-copy       Copy OpenCode-compatible SKILL.md files instead of symlinking
   --dry-run             Print actions without writing
   -h, --help            Show this help
 
 Environment:
-  RED_SKILLS_VERSION, RED_SKILLS_INSTALL_ROOT, RED_SKILLS_ONLY,
-  RED_SKILLS_CLAUDE_SCOPE, RED_SKILLS_PI_SCOPE, RED_SKILLS_SOURCE_DIR,
-  RED_SKILLS_ACTION, RED_SKILLS_FORCE, RED_SKILLS_PURGE, RED_SKILLS_REFRESH,
-  RED_SKILLS_OPENCODE_COPY, RED_SKILLS_MARKETPLACE_SOURCE (github|local),
-  RED_SKILLS_REPO.
+  RED_SKILLS_RED_DEV_SPEC, RED_SKILLS_LOCAL_DEV, RED_SKILLS_INSTALL_ROOT,
+  RED_SKILLS_ONLY, RED_SKILLS_CLAUDE_SCOPE, RED_SKILLS_PI_SCOPE,
+  RED_SKILLS_SOURCE_DIR, RED_SKILLS_ACTION, RED_SKILLS_FORCE,
+  RED_SKILLS_PURGE, RED_SKILLS_OPENCODE_COPY.
 EOF
 }
 
@@ -96,16 +98,6 @@ warn() { printf 'red-skills install: warn: %s\n' "$*" >&2; }
 die() {
   printf 'red-skills install: error: %s\n' "$*" >&2
   exit 1
-}
-
-# plugin_has_runtime <plugin> <runtime plugins...>
-plugin_has_runtime() {
-  local plugin="$1" candidate
-  shift
-  for candidate in "$@"; do
-    [[ "$candidate" == "$plugin" ]] && return 0
-  done
-  return 1
 }
 
 quote_cmd() {
@@ -178,161 +170,119 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required"
 }
 
-safe_release_tag() {
-  local tag="$1"
-  case "$tag" in
-    v[0-9]*.[0-9]*.[0-9]* | [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$tag" ;;
-    *) die "release tag must look like vX.Y.Z, got '$tag'" ;;
+# ── the handoff ────────────────────────────────────────────────────────────
+
+PLATFORM_OS=""
+PLATFORM_ARCH=""
+
+detect_platform() {
+  PLATFORM_OS="$(uname -s 2>/dev/null || true)"
+  PLATFORM_ARCH="$(uname -m 2>/dev/null || true)"
+  [[ -n "$PLATFORM_OS" ]] || PLATFORM_OS="unknown"
+  [[ -n "$PLATFORM_ARCH" ]] || PLATFORM_ARCH="unknown"
+}
+
+# The platforms the red-dev bootstrap installs on. Anything else is refused
+# before a single file is written: handing an operator to a bootstrap that
+# cannot run there, and then quietly installing something else instead, is the
+# dead end this whole change removes.
+platform_supported() {
+  case "$PLATFORM_OS" in
+    Linux | Darwin) ;;
+    *) return 1 ;;
+  esac
+  case "$PLATFORM_ARCH" in
+    x86_64 | amd64 | arm64 | aarch64) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
-prepare_source() {
-  if [[ -n "$SOURCE_DIR" ]]; then
-    [[ -d "$SOURCE_DIR" ]] || die "--source-dir does not exist: $SOURCE_DIR"
-    SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
-    [[ -f "$SOURCE_DIR/.claude-plugin/marketplace.json" ]] || die "source dir is missing .claude-plugin/marketplace.json"
-    [[ -f "$SOURCE_DIR/.agents/plugins/marketplace.json" ]] || die "source dir is missing .agents/plugins/marketplace.json"
-    log "using local source: $SOURCE_DIR"
+# The bootstrap entry point, resolved before it is trusted. `command -v` covers
+# an operator who already has red-dev; `mise which` covers the shell that has
+# not picked up mise's shims yet. An unresolvable entry point is never assumed.
+resolve_red_dev() {
+  local resolved
+  if resolved="$(command -v red-dev 2>/dev/null)" && [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
     return 0
   fi
-
-  require_cmd mktemp
-
-  local tag="$VERSION"
-  local versions_dir="$INSTALL_ROOT/versions"
-  local current="$INSTALL_ROOT/current"
-  local npm_version="$tag"
-  if [[ "$tag" != "latest" ]]; then
-    tag="$(safe_release_tag "$tag")"
-    npm_version="${tag#v}"
+  if command -v mise >/dev/null 2>&1; then
+    resolved="$(mise which red-dev 2>/dev/null || true)"
+    if [[ -n "$resolved" && -x "$resolved" ]]; then
+      printf '%s\n' "$resolved"
+      return 0
+    fi
   fi
+  return 1
+}
+
+# A machine that still carries the retired tree is told so once. This script
+# never refreshes, re-adopts or heals it — red-dev owns the wiring now, and the
+# tree leaves through --uninstall --purge when the operator is ready.
+report_retired_tree() {
+  [[ -d "$INSTALL_ROOT" ]] || return 0
+  warn "a standalone RedSkills tree remains at $INSTALL_ROOT; it is no longer read or updated"
+  warn "retire it once red-dev has wired this machine: install.sh --uninstall --purge"
+}
+
+hand_off_to_red_dev() {
+  detect_platform
+  if ! platform_supported; then
+    die "$(printf '%s\n' \
+      "unsupported platform ${PLATFORM_OS}/${PLATFORM_ARCH}: the red-dev bootstrap targets Linux and macOS on x86_64 or arm64." \
+      "  wire this host by hand — docs/INSTALL.md walks each CLI" \
+      "  or develop from a checkout: install.sh --local-dev --source-dir <checkout>")"
+  fi
+
+  log "platform ${PLATFORM_OS}/${PLATFORM_ARCH} is supported"
+  log "RedSkills is acquired and wired by red-dev; handing over to $RED_DEV_SPEC"
+  report_retired_tree
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "would materialise @reddb-io/red-skills@$npm_version and plugin packages under $versions_dir/$tag"
-    SOURCE_DIR="$current"
+    log "would run: mise use --global $RED_DEV_SPEC (when red-dev is absent)"
+    log "would run: red-dev --version, then red-dev install"
     return 0
   fi
 
-  mkdir -p "$versions_dir"
-
-  local tmp core package_dir package_version plugin bundle resolved_version dest
-  # Every marketplace plugin is materialised; only the ones with a runtime app
-  # (apps/<plugin> in the repo) carry dist/<plugin>.bundle.min.mjs. `internal`
-  # is skills-only, so requiring its bundle refused every install (v3.19.1).
-  local -a plugins=(dev memory brain internal)
-  local -a runtime_plugins=(dev memory brain)
-  local -a specs=("@reddb-io/red-skills@$npm_version")
-  for plugin in "${plugins[@]}"; do
-    specs+=("@reddb-io/red-skills-$plugin@$npm_version")
-  done
-
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-  log "materialising ${specs[*]}"
-  npm install "${specs[@]}" --prefix "$tmp" \
-    --no-save --no-audit --no-fund --ignore-scripts --loglevel=error
-
-  core="$tmp/node_modules/@reddb-io/red-skills"
-  [[ -f "$core/package.json" ]] || die "npm did not materialise @reddb-io/red-skills"
-  resolved_version="$(node -e 'process.stdout.write(require(process.argv[1]).version || "")' "$core/package.json")"
-  [[ -n "$resolved_version" ]] || die "@reddb-io/red-skills package has no version"
-  if [[ "$VERSION" == "latest" ]]; then
-    tag="v$resolved_version"
-  elif [[ "$resolved_version" != "$npm_version" ]]; then
-    die "npm resolved @reddb-io/red-skills@$resolved_version, expected $npm_version"
-  fi
-  VERSION="$tag"
-  dest="$versions_dir/$tag"
-
-  for plugin in "${plugins[@]}"; do
-    package_dir="$tmp/node_modules/@reddb-io/red-skills-$plugin"
-    bundle="$package_dir/dist/$plugin.bundle.min.mjs"
-    [[ -f "$package_dir/package.json" ]] || die "npm did not materialise @reddb-io/red-skills-$plugin"
-    if plugin_has_runtime "$plugin" "${runtime_plugins[@]}"; then
-      [[ -f "$bundle" ]] || die "@reddb-io/red-skills-$plugin package is missing dist/$plugin.bundle.min.mjs"
-    fi
-    package_version="$(node -e 'process.stdout.write(require(process.argv[1]).version || "")' "$package_dir/package.json")"
-    [[ "$package_version" == "$resolved_version" ]] \
-      || die "npm resolved @reddb-io/red-skills-$plugin@$package_version, expected $resolved_version"
-  done
-
-  if [[ "$REFRESH" == "true" ]]; then
-    rm -rf "$dest"
-  fi
-  if [[ ! -d "$dest" ]]; then
-    rm -rf "$dest.tmp"
-    mkdir -p "$dest.tmp/plugins" "$dest.tmp/dist"
-    cp -R "$core/." "$dest.tmp/"
-    for plugin in "${plugins[@]}"; do
-      package_dir="$tmp/node_modules/@reddb-io/red-skills-$plugin"
-      bundle="$package_dir/dist/$plugin.bundle.min.mjs"
-      cp -R "$package_dir" "$dest.tmp/plugins/$plugin"
-      if plugin_has_runtime "$plugin" "${runtime_plugins[@]}"; then
-        cp "$bundle" "$dest.tmp/dist/$plugin.bundle.min.mjs"
-      fi
-    done
-    mv "$dest.tmp" "$dest"
-  else
-    log "using cached npm materialisation $dest"
+  local entry
+  if ! entry="$(resolve_red_dev)"; then
+    command -v mise >/dev/null 2>&1 || die "$(printf '%s\n' \
+      "neither red-dev nor mise is installed, and this script no longer installs RedSkills itself." \
+      "  1. install mise: https://mise.jdx.dev/installing-mise.html" \
+      "  2. mise use --global $RED_DEV_SPEC" \
+      "  3. red-dev install")"
+    log "installing the pinned bootstrap $RED_DEV_SPEC through mise"
+    run mise use --global "$RED_DEV_SPEC"
+    entry="$(resolve_red_dev)" || die "could not run red-dev after installing $RED_DEV_SPEC through mise; open a new shell so mise's shims are on PATH, then run: red-dev install"
   fi
 
-  rm -rf "$tmp"
-  trap - RETURN
-  ensure_host_activation_config "$dest"
-  rm -f "$current"
-  ln -s "$dest" "$current"
-  SOURCE_DIR="$current"
-  log "current install -> $dest"
+  log "bootstrap entry point: $entry ($RED_DEV_SPEC)"
+  run "$entry" --version || die "could not run red-dev --version at $entry; the bootstrap entry point is not usable, so nothing was handed over"
+  run "$entry" install
+  log "red-dev owns this machine's RedSkills install from here"
 }
 
-# The OpenCode/RedCode generator (opencode-host) reads `.red/config.yaml` for
-# its ADR 0067 opt-in gate and model table. A source checkout carries the
-# repository's own; the npm package set carries no repository config at all —
-# the source-archive install used to smuggle the repo's in, and moving to npm
-# (#3945) silently dropped it, so every host install died at "config not found".
-# This is the host-install activation config for the plugins the package set
-# ships, written once beside the materialised tree; it is NOT a repository
-# `.red/` (that stays /red-setup's alone) and never enables anything in a project.
-ensure_host_activation_config() {
-  local tree="$1"
-  local config="$tree/.red/config.yaml"
-  [[ -f "$config" ]] && return 0
-  mkdir -p "$tree/.red"
-  cat >"$config" <<'EOF_CONFIG'
-# Written by red-skills install.sh: activation flags for the host-install
-# generator (opencode-host) over the materialised package set. Not a
-# repository config — /red-setup owns those, and this file enables nothing
-# inside any project.
-plugins:
-  dev:
-    enabled: true
-  memory:
-    enabled: true
-  brain:
-    enabled: true
-EOF_CONFIG
-  log "wrote host activation config $config"
+# ── the development escape hatch ───────────────────────────────────────────
+
+# The checkout --local-dev wires from. There is no acquisition fallback on
+# purpose: an escape hatch that can fetch a release is an installation path
+# wearing a development label.
+prepare_local_dev_source() {
+  [[ -n "$SOURCE_DIR" ]] \
+    || die "--local-dev wires a checkout you already have: pass --source-dir <red-skills checkout>"
+  [[ -d "$SOURCE_DIR" ]] || die "--source-dir does not exist: $SOURCE_DIR"
+  SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
+  [[ -f "$SOURCE_DIR/.claude-plugin/marketplace.json" ]] || die "source dir is missing .claude-plugin/marketplace.json"
+  [[ -f "$SOURCE_DIR/.agents/plugins/marketplace.json" ]] || die "source dir is missing .agents/plugins/marketplace.json"
 }
 
-# The reference a host CLI registers the marketplace from. The GitHub source is
-# what makes `plugin marketplace update` pull origin and see future releases;
-# the local source dir is the frozen-snapshot fallback.
-marketplace_ref() {
-  if [[ "$MARKETPLACE_SOURCE" == "local" ]]; then
-    printf '%s\n' "$SOURCE_DIR"
-  else
-    printf '%s\n' "$REPO"
-  fi
+announce_local_dev() {
+  log "local development install — this is not a production installation"
+  log "  wiring from the checkout $SOURCE_DIR"
+  log "  nothing here tracks a release, updates itself, or is supported for daily use"
+  log "  the supported install is the red-dev bootstrap ($RED_DEV_SPEC)"
 }
 
-# The source kind this install wants, in the vocabulary the host CLIs print.
-desired_marketplace_kind() {
-  if [[ "$MARKETPLACE_SOURCE" == "local" ]]; then
-    printf 'directory\n'
-  else
-    printf 'github\n'
-  fi
-}
 
 # Read one marketplace's registered source kind from a `plugin marketplace list`
 # transcript on stdin. The rendered shape is an entry line followed by an
@@ -380,19 +330,46 @@ host_marketplace_kind() {
   printf '%s\n' "$listed" | marketplace_source_kind red-skills
 }
 
-# Heal a registration whose source cannot reach future releases. A machine
-# installed before this change carries a Directory source, so `marketplace
-# update` re-reads its install-day snapshot forever; re-running the installer
-# removes that registration and re-adds it from the GitHub source.
-heal_marketplace_source() {
-  local cli="$1" current desired
-  desired="$(desired_marketplace_kind)"
-  current="$(host_marketplace_kind "$cli")"
-  case "$current" in
-    absent|unknown|"$desired") return 0 ;;
+# Register the checkout as one host CLI's marketplace source.
+#
+# Never the GitHub source: this script owns no RedSkills release any more, and a
+# GitHub registration it wrote would be a second owner racing red-dev's. A
+# `directory` registration is the shape red-dev writes, so it is left exactly
+# where it is unless the operator says --force; a `github` one is the retired
+# standalone path's own leftover, and the checkout replaces it.
+register_dev_marketplace() {
+  local cli="$1"
+  shift
+  local -a add_args=("$@")
+  local kind
+  kind="$(host_marketplace_kind "$cli")"
+
+  case "$kind" in
+    directory)
+      if [[ "$FORCE" != "true" ]]; then
+        warn "$cli already carries a directory-sourced red-skills marketplace; leaving it registered"
+        warn "  red-dev owns directory registrations — re-run with --force to point $cli at $SOURCE_DIR instead"
+        return 0
+      fi
+      warn "--force: replacing $cli's directory-sourced red-skills marketplace with $SOURCE_DIR"
+      try_run "$cli" plugin marketplace remove red-skills || true
+      ;;
+    github | git)
+      warn "$cli carries a $kind-sourced red-skills marketplace from the retired standalone installer; replacing it with $SOURCE_DIR"
+      try_run "$cli" plugin marketplace remove red-skills || true
+      ;;
+    unknown)
+      # Replacing a registration we could not read would discard whatever the
+      # operator configured, so this adds without removing anything.
+      warn "$cli could not report its red-skills marketplace source; adding $SOURCE_DIR without removing anything"
+      ;;
   esac
-  warn "$cli red-skills marketplace is $current-sourced but this install wants $desired; re-registering from $(marketplace_ref)"
-  try_run "$cli" plugin marketplace remove red-skills || true
+
+  if try_run "$cli" "${add_args[@]}" "$SOURCE_DIR"; then
+    return 0
+  fi
+  [[ "$kind" == "absent" ]] && die "$cli marketplace add failed"
+  warn "$cli marketplace add failed; leaving the existing registration in place"
 }
 
 install_claude() {
@@ -401,16 +378,8 @@ install_claude() {
     return 0
   fi
 
-  local ref
-  ref="$(marketplace_ref)"
-  log "installing Claude Code marketplace/plugins from $ref"
-  heal_marketplace_source claude
-  if ! try_run claude plugin marketplace add --scope "$CLAUDE_SCOPE" "$ref"; then
-    warn "Claude marketplace add failed; replacing existing red-skills marketplace source"
-    try_run claude plugin marketplace remove red-skills || true
-    try_run claude plugin marketplace add --scope "$CLAUDE_SCOPE" "$ref" || die "Claude marketplace add failed"
-  fi
-  try_run claude plugin marketplace update red-skills || warn "Claude marketplace update failed; continuing"
+  log "wiring Claude Code from the checkout $SOURCE_DIR"
+  register_dev_marketplace claude plugin marketplace add --scope "$CLAUDE_SCOPE"
 
   local plugin
   for plugin in dev memory brain; do
@@ -430,21 +399,13 @@ install_codex() {
     return 0
   fi
 
-  local ref
-  ref="$(marketplace_ref)"
-  log "installing Codex marketplace/plugins from $ref"
-  heal_marketplace_source codex
-  if ! try_run codex plugin marketplace add "$ref"; then
-    warn "Codex marketplace add failed; replacing existing red-skills marketplace source"
-    try_run codex plugin marketplace remove red-skills || true
-    try_run codex plugin marketplace add "$ref" || die "Codex marketplace add failed"
-  fi
-  try_run codex plugin marketplace upgrade red-skills || warn "Codex marketplace upgrade failed; continuing"
+  log "wiring Codex CLI from the checkout $SOURCE_DIR"
+  register_dev_marketplace codex plugin marketplace add
 
   local plugin
   for plugin in dev memory brain; do
     # Codex currently has marketplace upgrade but no plugin update command.
-    # Remove/re-add to make a rerun converge on the selected release source.
+    # Remove/re-add to make a rerun converge on the registered checkout.
     try_run codex plugin remove "$plugin@red-skills" || true
     if ! try_run codex plugin add "$plugin@red-skills"; then
       die "Codex plugin $plugin install failed"
@@ -460,13 +421,13 @@ install_gemini() {
 
   local generator="$SOURCE_DIR/scripts/build-gemini-extension.mjs"
   local validator="$SOURCE_DIR/scripts/validate-gemini-extension.mjs"
-  local extension_root="$INSTALL_ROOT/gemini/dev"
+  local extension_root="$LOCAL_DEV_ROOT/gemini/dev"
   if [[ "$DRY_RUN" != "true" ]]; then
     [[ -f "$generator" ]] || die "source is missing scripts/build-gemini-extension.mjs"
     [[ -f "$validator" ]] || die "source is missing scripts/validate-gemini-extension.mjs"
   fi
 
-  log "building Gemini dev extension from local package set $SOURCE_DIR"
+  log "building Gemini dev extension from the checkout $SOURCE_DIR"
   run node "$generator" --root "$SOURCE_DIR" --output "$extension_root"
   run node "$validator" --extension "$extension_root"
 
@@ -483,7 +444,7 @@ install_hermes() {
   if [[ "$DRY_RUN" != "true" ]]; then
     [[ -f "$installer" ]] || die "source is missing scripts/install-hermes-skills.mjs"
   fi
-  log "installing complete Hermes dev skills from local package set $SOURCE_DIR"
+  log "installing complete Hermes dev skills from the checkout $SOURCE_DIR"
   run node "$installer" --install --source "$SOURCE_DIR" --home "$hermes_home"
 }
 
@@ -822,14 +783,19 @@ run_uninstall() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --version|--ref)
+    --red-dev-spec)
       [[ $# -ge 2 ]] || die "$1 requires a value"
-      VERSION="$2"
+      RED_DEV_SPEC="$2"
       shift 2
+      ;;
+    --local-dev)
+      LOCAL_DEV="true"
+      shift
       ;;
     --install-root)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       INSTALL_ROOT="$2"
+      LOCAL_DEV_ROOT="$INSTALL_ROOT/local-dev"
       shift 2
       ;;
     --only)
@@ -858,15 +824,6 @@ while [[ $# -gt 0 ]]; do
       SOURCE_DIR="$2"
       shift 2
       ;;
-    --local-marketplace)
-      MARKETPLACE_SOURCE="local"
-      shift
-      ;;
-    --marketplace-source)
-      [[ $# -ge 2 ]] || die "$1 requires a value"
-      MARKETPLACE_SOURCE="$2"
-      shift 2
-      ;;
     --uninstall)
       ACTION="uninstall"
       shift
@@ -877,10 +834,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --purge)
       PURGE="true"
-      shift
-      ;;
-    --refresh)
-      REFRESH="true"
       shift
       ;;
     --opencode-copy)
@@ -911,11 +864,6 @@ case "$PI_SCOPE" in
   *) die "--pi-scope must be user or project" ;;
 esac
 
-case "$MARKETPLACE_SOURCE" in
-  github|local) ;;
-  *) die "--marketplace-source must be github or local" ;;
-esac
-
 case "$ACTION" in
   install|uninstall) ;;
   *) die "RED_SKILLS_ACTION must be install or uninstall" ;;
@@ -941,46 +889,52 @@ if [[ "$ACTION" == "uninstall" ]]; then
   exit 0
 fi
 
-require_cmd node
-if [[ -z "$SOURCE_DIR" ]]; then
-  require_cmd npm
+if [[ "$LOCAL_DEV" != "true" ]]; then
+  hand_off_to_red_dev
+  exit 0
 fi
-prepare_source
 
-installed_any="false"
+# The escape hatch from here down. It needs node because every host surface
+# below the marketplace is generated (Gemini extension, OpenCode/RedCode plugins,
+# Pi packages), and it needs a checkout because it acquires nothing.
+require_cmd node
+prepare_local_dev_source
+announce_local_dev
+
+wired_any="false"
 if has_target claude; then
   install_claude
-  installed_any="true"
+  wired_any="true"
 fi
 if has_target codex; then
   install_codex
-  installed_any="true"
+  wired_any="true"
 fi
 if has_target gemini; then
   install_gemini
-  installed_any="true"
+  wired_any="true"
 fi
 if has_target hermes; then
   install_hermes
-  installed_any="true"
+  wired_any="true"
 fi
 if has_target opencode; then
   install_opencode
-  installed_any="true"
+  wired_any="true"
 fi
 if has_target redcode; then
   install_redcode
-  installed_any="true"
+  wired_any="true"
 fi
 if has_target pi; then
   install_pi
-  installed_any="true"
+  wired_any="true"
 fi
 
-if [[ "$installed_any" != "true" ]]; then
+if [[ "$wired_any" != "true" ]]; then
   warn "no supported CLIs detected (claude, codex, gemini, hermes, opencode, redcode, pi)"
 fi
 
-log "done"
+log "done — local development wiring from $SOURCE_DIR, not a production installation"
 log "restart open CLI sessions so they reload plugin manifests"
 log "inside each repo, run /red-setup (Claude/OpenCode) or \$dev:red-setup (Codex when namespace-qualified)"
