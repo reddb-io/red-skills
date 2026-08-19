@@ -317,10 +317,11 @@ appears when a producer starts and ends when that producer dies, so a repo whose
 supervisor exited reads `unregistered` correctly. A stale pid file under
 `.red/tmp/supervisors/default/` is the residue of that death, not its cause.
 
-**A registration that outlives its producer is DECLARED, never inferred.** The
-MCP resident maintains one — `maintainStandingDrain` re-registers whenever
-nothing standing is held, which is what makes the reconnect survive a daemon
-restart, a plugin reload and a reboot — but only for a repo that declares it:
+**A registration that outlives its session is DECLARED, never inferred.** A
+`drain` carries the work it wants drained and registers it, and saying the same
+thing twice keeps the record already held rather than failing — which is what
+makes the reconnect survive a daemon restart, a plugin reload and a reboot. A
+repo that declares a standing drain states it here:
 
 ```yaml
 plugins:

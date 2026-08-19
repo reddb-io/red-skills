@@ -577,6 +577,11 @@ export const UNREGISTERED_DRAIN_WARNING =
   "this Project holds no registration, so the daemon polls no queue and births no Worker for it;" +
   " the drain intent is recorded and nothing acts on it";
 
+/** Whether a registration failed because the daemon already holds one. PURE. */
+function isProjectAlreadyRegistered(error: unknown): boolean {
+  return error instanceof Error && error.name === "RedskilledProjectRegisteredError";
+}
+
 /** Whether the daemon holds the registration its demand loop would poll. PURE. */
 export function projectIsRegistered(host: RedskilledHostState, project: AcpProjectWorkspace): boolean {
   return (host.registrations ?? []).some((entry) => entry.project_label === project.projectLabel);
@@ -603,7 +608,16 @@ export function bindProjectControl(deps: {
         if (deps.registerProject == null) {
           throw new Error("this endpoint cannot register a project: the daemon handed it no registration path");
         }
-        deps.registerProject({ ...request.registration, project_label: project.projectLabel });
+        try {
+          deps.registerProject({ ...request.registration, project_label: project.projectLabel });
+        } catch (error) {
+          // **A drain is idempotent; a registration is not.** `project-register`
+          // refuses a second record so two sessions cannot silently replace each
+          // other's work, but a drain re-run by the same operator — or by a new
+          // session repairing a standing declaration — must not fail for saying
+          // the same thing twice. A record already held IS the answer.
+          if (!isProjectAlreadyRegistered(error)) throw error;
+        }
       }
       const answer = await applyProjectControl(
         project,
