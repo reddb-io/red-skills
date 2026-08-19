@@ -136,3 +136,46 @@ describe("a drain registers the project it drains", () => {
     expect(answer).toMatchObject({ drain_intent: "draining", warning: UNREGISTERED_DRAIN_WARNING });
   });
 });
+
+describe("a drain says the same thing twice without failing", () => {
+  it("keeps the record it already holds instead of refusing the second drain", async () => {
+    const already = new Error("already holds a registration");
+    already.name = "RedskilledProjectRegisteredError";
+    let calls = 0;
+
+    const { mutateProjectControl } = bindProjectControl({
+      scopedProject: () => project,
+      projectControls: new Map<string, ProjectControlState>(),
+      persistProjectControls: async () => {},
+      hostState: () => hostState(true),
+      clock: () => "2026-08-19T20:00:00.000Z",
+      readGithubCustody: async () => null,
+      registerProject: () => {
+        calls += 1;
+        throw already;
+      },
+    });
+
+    await expect(mutateProjectControl("drain", { registration: { selector: "is:issue" } })).resolves.toMatchObject({
+      drain_intent: "draining",
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("still surfaces a registration that failed for any other reason", async () => {
+    const { mutateProjectControl } = bindProjectControl({
+      scopedProject: () => project,
+      projectControls: new Map<string, ProjectControlState>(),
+      persistProjectControls: async () => {},
+      hostState: () => hostState(false),
+      clock: () => "2026-08-19T20:00:00.000Z",
+      readGithubCustody: async () => null,
+      registerProject: () => {
+        throw new Error("the selector was empty");
+      },
+    });
+
+    await expect(mutateProjectControl("drain", { registration: { selector: "" } }))
+      .rejects.toThrow(/the selector was empty/);
+  });
+});
