@@ -33,12 +33,12 @@ describe("every structured castle refusal carries a repair (#3260)", () => {
   it("fails a new refusal that has only prose", () => {
     expect(collectRepairViolations([
       file(
-        "packages/worker/src/mcp/demo.ts",
+        "apps/dev/src/mcp-tools/demo.ts",
         'return { refused: true, reason: "try something else" };',
       ),
     ])).toEqual([
       {
-        path: "packages/worker/src/mcp/demo.ts",
+        path: "apps/dev/src/mcp-tools/demo.ts",
         line: 1,
         reason: "structured refusal has no repair or argued none",
       },
@@ -48,11 +48,11 @@ describe("every structured castle refusal carries a repair (#3260)", () => {
   it("accepts a callable repair and an argued none", () => {
     expect(collectRepairViolations([
       file(
-        "packages/worker/src/mcp/action.ts",
+        "apps/dev/src/mcp-tools/action.ts",
         'return { refused: true, reason: prose, repair: { tool: "project_start", args: {}, why: "register" } };',
       ),
       file(
-        "packages/worker/src/mcp/none.ts",
+        "apps/dev/src/mcp-tools/none.ts",
         'return { refused: true, reason: prose, repair: "none", repair_reason: "human decision required" };',
       ),
     ])).toEqual([]);
@@ -77,7 +77,7 @@ describe("every castle refusal and empty state is declared (#3261)", () => {
   it("fails an undeclared refusal, naming its file and site", () => {
     const files = [
       file(
-        "packages/worker/src/mcp/demo.ts",
+        "apps/dev/src/mcp-tools/demo.ts",
         [
           "export function refuseDemo() {",
           '  return { refused: true, reason: "not available", repair: "none", repair_reason: "demo" };',
@@ -91,21 +91,21 @@ describe("every castle refusal and empty state is declared (#3261)", () => {
     expect(violations).toEqual([
       {
         kind: "undeclared",
-        path: "packages/worker/src/mcp/demo.ts",
+        path: "apps/dev/src/mcp-tools/demo.ts",
         fn: "refuseDemo",
         line: 2,
         surface: "refusal",
       },
     ]);
     const message = formatRepairDeclarationFailure(violations);
-    expect(message).toContain("packages/worker/src/mcp/demo.ts:2");
+    expect(message).toContain("apps/dev/src/mcp-tools/demo.ts:2");
     expect(message).toContain("refuseDemo");
   });
 
   it("fails a declaration whose refusal path is gone", () => {
     const declared: DeclaredRepairSite[] = [
       {
-        path: "packages/worker/src/mcp/demo.ts",
+        path: "apps/dev/src/mcp-tools/demo.ts",
         fn: "refuseDemo",
         surface: "refusal",
       },
@@ -116,7 +116,7 @@ describe("every castle refusal and empty state is declared (#3261)", () => {
     expect(violations).toEqual([
       {
         kind: "stale",
-        path: "packages/worker/src/mcp/demo.ts",
+        path: "apps/dev/src/mcp-tools/demo.ts",
         fn: "refuseDemo",
         surface: "refusal",
       },
@@ -127,17 +127,17 @@ describe("every castle refusal and empty state is declared (#3261)", () => {
   it("declares the live refusal and empty-state sites by stable function name", () => {
     expect(DECLARED_REPAIR_SITES).toEqual([
       {
-        path: "packages/worker/src/mcp/posture.ts",
+        path: "apps/dev/src/mcp-tools/posture.ts",
         fn: "refusal",
         surface: "refusal",
       },
       {
-        path: "packages/worker/src/mcp/worker.ts",
+        path: "apps/dev/src/mcp-tools/worker.ts",
         fn: "workerInputRefusal",
         surface: "refusal",
       },
       {
-        path: "packages/worker/src/mcp/help.ts",
+        path: "apps/dev/src/mcp-tools/help.ts",
         fn: "invoke",
         surface: "empty-state",
       },
