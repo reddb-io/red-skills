@@ -9,6 +9,7 @@
     ".": "./index.ts",
     "./compat.js": "./compat.ts",
     "./endpoint.js": "./endpoint.ts",
+    "./github-request.js": "./github-request.ts",
     "./github-write.js": "./github-write.ts",
     "./go-dispatch.js": "./go-dispatch.ts",
     "./methods.js": "./methods.ts",

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { connectRedskillsProjectAcp } from "@reddb-io/redskilled/acp-client";
+import type { RedskilledGithubRequest } from "@reddb-io/protocol-acp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolve } from "node:path";
@@ -18,6 +19,7 @@ import {
   type LaneSubscriptionServer,
 } from "./lane-subscription.js";
 import { createAcpLaneFollower } from "./acp-lane-follower.js";
+import { createRsGithubMcpServer, RS_GITHUB_REQUEST_METHOD } from "./mcp-github/index.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
 
@@ -143,6 +145,57 @@ export async function connectProjectMcp(
   await closed;
 }
 
+/**
+ * Serve `rs_github` over the same stdio lane, against the same daemon.
+ *
+ * Two MCP surfaces share one bundle because they share one client: a second
+ * binary would duplicate the launcher, the version stamp and the packaging for
+ * a process whose entire body is an envelope and a socket. Which surface a host
+ * mounts is its argv, not its download.
+ */
+async function runRsGithub(): Promise<void> {
+  const fallbackRoot = process.cwd();
+  let projectPromise: ReturnType<typeof connectRedskillsProjectAcp> | undefined;
+  let server!: McpServer;
+  const project = () => {
+    projectPromise ??= resolveMcpProjectRoot(server.server, process.env, fallbackRoot).then((root) =>
+      connectRedskillsProjectAcp({
+        cwd: root,
+        name: "RedSkills GitHub MCP adapter",
+        version: buildInfo.version,
+      }));
+    return projectPromise;
+  };
+  server = createRsGithubMcpServer({
+    version: buildInfo.version,
+    invoke: async (method, params) => {
+      if (method !== RS_GITHUB_REQUEST_METHOD) {
+        throw new Error(`rs_github: no daemon method ${JSON.stringify(method)}`);
+      }
+      const session = await project();
+      return session.github((params as { request: RedskilledGithubRequest }).request);
+    },
+  });
+  const close = () => {
+    void server.close();
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+  try {
+    await connectProjectMcp({ server, transport: new StdioServerTransport() });
+  } finally {
+    if (projectPromise !== undefined) {
+      try {
+        (await projectPromise).close();
+      } catch {
+        // A failed lazy ACP connection has no live transport to close.
+      }
+    }
+    process.removeListener("SIGINT", close);
+    process.removeListener("SIGTERM", close);
+  }
+}
+
 async function run(): Promise<void> {
   const fallbackRoot = process.cwd();
   let projectPromise: ReturnType<typeof connectRedskillsProjectAcp> | undefined;
@@ -183,6 +236,8 @@ async function run(): Promise<void> {
 
 export interface McpEntrypointDependencies {
   connect(): Promise<void>;
+  /** Serve `rs_github` instead of `rs_dev`. Chosen by argv, never by config. */
+  connectGithub?(): Promise<void>;
   /** The lane's own canary (#2706). Optional so every existing caller keeps
    * working; omitted means the real probe. */
   canary?(args: string[]): Promise<number>;
@@ -200,7 +255,8 @@ export interface McpEntrypointDependencies {
 export const REDSKILLED_MCP_USAGE = `Usage: red-skills-redskilled-mcp [command]
 
 Commands:
-  (none)        serve the redskilled MCP surface over stdio
+  (none)        serve the rs_dev MCP surface over stdio
+  github        serve the rs_github MCP surface over stdio
   --version     print the build stamp (--json for the build info)
   --help        print this usage
 
@@ -229,6 +285,10 @@ export async function main(
       (async (args: string[]) =>
         (await import("./commands/mcp-lane-canary.js")).mcpLaneCanaryCommand(args));
     return canary(argv.slice(1));
+  }
+  if (argv[0] === "github") {
+    await (dependencies.connectGithub ?? runRsGithub)();
+    return 0;
   }
   if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
     process.stdout.write(

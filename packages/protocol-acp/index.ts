@@ -6,6 +6,7 @@
 // local Unix-socket / Named Pipe transport, and the `_redskills/*` methods.
 export * from "./compat.js";
 export * from "./endpoint.js";
+export * from "./github-request.js";
 export * from "./github-write.js";
 export * from "./go-dispatch.js";
 export * from "./methods.js";

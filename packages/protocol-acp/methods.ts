@@ -29,6 +29,7 @@ export const REDSKILLS_ACP_METHODS = {
   projectStatus: "_redskills/project_status",
   projectBudget: "_redskills/project_budget",
   githubRead: "_redskills/github_read",
+  githubRequest: "_redskills/github_request",
   githubWrite: "_redskills/github_write",
   githubUpdate: "_redskills/github_update",
   githubCustodyHandoff: "_redskills/github_custody_handoff",

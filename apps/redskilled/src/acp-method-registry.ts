@@ -154,7 +154,7 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
   {
     domain: "github",
     module: "apps/redskilled/src/acp-github.ts",
-    methods: ["githubRead", "githubWrite", "githubUpdate", "githubCustodyHandoff"],
+    methods: ["githubRead", "githubRequest", "githubWrite", "githubUpdate", "githubCustodyHandoff"],
     served: true,
   },
   {

@@ -16,7 +16,12 @@ import {
 } from "@agentclientprotocol/sdk";
 import { ensureRedskilledDaemon } from "./client.js";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
-import { REDSKILLS_ACP_METHODS, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
+import {
+  REDSKILLS_ACP_METHODS,
+  REDSKILLS_WIRE_MAJOR,
+  type RedskilledGithubRequest,
+} from "@reddb-io/protocol-acp";
+import type { RedskilledGithubRequestAnswer } from "./github-request.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import type { ProjectStatusContext } from "./project-control.js";
 
@@ -51,6 +56,14 @@ export interface RedskillsProjectPromptResult {
 export interface RedskillsProjectAcpSession {
   control(operation: "status"): Promise<RedskillsProjectStatusSnapshot>;
   control(operation: "drain" | "stop"): Promise<RedskillsProjectControlSnapshot>;
+  /**
+   * Forward one forge-shaped request to the daemon's Project gateway.
+   *
+   * The client composes the envelope and nothing else: which credential profile
+   * answers it, whether a cached value is fresh enough to serve, and whether a
+   * mutation is scheduled durably are all decided on the far side of this call.
+   */
+  github(request: RedskilledGithubRequest): Promise<RedskilledGithubRequestAnswer>;
   prompt(text: string): Promise<RedskillsProjectPromptResult>;
   cancel(): Promise<void>;
   permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;
@@ -122,6 +135,12 @@ export async function connectRedskillsProjectAcp(
 
   return {
     control,
+    github(request) {
+      return connection.agent.request<RedskilledGithubRequestAnswer>(
+        REDSKILLS_ACP_METHODS.githubRequest,
+        { request },
+      );
+    },
     async prompt(text) {
       const firstUpdate = pendingUpdates.length;
       const response = await connection.agent.request(methods.agent.session.prompt, {
