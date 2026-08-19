@@ -36,6 +36,7 @@ export type RedskillsAcpMethodDomainName =
   | "go"
   | "worktree"
   | "telemetry"
+  | "publication"
   | "worker";
 
 /** One domain's contribution: its bindings and what `initialize` advertises. */
@@ -114,9 +115,11 @@ export function redskillsAcpMethodTable(
  *
  * Declared here rather than discovered, so `apps/redskilled/tests/acp-control-plane-layout.test.ts`
  * can pin ONE module per domain and refuse a method with no home. `served`
- * states whether the public control plane binds the domain: `worker_budget_grace`
- * travels daemon → Worker and is answered by the Worker, so it has an owner and
- * no control-plane binding.
+ * states whether the PUBLIC control plane binds the domain, which two domains
+ * deliberately are not: `worker_budget_grace` travels daemon → Worker and is
+ * answered by the Worker, and `publication` travels Worker → daemon on the
+ * Worker's own connection, because that connection is the only honest proof of
+ * which Worker is asking (#4019).
  */
 export interface RedskillsAcpMethodDomainDeclaration {
   readonly domain: RedskillsAcpMethodDomainName;
@@ -177,6 +180,12 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
     module: "apps/redskilled/src/acp-telemetry.ts",
     methods: ["metrics"],
     served: true,
+  },
+  {
+    domain: "publication",
+    module: "apps/redskilled/src/acp-publication.ts",
+    methods: ["publish", "land"],
+    served: false,
   },
   {
     domain: "worker",

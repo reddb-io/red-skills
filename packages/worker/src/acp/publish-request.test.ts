@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RedskilledGithubWriteRequest } from "@reddb-io/protocol-acp";
+import type { RedskilledPublishRequest } from "@reddb-io/protocol-acp";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -18,10 +18,10 @@ afterEach(async () => {
 });
 
 function recordingParent() {
-  const requests: { readonly method: string; readonly params: RedskilledGithubWriteRequest }[] = [];
+  const requests: { readonly method: string; readonly params: RedskilledPublishRequest }[] = [];
   return {
     requests,
-    request: async (method: string, params: RedskilledGithubWriteRequest) => {
+    request: async (method: string, params: RedskilledPublishRequest) => {
       requests.push({ method, params });
       return { published: true };
     },
@@ -49,7 +49,8 @@ describe("the Worker's post-turn publication request", () => {
       method: WORKER_PUBLISH_METHOD,
       params: {
         idempotency_key: "worker-turn:s:c0ffee",
-        write: { kind: "repository-push", ref: "afk/4016-terminal-policy", sha: "c0ffee" },
+        branch: "afk/4016-terminal-policy",
+        commit: "c0ffee",
       },
     }]);
   });
@@ -71,9 +72,9 @@ describe("the Worker's post-turn publication request", () => {
     commit = "decade";
     await publisher.publishTurn();
 
-    expect(parent.requests.map(({ params }) => params.write)).toEqual([
-      { kind: "repository-push", ref: "afk/4016", sha: "c0ffee" },
-      { kind: "repository-push", ref: "afk/4016", sha: "decade" },
+    expect(parent.requests.map(({ params }) => ({ branch: params.branch, commit: params.commit }))).toEqual([
+      { branch: "afk/4016", commit: "c0ffee" },
+      { branch: "afk/4016", commit: "decade" },
     ]);
   });
 

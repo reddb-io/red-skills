@@ -14,10 +14,10 @@
  * behalf.
  */
 import { execFile } from "node:child_process";
-import { REDSKILLS_ACP_METHODS, type RedskilledGithubWriteRequest } from "@reddb-io/protocol-acp";
+import { REDSKILLS_ACP_METHODS, type RedskilledPublishRequest } from "@reddb-io/protocol-acp";
 
 /** The ACP method the Worker's publication request travels on. */
-export const WORKER_PUBLISH_METHOD = REDSKILLS_ACP_METHODS.githubWrite;
+export const WORKER_PUBLISH_METHOD = REDSKILLS_ACP_METHODS.publish;
 
 /** What the inner agent left behind in the Worktree, ready to publish. */
 export interface WorkerPublication {
@@ -29,7 +29,7 @@ export interface WorkerPublisherOptions {
   /** The Worktree the inner agent committed in. */
   readonly cwd: string;
   /** Sends the request to the ACP parent; the parent owns the credential. */
-  readonly request: (method: string, params: RedskilledGithubWriteRequest) => Promise<unknown>;
+  readonly request: (method: string, params: RedskilledPublishRequest) => Promise<unknown>;
   /** Stable per-Worker prefix, so a re-asked publication is the same write. */
   readonly idempotencyScope: string;
   /** Test seam over `git rev-parse`. Production reads the real Worktree. */
@@ -59,12 +59,13 @@ export function createWorkerPublisher(options: WorkerPublisherOptions): WorkerPu
       const publication = await readPublication(options.cwd).catch(() => null);
       if (publication == null || publication.commit === published) return null;
       published = publication.commit;
-      const write: RedskilledGithubWriteRequest = {
+      const request: RedskilledPublishRequest = {
         idempotency_key: `${options.idempotencyScope}:${publication.commit}`,
-        write: { kind: "repository-push", ref: publication.branch, sha: publication.commit },
+        branch: publication.branch,
+        commit: publication.commit,
       };
       try {
-        return { status: "requested", publication, receipt: await options.request(WORKER_PUBLISH_METHOD, write) };
+        return { status: "requested", publication, receipt: await options.request(WORKER_PUBLISH_METHOD, request) };
       } catch (error) {
         return { status: "refused", publication, detail: error instanceof Error ? error.message : String(error) };
       }

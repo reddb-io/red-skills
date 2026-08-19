@@ -20,7 +20,7 @@ import {
   closeServer,
   removeAcpEndpoint,
   socketStream,
-  type RedskilledGithubWriteRequest,
+  type RedskilledPublishRequest,
 } from "@reddb-io/protocol-acp";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -122,7 +122,7 @@ describe("a Worker finishing a prompt turn", () => {
     roots.push(root);
     const socketPath = join(root, "worker.sock");
     const cwd = await committedWorktree("worker-publish-worktree-", "afk/4016-publish");
-    const published: RedskilledGithubWriteRequest[] = [];
+    const published: RedskilledPublishRequest[] = [];
 
     const rendezvous = await bindWorkerRendezvous(socketPath);
     servers.push(rendezvous.server);
@@ -141,8 +141,8 @@ describe("a Worker finishing a prompt turn", () => {
     const parent = client({ name: "stub parent" })
       .onNotification(methods.client.session.update, () => undefined)
       .onRequest(
-        REDSKILLS_ACP_METHODS.githubWrite,
-        (value: unknown) => value as RedskilledGithubWriteRequest,
+        REDSKILLS_ACP_METHODS.publish,
+        (value: unknown) => value as RedskilledPublishRequest,
         ({ params }) => {
           published.push(params);
           return { receipt: "stub" };
@@ -165,11 +165,8 @@ describe("a Worker finishing a prompt turn", () => {
 
       expect(response.stopReason).toBe("end_turn");
       expect(published).toHaveLength(1);
-      expect(published[0]!.write).toEqual({
-        kind: "repository-push",
-        ref: "afk/4016-publish",
-        sha: expect.stringMatching(/^[0-9a-f]{40}$/),
-      });
+      expect(published[0]!.branch).toBe("afk/4016-publish");
+      expect(published[0]!.commit).toMatch(/^[0-9a-f]{40}$/);
       expect(published[0]!.idempotency_key).toContain(session.sessionId);
 
       // A second turn that committed nothing new is not a second publication.
