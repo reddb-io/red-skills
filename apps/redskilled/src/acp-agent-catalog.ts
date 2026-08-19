@@ -11,9 +11,13 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
+import { ACP_AGENT_IDS, type AcpAgentId, type AcpEndpoint } from "@reddb-io/protocol-acp";
 
-export const ACP_AGENT_IDS = ["redcode", "claude-code", "codex", "pi", "opencode"] as const;
-export type AcpAgentId = typeof ACP_AGENT_IDS[number];
+// The Agent identities and the resolved endpoint are shared wire (ADR 0148):
+// the Worker body reads an endpoint it never resolves, so it must not have to
+// import this catalog to do it. Re-exported here so daemon-side callers keep
+// asking the authority that owns discovery.
+export { ACP_AGENT_IDS, type AcpAgentId, type AcpEndpoint };
 
 export const ACP_AGENT_REQUIRED_CAPABILITIES = [
   "session/new",
@@ -90,13 +94,6 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
 ] as const;
 
 /** Credential-free launch projection handed to a Worker. */
-export interface AcpEndpoint {
-  readonly agent: AcpAgentId;
-  readonly transport: "stdio";
-  readonly command: string;
-  readonly args: readonly string[];
-}
-
 export interface AcpAgentProbeResult {
   readonly protocolVersion: number;
   readonly capabilities: readonly string[];

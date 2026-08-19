@@ -90,8 +90,8 @@ import {
   workflowOutcome,
   type ActiveWorkflowWorker,
 } from "./acp-worker-lifecycle.js";
-import { admitNativeAcpWorker } from "./acp-native-worker.js";
-export { runNativeAcpWorker } from "./acp-native-worker.js";
+import { admitNativeAcpWorker } from "./acp-worker-admission.js";
+export { runNativeAcpWorker } from "@reddb-io/worker/acp";
 import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";

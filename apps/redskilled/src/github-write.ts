@@ -8,38 +8,15 @@ import {
   githubUpstreamRefusal,
   responseValue,
 } from "./github-transport.js";
+import type {
+  RedskilledGithubWrite,
+  RedskilledGithubWriteRequest,
+} from "@reddb-io/protocol-acp";
 
-export type RedskilledGithubWrite =
-  | { readonly kind: "repository-push"; readonly ref: string; readonly sha: string }
-  | {
-      readonly kind: "pull-request";
-      readonly head: string;
-      readonly base: string;
-      readonly title: string;
-      readonly body: string;
-    }
-  | {
-      readonly kind: "issue-publication";
-      /** Absent to open a Ticket; present to publish a comment on that Ticket. */
-      readonly issue?: number;
-      readonly title?: string;
-      readonly body: string;
-      /**
-       * Labels stamped on a NEWLY opened Ticket.
-       *
-       * A lane label decides who may claim the Ticket, so stamping it in the
-       * SAME call that opens the Ticket is what keeps the window shut: a Ticket
-       * opened unlabelled and labelled a round-trip later is claimable by
-       * whoever lists the queue in between.
-       */
-      readonly labels?: readonly string[];
-    };
-
-export interface RedskilledGithubWriteRequest {
-  /** Stable caller-minted identity. Reusing it returns the durable receipt. */
-  readonly idempotency_key: string;
-  readonly write: RedskilledGithubWrite;
-}
+// The request a caller sends is wire (ADR 0148): a Worker composes one without
+// holding a credential. Everything below — custody, the durable receipt, the
+// upstream call — is the gateway that answers it, and stays here.
+export type { RedskilledGithubWrite, RedskilledGithubWriteRequest };
 
 export interface RedskilledGithubWriteUpstreamInput {
   readonly project: RedskilledGithubProjectAuthority;

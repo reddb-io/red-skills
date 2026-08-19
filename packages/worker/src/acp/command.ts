@@ -1,7 +1,14 @@
-/** Internal CLI adapter for a daemon-selected Workflow Worker child endpoint. */
+/**
+ * The `acp-worker` re-exec entry: argv in, one Worker body out.
+ *
+ * The daemon re-execs its own binary with this subcommand; the binary's router
+ * hands the arguments straight here. Every value it reads was CHOSEN by the
+ * daemon — the rendezvous socket and the child Agent endpoint — so this parses
+ * and refuses, and decides nothing (ADR 0148).
+ */
 import { parseFlags } from "@reddb-io/shared/args.js";
-import { ACP_AGENT_IDS, type AcpAgentId } from "./acp-agent-catalog.js";
-import { runNativeAcpWorker } from "./acp-native-worker.js";
+import { ACP_AGENT_IDS, type AcpAgentId } from "@reddb-io/protocol-acp";
+import { runNativeAcpWorker } from "./native-worker.js";
 
 const ACP_WORKER_FLAGS = {
   socket: { kind: "value", coerce: (raw: string) => raw },

@@ -3,7 +3,7 @@ import {
   REDSKILLED_WORKER_BUDGET_GRACE_METHOD,
   createAcpWorkerBudgetGraceRuntime,
   type WorkerBudgetGraceEnvelope,
-} from "../src/acp-worker-budget-grace.js";
+} from "@reddb-io/worker/acp";
 
 describe("ACP Worker Budget grace", () => {
   it("cancels, checkpoints, requests tokenless publication, writes its Envelope, and exits in order", async () => {
