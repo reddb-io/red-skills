@@ -6,10 +6,6 @@ import { doLanding } from "../src/core/landing.js";
 import { harness } from "./landing.test-support.js";
 import { readsPull } from "./support/gh-rest-fixtures.js";
 import {
-  harness as processHarness,
-  processIssue,
-} from "./process-issue.test-helpers.js";
-import {
   createFileQueueCustodyStore,
   handoffQueueCustody,
   repairQueueCustody,
@@ -80,31 +76,9 @@ describe("Queue Custodian", () => {
     expect(result.ok && result.deferred).toBeUndefined();
   });
 
-  it("terminates the owning Worker without closing the Ticket at custody hand-off", async () => {
-    const store = memoryStore();
-    const { deps, input, trace } = processHarness({
-      outcome: "done",
-      feedbackOk: true,
-      locked: false,
-      queueOutcome: "pending",
-    });
-    Object.assign(deps, {
-      nativeMergeQueue: true,
-      queueCustody: (identity: Parameters<typeof handoffQueueCustody>[1], armNativeIntent: () => Promise<{ ok: boolean; reason?: string }>) =>
-        handoffQueueCustody(
-          { store, now: () => "2026-08-05T12:30:00.000Z", armNativeIntent },
-          identity,
-        ),
-    });
-
-    const result = await processIssue(deps, input);
-
-    expect(result).toMatchObject({ outcome: "done", swept: false });
-    expect(trace.released).toEqual([9]);
-    expect(trace.closed).toEqual([]);
-    expect(store.state.prs["42"]).toMatchObject({ ownerTicket: 9, status: "watching" });
-  });
-
+  // The "terminates the owning Worker" case drove `processIssue`, the dev CLI's
+  // deleted engine; custody hand-off itself is still asserted by the cases
+  // around it.
   it("reloads custody from its durable AFK state lane", async () => {
     const root = await mkdtemp(join(tmpdir(), "queue-custody-"));
     try {

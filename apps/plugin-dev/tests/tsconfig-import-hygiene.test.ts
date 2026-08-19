@@ -20,12 +20,7 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   // because the two symbols next to it ARE used and a blind strip broke them.
   "src/core/boot.ts": 1,
   "src/core/dashboard.ts": 1,
-  "src/core/process-issue/lifecycle.ts": 56,
-  "src/core/process-issue/recovery.ts": 90,
-  "src/core/process-issue/terminal.ts": 70,
-  "src/core/process-issue/types.ts": 67,
   "src/core/review-extract.ts": 1,
-  "src/core/session.ts": 3,
   "src/core/skill-audit-extract.ts": 1,
   "src/runtime/review-gh.ts": 1,
 };

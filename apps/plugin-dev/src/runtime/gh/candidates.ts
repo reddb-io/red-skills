@@ -5,7 +5,7 @@ import {
   LABEL_READY,
   LABEL_SCOUT_LANE,
 } from "../../core/triage-labels.js";
-import type { IssueCandidate, SelectionFilter } from "../../core/session.js";
+import type { IssueCandidate, SelectionFilter } from "../../types/work-candidate.js";
 import type { HitlCandidate } from "../../core/hitl-selection.js";
 import type {
   QueueVisibilityTransportFailure,
