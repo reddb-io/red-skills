@@ -29,6 +29,7 @@ import { startRedskilledHostOtlpExport } from "./telemetry-otlp.js";
 import {
   readRedskilledHostConfig,
   readRedskilledHostGithubApp,
+  redskilledDaemonPolicy,
   resolveRedskilledHostEventSinks,
   resolveRedskilledHostSettings,
 } from "./host-config.js";
@@ -533,8 +534,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       daemon = await startRedskilledDaemon({
         paths,
         ...(hostEventSinks == null ? {} : { hostEventSinks }),
-        idleMs: hostSettings.idleMs,
-        ceiling: hostSettings.ceiling,
+        ...redskilledDaemonPolicy(hostSettings),
         // The artifact states what it IS. Absent, the daemon reports the version
         // baked into this build rather than a placeholder, because "what version is
         // answering" is the first fact a skew investigation needs.
