@@ -23,26 +23,6 @@
             "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/command-guard.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
-      },
-      {
-        "matcher": "Task|Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev route-model-tier --host claude <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"$f\" run dev path-brief --plugin-root \"$root\" <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
-          }
-        ]
       }
     ]
   }
