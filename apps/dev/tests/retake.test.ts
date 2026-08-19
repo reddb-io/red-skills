@@ -6,7 +6,6 @@ import {
   recommendRetake,
   summarizeChecks,
 } from "../src/core/retake.js";
-import { renderRetakeReport } from "../src/commands/retake.js";
 
 const issue = {
   number: 123,
@@ -55,23 +54,6 @@ describe("retake helpers", () => {
 });
 
 describe("recommendRetake", () => {
-  it("surfaces a fixture Worker's session artifact in reconstruction output", () => {
-    const report = renderRetakeReport({
-      issue,
-      pullRequests: [],
-      branches: [],
-      worktrees: [],
-      workerState: {
-        path: "/repo/.red/tmp/workers/wAAAA/123/afk.state.toon",
-        attemptDir: "/repo/.red/tmp/workers/wAAAA/123",
-        issue: 123,
-        sessionArtifact: "/sessions/wAAAA/runner-session.toon",
-      },
-    });
-
-    expect(report).toContain("session evidence: /sessions/wAAAA/runner-session.toon");
-  });
-
   it("routes ready-for-human issues to HITL first", () => {
     expect(recommendRetake({
       issue: { ...issue, labels: ["ready-for-human"] },

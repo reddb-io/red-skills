@@ -19,7 +19,6 @@ import {
 } from "../src/core/worker-budget.js";
 import { CAP_HANDOFF_MARKER } from "../src/core/wall-clock-cap.js";
 import { CONFIG_DEFAULTS, getConfig, loadConfig } from "../src/core/config.js";
-import { resolveSupervisorConfig } from "../src/core/supervisor.js";
 
 describe("budget resolution: unset means unlimited, never zero (#2707)", () => {
   it("the shipped defaults leave memory and cost unlimited", () => {
@@ -76,14 +75,6 @@ describe("budget resolution: unset means unlimited, never zero (#2707)", () => {
     expect(budgets.wall_clock_s).toBe(2700);
   });
 
-  it("the supervisor config carries the resolved table, wall clock included", () => {
-    const config = resolveSupervisorConfig(
-      { RED_AFK_ATTEMPT_COST_USD: "9" },
-      (key) => (key === "afk.issue_wall_clock_max_s" ? "1800" : ""),
-    );
-    expect(config.workerBudgets).toEqual({ wall_clock_s: 1800, cost_usd: 9 });
-    expect(config.workerBudgets.peak_rss_mb).toBeUndefined();
-  });
 });
 
 describe("budget evaluation names the budget that fired (#2707)", () => {

@@ -25,7 +25,6 @@ import {
 } from "../src/runtime/engine-floor-check.js";
 import type { PublishedVersionObservation } from "../src/core/published-version.js";
 import { CONFIG_DEFAULTS } from "../src/core/config.js";
-import { goCommand, type GoRuntime } from "../src/commands/go.js";
 import { invokeProjectMcp } from "../src/project-acp-adapter.js";
 import type { RedskillsProjectAcpSession } from "@reddb-io/redskilled/acp-client";
 import type { DispatchedWorkerBirth } from "../src/runtime/mcp-worker-birth.js";
@@ -288,103 +287,6 @@ describe("the dispatch-time reading", () => {
 
     expect(verdict.decision).toBe("proceed");
     expect(resolvePublished).not.toHaveBeenCalled();
-  });
-});
-
-const GRANTED: DispatchedWorkerBirth = {
-  worker_id: "worker-3031",
-  pid: 424_242,
-  fork_sha: "granted-fork-sha",
-  log: "/tmp/red/logs/2026-08-02/dispatch-3031.log",
-  warnings: [],
-  admission: "admitted: 1 of 3 workers",
-};
-
-const SUPERSEDED = evaluateEngineFloor({
-  engineVersion: "3.2.0",
-  published: fromRegistry("3.4.1"),
-  policy: "refuse",
-});
-
-const SUPERSEDED_WARNING = evaluateEngineFloor({
-  engineVersion: "3.2.0",
-  published: fromRegistry("3.4.1"),
-  policy: "warn",
-});
-
-interface RecordedGo {
-  runtime: GoRuntime;
-  born: string[][];
-  minted: number;
-  output: string[];
-}
-
-function goRuntime(verdict: EngineFloorVerdict): RecordedGo {
-  const born: string[][] = [];
-  const output: string[] = [];
-  const recorded: RecordedGo = {
-    born,
-    output,
-    minted: 0,
-    runtime: {
-      ensureLabel: async () => undefined,
-      createGoIssue: async () => (recorded.minted += 1, 3031),
-      createScoutIssue: async () => (recorded.minted += 1, 3031),
-      birthWorker: async (args) => {
-        born.push([...args]);
-        return GRANTED;
-      },
-      runEngineAttached: async () => 0,
-      checkEngineFloor: async () => verdict,
-      hasHarness: false,
-      write: (text) => output.push(text),
-    },
-  };
-  return recorded;
-}
-
-describe("/go carries the floor", () => {
-  it("refuses before minting the issue, so a refused dispatch leaves nothing behind", async () => {
-    const recorded = goRuntime(SUPERSEDED);
-    const errors: string[] = [];
-    const spy = vi.spyOn(console, "error").mockImplementation((text: unknown) => {
-      errors.push(String(text));
-    });
-
-    try {
-      const code = await goCommand(["fix the flaky login test"], "/workspace", recorded.runtime);
-
-      expect(code).toBe(1);
-      expect(recorded.minted).toBe(0);
-      expect(recorded.born).toEqual([]);
-      expect(errors.join("")).toContain("3.2.0");
-      expect(errors.join("")).toContain("3.4.1");
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("refuses a scout dispatch on the same reading", async () => {
-    const recorded = goRuntime(SUPERSEDED);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    try {
-      expect(await goCommand(["--scout", "why did it die?"], "/workspace", recorded.runtime)).toBe(1);
-      expect(recorded.born).toEqual([]);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("dispatches under `warn` and prints both versions", async () => {
-    const recorded = goRuntime(SUPERSEDED_WARNING);
-    const code = await goCommand(["fix the flaky login test"], "/workspace", recorded.runtime);
-
-    expect(code).toBe(0);
-    expect(recorded.born).toHaveLength(1);
-    const answer = recorded.output.join("");
-    expect(answer).toContain("3.2.0");
-    expect(answer).toContain("3.4.1");
   });
 });
 

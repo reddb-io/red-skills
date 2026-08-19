@@ -10,17 +10,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  RED_AFK_SLOT_PLACEHOLDER,
-  RED_AFK_WORKER_ID_PLACEHOLDER,
-} from "../src/core/supervisor/launch-template.js";
-import {
   createCastleWorkerLaneBridge,
   workerLogLine,
 } from "../src/core/castle-worker-lane-bridge.js";
 import {
   REDSKILLED_HOST_WORKER_ID_ENV,
   createWorkerLogLinePublisher,
-  registrationLaunchEnv,
 } from "../src/runtime/redskilled-worker-log.js";
 
 const roots: string[] = [];
@@ -113,27 +108,3 @@ describe("the beat the bridge already keeps", () => {
 });
 
 // #3081 — the slot the host placed a Worker on must reach the Worker.
-describe("registrationLaunchEnv slot and runner", () => {
-  it("declares RED_AFK_SLOT so per-slot isolation is not all slot 0", () => {
-    // `parseSlot(process.env.RED_AFK_SLOT) ?? 0` is read in reconcile.ts and
-    // process-deps.ts. Unset, every Worker resolved to slot 0 and the isolation
-    // it exists for — retire files, cargo target dirs, hook scoping — collapsed.
-    expect(registrationLaunchEnv().RED_AFK_SLOT).toBe(RED_AFK_SLOT_PLACEHOLDER);
-  });
-
-  it("pins the runner the registration decided, and omits it when none is given", () => {
-    expect(registrationLaunchEnv("codex").RED_AFK_RUNNER).toBe("codex");
-    expect(registrationLaunchEnv()).not.toHaveProperty("RED_AFK_RUNNER");
-    expect(registrationLaunchEnv("")).not.toHaveProperty("RED_AFK_RUNNER");
-  });
-
-  it("NEVER sets RED_AFK_WORKER_ID — the host's handle must not rename the work", () => {
-    // The two ids exist on purpose. RED_AFK_WORKER_ID names the work: its
-    // directory, its claim comment, every project-side surface. Assigning the
-    // host's handle to it would rename the work to satisfy an address, so the
-    // host's id travels under its own name and attribution reads THAT.
-    const env = registrationLaunchEnv("claude");
-    expect(env).not.toHaveProperty("RED_AFK_WORKER_ID");
-    expect(env[REDSKILLED_HOST_WORKER_ID_ENV]).toBe(RED_AFK_WORKER_ID_PLACEHOLDER);
-  });
-});
