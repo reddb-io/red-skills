@@ -86,6 +86,7 @@ import {
   type RedskilledProjectRegistrationRequest,
 } from "../project-registration.js";
 import { createRedskilledProjectHookRuntime } from "../project-hook.js";
+import { meteredRedskilledEventLane, redskilledMetrics } from "../telemetry-metrics.js";
 import { createRedskilledHostEventSinkRuntime } from "../host-event-sink.js";
 import { detectRedskilledHostTopology } from "../host-topology.js";
 import { pingAnswer } from "./ping-answer.js";
@@ -326,7 +327,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   const startedAt = clock();
-  const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
+  const eventLane = meteredRedskilledEventLane(options.eventLane ?? createRedskilledEventLane(paths.eventLanePath), redskilledMetrics());
   const registrationIntentStore = options.registrationIntentStore ??
     createRedskilledRegistrationIntentStore(paths.registrationIntentPath);
   const liveness = options.liveness ?? detectWorkerLiveness;

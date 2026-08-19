@@ -26,6 +26,7 @@ import {
 } from "./event-lane.js";
 import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledHostEventSinks } from "./host-event-sink.js";
+import type { RedskilledTelemetryConfig } from "./telemetry-otlp.js";
 import type {
   RedskilledGithubCredentialProfileDeclaration,
   RedskilledGithubCredentialProfiles,
@@ -45,6 +46,8 @@ export interface RedskilledHostConfig {
   readonly notifications?: readonly RedskilledPublicHostEventKind[];
   /** Named daemon-owned GitHub authentication backends. */
   readonly githubProfiles?: RedskilledGithubCredentialProfiles;
+  /** Where this host's counters are pushed; absent is the default, which is nowhere. */
+  readonly telemetry?: RedskilledTelemetryConfig;
 }
 
 /** A credential backend declaration that must fail closed at daemon boot. */
@@ -135,6 +138,7 @@ export async function readRedskilledHostConfig(
       ...hooksAt(redskilled),
       ...notificationsAt(redskilled),
       ...githubProfilesAt(redskilled),
+      ...telemetryAt(redskilled),
     };
   } catch (error) {
     if (error instanceof RedskilledGithubProfileConfigError) throw error;
@@ -143,6 +147,40 @@ export async function readRedskilledHostConfig(
     warn(`redskilled: malformed host config ${JSON.stringify(path)}; using environment and defaults instead: ${errorMessage(error)}`);
     return {};
   }
+}
+
+/**
+ * `telemetry.otlp` from operator policy, or nothing.
+ *
+ * Malformed reads as ABSENT rather than as a throw, which is this reader's
+ * standing rule for optional measurement (see the GitHub App block above): a
+ * daemon that refused to boot over a mistyped collector URL would trade the
+ * whole host for a counter nobody is watching yet.
+ */
+function telemetryAt(
+  redskilled: Readonly<Record<string, unknown>>,
+): Pick<RedskilledHostConfig, "telemetry"> | Record<never, never> {
+  const telemetry = redskilled.telemetry;
+  if (!isMapping(telemetry) || !isMapping(telemetry.otlp)) return {};
+  const otlp = telemetry.otlp;
+  const endpoint = typeof otlp.endpoint === "string" ? otlp.endpoint.trim() : "";
+  if (endpoint === "") return {};
+  const intervalMs = Number(otlp.interval_ms);
+  const headers: Record<string, string> = {};
+  if (isMapping(otlp.headers)) {
+    for (const [name, value] of Object.entries(otlp.headers)) {
+      if (typeof value === "string" || typeof value === "number") headers[name] = String(value);
+    }
+  }
+  return {
+    telemetry: {
+      otlp: {
+        endpoint,
+        ...(Number.isSafeInteger(intervalMs) && intervalMs > 0 ? { intervalMs } : {}),
+        ...(Object.keys(headers).length === 0 ? {} : { headers }),
+      },
+    },
+  };
 }
 
 function githubProfilesAt(

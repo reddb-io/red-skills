@@ -8,6 +8,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 import { removeAcpEndpoint } from "@reddb-io/protocol-acp";
+import { redskilledMetrics } from "./telemetry-metrics.js";
 
 export interface ActiveWorkflowWorker {
   readonly workerId: string;
@@ -127,10 +128,13 @@ export async function requestWorkflowTurn(
     });
   };
   try {
-    return { worker, response: await request(worker) };
+    const response = await request(worker);
+    redskilledMetrics().observeTurn("completed");
+    return { worker, response };
   } catch (error) {
     if (!workerTransportIsClosed(worker)) {
       scheduleIdleCleanup(publicSessionId, worker, active);
+      redskilledMetrics().observeTurn("refused");
       throw error;
     }
     cleanupWorkflowWorker(publicSessionId, worker, active);
@@ -140,9 +144,12 @@ export async function requestWorkflowTurn(
   active.set(publicSessionId, replacement);
   await notifyWorkerLifecycle(replacement, "replacement");
   try {
-    return { worker: replacement, response: await request(replacement) };
+    const response = await request(replacement);
+    redskilledMetrics().observeTurn("completed");
+    return { worker: replacement, response };
   } catch (error) {
     cleanupWorkflowWorker(publicSessionId, replacement, active);
+    redskilledMetrics().observeTurn("refused");
     throw error;
   }
 }
