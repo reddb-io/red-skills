@@ -15,8 +15,8 @@ export {
   makeRunAgent,
 } from "./wire/settings.js";
 
-export type { MonitorInputs, DeadWorkerSweepDeps } from "./wire/monitor.js";
-export { readFleetState, reclaimDeadWorkers, collectMonitorInputs } from "./wire/monitor.js";
+export type { MonitorInputs } from "./wire/monitor.js";
+export { readFleetState, collectMonitorInputs } from "./wire/monitor.js";
 
 export { parseGitHubRepoSlugFromRemoteUrl, inferGitHubRepoSlug } from "./wire/github-slug.js";
 

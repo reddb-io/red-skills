@@ -16,13 +16,11 @@ import type {
   DeadendClaim,
   DeadendIssue,
   DeadendPr,
-  DeadendWorktree,
   IssueState,
 } from "../core/deadend-audit.js";
 import { issueFromAFKBranch } from "../core/boot-sweep.js";
 import { parseClaimRecords } from "../core/claim.js";
 import { LABEL_DEPENDENCY, LABEL_RUNNING } from "../core/triage-labels.js";
-import { collectTmpJanitorReport } from "./tmp-janitor.js";
 import {
   listCandidates,
   listHitlCandidates,
@@ -32,7 +30,7 @@ import {
 } from "./gh.js";
 import { isRecord } from "./gh/common.js";
 import { readGhJsonRows } from "./gh/read.js";
-import { afkPaths, collectMonitorInputs, resolveRepoContext } from "./wire.js";
+import { collectMonitorInputs, resolveRepoContext } from "./wire.js";
 
 function issueStateOf(raw: string): IssueState {
   const upper = raw.toUpperCase();
@@ -112,7 +110,6 @@ export async function collectDeadendAuditReport(
 ): Promise<DeadendAuditReport> {
   const context = await resolveRepoContext(root);
   const gh: GhContext = { cwd: context.root, repo: context.repo };
-  const paths = afkPaths(root);
 
   const reader: DeadendAuditReader = {
     now: () => Date.now(),
@@ -201,17 +198,11 @@ export async function collectDeadendAuditReport(
     },
 
     async worktrees() {
-      const states = await listIssueStates(gh);
-      const report = await collectTmpJanitorReport(
-        paths.tmpDir,
-        Math.floor(Date.now() / 1000),
-        (issue) => issueStateOf(states.get(issue)?.state ?? "UNKNOWN"),
-      );
-      const out: DeadendWorktree[] = [];
-      for (const entry of report.orphanFeedback.reclaim) {
-        out.push({ lane: "feedback", path: entry.path, live: false });
-      }
-      return out;
+      // The feedback-lane inventory came from the tmp janitor, deleted in #4032
+      // (ADR 0149 §4): Workers live in daemon-placed storage now, so a client
+      // checkout has no Worker worktrees to audit. `worktree_list` on the daemon
+      // is the one inventory that still answers this.
+      return [];
     },
 
     async issueStates() {

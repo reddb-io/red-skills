@@ -1,5 +1,3 @@
-import { existsSync, statSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readPublishedBundleVersion } from "../../core/published-version.js";
 import { decodeDevSnapshotSniff } from "../../core/toon-snapshot.js";
@@ -7,11 +5,7 @@ import type { CompactWorker, FleetState, SlotDetail } from "../../core/monitor.j
 import {
   readAllWorkerStates,
   currentRenderableWorkerRecords,
-  type WorkerStateRecord,
-} from "../../core/worker-state-reader.js";
-import { planLivenessReclaim, type LivenessReclaimInput } from "../../core/reclaim.js";
-import type { WorkerProcessVerdict } from "../../core/worker-reclaim.js";
-import { readWorkerLivenessForTmpPath } from "../tmp-janitor.js";
+  } from "../../core/worker-state-reader.js";
 import { readHistoryRecords, type HistoryRecord } from "../../core/history.js";
 import {
   createEnginePaths,
@@ -19,15 +13,8 @@ import {
   readCastleMonitorHistoryEvents,
   readCastleMonitorWorkers,
 } from "@reddb-io/worker/engine";
-import * as ghx from "../gh.js";
-import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { collectLogLineCounts } from "../log-cursor.js";
-import { reapableWorktreeUnder } from "../supervisor-fs.js";
-import {
-  WORKTREE_RECLAIM_TOMBSTONE,
-  worktreeReclaimTombstoneLine,
-} from "../worker-workspace-retention.js";
 import { afkPaths } from "./paths.js";
 
 export interface MonitorInputs {
@@ -175,29 +162,6 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
   }
 }
 
-/** Injected seams for {@link reclaimDeadWorkers} (real defaults wire gh/git/fs). */
-export interface DeadWorkerSweepDeps {
-  /** The DAEMON's verdict on the Worker owning a dir (Spec #2772 US 46). Default
-   * asks the daemon through the single liveness anchor; there is deliberately no
-   * pid-file seam here, because keying reclaim on a pid file is what deleted a
-   * live lane and kept the dead ones (#2679). */
-  workerLiveness?: (workerDir: string) => Promise<WorkerProcessVerdict>;
-  /** Current tracker state. UNKNOWN conservatively retains the workspace. */
-  issueState?: (issue: number) => Promise<"OPEN" | "CLOSED" | "UNKNOWN">;
-  /** Worker-state mtime in epoch seconds; sibling tombstones do not reset it. */
-  dirMtimeS?: (statePath: string) => number | undefined;
-  /** Injected clock for the pure two-stage TTL planner. */
-  nowS?: number;
-  /** `git worktree remove --force`. Default runtime git against `root`. */
-  removeWorktree?: (worktreePath: string) => Promise<void>;
-  /** `rm -rf`. Default `fsx.removeDir`. */
-  removeDir?: (dir: string) => Promise<void>;
-  /** Path existence probe. Default `existsSync`. */
-  exists?: (path: string) => boolean;
-  /** Tombstone writer, injected so the stage-one side effect is testable. */
-  writeTombstone?: (path: string, contents: string) => Promise<void>;
-}
-
 /**
  * Read-time liveness-gated teardown (issue #1219): as workers finish/crash,
  * enforce the CLOSED-immediate / OPEN-two-stage policy from the pure planner. Runs
@@ -214,97 +178,6 @@ export interface DeadWorkerSweepDeps {
  * Best-effort throughout: every fs/git/gh failure is swallowed so the sweep never
  * breaks the read it rides on. Returns the reclaimed attempt-dir paths.
  */
-export async function reclaimDeadWorkers(
-  root: string,
-  records: ReadonlyArray<WorkerStateRecord>,
-  repo = "",
-  deps: DeadWorkerSweepDeps = {},
-): Promise<string[]> {
-  const exists = deps.exists ?? ((p: string) => existsSync(p));
-  const workerLiveness =
-    deps.workerLiveness ??
-    ((workerDir: string): Promise<WorkerProcessVerdict> =>
-      readWorkerLivenessForTmpPath(afkPaths(root).tmpDir, workerDir));
-  const issueState =
-    deps.issueState ??
-    (async (issue: number): Promise<"OPEN" | "CLOSED" | "UNKNOWN"> => {
-      const state = await ghx.blockerState({ cwd: root, repo }, issue);
-      return state === "OPEN" || state === "CLOSED" ? state : "UNKNOWN";
-    });
-  const dirMtimeS =
-    deps.dirMtimeS ??
-    ((dir: string): number | undefined => {
-      try {
-        return Math.floor(statSync(dir).mtimeMs / 1000);
-      } catch {
-        return undefined;
-      }
-    });
-  const nowS = deps.nowS ?? Math.floor(Date.now() / 1000);
-  const removeWorktree =
-    deps.removeWorktree ??
-    (async (worktreePath: string): Promise<void> => {
-      await gitx.worktreeRemove({ cwd: root }, worktreePath);
-    });
-  const removeDir = deps.removeDir ?? ((dir: string) => fsx.removeDir(dir));
-  const writeTombstone =
-    deps.writeTombstone ??
-    ((path: string, contents: string): Promise<void> => writeFile(path, contents, "utf8"));
-
-  // The daemon's verdict per Worker, memoized so a Worker's several attempt dirs
-  // ask once. An unreachable daemon answers `unknown`, which spares the dir.
-  const verdictCache = new Map<string, WorkerProcessVerdict>();
-  const workerVerdict = async (workerDir: string): Promise<WorkerProcessVerdict> => {
-    const cached = verdictCache.get(workerDir);
-    if (cached !== undefined) return cached;
-    const verdict = await workerLiveness(workerDir).catch((): WorkerProcessVerdict => "unknown");
-    verdictCache.set(workerDir, verdict);
-    return verdict;
-  };
-
-  // Build the pure planner inputs, resolving tracker state only for dead workers.
-  const inputs: LivenessReclaimInput[] = [];
-  for (const rec of records) {
-    const attemptDir = dirname(rec.path);
-    const workerDir = dirname(attemptDir);
-    // A renderable-live record is EVIDENCE the Worker still runs: it withholds
-    // the death claim, and never asserts a life the daemon did not.
-    const liveness = rec.renderableLive ? "unknown" : await workerVerdict(workerDir);
-    const num = rec.state.current.number;
-    const issue = typeof num === "number" ? num : Number.parseInt(String(num), 10);
-    const state =
-      Number.isFinite(issue) && issue > 0 ? await issueState(issue) : "UNKNOWN";
-    inputs.push({
-      attemptDir,
-      // Current workers use the conventional direct child. During rollout,
-      // hygiene may still discover a legacy nested worktree for removal only.
-      worktreePath: reapableWorktreeUnder(attemptDir) ?? join(attemptDir, "worktree"),
-      liveness,
-      issueState: state,
-      mtimeS: dirMtimeS(rec.path) ?? nowS,
-    });
-  }
-
-  const reclaimed: string[] = [];
-  for (const action of planLivenessReclaim(inputs, nowS)) {
-    let worktreeRemoved = false;
-    if (action.removeWorktree && exists(action.worktreePath)) {
-      await removeWorktree(action.worktreePath).catch(() => undefined);
-      worktreeRemoved = true;
-    }
-    if (action.writeTombstone && worktreeRemoved) {
-      await writeTombstone(
-        join(action.attemptDir, WORKTREE_RECLAIM_TOMBSTONE),
-        worktreeReclaimTombstoneLine(nowS),
-      ).catch(() => undefined);
-    }
-    if (action.reclaimDir) {
-      await removeDir(action.attemptDir).catch(() => undefined);
-      reclaimed.push(action.attemptDir);
-    }
-  }
-  return reclaimed;
-}
 
 /** Read castle monitor lanes into the pure renderer's inputs. During the
  * migration window, fall back to legacy worker/history files only when the
@@ -315,11 +188,10 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   let workers = await readCastleMonitorWorkers(castlePaths);
   if (workers.length === 0) {
     const records = await readAllWorkerStates(paths.tmpDir);
-    // Read-time liveness-gated teardown (issue #1219): enforce the same
-    // CLOSED-immediate / OPEN-two-stage policy as the boot janitor. Best-effort
-    // — a failure here never blocks the render.
-    await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
-    await fsx.reapDeadEmptyWorkerShells(paths.tmpDir).catch(() => undefined);
+    // #4032 removed the read-time teardown that used to run here: the monitor
+    // RENDERS, and a renderer that deletes is how a stale read became a
+    // deletion. Workers live in daemon-placed storage now (ADR 0149), so the
+    // daemon reaps what it births and this path only reads.
     const currentRecords = currentRenderableWorkerRecords(records);
     const logPaths = currentRecords.map(({ path, state }) =>
       state.log || join(dirname(dirname(path)), "worker.log.toonl")

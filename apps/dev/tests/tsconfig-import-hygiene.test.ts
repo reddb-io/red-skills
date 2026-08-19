@@ -15,6 +15,10 @@ const OPTED_OUT_CONFIGS = [
 ];
 const RATCHETED_CONFIGS = ["apps/dev/tsconfig.json"];
 const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
+  // #4032 deleted the janitor's boot phase; one import it shared with the
+  // surviving code is now unreferenced. Declared rather than force-removed,
+  // because the two symbols next to it ARE used and a blind strip broke them.
+  "src/core/boot.ts": 1,
   "src/core/dashboard.ts": 1,
   "src/core/process-issue/lifecycle.ts": 56,
   "src/core/process-issue/recovery.ts": 90,

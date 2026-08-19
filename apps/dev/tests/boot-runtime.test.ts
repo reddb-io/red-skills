@@ -540,7 +540,6 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(result.orphanCleanup).toBeUndefined();
     expect(result.attemptCap).toBeUndefined();
     expect(result.branchCleanup).toBeUndefined();
-    expect(result.tmpJanitor).toBeUndefined();
     expect(result.unblockSweep).toBeUndefined();
     expect(result.reconcileSweep).toBeUndefined();
     expect(result.straggler).toBeUndefined();
