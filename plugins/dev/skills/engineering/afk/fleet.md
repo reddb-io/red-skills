@@ -64,7 +64,7 @@ than one inferred from a pid it happens to remember.
 **Release recycle rule.** A registration names the bundle a Worker is born
 against, resolved from the PUBLISHED version rather than from the registering
 process's own. After any RedSkills release that changes AFK or
-`red-castle` engine behavior, stop and re-register the project before starting or
+`@reddb-io/worker` engine behavior, stop and re-register the project before starting or
 counting a proving drain; otherwise the drain may still be executing on the
 pre-release engine. `status {scope: worker}` and the statusline fleet cell show the running
 bundle version and mark skew against a newer locally cached bundle so a stale

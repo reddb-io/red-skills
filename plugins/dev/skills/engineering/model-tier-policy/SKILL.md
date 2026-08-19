@@ -75,7 +75,7 @@ See ADR 0049.
 
 ## Interactive enforcement (issue #456, ADR 0049)
 
-The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the dev bundle's `route-model-tier` command (`apps/plugin-dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
+The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the daemon's `route-model-tier` command (`apps/plugin-dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
 
 - maps a dispatch to a tier-agent (`validate` → `validate`, `simple-code` → `simple`, `complex-code` → `complex`) and asks `resolveTier` for the policy model from the **single config source** (`plugins.dev.afk.models.claude.<tier>.model`); it hardcodes no model id;
 - when the dispatched model's family disagrees with the tier (or is unset), corrects it via the enforcement contract decided at HITL on 2026-06-08: **(a) rewrite** the dispatch model in place using Claude's `hookSpecificOutput.updatedInput` → **(b) fallback block-and-retry** (`permissionDecision: "deny"`) → **(c) degrade to audit** (`additionalContext`). Claude supports rewrite, so it always takes path (a);

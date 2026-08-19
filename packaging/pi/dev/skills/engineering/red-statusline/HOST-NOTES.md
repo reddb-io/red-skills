@@ -45,7 +45,7 @@ The AFK rows are quiet when no worker is active. Hosts that cannot run a command
 
 **Host capabilities differ; the product architecture should not.** Treat the RedSkills statusline as:
 
-1. A shared producer: the dev bundle's `statusline` subcommand.
+1. One renderer: the daemon statusline command.
 2. Host adapters: Claude Code's command-backed `statusLine`; Codex's global `tui.status_line` list and plugin `SessionStart` hook.
 3. Fallback visibility: `/afk monitor`, which works when a host has no command-backed footer.
 

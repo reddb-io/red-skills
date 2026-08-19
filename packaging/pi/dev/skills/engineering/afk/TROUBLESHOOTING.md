@@ -298,7 +298,7 @@ supervisor.
    ready work stranded and live workers versus target.
 3. If live workers were not adopted, stop the fleet, verify no pids remain live,
    then relaunch from a clean state.
-4. If stale supervisor dirs remain in the red-castle state lane after boot, remove only dead `s<PID>`
+4. If stale supervisor dirs remain in the the Worker's state lane after boot, remove only dead `s<PID>`
    dirs after confirming the pid is not live.
 
 ### Root fix

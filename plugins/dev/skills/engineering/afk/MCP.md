@@ -5,7 +5,7 @@ capability, and every other surface is a client of it.** `/afk`, `/go` and any
 future command-center UI all drive the same tools over the same value-returning
 cores (ADR 0120, public name amended by ADR 0142, sole client surface by
 ADR 0147 rule 1 — there is no second implementation to age beside it).
-The name identifies the operator-facing system boundary; `red-castle` remains
+The name identifies the operator-facing system boundary; `@reddb-io/worker` remains
 the execution substrate and its `Castle*` contracts remain internal. This file
 is the client contract; the skills that reference it never restate the tool list.
 
@@ -96,7 +96,7 @@ remain available for specialized lifecycle operations during consolidation.
 
 When `.red/config.yaml` declares both
 `plugins.dev.afk.standing.runner` and `plugins.dev.afk.standing.target`, MCP
-startup reaches the Castle resident, which calls the same ensure-style drain
+startup reaches the daemon's Project control state, which calls the same ensure-style drain
 automatically and renews it for the resident lifetime. The standing marker travels in the registration, allowing the
 daemon to retain its recoverable intent while a counted backlog remains. Without
 that block, startup preserves the explicit-only `drain`/`project_start` behavior.
@@ -343,7 +343,7 @@ renders a table and re-reads it. The pairing is declared in
 
 ## Refs
 
-- ADR 0120 — red-castle is the AFK MCP; CLI and skills are clients.
+- ADR 0120 — the daemon MCP is the AFK surface; skills are its clients (amended by ADR 0147: the CLI is gone, and `rs_dev` is the adapter).
 - ADR 0128 §7 — the CLI is a thin client of the same core, so the MCP lane
   carries a canary that exercises the shipped path end to end and fails loudly.
 - ADR 0130 — the lane spans two processes and a socket, so the canary carries a

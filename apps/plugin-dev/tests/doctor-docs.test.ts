@@ -325,24 +325,24 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("pushes a branch, opens a PR, and merges it");
   });
 
-  it("audits the red-castle state lane read-only and delegates migration residue fixes", async () => {
+  it("audits the Worker state lane read-only and delegates migration residue fixes", async () => {
     const skill = await readDoctorSkill();
 
-    expect(skill).toContain("red-castle state lane");
+    expect(skill).toContain("Worker state lane");
     expect(skill).toContain("`.red/state/castle/`");
     expect(skill).toContain("`history.toonl` and `validation.toonl`");
     expect(skill).toContain("`workers/<id>/state.toon` / `supervisors/<id>/state.toon`");
     expect(skill).toContain("red.castle.state.v1");
-    expect(skill).toContain("populated legacy `.red/state/afk/` directory only when a live red-castle lane also exists");
-    expect(skill).toContain("Repos with no red-castle lane and no legacy AFK lane pass clean");
+    expect(skill).toContain("populated legacy `.red/state/afk/` directory only when a live castle state lane also exists");
+    expect(skill).toContain("Repos with no castle state lane and no legacy AFK lane pass clean");
     expect(skill).toContain("apps/plugin-dev/src/core/castle-state-doctor.ts");
     expect(skill).toContain("auditCastleStateLane");
     expect(skill).toContain("never rewrite history, validation, or snapshots");
     expect(skill).toContain("never delete legacy residue");
-    expect(skill).toContain("red-castle state lane findings (check 20)");
+    expect(skill).toContain("the Worker's state lane findings (check 20)");
 
     const apply = await readDoctorApply();
-    expect(apply).toContain("red-castle state lane (check 20)");
+    expect(apply).toContain("the Worker's state lane (check 20)");
     expect(apply).toContain("delegate to the dev durable path migration entrypoint");
     expect(apply).toContain("red-path-migration");
     expect(apply).toContain("Never hand-delete `.red/state/afk/`");
