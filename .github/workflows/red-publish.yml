@@ -294,13 +294,19 @@ jobs:
       # channel stays retired; the package-set signature below authenticates the
       # complete workstation release contract instead.
 
-      # ADR 0039: the two committed, dependency-free entrypoints —
-      # plugins/dev/hooks/red-fetch.mjs (fetch role) and
-      # plugins/dev/skills/engineering/afk/bin/afk.mjs (run:dev role) — are built
-      # from ONE source, packages/shared/entrypoint-cli.ts, and are committed on
-      # main. `build` re-emits them plus the dist/dev.bundle.min.mjs asset
-      # (ADR 0034); esbuild output is deterministic, so the tagged tree already
-      # carries the bytes this rebuild produces.
+      # ADR 0039: the committed, dependency-free entrypoint —
+      # plugins/dev/hooks/red-fetch.mjs (fetch role) — is built from
+      # packages/shared/entrypoint-cli.ts and committed on main; `build`
+      # re-emits it, and esbuild output is deterministic, so the tagged tree
+      # already carries the bytes this rebuild produces.
+      #
+      # **No dev CLI bundle and no manifest for one.** #4031 deleted
+      # `dist/dev.bundle.min.mjs` (ADR 0147 §1: `redskilled` is the one binary of
+      # the execution chain), and `scripts/rehearse-release-pack.sh` refuses its
+      # return — while this step still checksummed it, so v4.0.0's publish died
+      # on ENOENT at the first release after the deletion. The dev plugin ships
+      # its MCP through the npm package (`red-skills-redskilled-mcp`), which
+      # carries npm's own integrity, so there is nothing here to pin.
       - name: Build dev runtime bundle
         if: steps.target.outputs.publish == 'true'
         working-directory: apps/plugin-dev
@@ -309,23 +315,7 @@ jobs:
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
           RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
           RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
-        run: |
-          set -euo pipefail
-          pnpm build
-          # Checksum manifest the dynamic-fetch hook (packages/shared/bundle-fetch.ts)
-          # verifies before caching. Mirrors memory-runtime-manifest.json.
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const bytes = readFileSync('../../dist/dev.bundle.min.mjs');
-          const manifest = {
-            plugin: 'dev',
-            version: process.env.NEXT.replace(/^v/, ''),
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          };
-          writeFileSync('../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('dev runtime manifest:', JSON.stringify(manifest));
-          EOF
+        run: pnpm build
 
       # ADR 0029: the Memory runtime ships as release assets, not committed
       # build output. esbuild bundles the CLI (all JS deps inlined) into one

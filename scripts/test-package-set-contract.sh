@@ -378,8 +378,6 @@ expected_workstation=(
   dist/build-gemini-extension.mjs
   dist/validate-gemini-extension.mjs
   dist/install-hermes-skills.mjs
-  dist/dev.bundle.min.mjs
-  dist/dev.manifest.json
   dist/redskilled-mcp.bundle.min.mjs
   dist/code-nav.bundle.min.mjs
   dist/code-nav.manifest.json
