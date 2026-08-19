@@ -1,15 +1,18 @@
 import { encode as encodeToon } from "@reddb-io/toon";
 
 /**
- * marketplace-source-doctor.ts — is the installed RedSkills marketplace able to
- * see a release published after install day?
+ * marketplace-source-doctor.ts — who owns this machine's RedSkills marketplace?
  *
- * A host CLI registers a marketplace from a source, and that source is what
- * `marketplace update` re-reads forever. Registered from the installer's local
- * snapshot (`~/.red-skills/versions/<tag>`), the update flow re-reads an
- * unchanging directory: the machine is frozen at its install-day version and
- * every "update" succeeds while advancing nothing. Registered from the GitHub
- * source, the same command pulls origin and sees every future release.
+ * red-dev acquires RedSkills and wires the host CLIs, and what it registers is a
+ * **directory** source pointing at the tree it manages. That is the healthy
+ * shape, so this audit never touches one: repointing a directory registration
+ * at the GitHub repository — which is what this doctor used to offer, and what
+ * `scripts/install.sh` used to do on every re-run — tears out red-dev's wiring
+ * and installs a second owner of the same machine (#3978).
+ *
+ * A `github` or `git` registration is the retired standalone installer's own
+ * leftover. It still resolves, so it is reported rather than reded, and its
+ * cure is the bootstrap, not another registration this doctor writes.
  *
  * Pure and IO-free like the other `core/` doctors: the host CLI transcript is
  * injected, so the audit reads facts and never asks a machine.
@@ -18,18 +21,18 @@ import { encode as encodeToon } from "@reddb-io/toon";
 /** The marketplace name every RedSkills host registers. */
 export const RED_SKILLS_MARKETPLACE = "red-skills";
 
-/** The canonical GitHub source a healthy registration points at. */
-export const RED_SKILLS_MARKETPLACE_REPO = "reddb-io/red-skills";
+/** The pinned mise spec for the bootstrap that owns acquisition and wiring. */
+export const RED_DEV_BOOTSTRAP_SPEC = "red-dev@1";
 
 /** Host CLIs that register a RedSkills marketplace. */
 export type MarketplaceHost = "claude" | "codex" | "gemini";
 
 export type MarketplaceSourceKind =
-  /** Tracks the GitHub repository; `marketplace update` pulls origin. */
+  /** Tracks the GitHub repository — the retired standalone installer's shape. */
   | "github"
   /** Tracks a git remote; `marketplace update` pulls that remote. */
   | "git"
-  /** Tracks a local directory — the frozen-snapshot shape. */
+  /** Tracks a local directory — what red-dev registers. */
   | "directory"
   /** The host lists no such marketplace. */
   | "absent"
@@ -38,7 +41,7 @@ export type MarketplaceSourceKind =
 
 export type MarketplaceSourceVerdict = "ok" | "warn" | "error";
 
-export type MarketplaceSourceFindingKind = "frozen-directory-source" | "source-unknown";
+export type MarketplaceSourceFindingKind = "standalone-source" | "source-unknown";
 
 export interface MarketplaceSourceFacts {
   readonly host: MarketplaceHost;
@@ -72,12 +75,15 @@ export interface MarketplaceSourceReport {
   readonly rows: MarketplaceSourceRow[];
 }
 
-/** The exact commands that repoint a frozen registration at the GitHub source. */
-export function repointRecipe(host: MarketplaceHost, marketplace = RED_SKILLS_MARKETPLACE): string {
-  return (
-    `${host} plugin marketplace remove ${marketplace} && ` +
-    `${host} plugin marketplace add ${RED_SKILLS_MARKETPLACE_REPO}`
-  );
+/**
+ * The one recipe: hand the machine to the bootstrap that owns it.
+ *
+ * Deliberately not a `marketplace add` this doctor could run itself — the
+ * registration is red-dev's to write, and a doctor that writes its own is the
+ * second owner the whole change removes.
+ */
+export function bootstrapRecipe(): string {
+  return `mise use --global ${RED_DEV_BOOTSTRAP_SPEC} && red-dev install`;
 }
 
 function normalizeSourceWord(word: string): MarketplaceSourceKind {
@@ -152,19 +158,25 @@ function auditOne(facts: MarketplaceSourceFacts): {
     return { row: { host, marketplace, source: "absent", detail: "host not installed", verdict: "ok" } };
   }
 
+  // A directory registration is red-dev's, and red-dev is the owner. Reporting
+  // it is the whole job; changing it is the defect.
   if (facts.kind === "directory") {
+    return { row: { host, marketplace, source: facts.kind, detail, verdict: "ok" } };
+  }
+
+  if (facts.kind === "github" || facts.kind === "git") {
     return {
       finding: {
         host,
         marketplace,
-        kind: "frozen-directory-source",
-        verdict: "error",
+        kind: "standalone-source",
+        verdict: "warn",
         reason:
-          `${host} marketplace ${marketplace} is Directory-sourced (${detail}); ` +
-          "the update flow re-reads that install-day snapshot and can never advance the plugins",
-        remediation: repointRecipe(host, marketplace),
+          `${host} marketplace ${marketplace} is ${facts.kind}-sourced (${detail}); ` +
+          "the retired standalone installer registered it, and red-dev owns RedSkills acquisition and wiring now",
+        remediation: bootstrapRecipe(),
       },
-      row: { host, marketplace, source: facts.kind, detail, verdict: "error" },
+      row: { host, marketplace, source: facts.kind, detail, verdict: "warn" },
     };
   }
 
@@ -217,69 +229,4 @@ export function renderMarketplaceSourceReportToon(report: MarketplaceSourceRepor
       remediation: finding.remediation,
     })),
   });
-}
-
-export interface MarketplaceSourceFixOptions {
-  readonly fix: boolean;
-  readonly approved: boolean;
-}
-
-export interface MarketplaceRepointResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-export interface MarketplaceSourceFixDeps {
-  /** Removes the marketplace and re-adds it from the GitHub source. */
-  readonly repoint: (
-    host: MarketplaceHost,
-    marketplace: string,
-  ) => Promise<MarketplaceRepointResult>;
-}
-
-export interface MarketplaceSourceFixReceipt {
-  readonly host: MarketplaceHost;
-  readonly marketplace: string;
-  readonly status: "applied" | "failed" | "skipped";
-  readonly reason: string;
-}
-
-/**
- * Repoint every frozen registration at the GitHub source, one confirmation each.
- *
- * A `source-unknown` finding is never "fixed": re-registering a marketplace we
- * could not read would discard whatever the operator actually configured.
- */
-export async function applyMarketplaceSourceFixes(
-  report: MarketplaceSourceReport,
-  options: MarketplaceSourceFixOptions,
-  deps: MarketplaceSourceFixDeps,
-): Promise<MarketplaceSourceFixReceipt[]> {
-  if (!options.fix) return [];
-
-  const receipts: MarketplaceSourceFixReceipt[] = [];
-  for (const finding of report.findings) {
-    const { host, marketplace } = finding;
-    if (finding.kind !== "frozen-directory-source") {
-      receipts.push({ host, marketplace, status: "skipped", reason: "source could not be read" });
-      continue;
-    }
-    if (!options.approved) {
-      receipts.push({ host, marketplace, status: "skipped", reason: "approval required" });
-      continue;
-    }
-    const result = await deps.repoint(host, marketplace);
-    receipts.push(
-      result.code === 0
-        ? {
-            host,
-            marketplace,
-            status: "applied",
-            reason: `re-registered from ${RED_SKILLS_MARKETPLACE_REPO}`,
-          }
-        : { host, marketplace, status: "failed", reason: `repoint exited ${result.code}` },
-    );
-  }
-  return receipts;
 }
