@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  classifyWorkerArtifact,
   planWorkerReclaim,
   type WorkerArtifact,
   type WorkerProcessVerdict,
@@ -20,6 +21,7 @@ import {
   runTmpJanitor,
 } from "../src/runtime/tmp-janitor.js";
 import type { DaemonWorkerSetReader } from "../src/runtime/liveness-anchor.js";
+import { workerWorkspaceRoot, workerWorktreePath } from "@reddb-io/redskilled/worker-workspace";
 
 const NOW = 1_800_000_000;
 const NOW_ISO = new Date(NOW * 1000).toISOString();
@@ -266,6 +268,30 @@ describe("the reclaim planner stays total", () => {
       "pointer-retained",
       "unclassified",
     ]);
+  });
+
+  it("still calls the daemon's OS-temporary workspace a workspace after ADR 0149 moved it", () => {
+    // The lane moved out of the client checkout and into `os.tmpdir()`; the
+    // COST did not change, and the cost is what the rule reads. A relocated
+    // workspace that stopped classifying as one is a lane nothing ever reclaims.
+    const worktree = workerWorktreePath(workerWorkspaceRoot({ tmpDir: "/tmp", uid: 1000 }), "0aBcDeF");
+    expect(worktree).toBe("/tmp/red-skills-1000/workers/0aBcDeF/worktree");
+    expect(classifyWorkerArtifact("worktree")).toBe("workspace");
+
+    const plan = planWorkerReclaim(
+      [{ worker_id: "0aBcDeF", kind: "worktree", path: worktree }],
+      { liveness: dead, nowIso: NOW_ISO },
+    );
+
+    expect(plan.reclaim).toEqual([
+      expect.objectContaining({
+        class: "workspace",
+        reclaim: true,
+        verdict: "workspace-reclaimable",
+        artifact: expect.objectContaining({ path: worktree }),
+      }),
+    ]);
+    expect(plan.totals).toEqual({ considered: 1, reclaim: 1, retain: 0, dropped: 0 });
   });
 
   it("reports a path no Worker accounts for instead of touching it", () => {
