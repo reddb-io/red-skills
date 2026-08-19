@@ -98,6 +98,16 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     defines: ["createWorkerPublisher"],
     runs: "reads the branch and commit the turn produced and asks the ACP parent to publish them, once",
   },
+  {
+    module: "ticket-loop.ts",
+    defines: ["runTicketLoop"],
+    runs: "drives one Ticket from claim to land inside the turn: claim, implement, gate, re-seed in place, publish, land",
+  },
+  {
+    module: "local-gate.ts",
+    defines: ["runWorkerLocalGate"],
+    runs: "runs the declared gate stages in the Worker's own Worktree, so the re-seed decision is made where the diff is",
+  },
 ];
 
 /**

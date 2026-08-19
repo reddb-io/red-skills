@@ -25,21 +25,28 @@ import {
   requireCompatibleWireMajor,
   sessionRecoveryFromMeta,
   socketStream,
+  ticketHandoffFromMeta,
   waitForAbort,
   type AcpEndpoint,
   type AcpSessionRecoveryCheckpoint,
+  type RedskillsTicketHandoff,
 } from "@reddb-io/protocol-acp";
 import { WorkflowChildAgent } from "./child-agent.js";
+import { runWorkerLocalGate } from "./local-gate.js";
 import { createWorkerPublisher, type WorkerPublisher } from "./publish-request.js";
+import { runTicketLoop, type TicketLoopRecord, type TicketLoopResult } from "./ticket-loop.js";
+
+/** One public session this Worker holds, and what it retains across its turns. */
+interface HeldSession {
+  readonly request: NewSessionRequest;
+  child?: WorkflowChildAgent;
+  publisher?: WorkerPublisher;
+}
 
 /** The daemon-admitted native Workflow Worker. */
 export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpEndpoint): Promise<number> {
   const controllers = new Map<string, AbortController>();
-  const sessions = new Map<string, {
-    readonly request: NewSessionRequest;
-    child?: WorkflowChildAgent;
-    publisher?: WorkerPublisher;
-  }>();
+  const sessions = new Map<string, HeldSession>();
   const recoveries = new Map<string, AcpSessionRecoveryCheckpoint>();
   /**
    * Ask the parent to publish what this turn committed, at most once per turn.
@@ -54,6 +61,11 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
     response: PromptResponse,
   ): Promise<void> {
     if (response.stopReason === "cancelled") return;
+    // A Ticket turn already decided about publication, and its answer includes
+    // the refusals: a lane the Worker may not claim and a gate that blocked
+    // both end with a commit in the Worktree that must reach no remote. Asking
+    // again here would publish precisely the work the loop refused.
+    if (ticketOutcome(response) != null) return;
     const held = sessions.get(sessionId);
     if (held == null) return;
     held.publisher ??= createWorkerPublisher({
@@ -79,6 +91,72 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
     });
   }
 
+  /**
+   * One Ticket turn: the whole loop, inside the process the daemon admitted.
+   *
+   * The child Agent and the publisher are the SESSION's, not the round's — a
+   * re-seed re-instructs the implementer that is already holding the Worktree,
+   * and the publisher that remembers what it already asked for is what keeps a
+   * second round from publishing the first round's commit twice (ADR 0129).
+   */
+  async function runTicketTurn(
+    sessionId: string,
+    held: HeldSession,
+    ticket: RedskillsTicketHandoff,
+    parent: AgentContext,
+    signal: AbortSignal,
+  ): Promise<PromptResponse> {
+    const child = held.child ??= new WorkflowChildAgent({
+      endpoint: childEndpoint,
+      cwd: held.request.cwd,
+      mcpServers: held.request.mcpServers,
+      ...(held.request.additionalDirectories == null
+        ? {}
+        : { additionalDirectories: held.request.additionalDirectories }),
+      publicSessionId: sessionId,
+      parent,
+    });
+    held.publisher ??= createWorkerPublisher({
+      cwd: held.request.cwd,
+      idempotencyScope: `worker-turn:${sessionId}`,
+      request: (method, write) => parent.request(method, write),
+    });
+
+    const result = await runTicketLoop({
+      ticket: {
+        number: ticket.number,
+        title: ticket.title,
+        labels: ticket.labels,
+        base: ticket.base,
+        handoff: ticket.handoff,
+      },
+      workerId: ticket.worker_id,
+      sessionId,
+      ...(ticket.runner == null ? {} : { runner: ticket.runner }),
+      ...(ticket.run_mode == null ? {} : { runMode: ticket.run_mode }),
+      ...(ticket.reseed_budget == null ? {} : { reseedBudget: ticket.reseed_budget }),
+      request: (method, request) => parent.request(method, request),
+      implement: async (handoff) => {
+        if (signal.aborted) return { stopReason: "cancelled" };
+        const response = await child.prompt({
+          sessionId,
+          prompt: [{ type: "text", text: handoff }],
+        });
+        return { stopReason: response.stopReason };
+      },
+      gate: async () => await runWorkerLocalGate({
+        worktree: held.request.cwd,
+        base: ticket.base,
+        ...(ticket.backpressure_commands == null
+          ? {}
+          : { backpressureCommands: ticket.backpressure_commands }),
+      }),
+      publisher: held.publisher,
+      narrate: (record) => notifyTicketStage(parent, sessionId, record),
+    });
+    return ticketResponse(result);
+  }
+
   async function runPromptTurn(
     params: PromptRequest,
     parent: AgentContext,
@@ -92,6 +170,10 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
       if (recovery != null) {
         recoveries.delete(params.sessionId);
         await notifySessionRecovery(parent, params.sessionId, recovery);
+      }
+      const ticket = ticketHandoffFromMeta(params._meta) ?? ticketHandoffFromMeta(held.request._meta);
+      if (ticket != null) {
+        return await runTicketTurn(params.sessionId, held, ticket, parent, controller.signal);
       }
       const prompt = promptText(params);
       if (prompt.includes("delegate child")) {
@@ -265,4 +347,70 @@ function promptText(params: PromptRequest): string {
     .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+/**
+ * Narrate one Ticket stage to the parent, so the Worker log holds the arc.
+ *
+ * An empty message chunk carrying `_meta` rather than prose: the stage record
+ * is for the daemon's lane, and a Worker that also spoke it as text would put
+ * its own bookkeeping in the transcript the human reads.
+ */
+function notifyTicketStage(
+  parent: AgentContext,
+  sessionId: string,
+  record: TicketLoopRecord,
+): Promise<void> {
+  return parent.notify(methods.client.session.update, {
+    sessionId,
+    update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } },
+    _meta: {
+      redskills: {
+        lifecycle: { event: `ticket-${record.stage}-${record.ok ? "passed" : "blocked"}` },
+        ticketStage: {
+          stage: record.stage,
+          ok: record.ok,
+          ...(record.round == null ? {} : { round: record.round }),
+          ...(record.detail == null ? {} : { detail: record.detail }),
+        },
+      },
+    },
+  });
+}
+
+/**
+ * The turn's answer, carrying the loop's own verdict.
+ *
+ * Only a LANDED Ticket is a completion: a gate that blocked, a refusal and a
+ * Worktree with nothing in it are all ordinary ends of a turn, and calling any
+ * of them "complete" would tell the daemon to close a Ticket nothing shipped.
+ */
+function ticketResponse(result: TicketLoopResult): PromptResponse {
+  const ticket = result.outcome === "landed"
+    ? {
+        outcome: result.outcome,
+        rounds: result.rounds,
+        pullRequest: result.pullRequest,
+        branch: result.publication.branch,
+        commit: result.publication.commit,
+      }
+    : result.outcome === "gate-blocked"
+      ? { outcome: result.outcome, rounds: result.rounds, failedStage: result.failedStage, detail: result.detail }
+      : result.outcome === "refused"
+        ? { outcome: result.outcome, stage: result.stage, detail: result.detail }
+        : { outcome: result.outcome, rounds: result.rounds };
+  return {
+    stopReason: result.outcome === "cancelled" ? "cancelled" : "end_turn",
+    _meta: {
+      redskills: {
+        ticket,
+        ...(result.outcome === "landed" ? { workflowOutcome: "completion" } : {}),
+      },
+    },
+  } satisfies PromptResponse;
+}
+
+/** The Ticket verdict a turn carries, or `undefined` for an ordinary turn. */
+function ticketOutcome(response: PromptResponse): unknown {
+  return (response._meta as { redskills?: { ticket?: unknown } } | undefined)?.redskills?.ticket;
 }

@@ -171,52 +171,15 @@ export function allowlistExternalWidened(oldContent: string, newContent: string)
 
 // ---------- ordered gate verdict (ADR 0119, issue #2245) ----------
 
-/**
- * The gate's stages, in CHEAP → EXPENSIVE order.
- *
- * `feedback` is the package test/typecheck/lint suite; `backpressure` is the
- * operator's extra commands; `review` is the diff review, last because it is
- * the most expensive. Later stages do not run once an earlier one blocks, and a
- * stage with nothing to run is skipped rather than failed — so a review that
- * cannot run degrades the gate instead of blocking the attempt.
- */
-export const GATE_STAGE_ORDER = ["feedback", "backpressure", "review"] as const;
-
-export type GateStage = (typeof GATE_STAGE_ORDER)[number];
-
-/** One stage's contribution to the gate verdict. */
-export interface GateStageOutcome {
-  stage: GateStage;
-  /** False → this stage BLOCKS the landing. */
-  ok: boolean;
-  /** True when the stage was not wired or had nothing to run; never blocks. */
-  skipped?: boolean;
-}
-
-/** ONE verdict for the whole gate: green, or the first stage that blocked it. */
-export interface GateVerdict {
-  /** True only when no stage blocked. */
-  ok: boolean;
-  /** The earliest blocking stage in {@link GATE_STAGE_ORDER}. */
-  failedStage?: GateStage;
-}
-
-/**
- * Fold the stage outcomes into ONE verdict. PURE — no IO.
- *
- * The caller may pass the stages in any order and may pass only the stages it
- * has run so far; the fold always reports the earliest blocker in
- * {@link GATE_STAGE_ORDER}, so "which stage decided this" does not depend on the
- * order the caller happened to evaluate them in. A skipped stage never blocks.
- */
-export function gateVerdict(outcomes: readonly GateStageOutcome[]): GateVerdict {
-  const ordered = [...outcomes].sort(
-    (a, b) => GATE_STAGE_ORDER.indexOf(a.stage) - GATE_STAGE_ORDER.indexOf(b.stage),
-  );
-  for (const outcome of ordered) {
-    if (outcome.skipped === true || outcome.ok) continue;
-    return { ok: false, failedStage: outcome.stage };
-  }
-  return { ok: true };
-}
-
+// The order and its fold moved to `@reddb-io/worker/engine` when the native ACP
+// Worker began running the declared stages locally (issue #4020, ADR 0148):
+// both bodies need the same table, and two spellings of a stage order agree
+// only until somebody edits one. Re-exported here because the callers that
+// import it from this module are asking for the gate, not for a package.
+export {
+  GATE_STAGE_ORDER,
+  gateVerdict,
+  type GateStage,
+  type GateStageOutcome,
+  type GateVerdict,
+} from "@reddb-io/worker/engine";
