@@ -35,10 +35,12 @@ set -euo pipefail
 # revision and records it. `--red-dev-spec` overrides it for a pre-release.
 RED_DEV_SPEC="${RED_SKILLS_RED_DEV_SPEC:-red-dev@1}"
 
-# Where the retired standalone path put its tree. Kept for `--uninstall
-# --purge`, which is how that tree leaves a machine, and as the scratch root the
-# escape hatch generates host surfaces into.
-INSTALL_ROOT="${RED_SKILLS_INSTALL_ROOT:-$HOME/.red-skills}"
+# Where red-dev keeps RedSkills on this machine. This script never writes the
+# package set there — red-dev owns it — but it is what `--uninstall --purge`
+# removes, where `--uninstall` finds the host-unwiring scripts when no
+# --source-dir is given, and the root the escape hatch generates host surfaces
+# under (`local-dev/`).
+INSTALL_ROOT="${RED_SKILLS_INSTALL_ROOT:-$HOME/.red/skills}"
 LOCAL_DEV_ROOT="$INSTALL_ROOT/local-dev"
 
 ONLY="${RED_SKILLS_ONLY:-auto}"
@@ -74,13 +76,15 @@ Options:
                         --uninstall.
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
-  --install-root <dir>  Where the retired standalone tree lives, for --purge
-                        (default: ~/.red-skills)
+  --install-root <dir>  Where red-dev keeps RedSkills on this machine, for
+                        --purge (default: ~/.red/skills)
   --uninstall           Remove RedSkills from detected/specified CLIs
   --force               With --local-dev: reinstall plugins, and replace a
                         directory-sourced marketplace registration this script
                         would otherwise leave to red-dev
-  --purge               With --uninstall, also remove the standalone install tree
+  --purge               With --uninstall, also remove the RedSkills tree under
+                        --install-root; red-dev acquires a fresh one on its
+                        next run
   --opencode-copy       Copy OpenCode-compatible SKILL.md files instead of symlinking
   --dry-run             Print actions without writing
   -h, --help            Show this help
@@ -216,15 +220,6 @@ resolve_red_dev() {
   return 1
 }
 
-# A machine that still carries the retired tree is told so once. This script
-# never refreshes, re-adopts or heals it — red-dev owns the wiring now, and the
-# tree leaves through --uninstall --purge when the operator is ready.
-report_retired_tree() {
-  [[ -d "$INSTALL_ROOT" ]] || return 0
-  warn "a standalone RedSkills tree remains at $INSTALL_ROOT; it is no longer read or updated"
-  warn "retire it once red-dev has wired this machine: install.sh --uninstall --purge"
-}
-
 hand_off_to_red_dev() {
   detect_platform
   if ! platform_supported; then
@@ -236,7 +231,6 @@ hand_off_to_red_dev() {
 
   log "platform ${PLATFORM_OS}/${PLATFORM_ARCH} is supported"
   log "RedSkills is acquired and wired by red-dev; handing over to $RED_DEV_SPEC"
-  report_retired_tree
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log "would run: mise use --global $RED_DEV_SPEC (when red-dev is absent)"
@@ -291,7 +285,7 @@ announce_local_dev() {
 #   Configured marketplaces:
 #
 #     ❯ red-skills
-#       Source: Directory (/home/…/.red-skills/current)
+#       Source: Directory (/home/…/.red/skills/current)
 #
 # Prints the lowercased kind (`github`, `directory`, `git`), `absent` when the
 # marketplace is not registered, or `unknown` when a source line cannot be read.
@@ -772,6 +766,8 @@ run_uninstall() {
     touched_any="true"
   fi
 
+  # The whole tree red-dev keeps, not a part of it: a purge is "no RedSkills
+  # on this machine", and red-dev's next run acquires and wires from nothing.
   if [[ "$PURGE" == "true" ]]; then
     run rm -rf "$INSTALL_ROOT"
   fi

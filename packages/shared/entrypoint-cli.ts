@@ -66,9 +66,14 @@ function cacheRoot(override?: string): string {
   return join(homedir(), ".cache", "red-skills", "bundles");
 }
 
-/** Versioned runtime tree populated by the standalone installer. */
+/**
+ * Where red-dev keeps RedSkills on this machine: `~/.red/skills`, inside the
+ * `.red` namespace with the rest of its state. Read-only from here — the
+ * exact-version bundle under `versions/v<x>` is preferred when it exists, and
+ * nothing is ever written into it (materialisation goes to the cache).
+ */
 function installRoot(): string {
-  return process.env.RED_SKILLS_INSTALL_ROOT || join(homedir(), ".red-skills");
+  return process.env.RED_SKILLS_INSTALL_ROOT || join(homedir(), ".red", "skills");
 }
 
 const realIO: BundleIO = {

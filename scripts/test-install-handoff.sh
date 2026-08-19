@@ -2,8 +2,8 @@
 # Contract test for the standalone installer's handoff to mise/red-dev (#3978).
 #
 # The ownership this pins away: the installer used to acquire RedSkills itself —
-# it materialised npm packages into its own `~/.red-skills/versions/<tag>` tree,
-# symlinked `current`, registered a GitHub-sourced marketplace on every host CLI,
+# it materialised npm packages into its own `versions/<tag>` tree under the
+# RedSkills root (`~/.red/skills` today), symlinked `current`, registered a GitHub-sourced marketplace on every host CLI,
 # and *healed* a Directory-sourced registration back to GitHub. Once red-dev owns
 # acquisition and wiring through mise, every one of those is a second owner of
 # the same machine, and the heal actively tears out red-dev's registration.
@@ -145,7 +145,7 @@ done
 home=""
 status=0
 
-# Each scenario gets a fresh HOME so `~/.red-skills` can only exist because this
+# Each scenario gets a fresh HOME so `~/.red/skills` can only exist because this
 # run created it.
 run_installer() {
   home="$tmp/home"
@@ -195,7 +195,7 @@ run_installer
 }
 assert_contains "handoff" "red-dev install" "$tmp/log"
 assert_contains "handoff" "red-dev --version" "$tmp/log"
-assert_no_path "handoff" "$home/.red-skills"
+assert_no_path "handoff" "$home/.red/skills"
 assert_absent "handoff" "npm " "$tmp/log"
 assert_absent "handoff" "marketplace add" "$tmp/log"
 assert_absent "handoff" "marketplace remove" "$tmp/log"
@@ -216,7 +216,7 @@ run_installer
 [[ "$status" -ne 0 ]] || fail "handoff reported success although red-dev never answered"
 assert_contains "unverified handoff" "mise use --global red-dev@" "$tmp/log"
 assert_contains "unverified handoff" "could not run red-dev" "$tmp/stdout"
-assert_no_path "unverified handoff" "$home/.red-skills"
+assert_no_path "unverified handoff" "$home/.red/skills"
 
 # A mise that really installs the tool: the bootstrap runs through it.
 cat >"$bin/mise" <<STUB
@@ -241,7 +241,7 @@ run_installer
 }
 assert_contains "mise handoff" "mise use --global red-dev@" "$tmp/log"
 assert_contains "mise handoff" "red-dev install" "$tmp/log"
-assert_no_path "mise handoff" "$home/.red-skills"
+assert_no_path "mise handoff" "$home/.red/skills"
 assert_absent "mise handoff" "npm " "$tmp/log"
 
 # The pin is overridable for a red-dev pre-release, and the override is what
@@ -261,7 +261,7 @@ run_installer
 [[ "$status" -ne 0 ]] || fail "installer reported success with neither mise nor red-dev present"
 assert_contains "no bootstrap" "mise" "$tmp/stdout"
 assert_contains "no bootstrap" "red-dev@" "$tmp/stdout"
-assert_no_path "no bootstrap" "$home/.red-skills"
+assert_no_path "no bootstrap" "$home/.red/skills"
 assert_absent "no bootstrap" "npm " "$tmp/log"
 assert_absent "no bootstrap" "marketplace add" "$tmp/log"
 
@@ -282,7 +282,7 @@ run_installer
 [[ "$status" -ne 0 ]] || fail "unsupported platform was accepted"
 assert_contains "unsupported platform" "Plan9" "$tmp/stdout"
 assert_contains "unsupported platform" "docs/INSTALL.md" "$tmp/stdout"
-assert_no_path "unsupported platform" "$home/.red-skills"
+assert_no_path "unsupported platform" "$home/.red/skills"
 remove_stub uname
 
 # ---------------------------------------------------------------------------
@@ -299,8 +299,8 @@ assert_contains "escape hatch" "not a production installation" "$tmp/stdout"
 assert_contains "escape hatch" "plugin marketplace add --scope user $source_dir" "$tmp/log"
 assert_absent "escape hatch" "reddb-io/red-skills" "$tmp/log"
 assert_absent "escape hatch" "npm " "$tmp/log"
-assert_no_path "escape hatch" "$home/.red-skills/versions"
-assert_no_path "escape hatch" "$home/.red-skills/current"
+assert_no_path "escape hatch" "$home/.red/skills/versions"
+assert_no_path "escape hatch" "$home/.red/skills/current"
 
 # Without a checkout there is nothing to develop against, and the escape hatch
 # must not quietly become an acquisition path.
@@ -352,18 +352,6 @@ for retired in --local-marketplace --refresh; do
 done
 run_installer --marketplace-source github
 [[ "$status" -ne 0 ]] || fail "retired flag --marketplace-source was accepted"
-
-# ---------------------------------------------------------------------------
-# 9. A machine still carrying the retired tree is told how to retire it, and
-#    the handoff neither refreshes nor re-adopts it.
-# ---------------------------------------------------------------------------
-make_stub red-dev
-home="$tmp/home"
-rm -rf "$home"
-mkdir -p "$home/.red-skills/versions/v3.19.5"
-run_installer_in_home
-assert_contains "legacy tree notice" "--uninstall --purge" "$tmp/stdout"
-assert_absent "legacy tree notice" "npm " "$tmp/log"
 
 if [ "$failures" -eq 0 ]; then
   printf 'ok: the standalone installer hands ownership to mise/red-dev and owns nothing\n'

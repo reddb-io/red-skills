@@ -4,8 +4,8 @@ import { isDirectExecution } from "../src/cli.js";
 describe("rsp bundle direct execution", () => {
   it("recognizes a native Windows argv path as the file URL being executed", () => {
     expect(isDirectExecution(
-      "file:///C:/Users/filip/.red-skills/current/packaging/npm/dist/rsp.bundle.min.mjs",
-      "C:\\Users\\filip\\.red-skills\\current\\packaging\\npm\\dist\\rsp.bundle.min.mjs",
+      "file:///C:/Users/filip/.red/skills/current/packaging/npm/dist/rsp.bundle.min.mjs",
+      "C:\\Users\\filip\\.red\\skills\\current\\packaging\\npm\\dist\\rsp.bundle.min.mjs",
       "win32",
     )).toBe(true);
   });
