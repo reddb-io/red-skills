@@ -154,13 +154,19 @@ export async function materializeWorkerWorkspace(
   if (input.trunk != null) {
     // Loud-but-non-fatal: a network flake must not stop the drain, and a fork
     // that proceeds stale is the stated exception rather than the invisible
-    // rule — the clone below records the base commit either way.
+    // rule — the journal line below is what makes it stated.
     const branch = input.trunk.branch
       ?? await git(input.projectWorkspacePath, ["symbolic-ref", "--short", "HEAD"])
       ?? "main";
-    const fetched = await git(input.projectWorkspacePath, ["fetch", "--quiet", input.trunk.remoteUrl, branch]);
+    const fetchUrl = anonymousFetchUrl(input.trunk.remoteUrl);
+    const fetched = await git(input.projectWorkspacePath, ["fetch", "--quiet", fetchUrl, branch]);
     if (fetched !== undefined) {
       await git(input.projectWorkspacePath, ["reset", "--hard", "FETCH_HEAD"]);
+    } else {
+      process.stderr.write(
+        `redskilled: Worker ${input.workerId} forks a STALE mirror — the trunk fetch from ` +
+        `${fetchUrl} failed, so this Worker's base and its origin predate today's ${branch}\n`,
+      );
     }
   }
 
@@ -180,6 +186,22 @@ export async function materializeWorkerWorkspace(
     worktreePath,
     ...(baseCommit == null ? {} : { baseCommit }),
   };
+}
+
+/**
+ * The URL the mirror refresh fetches from, credentials not assumed (#4188).
+ *
+ * The checkout's remote is often SSH (`git@github.com:o/r.git`), which the
+ * daemon — a systemd user service with no ssh-agent — cannot speak, so the
+ * refresh silently failed and every fork stayed days stale. GitHub SSH forms
+ * are rewritten to anonymous HTTPS; any other URL passes through untouched.
+ */
+export function anonymousFetchUrl(remoteUrl: string): string {
+  const scp = /^git@github\.com:(.+?)(?:\.git)?$/.exec(remoteUrl);
+  if (scp != null) return `https://github.com/${scp[1]}.git`;
+  const ssh = /^ssh:\/\/git@github\.com\/(.+?)(?:\.git)?$/.exec(remoteUrl);
+  if (ssh != null) return `https://github.com/${ssh[1]}.git`;
+  return remoteUrl;
 }
 
 /**

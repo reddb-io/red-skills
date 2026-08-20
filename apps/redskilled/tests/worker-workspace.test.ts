@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { launchWorker, mintHostWorkerId } from "../src/worker-launch.js";
 import {
+  anonymousFetchUrl,
   materializeWorkerWorkspace,
   releaseWorkerWorkspace,
   workerWorkspaceDir,
@@ -78,6 +79,29 @@ describe("the fork refreshes the mirror's trunk first", () => {
     const verbs = calls.map((args) => args[0]);
     expect(verbs).not.toContain("reset");
     expect(verbs).toContain("clone");
+  });
+
+  it("rewrites a GitHub SSH remote to anonymous HTTPS for the fetch", async () => {
+    const { calls, git } = recordedGit((args) =>
+      args[0] === "rev-parse" ? "true" : args[0] === "symbolic-ref" ? "main" : "");
+
+    await materializeWorkerWorkspace({
+      root: await scratch("redskilled-fresh-fork-"),
+      workerId: "VSfresh4",
+      projectWorkspacePath: "/tmp/mirror",
+      git,
+      trunk: { remoteUrl: "git@github.com:reddb-io/red-skills.git" },
+    });
+
+    // The daemon has no ssh-agent; an SSH fetch fails silently and every fork
+    // stays days stale — the rewrite is what makes the refresh actually run.
+    expect(calls).toContainEqual(["fetch", "--quiet", "https://github.com/reddb-io/red-skills.git", "main"]);
+  });
+
+  it("passes non-GitHub and HTTPS URLs through untouched", () => {
+    expect(anonymousFetchUrl("https://github.com/o/r.git")).toBe("https://github.com/o/r.git");
+    expect(anonymousFetchUrl("ssh://git@github.com/o/r.git")).toBe("https://github.com/o/r.git");
+    expect(anonymousFetchUrl("git@gitlab.example:o/r.git")).toBe("git@gitlab.example:o/r.git");
   });
 
   it("touches nothing without a declared trunk", async () => {
