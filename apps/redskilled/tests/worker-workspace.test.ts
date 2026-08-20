@@ -29,6 +29,73 @@ import { workerModeEnv } from "@reddb-io/shared/working-mode.js";
 
 const roots: string[] = [];
 
+/**
+ * #4188: the Project mirror is cloned once and never fetched again, so without
+ * a refresh every Worker forks a days-old tree and the gate judges code main
+ * no longer has. The trunk refresh runs against the CANONICAL remote, before
+ * the clone, and a failed fetch degrades to a stale fork instead of a refusal.
+ */
+describe("the fork refreshes the mirror's trunk first", () => {
+  const recordedGit = (answers: (args: readonly string[]) => string | undefined) => {
+    const calls: string[][] = [];
+    const git = async (_cwd: string, args: readonly string[]) => {
+      calls.push([...args]);
+      return answers(args);
+    };
+    return { calls, git };
+  };
+
+  it("fetches the canonical trunk and advances the mirror before cloning", async () => {
+    const { calls, git } = recordedGit((args) =>
+      args[0] === "rev-parse" ? "true" : args[0] === "symbolic-ref" ? "main" : "");
+
+    await materializeWorkerWorkspace({
+      root: await scratch("redskilled-fresh-fork-"),
+      workerId: "VSfresh1",
+      projectWorkspacePath: "/tmp/mirror",
+      git,
+      trunk: { remoteUrl: "https://github.com/o/r.git" },
+    });
+
+    const verbs = calls.map((args) => args[0]);
+    expect(calls).toContainEqual(["fetch", "--quiet", "https://github.com/o/r.git", "main"]);
+    expect(calls).toContainEqual(["reset", "--hard", "FETCH_HEAD"]);
+    expect(verbs.indexOf("fetch")).toBeLessThan(verbs.indexOf("clone"));
+  });
+
+  it("forks stale rather than refusing when the fetch fails", async () => {
+    const { calls, git } = recordedGit((args) =>
+      args[0] === "rev-parse" ? "true" : args[0] === "fetch" ? undefined : args[0] === "symbolic-ref" ? "main" : "");
+
+    await materializeWorkerWorkspace({
+      root: await scratch("redskilled-fresh-fork-"),
+      workerId: "VSfresh2",
+      projectWorkspacePath: "/tmp/mirror",
+      git,
+      trunk: { remoteUrl: "https://github.com/o/r.git" },
+    });
+
+    const verbs = calls.map((args) => args[0]);
+    expect(verbs).not.toContain("reset");
+    expect(verbs).toContain("clone");
+  });
+
+  it("touches nothing without a declared trunk", async () => {
+    const { calls, git } = recordedGit((args) => (args[0] === "rev-parse" ? "true" : ""));
+
+    await materializeWorkerWorkspace({
+      root: await scratch("redskilled-fresh-fork-"),
+      workerId: "VSfresh3",
+      projectWorkspacePath: "/tmp/mirror",
+      git,
+    });
+
+    expect(calls.map((args) => args[0])).not.toContain("fetch");
+  });
+});
+
+
+
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });

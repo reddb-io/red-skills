@@ -23,6 +23,8 @@ export interface AcpProjectIdentity {
   readonly projectId: string;
   readonly projectLabel: string;
   readonly checkoutRoot: string;
+  /** The checkout's canonical remote, when it has one — the fetch source for fresh forks (#4188). */
+  readonly remoteUrl?: string;
 }
 
 export interface AcpProjectWorkspace extends AcpProjectIdentity {
@@ -51,6 +53,7 @@ export async function resolveAcpProjectIdentity(
       projectId: `github:${github.id}`,
       projectLabel: github.fullName,
       checkoutRoot,
+      ...(remoteUrl == null ? {} : { remoteUrl }),
     };
   }
 
@@ -66,6 +69,7 @@ export async function resolveAcpProjectIdentity(
     projectId: remoteSlug == null ? `local:${fallback.hash}` : `remote:${remoteSlug}`,
     projectLabel: fallback.name,
     checkoutRoot,
+    ...(remoteUrl == null ? {} : { remoteUrl }),
   };
 }
 
