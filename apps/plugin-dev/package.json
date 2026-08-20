@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/dev",
-  "version": "4.1.3",
+  "version": "4.1.4",
   "private": true,
   "description": "RedSkills dev plugin implementation — the AFK TypeScript runtime (typed CLI, state-machine modules, sandcastle execution) under apps/plugin-dev. Ships the `rs_dev` Plugin MCP bundle (ADR 0034, relocated by ADR 0060; the CLI bundle was deleted by ADR 0147).",
   "license": "Apache-2.0",
