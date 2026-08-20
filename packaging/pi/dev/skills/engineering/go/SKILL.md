@@ -55,6 +55,14 @@ and the mutation-mode contract are in [`../afk/MCP.md`](../afk/MCP.md).
 | `verify` | one ephemeral command appended to `post_done` for this dispatch |
 | `tags` | territory `tag:<value>` labels stamped on the minted Ticket |
 
+**What `/go` never does by hand.** No `git worktree add`, no branch pushed from
+the human's checkout, no CI watched in a shell loop, no `gh pr merge`: the
+dispatched Worker works in the workspace the daemon placed, the gate runs
+inside its turn, and landing goes through the daemon's custody hand-off. An
+agent that finds itself doing any of those is not "helping" — it is rebuilding
+the deleted engine one shell command at a time, and the repair is to fix or
+file the MCP gap and dispatch again.
+
 **Then observe.** `status {scope: worker}` reads the run — a `/go` Worker is
 stamped `origin=go` / `current.kind=go`, so it stays distinguishable from drain
 Workers in every observability tool. `events_since` is the incremental read for a

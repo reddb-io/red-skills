@@ -5,6 +5,8 @@
 // where it stands, and which version a birth should reach for. Kept apart from
 // the pure builder so the rule stays testable without a git checkout, and kept
 // out of the tool handlers so a tool remains a schema.
+import { execFileSync } from "node:child_process";
+
 import { resolveProjectIdentityForDir } from "@reddb-io/shared/project-identity-resolve.js";
 import { DEFAULT_FLEET_WIDTH } from "@reddb-io/shared/default-fleet-width.js";
 
@@ -38,7 +40,23 @@ export function drainRegistrationFor(
     target,
     version,
     ...(runner == null ? {} : { runner }),
+    ...(trunkBranch(root) == null ? {} : { trunkBranch: trunkBranch(root) }),
   });
+}
+
+/** The branch `origin/HEAD` points at, or `undefined` when git cannot say. */
+export function trunkBranch(root: string): string | undefined {
+  try {
+    const head = execFileSync("git", ["-C", root, "symbolic-ref", "refs/remotes/origin/HEAD"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    }).trim();
+    const branch = head.split("/").pop();
+    return branch == null || branch === "" ? undefined : branch;
+  } catch {
+    // `main` is the builder's own fallback; inventing one here would decide twice.
+    return undefined;
+  }
 }
 
 /** `owner/name` for this checkout, or `undefined` when it has no such identity. PURE-ish. */
