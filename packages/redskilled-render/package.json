@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled-render",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "private": true,
   "type": "module",
   "description": "One render implementation outside the daemon (ADR 0132 decision 1): a stateless, transport-free function from one decoded redskilled payload to one drawn surface, at parameterized densities — statusline line, host panel, full dashboard.",
