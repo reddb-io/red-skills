@@ -134,3 +134,29 @@ describe("reading the Worktree's publication", () => {
     expect(await readWorktreePublication(root)).toBeNull();
   });
 });
+
+describe("the publication owns its branch", () => {
+  it("publishes as the Worker-unique ref regardless of the local branch name", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const publisher = createWorkerPublisher({
+      cwd: "/tmp/wt",
+      idempotencyScope: "worker-turn:s1",
+      request: async (_method, params) => {
+        requests.push(params as unknown as Record<string, unknown>);
+        return { ok: true };
+      },
+      readPublication: async () => ({ branch: "main", commit: "a".repeat(40) }),
+      publishRef: "red/W1/4157",
+    });
+
+    const outcome = await publisher.publishTurn();
+
+    // An agent that committed on `main` must not publish `refs/heads/main`
+    // (rejected non-fast-forward at the canonical repository), and a reused
+    // branch name must not collide with a merged branch's corpse (#4157).
+    expect(requests[0]?.branch).toBe("red/W1/4157");
+    expect(outcome?.status).toBe("requested");
+    expect(outcome && "publication" in outcome ? outcome.publication.branch : null).toBe("red/W1/4157");
+  });
+});
+

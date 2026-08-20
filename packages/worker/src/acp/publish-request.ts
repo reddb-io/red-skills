@@ -34,6 +34,15 @@ export interface WorkerPublisherOptions {
   readonly idempotencyScope: string;
   /** Test seam over `git rev-parse`. Production reads the real Worktree. */
   readonly readPublication?: (cwd: string) => Promise<WorkerPublication | null>;
+  /**
+   * The branch this publication PUBLISHES AS, regardless of the Worktree's
+   * local branch name. An inner agent that commits on `main` would otherwise
+   * publish `refs/heads/main` (rejected non-fast-forward at the canonical
+   * repository), and one that names its branch after an old merged branch
+   * collides with the corpse (#4157: both happened in one evening). A Ticket
+   * turn passes the Worker-unique ref; absent keeps the local name.
+   */
+  readonly publishRef?: string;
 }
 
 export interface WorkerPublisher {
@@ -56,7 +65,10 @@ export function createWorkerPublisher(options: WorkerPublisherOptions): WorkerPu
   let published: string | undefined;
   return {
     async publishTurn() {
-      const publication = await readPublication(options.cwd).catch(() => null);
+      const local = await readPublication(options.cwd).catch(() => null);
+      const publication = local == null
+        ? null
+        : options.publishRef == null ? local : { ...local, branch: options.publishRef };
       if (publication == null || publication.commit === published) return null;
       published = publication.commit;
       const request: RedskilledPublishRequest = {
