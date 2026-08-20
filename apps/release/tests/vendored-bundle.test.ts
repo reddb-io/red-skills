@@ -27,15 +27,23 @@ afterEach(() => {
  * source read correct, the tests passed, and the thing that ran was neither.
  */
 /**
- * Drop the wall-clock stamp esbuild bakes in, so the comparison is about CODE.
+ * Drop the build stamps esbuild bakes in, so the comparison is about CODE.
  *
- * Every build writes its own `__RED_BUILD_TIME__`, which is the one byte range
- * that legitimately differs between two builds of identical source. Comparing
- * with it in place would fail on every run and teach the reader to ignore this
- * test — which is worse than not having it.
+ * Three byte ranges legitimately differ between two builds of identical
+ * source: `__RED_BUILD_TIME__` (every build has its own clock),
+ * `__RED_BUILD_VERSION__` and `__RED_BUILD_GIT_SHA__` (the version train
+ * moves the anchor every release, so a vendored copy always trails the next
+ * rebuild by exactly its release number — observed as an 8-byte "4.1.1" vs
+ * "4.1.4" diff that reddened every Worker gate after every train). Comparing
+ * with any of them in place fails on every run for a reason that is not a
+ * code change, and teaches the reader to ignore this test — worse than not
+ * having it.
  */
 function withoutBuildStamp(source: string): string {
-  return source.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "<build-time>");
+  return source
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "<build-time>")
+    .replace(/\("__RED_BUILD_VERSION__",\(\)=>"[^"]*"\)/g, '("__RED_BUILD_VERSION__",()=>"<version>")')
+    .replace(/\("__RED_BUILD_GIT_SHA__",\(\)=>"[^"]*"\)/g, '("__RED_BUILD_GIT_SHA__",()=>"<git-sha>")');
 }
 
 describe("vendored release engine (#3466)", () => {
