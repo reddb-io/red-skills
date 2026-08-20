@@ -6,6 +6,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const SCHEMA = "red.package-set.v2";
+// The schema every existing reader still verifies. A set carries both while the
+// readers migrate (#4005): refusing v1 here would make the shipped verifier
+// unable to check the manifest the release still names canonically.
+const LEGACY_SCHEMA = "red.package-set.v1";
 const COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
@@ -15,6 +19,7 @@ const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const CHANNELS = ["stable", "canary", "next", "pinned"];
 const TARGETS = ["linux-x64", "windows-x64"];
 const EXPECTED_KEYS = ["schema", "sourceCommit", "version", "channel", "targets", "artifacts", "wholeSetDigest"];
+const LEGACY_EXPECTED_KEYS = ["schema", "sourceCommit", "artifacts", "wholeSetDigest"];
 const EXPECTED_ARTIFACT_KEYS = ["name", "sourceCommit", "size", "sha256"];
 const GITHUB_ISSUER = "https://token.actions.githubusercontent.com";
 const RELEASE_IDENTITY =
@@ -80,19 +85,26 @@ function parseAndValidateManifest(manifestPath) {
   } catch {
     fail("manifest is not valid JSON");
   }
-  if (!sameKeys(manifest, EXPECTED_KEYS)) fail("manifest shape or key order is not canonical");
-  if (manifest.schema !== SCHEMA) fail(`unsupported manifest schema: ${String(manifest.schema)}`);
-  if (!COMMIT.test(manifest.sourceCommit)) fail("manifest source commit is invalid");
-  if (typeof manifest.version !== "string" || !VERSION.test(manifest.version)) fail("manifest version is invalid");
-  if (!CHANNELS.includes(manifest.channel)) fail(`manifest channel is not a known channel: ${String(manifest.channel)}`);
-  if (!Array.isArray(manifest.targets) || manifest.targets.length === 0) {
-    fail("manifest must declare at least one target");
+  const legacy = manifest?.schema === LEGACY_SCHEMA;
+  if (!sameKeys(manifest, legacy ? LEGACY_EXPECTED_KEYS : EXPECTED_KEYS)) {
+    fail("manifest shape or key order is not canonical");
   }
-  let priorTarget = "";
-  for (const target of manifest.targets) {
-    if (!TARGETS.includes(target)) fail(`manifest declares an unknown target: ${String(target)}`);
-    if (priorTarget && priorTarget.localeCompare(target, "en") >= 0) fail("targets must be unique and sorted");
-    priorTarget = target;
+  if (manifest.schema !== SCHEMA && !legacy) fail(`unsupported manifest schema: ${String(manifest.schema)}`);
+  if (!COMMIT.test(manifest.sourceCommit)) fail("manifest source commit is invalid");
+  if (!legacy) {
+    if (typeof manifest.version !== "string" || !VERSION.test(manifest.version)) fail("manifest version is invalid");
+    if (!CHANNELS.includes(manifest.channel)) {
+      fail(`manifest channel is not a known channel: ${String(manifest.channel)}`);
+    }
+    if (!Array.isArray(manifest.targets) || manifest.targets.length === 0) {
+      fail("manifest must declare at least one target");
+    }
+    let priorTarget = "";
+    for (const target of manifest.targets) {
+      if (!TARGETS.includes(target)) fail(`manifest declares an unknown target: ${String(target)}`);
+      if (priorTarget && priorTarget.localeCompare(target, "en") >= 0) fail("targets must be unique and sorted");
+      priorTarget = target;
+    }
   }
   if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length === 0) {
     fail("manifest must declare at least one artifact");
@@ -124,14 +136,16 @@ function parseAndValidateManifest(manifestPath) {
     if (!SHA256.test(artifact.sha256)) fail(`artifact ${artifact.name} has an invalid checksum`);
   }
 
-  const identity = {
-    schema: manifest.schema,
-    sourceCommit: manifest.sourceCommit,
-    version: manifest.version,
-    channel: manifest.channel,
-    targets: manifest.targets,
-    artifacts: manifest.artifacts,
-  };
+  const identity = legacy
+    ? { schema: manifest.schema, sourceCommit: manifest.sourceCommit, artifacts: manifest.artifacts }
+    : {
+      schema: manifest.schema,
+      sourceCommit: manifest.sourceCommit,
+      version: manifest.version,
+      channel: manifest.channel,
+      targets: manifest.targets,
+      artifacts: manifest.artifacts,
+    };
   const expectedDigest = sha256(Buffer.from(`${JSON.stringify(identity)}\n`));
   if (manifest.wholeSetDigest !== expectedDigest) fail("whole-set digest does not match the manifest identity");
   const canonicalBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
@@ -194,12 +208,17 @@ try {
   if (!existsSync(options.manifestPath)) fail("manifest is missing");
   verifySignature(options);
   const manifest = parseAndValidateManifest(options.manifestPath);
+  if (options.requireTarget && manifest.schema === LEGACY_SCHEMA) {
+    fail("--require-target needs a v2 manifest: a v1 set states no targets");
+  }
   if (options.requireTarget && !manifest.targets.includes(options.requireTarget)) {
     fail(`package set was not built for ${options.requireTarget} (targets: ${manifest.targets.join(", ")})`);
   }
   verifyArtifacts(manifest, options.manifestPath);
   process.stdout.write(
-    `verified package set ${manifest.wholeSetDigest} (${manifest.version}, ${manifest.channel}, ${manifest.targets.join(" ")})\n`,
+    manifest.schema === LEGACY_SCHEMA
+      ? `verified package set ${manifest.wholeSetDigest} (${LEGACY_SCHEMA})\n`
+      : `verified package set ${manifest.wholeSetDigest} (${manifest.version}, ${manifest.channel}, ${manifest.targets.join(" ")})\n`,
   );
 } catch (error) {
   process.stderr.write(`package-set verification failed: ${error instanceof Error ? error.message : String(error)}\n`);

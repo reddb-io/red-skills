@@ -100,7 +100,20 @@ export const DEVELOPER_ONLY_ARTIFACTS = [
 ];
 
 /** The signed manifest and its Sigstore bundle: attached, never members of the set they describe. */
-export const PACKAGE_SET_SIGNATURE_ASSETS = ["dist/package-set.manifest.json", "dist/package-set.manifest.sigstore.json"];
+/**
+ * The manifests the Release attaches, each with its own signature.
+ *
+ * Two, while the readers migrate (#4005): `package-set.manifest.json` keeps the
+ * canonical name and the v1 shape every existing verifier mirrors, and the v2
+ * manifest — the one whose identity covers version, channel and targets — rides
+ * beside it. The canonical name flips when the readers have flipped.
+ */
+export const PACKAGE_SET_SIGNATURE_ASSETS = [
+  "dist/package-set.manifest.json",
+  "dist/package-set.manifest.sigstore.json",
+  "dist/package-set.manifest.v2.json",
+  "dist/package-set.manifest.v2.sigstore.json",
+];
 
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 
