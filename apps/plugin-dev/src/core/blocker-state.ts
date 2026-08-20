@@ -42,6 +42,14 @@ export interface CurrentBlocker {
   loopNote?: string;
   /** Present when a `status: blocked` record is active but needs repair. */
   defect?: BlockerStateDefect;
+  /**
+   * Structured HITL fields (#4168): a question, options[], and a recommended
+   * default. The default is a recommendation only and is NEVER auto-applied.
+   * `/hitl` renders the question and options and records the human answer.
+   */
+  question?: string;
+  options?: string[];
+  default?: string;
 }
 
 export interface ResolvedBlocker {
@@ -166,6 +174,9 @@ export function makeBlocker(fields: {
   ref?: string;
   parkedAtEpoch?: number;
   loopNote?: string;
+  question?: string;
+  options?: string[];
+  default?: string;
 }): CurrentBlocker {
   assertDeclaredBlockerKind(fields.kind);
   const kind = reconcileBlockerKind(fields.kind, fields.summary);
@@ -182,6 +193,9 @@ export function makeBlocker(fields: {
     next,
     ...(fields.parkedAtEpoch !== undefined ? { parkedAtEpoch: fields.parkedAtEpoch } : {}),
     ...(fields.loopNote !== undefined ? { loopNote: fields.loopNote } : {}),
+    ...(fields.question !== undefined ? { question: fields.question } : {}),
+    ...(fields.options !== undefined ? { options: fields.options } : {}),
+    ...(fields.default !== undefined ? { default: fields.default } : {}),
   };
 }
 
@@ -218,6 +232,20 @@ function parseEpochField(value: string | undefined): number | undefined {
   return parsed;
 }
 
+/** Parse a comma-separated options string into an array of trimmed non-empty strings.
+ * Returns undefined when the field is absent or produces no valid items. */
+function parseOptionsField(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  const items = value.split(",").map((s) => normalizeLine(s)).filter((s) => s.length > 0);
+  return items.length > 0 ? items : undefined;
+}
+
+/** Serialize an options array to a comma-separated string for markdown storage. */
+function serializeOptionsField(options: string[] | undefined): string | undefined {
+  if (options === undefined || options.length === 0) return undefined;
+  return options.join(", ");
+}
+
 export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
   const inner = readAnchoredRegion(markdown, BLOCKER_OPEN, BLOCKER_CLOSE);
   if (inner === null) return null;
@@ -238,6 +266,9 @@ export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
     ...(missingFields.length > 0
       ? { defect: { name: MALFORMED_BLOCKER_STATE, missingFields } }
       : {}),
+    ...(fields.question ? { question: safeField(fields.question) } : {}),
+    ...(parseOptionsField(fields.options) ? { options: parseOptionsField(fields.options) } : {}),
+    ...(fields.default ? { default: safeField(fields.default) } : {}),
   };
 }
 
@@ -252,6 +283,9 @@ function formatBlockerFields(blocker: CurrentBlocker): string {
   lines.push(`next: ${safeField(blocker.next, "Human guidance required.")}`);
   if (blocker.parkedAtEpoch !== undefined) lines.push(`parked_at: ${blocker.parkedAtEpoch}`);
   if (blocker.loopNote) lines.push(`loop_detected: ${safeField(blocker.loopNote)}`);
+  if (blocker.question) lines.push(`question: ${safeField(blocker.question)}`);
+  if (blocker.options) lines.push(`options: ${serializeOptionsField(blocker.options)}`);
+  if (blocker.default) lines.push(`default: ${safeField(blocker.default)}`);
   return `\n${lines.join("\n")}\n`;
 }
 
@@ -333,7 +367,10 @@ export function applyCurrentBlockerEdit(markdown: string, blocker: CurrentBlocke
     parsed.next === blocker.next &&
     parsed.ref === blocker.ref &&
     parsed.parkedAtEpoch === blocker.parkedAtEpoch &&
-    parsed.loopNote === blocker.loopNote;
+    parsed.loopNote === blocker.loopNote &&
+    parsed.question === blocker.question &&
+    JSON.stringify(parsed.options) === JSON.stringify(blocker.options) &&
+    parsed.default === blocker.default;
   return { body, changed, valid };
 }
 

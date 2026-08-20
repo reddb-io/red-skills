@@ -258,4 +258,48 @@ Old question.
       prompt: "State the pending human decision for #42: Resolve HITL blocker",
     });
   });
+
+  it("extracts structured question/options/default from a parked blocker", () => {
+    const body = upsertCurrentBlocker("## Summary\nBuild the thing.", {
+      status: "blocked",
+      kind: "decision",
+      summary: "Retry policy is undecided.",
+      next: "Choose retry mode.",
+      question: "Which retry policy should we use?",
+      options: ["immediate", "exponential", "linear"],
+      default: "exponential",
+    });
+
+    const result = extractPendingHitlDecision(issue({ body }));
+
+    expect(result).toMatchObject({
+      kind: "pending-decision",
+      source: "current-blocker",
+      prompt: "Which retry policy should we use?",
+    });
+    expect(result.evidence).toContain("question: Which retry policy should we use?");
+    expect(result.evidence).toContain("options: immediate, exponential, linear");
+    expect(result.evidence).toContain("default: exponential");
+  });
+
+  it("uses next as prompt when question is absent but structured options/default are present", () => {
+    const body = upsertCurrentBlocker("## Summary\nBuild the thing.", {
+      status: "blocked",
+      kind: "decision",
+      summary: "Retry policy is undecided.",
+      next: "Choose retry mode.",
+      options: ["immediate", "exponential"],
+      default: "exponential",
+    });
+
+    const result = extractPendingHitlDecision(issue({ body }));
+
+    expect(result).toMatchObject({
+      kind: "pending-decision",
+      source: "current-blocker",
+      prompt: "Choose retry mode.",
+    });
+    expect(result.evidence).toContain("options: immediate, exponential");
+    expect(result.evidence).toContain("default: exponential");
+  });
 });

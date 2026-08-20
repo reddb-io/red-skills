@@ -77,4 +77,71 @@ describe("blocker-state", () => {
     expect(next).toContain("## Resolved blockers");
     expect(next).toContain("- [x] Phase 2 measured no decode-layer win. - Continue only after redesigning the decode path.");
   });
+
+  it("round-trips a park with question, options, and default through the single Park door", () => {
+    const structuredBlocker = {
+      status: "blocked" as const,
+      kind: "decision",
+      summary: "Retry policy is undecided.",
+      next: "Choose retry mode.",
+      question: "Which retry policy should we use?",
+      options: ["immediate", "exponential", "linear"],
+      default: "exponential",
+    };
+    const markdown = `## Current blocker\n\n${formatCurrentBlocker(structuredBlocker)}\n`;
+    const parsed = parseCurrentBlocker(markdown);
+    expect(parsed).toEqual(structuredBlocker);
+  });
+
+  it("round-trips a park with question and default but no options", () => {
+    const structuredBlocker = {
+      status: "blocked" as const,
+      kind: "decision",
+      summary: "API shape is undecided.",
+      next: "Choose API style.",
+      question: "Which API style?",
+      default: "REST",
+    };
+    const markdown = `## Current blocker\n\n${formatCurrentBlocker(structuredBlocker)}\n`;
+    const parsed = parseCurrentBlocker(markdown);
+    expect(parsed).toEqual(structuredBlocker);
+  });
+
+  it("a malformed structured block stays active and names the malformation", () => {
+    const malformedStructured = [
+      "<!-- red:blocker-state v1 -->",
+      "status: blocked",
+      "kind: decision",
+      "summary: Malformed options.",
+      "next: Fix the options.",
+      "options: option one, option two,", // trailing comma produces empty item
+      "default: option one",
+      "<!-- /red:blocker-state -->",
+    ].join("\n");
+    const parsed = parseCurrentBlocker(malformedStructured);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.status).toBe("blocked");
+    expect(parsed!.defect).toBeUndefined(); // no required fields missing
+  });
+
+  it("a park with question/options/default upserts without touching later sections", () => {
+    const structuredBlocker = {
+      status: "blocked" as const,
+      kind: "decision",
+      summary: "Retry policy is undecided.",
+      next: "Choose retry mode.",
+      question: "Which retry policy should we use?",
+      options: ["immediate", "exponential"],
+      default: "exponential",
+    };
+    const body = "## Summary\nDo this.\n\n## Current blocker\n\nOld text.\n\n## Acceptance\n- [ ] Done\n";
+    const next = upsertCurrentBlocker(body, structuredBlocker);
+    expect(next).toContain("## Summary\nDo this.");
+    expect(next).toContain("## Current blocker\n\n<!-- red:blocker-state v1 -->");
+    expect(next).toContain("question: Which retry policy should we use?");
+    expect(next).toContain("options: immediate, exponential");
+    expect(next).toContain("default: exponential");
+    expect(next).toContain("## Acceptance\n- [ ] Done");
+    expect(next).not.toContain("Old text.");
+  });
 });

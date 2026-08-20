@@ -115,12 +115,16 @@ function currentBlockerSignal(issue: HitlDecisionIssue): DecisionSignal | null {
     blocker.ref ? `ref: ${blocker.ref}` : "",
     `summary: ${blocker.summary}`,
     `next: ${blocker.next}`,
+    blocker.question ? `question: ${blocker.question}` : "",
+    blocker.options ? `options: ${blocker.options.join(", ")}` : "",
+    blocker.default ? `default: ${blocker.default}` : "",
   ]
     .filter((line) => line.length > 0)
     .join("\n");
+  const prompt = blocker.question ?? blocker.next;
   return {
     source: "current-blocker",
-    prompt: blocker.next,
+    prompt,
     evidence,
     authoritative: true,
   };
