@@ -61,6 +61,25 @@ export interface DemandTurnDeps {
 }
 
 /**
+ * What the last poll knows about the item a birth is for. PURE.
+ *
+ * Beside the handoff it feeds rather than in the demand loop: the lifecycle
+ * decides that a birth happens, never what the Worker is told about it.
+ */
+export function queueBriefing(
+  projects: readonly {
+    readonly project_label: string;
+    readonly tickets?: readonly { readonly id: string; readonly title: string; readonly labels: readonly string[] }[];
+  }[],
+  projectLabel: string,
+  workItem: string | undefined,
+): { readonly id: string; readonly title: string; readonly labels: readonly string[] } | undefined {
+  if (workItem == null) return undefined;
+  return projects.find((project) => project.project_label === projectLabel)
+    ?.tickets?.find((candidate) => candidate.id === workItem);
+}
+
+/**
  * The turn one birth owes, or `null` when this project states no prompt.
  *
  * Pure and separate from the loop that calls it, because the interesting part
@@ -69,10 +88,19 @@ export interface DemandTurnDeps {
  * refused BEFORE anything is spawned. PURE.
  */
 export function demandTurnForBirth(
-  registration: { readonly prompt?: string } | undefined,
+  registration: {
+    readonly prompt?: string;
+    readonly trunk?: { readonly branch: string };
+  } | undefined,
   birth: { readonly workspace_path: string; readonly index: number; readonly work_item?: string },
   workerId: string,
-): { readonly workspacePath: string; readonly prompt: string; readonly workItem?: string } | null {
+  ticket?: { readonly id: string; readonly title: string; readonly labels: readonly string[] },
+): {
+  readonly workspacePath: string;
+  readonly prompt: string;
+  readonly workItem?: string;
+  readonly ticket?: Readonly<Record<string, unknown>>;
+} | null {
   if (registration?.prompt == null) return null;
   const expanded = expandLaunchTemplate({ argv: [registration.prompt] }, {
     worker_id: workerId,
@@ -80,10 +108,29 @@ export function demandTurnForBirth(
     workspace_path: birth.workspace_path,
     ...(birth.work_item == null ? {} : { work_item: birth.work_item }),
   }).argv[0]!;
+  // The handoff is stated only when every fact it requires is present: a Ticket
+  // briefed with an empty title or no trunk is one the Worker refuses, and a
+  // refusal the daemon could have avoided is a Worker born to fail.
+  const number = Number(ticket?.id);
+  const base = registration.trunk?.branch;
+  const briefed = ticket != null && Number.isInteger(number) && number > 0 &&
+    ticket.title !== "" && base != null && base !== "";
   return {
     workspacePath: birth.workspace_path,
     prompt: expanded,
     ...(birth.work_item == null ? {} : { workItem: birth.work_item }),
+    ...(briefed
+      ? {
+        ticket: {
+          number,
+          title: ticket!.title,
+          labels: [...ticket!.labels],
+          base: base!,
+          handoff: expanded,
+          worker_id: workerId,
+        },
+      }
+      : {}),
   };
 }
 
@@ -125,6 +172,16 @@ export interface DemandTurnRequest {
   readonly prompt: string;
   /** The queue identifier this turn is for, when the birth had one. */
   readonly workItem?: string;
+  /**
+   * The Ticket this Worker is briefed with (#4118's first drain).
+   *
+   * **A Worker enters its Ticket loop only through a handoff.** Without one the
+   * body takes its third path — echo the prompt back and end the turn — which
+   * is exactly what every unattended turn did: `no-workflow-outcome (end_turn)`
+   * in under a second, a fresh Worker every fifteen. The handoff is the same
+   * wire a client dispatch uses; the daemon states it and reads none of it.
+   */
+  readonly ticket?: Readonly<Record<string, unknown>>;
 }
 
 export interface DemandTurnResult {
@@ -249,6 +306,7 @@ export function createDemandTurnRunner(
             redskills: {
               unattended: true,
               ...(request.workItem == null ? {} : { workItem: request.workItem }),
+              ...(request.ticket == null ? {} : { ticket: request.ticket }),
             },
           },
         },

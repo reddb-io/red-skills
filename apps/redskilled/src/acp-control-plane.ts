@@ -59,6 +59,8 @@ export interface DemandBirthTurn {
   readonly workspacePath: string;
   readonly prompt: string;
   readonly workItem?: string;
+  /** The Ticket handoff that puts the Worker in its Ticket loop (#4118). */
+  readonly ticket?: Readonly<Record<string, unknown>>;
 }
 import {
   bindProjectControl,
@@ -201,6 +203,7 @@ export async function startRedskillsAcpControlPlane(
     project: await workspaceFor(await resolveAcpProjectIdentity(request.workspacePath)),
     prompt: request.prompt,
     ...(request.workItem == null ? {} : { workItem: request.workItem }),
+    ...(request.ticket == null ? {} : { ticket: request.ticket }),
   });  let closed = false;
   return {
     socketPath: paths.acpSocketPath,

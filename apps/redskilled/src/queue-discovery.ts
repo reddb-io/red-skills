@@ -101,6 +101,23 @@ export interface RedskilledProjectQueue {
    * gets a number, so it says nothing here.
    */
   readonly items?: readonly string[];
+  /**
+   * What each counted item is, as the handoff needs it (#4118's first drain).
+   *
+   * The Worker's Ticket loop is entered only through a handoff, and that
+   * contract names the Ticket, its labels and its trunk — so a poll that kept
+   * only numbers left the daemon able to plan a birth it could not brief. These
+   * are opaque like every other project-authored string here: carried into the
+   * handoff verbatim, never read. Same order and same cap as `items`.
+   */
+  readonly tickets?: readonly RedskilledQueueTicket[];
+}
+
+/** One counted item, in the three facts a Ticket handoff has to state. */
+export interface RedskilledQueueTicket {
+  readonly id: string;
+  readonly title: string;
+  readonly labels: readonly string[];
 }
 
 /**
@@ -125,13 +142,15 @@ export function carryQueueItems(
   previous: RedskilledQueueDiscovery | null,
 ): RedskilledQueueDiscovery {
   if (previous == null) return next;
-  const held = new Map(previous.projects.map((project) => [project.project_label, project.items]));
+  const held = new Map(previous.projects
+    .filter((project) => project.items != null)
+    .map((project) => [project.project_label, { items: project.items!, tickets: project.tickets ?? [] }] as const));
   return {
     ...next,
     projects: next.projects.map((project) => {
       if (project.items != null) return project;
       const carried = held.get(project.project_label);
-      return carried == null ? project : { ...project, items: [...carried] };
+      return carried == null ? project : { ...project, items: [...carried.items], tickets: [...carried.tickets] };
     }),
   };
 }
@@ -144,13 +163,35 @@ export function carryQueueItems(
  * the daemon declines to plan.
  */
 export function queueItemIdentifiers(items: readonly Record<string, unknown>[]): readonly string[] {
-  const identifiers: string[] = [];
+  return queueTickets(items).map((ticket) => ticket.id);
+}
+
+/**
+ * The counted items in the three facts a handoff states. PURE.
+ *
+ * An item the transport returned without a usable number is skipped for the
+ * same reason as before — a birth briefed with a fabricated Ticket is worse
+ * than a birth the daemon declines to plan — and a missing title becomes an
+ * empty string rather than an invented one, because the handoff refuses an
+ * empty title and refusing loudly beats briefing wrongly.
+ */
+export function queueTickets(items: readonly Record<string, unknown>[]): readonly RedskilledQueueTicket[] {
+  const tickets: RedskilledQueueTicket[] = [];
   for (const item of items) {
-    if (identifiers.length >= REDSKILLED_QUEUE_ITEM_CAP) break;
+    if (tickets.length >= REDSKILLED_QUEUE_ITEM_CAP) break;
     const number = item.number;
-    if (typeof number === "number" && Number.isInteger(number) && number > 0) identifiers.push(String(number));
+    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) continue;
+    tickets.push({
+      id: String(number),
+      title: typeof item.title === "string" ? item.title : "",
+      labels: Array.isArray(item.labels)
+        ? item.labels
+          .map((label) => (typeof label === "string" ? label : (label as { name?: unknown } | null)?.name))
+          .filter((name): name is string => typeof name === "string")
+        : [],
+    });
   }
-  return identifiers;
+  return tickets;
 }
 
 /** What the token had left when the query answered; `null` when it did not say. */
@@ -437,6 +478,7 @@ async function fetchConditionalQueueDiscovery(
         depth,
         detail: `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector`,
         items: queueItemIdentifiers(matched),
+        tickets: queueTickets(matched),
       });
     } catch (error) {
       const rateLimited = isGithubRateLimitError(error);
