@@ -1,6 +1,6 @@
 {
   "name": "brain",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "description": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
   "author": {
     "name": "reddb.io",
