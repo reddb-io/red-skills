@@ -49,7 +49,8 @@
     "./skills/knowledge/research",
     "./skills/productivity/ff",
     "./skills/productivity/reflect",
-    "./skills/productivity/wait-what",
+    "./skills/productivity/what",
+    "./skills/productivity/unslop",
     "./skills/productivity/to-questionnaire",
     "./skills/productivity/handoff",
     "./skills/productivity/writing-for-agents"

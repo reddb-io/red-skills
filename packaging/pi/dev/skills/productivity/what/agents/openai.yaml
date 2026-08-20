@@ -1,0 +1,5 @@
+interface:
+  display_name: "What"
+  short_description: "Re-pitch the last reply so it stands on its own, in plain human language. Use only when the user invokes this skill."
+policy:
+  allow_implicit_invocation: false
