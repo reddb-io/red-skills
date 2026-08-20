@@ -685,6 +685,34 @@ _Avoid_: "the worker's fetch", staleness stamp/threshold (the grant has no fetch
 A named point in a Worker's lifecycle where operator-declared validation commands run — post-DONE, correction, landing, with the merge queue documented as the CI-side final moment. **The declaration defines the moment; an undeclared moment is skipped, loudly** — the engine never guesses a command and never refuses to run for lack of one; every surface that narrates the run states which moments ran, which were skipped, and why. Post-DONE validates the branch against its **fork point**; freshness against the live base belongs exclusively to the merge queue, and a queue ejection is healed by the repair lane, not by re-validating in every Worker.
 _Avoid_: gate stage (the gate is the semaphore, not the schedule), "the feedback loop", hardcoded default
 
+**Countersign**:
+The recorded outcome of independent verification of a PR at one exact head: `live-verified | test-verified | type-check-only | verifier-blocked | verifier-failed`. The gate signs its own work; a Countersign is the second signature, from an identity that did not implement the change. CI green and a passing gate are evidence inside a Countersign row, never the Countersign itself; `verifier-blocked` is not a pass — it parks `ready-for-human`.
+_Avoid_: verdict (the **Verdict** is the gate's failure classifier, ADR 0136 — ADR 0156 renames 0154's rows for exactly this reason), validation result, PASS/FAIL without the SHA it binds to
+
+**Countersign ledger**:
+The append-only TOONL lane `.red/state/castle/countersigns.toonl`, keyed `(pr, head_sha, patch_id)` with a `verifier_identity`; supersession is an appended `voided` row, never a mutation. Every enumerated land entry point refuses to merge without a live passing row at the head actually being merged, `stablePatchId()` the only equivalence for clean rebases (ADR 0154/0156).
+_Avoid_: validation.jsonl (a per-workspace gate artifact, not a merge authorization), verification log
+
+**Verify Worker**:
+The named wave-2 carrier of the **Countersign**: a daemon-spawned Worker on a different model family that verifies another Worker's PR from outside the author's process. Wave 1 carries the invariant with the promoted adversarial reviewer (default-on, fail-closed, distinct runner/model identity — ADR 0154 §2); the standalone Worker is the escalation when isolation justifies a second admission path.
+_Avoid_: verifier subagent (a subagent of the author is not independent), reviewer (the reviewer is wave 1's carrier, not this)
+
+**Verify label (`verify:<value>`)**:
+The **Label family** that declares at triage time the minimum **Countersign** class a Ticket's land requires: `verify:live`, `verify:tests`, or `verify:gate-only`. A Ticket without one fails closed — full review; `verify:gate-only` is the explicit human-declared exemption that lets a mechanical change land on the gate's own SHA-pinned row. Neither a daemon heuristic nor the author's self-declaration decides the class (ADR 0156).
+_Avoid_: verification tier (tier names the model policy), risk label
+
+**Standing orders**:
+The operator's append-only per-drain register of numbered instructions, written through the daemon and injected verbatim into every Worker brief and resume. The reflex: an instruction the operator catches themselves repeating is appended before acting. Orders that stabilise are promoted into CLAUDE.md by PR; the register is drain-scoped, not a second permanent home.
+_Avoid_: preferences file, steering (**runner_steer** is a point-in-time nudge, not a standing register)
+
+**Harvest deadline**:
+At roughly 70% of an operator-declared drain budget, the daemon stops admitting new work and lands what already carries a **Countersign** — finished-but-unlanded work counts as zero. Armed only when the operator declares a budget; no budget, no harvest.
+_Avoid_: soft deadline, timeout (the drain is not killed — admission stops, landing continues)
+
+**Decision trail**:
+Decision-level rows in `worker.log.toonl` — one row per fork taken, pivot, revert, blocker, or verified unit, with the why and an evidence pointer, never prose. At drain end an **Attention audit** (a different model family than the workers) reads trails against outcomes and emits the "Attention" section the operator reads first; `daily_review` consumes it.
+_Avoid_: narration (lifecycle events already exist), audit log
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
