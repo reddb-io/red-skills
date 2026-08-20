@@ -41,6 +41,10 @@ describe("what a drain hands the daemon", () => {
     expect(buildDrainRegistration(input).prompt).toBe(DRAIN_WORKER_PROMPT);
     expect(DRAIN_WORKER_PROMPT).toContain("{{work_item}}");
     expect(DRAIN_WORKER_PROMPT).toContain("/afk");
+    // #4162: the Worker's workspace is already materialised on the Ticket's
+    // base; an inner agent told nothing builds a nested worktree by following
+    // the repository's interactive-mode rules.
+    expect(DRAIN_WORKER_PROMPT).toContain("never create another worktree");
   });
 
   it("narrows the queue by the facets a caller stated", () => {
