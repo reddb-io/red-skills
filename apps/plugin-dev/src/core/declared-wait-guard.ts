@@ -672,6 +672,14 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a seconds-long drain whose boolean return is the report" },
   },
   {
+    path: "apps/redskilled/src/acp-control-plane.ts",
+    fn: "servePublicConnection",
+    subject: "a cancelled, client-less prompt turn ending on its own after the upstream connection closed",
+    deadline: "DETACHED_TURN_GRACE_MS (120 seconds) after the cancel is sent",
+    escalation: "reapWorkflowWorker with `detached-turn-deadline`, returning the host slot other projects were refused against",
+    heartbeat: { silent: "one unref'd grace timer per detached busy session; the reap itself is the report" },
+  },
+  {
     path: "apps/redskilled/src/acp-workflow-turn.ts",
     fn: "runAcpWorkflowTurn",
     subject: "the targeted Worker's admission becoming observable before its first prompt is forwarded",

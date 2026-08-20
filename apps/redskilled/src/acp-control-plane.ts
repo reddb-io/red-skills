@@ -542,10 +542,44 @@ async function servePublicConnection(
     await observer.settled();
   }
   for (const [sessionId, worker] of active) {
-    if (busy.has(sessionId) || v2Turns.has(sessionId)) continue;
+    if (busy.has(sessionId) || v2Turns.has(sessionId)) {
+      // **A busy Worker whose client left is finished or it is leaked.** The
+      // turn paths already reap on completion when `attached()` is false — the
+      // hole was a turn that never completes: an answer notified to a dead
+      // upstream, a child that never ends. Measured on 2026-08-20 as Workers
+      // alive 56 minutes for clients gone 55 of them, each holding a host slot
+      // other projects were refused against.
+      //
+      // A DISPATCHED Ticket turn is the one busy shape that outlives its
+      // client on purpose (#3885): it publishes through the daemon and its PR
+      // is useful with nobody watching. An ordinary prompt turn's answer has
+      // no reader, so it is cancelled — and cancellation gets a deadline,
+      // because a cancel nobody bounds is the same eternal wait wearing a
+      // politer name.
+      if (worker.dispatch == null) {
+        worker.cancelled = true;
+        void worker.connection.agent
+          .notify(methods.agent.session.cancel, { sessionId: worker.downstreamSessionId })
+          .catch(() => undefined);
+        const grace = setTimeout(() => {
+          if (active.get(sessionId) === worker) {
+            void reapWorkflowWorker(sessionId, worker, active, "detached-turn-deadline");
+          }
+        }, DETACHED_TURN_GRACE_MS);
+        grace.unref();
+      }
+      continue;
+    }
     cleanupWorkflowWorker(sessionId, worker, active);
   }
 }
+
+/**
+ * How long a cancelled, client-less turn may take to end on its own before the
+ * daemon reaps it. Generous: a child agent mid-tool-call finishes the call
+ * before honouring cancellation. What it buys is that the slot RETURNS.
+ */
+const DETACHED_TURN_GRACE_MS = 120_000;
 
 async function runV2PublicTurn(
   options: StartRedskillsAcpControlPlaneOptions,
