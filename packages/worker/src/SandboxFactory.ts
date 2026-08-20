@@ -9,7 +9,6 @@ import {
   ExecError,
   SyncError,
   WorktreeError,
-  type DockerError,
   type SandboxError,
 } from "./errors.js";
 import type { Timeouts } from "./run.js";
