@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createDemandTurnRunner,
   demandTurnForBirth,
+  queueBriefing,
   DEMAND_TURN_PERMISSION_REFUSAL,
   type DemandTurnAdmission,
   type DemandTurnRecord,
@@ -187,5 +188,42 @@ describe("what one birth owes its Worker", () => {
       { workspace_path: "/tmp/w", index: 0 },
       "W1",
     )).toThrow(/work_item/);
+  });
+});
+
+describe("the birth briefs its Worker with a Ticket", () => {
+  const briefing = { id: "4118", title: "worker-container invokes a deleted binary", labels: ["bug", "ready-for-agent"] };
+  const registration = { prompt: "Work issue #{{work_item}} to a merged PR", trunk: { branch: "main" } };
+  const birth = { workspace_path: "/tmp/w", index: 0, work_item: "4118" };
+
+  it("states the handoff the Worker's Ticket loop is entered through", () => {
+    const turn = demandTurnForBirth(registration, birth, "W7", briefing);
+
+    expect(turn?.ticket).toEqual({
+      number: 4118,
+      title: "worker-container invokes a deleted binary",
+      labels: ["bug", "ready-for-agent"],
+      base: "main",
+      // The prompt IS the briefing: one sentence, with the daemon's fact in it.
+      handoff: "Work issue #4118 to a merged PR",
+      worker_id: "W7",
+    });
+  });
+
+  it("states no handoff when a fact it requires is missing, rather than briefing a refusal", () => {
+    // A Worker refuses an empty title or a Ticket with no trunk; a refusal the
+    // daemon could have avoided is a Worker born to fail.
+    expect(demandTurnForBirth(registration, birth, "W7", { ...briefing, title: "" })?.ticket).toBeUndefined();
+    expect(demandTurnForBirth({ prompt: registration.prompt }, birth, "W7", briefing)?.ticket).toBeUndefined();
+    expect(demandTurnForBirth(registration, birth, "W7")?.ticket).toBeUndefined();
+  });
+
+  it("finds the briefing the last poll kept for that item, and nothing for another", () => {
+    const projects = [{ project_label: "a/b", tickets: [briefing] }];
+
+    expect(queueBriefing(projects, "a/b", "4118")).toEqual(briefing);
+    expect(queueBriefing(projects, "a/b", "4119")).toBeUndefined();
+    expect(queueBriefing(projects, "c/d", "4118")).toBeUndefined();
+    expect(queueBriefing(projects, "a/b", undefined)).toBeUndefined();
   });
 });

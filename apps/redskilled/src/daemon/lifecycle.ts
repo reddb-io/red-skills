@@ -76,7 +76,7 @@ import {
   launchProbeArgv,
   launchProbeRefusal,
 } from "../launch-probe.js";
-import { demandTurnForBirth, describeDemandTurn } from "../acp-demand-turn.js";
+import { demandTurnForBirth, describeDemandTurn, queueBriefing } from "../acp-demand-turn.js";
 import { createRedskilledRegistrationIntentStore } from "../registration-intent-store.js";
 import {
   buildRegistrationLapse,
@@ -1029,7 +1029,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // on the host.
         if (registered?.prompt != null && acpControlPlane != null) {
           try {
-            const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()))!;
+            const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()),
+              queueBriefing(lastQueue?.projects ?? [], birth.project_label, birth.work_item))!;
             void acpControlPlane.runDemandTurn(turn).catch(async (error: unknown) => {
               await eventLane.recordDemandRefusal({
                 ts: clock(),
@@ -2403,7 +2404,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // The one registration path (#4101): a drain that carries its work
       // registers through the same function `project-register` does.
       registerProject: (request) => registerProject(request),
-      // **A turn that completes says so** — only its failure path had a surface.
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
     });
   } catch (error) {
