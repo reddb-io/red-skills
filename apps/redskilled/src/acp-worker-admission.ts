@@ -22,6 +22,7 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { ACP_AGENT_CATALOG, type AcpEndpoint } from "./acp-agent-catalog.js";
+import { githubMethodDomain } from "./acp-github.js";
 import { publicationMethodDomain } from "./acp-publication.js";
 import {
   ACP_PROTOCOL_VERSION,
@@ -187,9 +188,17 @@ export async function admitNativeAcpWorker(
       ...params,
       sessionId: publicSessionId,
     }));
-  // Bound HERE rather than on the public control plane: the socket is what says
-  // which Worker is asking, and no client of the daemon may publish as one.
-  for (const binding of publication.bindings) {
+  // **A Worker holds no credential, so every write it needs is a request to the
+  // daemon** (ADR 0144 §3). The Ticket loop claims its Ticket through the
+  // registry's `githubWrite`, and this connection served only publish and land
+  // — so the first real drain refused at the claim with a method-not-found for
+  // it, one Worker every fifteen seconds until somebody read the host lane. The
+  // GitHub domain is bound here, scoped to the Project this Worker was admitted
+  // for, for the same reason publication is: the socket says who is asking.
+  const github = options.githubGateway == null
+    ? undefined
+    : githubMethodDomain({ gateway: options.githubGateway, scopedProject: () => session.project });
+  for (const binding of [...publication.bindings, ...(github?.bindings ?? [])]) {
     // The Worker connection hands a handler no peer of its own: the daemon IS
     // the peer here, so the context the domain expects is completed with none.
     downstreamApp.onRequest(binding.method, binding.params, ({ params }) =>

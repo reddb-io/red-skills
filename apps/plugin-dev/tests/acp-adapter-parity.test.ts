@@ -177,3 +177,16 @@ describe("a control tool with arguments stays a control call", () => {
       .rejects.toThrow(/cannot express \["selector"\]/);
   });
 });
+
+describe("read shaping is not a refusal", () => {
+  it("accepts the fields `status` declares, and still refuses what the surface cannot express", async () => {
+    const control = vi.fn(async () => ({ version: 1 }));
+    const session = { control, prompt: async () => { throw new Error("not the prompt path"); } } as never;
+
+    await invokeProjectMcp(session, "status", { scope: "project", live_only: true });
+    expect(control).toHaveBeenCalledWith("status");
+
+    await expect(invokeProjectMcp(session, "drain", { selector: { label: "x" } }))
+      .rejects.toThrow(/cannot express/);
+  });
+});
