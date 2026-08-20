@@ -14,6 +14,7 @@ import {
 } from "./mcp-tools/index.js";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 import { invokeProjectMcp } from "./project-acp-adapter.js";
+import { drainRegistrationFor } from "./core/drain-registration-resolve.js";
 import {
   registerLaneEventSubscription,
   type LaneSubscriptionServer,
@@ -46,6 +47,15 @@ export function createRedskilledMcpServer(
     throw new Error("REDSKILLED_ACP_UNAVAILABLE: the stdio adapter has no ACP client");
   });
   const dependencies = {} as CastleMcpDependencies;
+  // **A drain that carries no work registers nothing** (#4101). The daemon
+  // births only for a registration, and this process is the one that knows what
+  // this project's work IS — a repository, a ready label, a target. Building it
+  // here rather than in a tool handler keeps the tool a schema and the semantics
+  // where the checkout is.
+  const enrich = (tool: string, input: Record<string, unknown>): Record<string, unknown> =>
+    tool === "drain" && input.registration == null
+      ? { ...input, registration: drainRegistrationFor(root, buildInfo.version, input) }
+      : input;
   for (const tool of createCastleMcpTools(dependencies)) {
     registerTool(
       tool.name,
@@ -59,7 +69,7 @@ export function createRedskilledMcpServer(
           {
             type: "text" as const,
             text: encodeRedskilledMcpToon(
-              await invoke(tool.name, input),
+              await invoke(tool.name, enrich(tool.name, input)),
             ),
           },
         ],
