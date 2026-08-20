@@ -41,16 +41,20 @@ function workerStub(response: unknown, workerId = "W1"): ActiveWorkflowWorker & 
 function runner(
   admit: (input: DemandTurnAdmission) => Promise<ActiveWorkflowWorker>,
   records: DemandTurnRecord[] = [],
+  opened: Array<{ sessionId: string }> = [],
 ) {
   return {
     records,
+    opened,
     run: createDemandTurnRunner({
       paths: {} as never,
       startWorker: (() => {
         throw new Error("an injected admission owns the birth in this test");
       }) as never,
       hostState: () => ({ workers: [] }),
-      sessionJournal: {} as never,
+      sessionJournal: {
+        create: async (sessionId: string) => void opened.push({ sessionId }),
+      } as never,
       admit,
       record: (line) => records.push(line),
     }),
@@ -120,6 +124,16 @@ describe("the daemon's unattended turn", () => {
 
     expect(new Set(seen).size).toBe(2);
     expect(seen.every((id) => id.includes("github:1"))).toBe(true);
+  });
+
+  it("opens its own durable session before admitting — the journal refuses a turn nobody opened", async () => {
+    const opened: Array<{ sessionId: string }> = [];
+    const { run } = runner(async () => workerStub({ stopReason: "end_turn" }), [], opened);
+
+    await run({ project, prompt: "go", workItem: "4118" });
+
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.sessionId).toContain("github:1");
   });
 
   it("refuses permission on nobody's behalf, and says why", async () => {

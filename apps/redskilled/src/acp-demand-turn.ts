@@ -217,6 +217,13 @@ export function createDemandTurnRunner(
     const notify: AgentConnection["client"]["notify"] = async () => {};
 
     try {
+      // **A turn nobody opened is a turn the journal refuses.** Admission and
+      // every checkpoint key off a durable session record, so an unattended
+      // turn has to open its own exactly as `session/new` opens a client's —
+      // otherwise the demand loop reaches admission and dies on "unknown
+      // durable RedSkills ACP session", which is a birth nobody can explain
+      // from the outside (observed on 4.0.2, issue #4118's first drain).
+      await deps.sessionJournal.create(sessionId, request.project);
       const { worker, response } = await requestWorkflowTurn(
         sessionId,
         active,
