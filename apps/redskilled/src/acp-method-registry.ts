@@ -11,6 +11,7 @@
 // A domain also declares the `_meta.redskills` fragment it contributes to
 // `initialize`, because advertising a method the endpoint does not bind (and
 // binding one it never advertises) are the same drift in the other direction.
+import { RequestError } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS, type RedskillsAcpMethod } from "@reddb-io/protocol-acp";
 
 /** The context an extension handler is given. Params are already validated. */
@@ -62,10 +63,26 @@ export function redskillsAcpMethod<Params, Result>(
   params: (value: unknown) => Params,
   handle: (context: RedskillsAcpMethodContext<Params>) => Result,
 ): RedskillsAcpMethodBinding {
+  // **An error that crosses the wire keeps its words.** A handler that threw a
+  // plain Error reached the Worker as bare "Internal error" (-32603, message
+  // swallowed by the SDK), so every carefully-worded refusal in the publish
+  // path — delivery failures, authority checks — died on the wire and two
+  // Workers ground one Ticket on a cause nobody could read. A RequestError
+  // passes through untouched; anything else is re-thrown as one carrying the
+  // original sentence.
+  const named = async (context: RedskillsAcpMethodContext<Params>): Promise<unknown> => {
+    try {
+      return await handle(context);
+    } catch (error) {
+      if (error instanceof RequestError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new RequestError(-32603, `${method} failed: ${message}`);
+    }
+  };
   return {
     method,
     params,
-    handle: handle as (context: RedskillsAcpMethodContext) => unknown,
+    handle: named as (context: RedskillsAcpMethodContext) => unknown,
   };
 }
 
