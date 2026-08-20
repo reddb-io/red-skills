@@ -139,6 +139,8 @@ export function queueBriefing(
  * is not the plumbing: it is that a project which said nothing births exactly
  * as it always did, and a template naming a fact this birth does not have is
  * refused BEFORE anything is spawned. PURE.
+ *
+ * @param standingOrders - Optional standing orders to prepend to the prompt
  */
 export function demandTurnForBirth(
   registration: {
@@ -149,6 +151,7 @@ export function demandTurnForBirth(
   birth: { readonly workspace_path: string; readonly index: number; readonly work_item?: string },
   workerId: string,
   ticket?: { readonly id: string; readonly title: string; readonly labels: readonly string[] },
+  standingOrders?: string,
 ): {
   readonly workspacePath: string;
   readonly prompt: string;
@@ -162,6 +165,10 @@ export function demandTurnForBirth(
     workspace_path: birth.workspace_path,
     ...(birth.work_item == null ? {} : { work_item: birth.work_item }),
   }).argv[0]!;
+  // Prepend standing orders to the prompt if present
+  const withOrders = standingOrders != null && standingOrders !== ""
+    ? `${standingOrders}\n${expanded}`
+    : expanded;
   // The handoff is stated only when every fact it requires is present: a Ticket
   // briefed with an empty title or no trunk is one the Worker refuses, and a
   // refusal the daemon could have avoided is a Worker born to fail.
@@ -171,7 +178,7 @@ export function demandTurnForBirth(
     ticket.title !== "" && base != null && base !== "";
   return {
     workspacePath: birth.workspace_path,
-    prompt: expanded,
+    prompt: withOrders,
     ...(birth.work_item == null ? {} : { workItem: birth.work_item }),
     ...(briefed
       ? {
@@ -180,7 +187,7 @@ export function demandTurnForBirth(
           title: ticket!.title,
           labels: [...ticket!.labels],
           base: base!,
-          handoff: expanded,
+          handoff: withOrders,
           worker_id: workerId,
           ...(registration.validation_commands == null || registration.validation_commands.length === 0
             ? {}

@@ -33,6 +33,7 @@ import type { RedskilledHostEventSinks } from "../host-event-sink.js";
 import type { RedskilledHostTopology } from "../host-topology.js";
 import { type RedskilledRegistrationIntentStore,
 } from "../registration-intent-store.js";
+import type { StandingOrdersStore } from "../standing-orders.js";
 import { type RedskilledProjectRegistration,
   type RedskilledProjectRegistrationRequest,
 } from "../project-registration.js";
@@ -147,6 +148,8 @@ export interface RedskilledDaemonOptions {
   readonly eventLane?: RedskilledEventLane;
   /** The durable registration snapshot; defaults to this session's own. */
   readonly registrationIntentStore?: RedskilledRegistrationIntentStore;
+  /** The standing orders store; defaults to this session's own. */
+  readonly standingOrdersStore?: StandingOrdersStore;
   /** Durable generic host-resource authority; injected for handover tests. */
   readonly resourceLeaseStore?: RedskilledResourceLeaseStore;
   /** Real available memory, sampled only while deciding generic resource admission. */

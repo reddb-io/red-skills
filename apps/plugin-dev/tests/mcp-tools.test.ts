@@ -190,6 +190,8 @@ function deps(): CastleMcpDependencies {
     codexStatusline: vi.fn(async () => ({ status: "ok", problem: null })),
     codexMonitorAgent: vi.fn(async () => ({ mode: "run", prompt: "poll status" })),
     reconcileEngine: vi.fn(async () => ({ version: "3.21.0", registration: "renewed" })),
+    standingOrdersShow: vi.fn(async () => ({ project_label: "red-skills", orders: [] })),
+    standingOrdersAppend: vi.fn(async (input) => ({ version: 1 as const, n: 1, text: input.text, ts: new Date().toISOString() })),
   };
 }
 

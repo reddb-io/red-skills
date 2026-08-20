@@ -29,6 +29,7 @@ import {
   type RedskilledWorkerEventKind,
   type RecordWorkerEventInput,
 } from "../event-lane.js";
+import { createStandingOrdersStore, deriveHomeDirFromEventLanePath, formatStandingOrdersBrief } from "../standing-orders.js";
 import {
   DEFAULT_REDSKILLED_DEMAND_MS,
   beginBirthProbe,
@@ -348,6 +349,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   const startedAt = clock();
   const eventLane = meteredRedskilledEventLane(options.eventLane ?? createRedskilledEventLane(paths.eventLanePath), redskilledMetrics());
+  const standingOrdersStore = options.standingOrdersStore ?? createStandingOrdersStore(deriveHomeDirFromEventLanePath(paths.eventLanePath));
   const registrationIntentStore = options.registrationIntentStore ??
     createRedskilledRegistrationIntentStore(paths.registrationIntentPath);
   const liveness = options.liveness ?? detectWorkerLiveness;
@@ -1022,8 +1024,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // Worker's whole life, and a blocked tick would stop every project.
         if (registered?.prompt != null && acpControlPlane != null) {
           try {
+            // Read standing orders for this project and prepend to prompt
+            const ordersResult = await standingOrdersStore.show(birth.project_label);
+            const standingOrdersText = ordersResult.orders.length > 0
+              ? formatStandingOrdersBrief(ordersResult.orders)
+              : undefined;
             const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()),
-              queueBriefing(lastQueue?.projects ?? [], birth.project_label, birth.work_item))!;
+              queueBriefing(lastQueue?.projects ?? [], birth.project_label, birth.work_item), standingOrdersText)!;
             void acpControlPlane.runDemandTurn(turn).catch(async (error: unknown) => {
               await eventLane.recordDemandRefusal({
                 ts: clock(),
@@ -2405,6 +2412,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       releaseProject: (projectLabel) => deregisterProject(projectLabel),
       workerPulse: (pulse) => recordWorkerPulse(pulse),
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
+      standingOrdersStore,
     });
   } catch (error) {
     await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);
