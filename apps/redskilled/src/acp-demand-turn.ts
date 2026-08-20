@@ -144,6 +144,7 @@ export function demandTurnForBirth(
   registration: {
     readonly prompt?: string;
     readonly trunk?: { readonly branch: string };
+    readonly validation_commands?: readonly string[];
   } | undefined,
   birth: { readonly workspace_path: string; readonly index: number; readonly work_item?: string },
   workerId: string,
@@ -181,6 +182,9 @@ export function demandTurnForBirth(
           base: base!,
           handoff: expanded,
           worker_id: workerId,
+          ...(registration.validation_commands == null || registration.validation_commands.length === 0
+            ? {}
+            : { validation_commands: [...registration.validation_commands] }),
         },
       }
       : {}),

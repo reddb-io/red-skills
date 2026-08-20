@@ -41,6 +41,14 @@ export interface RedskillsTicketHandoff {
   readonly reseed_budget?: number;
   /** The operator's extra gate commands, run after feedback and only if it passed. */
   readonly backpressure_commands?: readonly string[];
+  /**
+   * The project's DECLARED local gate (#4166). When present, the Worker runs
+   * exactly these commands as its feedback stage instead of improvising a
+   * package-cone suite — the declared schedule is the sole local validation
+   * authority, and an improvised full suite both contradicts it and flakes
+   * under the Worker's memory ceiling.
+   */
+  readonly validation_commands?: readonly string[];
 }
 
 /**
@@ -78,6 +86,9 @@ export function ticketHandoffFromMeta(meta: unknown): RedskillsTicketHandoff | u
       : {}),
     ...(isStringArray(ticket.backpressure_commands)
       ? { backpressure_commands: ticket.backpressure_commands }
+      : {}),
+    ...(isStringArray(ticket.validation_commands)
+      ? { validation_commands: ticket.validation_commands }
       : {}),
   };
 }

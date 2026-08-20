@@ -151,6 +151,9 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
         ...(ticket.backpressure_commands == null
           ? {}
           : { backpressureCommands: ticket.backpressure_commands }),
+        ...(ticket.validation_commands == null
+          ? {}
+          : { validationCommands: ticket.validation_commands }),
       }),
       publisher: held.publisher,
       narrate: (record) => notifyTicketStage(parent, sessionId, record),
