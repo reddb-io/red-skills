@@ -8,6 +8,23 @@ import { pathToFileURL } from "node:url";
 export const PACKAGE_SET_SCHEMA = "red.package-set.v2";
 
 /**
+ * The schema every existing consumer still reads.
+ *
+ * **A schema bump is only landed when its readers can read it.** v2 moved
+ * `version`, `channel` and `targets` inside the signed identity (#4005) and
+ * went out as the canonical manifest in 4.0.0 — which is exactly when red-dev,
+ * whose verifier mirrors v1 key-for-key, began refusing every set with
+ * `manifest shape or key order is not canonical`. A machine that could not
+ * install the release could not be told about the release.
+ *
+ * So the set carries BOTH during the transition: `package-set.manifest.json`
+ * stays v1, the name and shape every reader already knows, and v2 rides beside
+ * it under its own name and its own signature. The canonical name flips when
+ * the readers have flipped, and v1 leaves then — not before.
+ */
+export const PACKAGE_SET_LEGACY_SCHEMA = "red.package-set.v1";
+
+/**
  * The closed channel vocabulary (#4005). A consumer that reads `channel` has to
  * be able to decide on it, so the value is one of a named set rather than free
  * text: `stable` is what the release publishes, `canary` is the opt-in dist-tag
@@ -107,6 +124,20 @@ export function createPackageSet({ sourceCommit, version, channel, targets, arti
   };
 }
 
+/**
+ * The v1 view of the same artifacts: the identity v1 readers verify, byte for
+ * byte as they have always seen it. Derived from the same inputs rather than
+ * built a second time, so the two manifests cannot describe different sets.
+ */
+export function legacyPackageSet(manifest) {
+  const identity = {
+    schema: PACKAGE_SET_LEGACY_SCHEMA,
+    sourceCommit: manifest.sourceCommit,
+    artifacts: manifest.artifacts,
+  };
+  return { ...identity, wholeSetDigest: sha256(packageSetIdentityBytes(identity)) };
+}
+
 export function encodePackageSet(manifest) {
   return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
 }
@@ -130,6 +161,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (argument === "--target" && value) {
       options.targets.push(value);
+      index += 1;
+    } else if (argument === "--legacy-out" && value) {
+      options.legacyOut = value;
       index += 1;
     } else if (argument === "--out" && value) {
       options.out = value;
@@ -158,6 +192,13 @@ export function main(argv = process.argv.slice(2)) {
   const out = resolve(options.out);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, encodePackageSet(manifest));
+  if (options.legacyOut) {
+    const legacy = legacyPackageSet(manifest);
+    const legacyPath = resolve(options.legacyOut);
+    mkdirSync(dirname(legacyPath), { recursive: true });
+    writeFileSync(legacyPath, encodePackageSet(legacy));
+    process.stdout.write(`${legacy.wholeSetDigest}\n`);
+  }
   process.stdout.write(`${manifest.wholeSetDigest}\n`);
 }
 

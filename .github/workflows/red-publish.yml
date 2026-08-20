@@ -764,12 +764,19 @@ jobs:
           while IFS= read -r target; do
             target_args+=(--target "$target")
           done < <(node scripts/workstation-package-set.mjs --targets)
+          # TWO manifests while the readers migrate (#4005): the canonical name
+          # keeps the v1 shape every existing verifier mirrors — red-dev refused
+          # every 4.0.x set with "manifest shape or key order is not canonical"
+          # the moment v2 took that name — and v2 rides beside it under its own
+          # name and its own signature. Both describe the same artifacts,
+          # derived from one build rather than assembled twice.
           node scripts/build-package-set.mjs \
             --source-commit "$SOURCE_COMMIT" \
             --release-version "$VERSION" \
             --channel stable \
             "${target_args[@]}" \
-            --out dist/package-set.manifest.json \
+            --out dist/package-set.manifest.v2.json \
+            --legacy-out dist/package-set.manifest.json \
             "${build_args[@]}"
           # The Sigstore bundle format (--new-bundle-format) carries the
           # certificate, signature, and Rekor entry with its inclusion proof,
@@ -787,6 +794,11 @@ jobs:
             --new-bundle-format \
             --bundle dist/package-set.manifest.sigstore.json \
             dist/package-set.manifest.json
+          cosign sign-blob \
+            --yes \
+            --new-bundle-format \
+            --bundle dist/package-set.manifest.v2.sigstore.json \
+            dist/package-set.manifest.v2.json
           cosign initialize
           trusted_root="$HOME/.sigstore/root/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
           [ -f "$trusted_root" ] || { echo "cosign initialize did not cache $trusted_root" >&2; exit 1; }
@@ -808,6 +820,14 @@ jobs:
               --cosign-bin "$(command -v cosign)" \
               --trusted-root "$trusted_root"
           sudo rm -rf "$expansion"
+          # The v2 manifest is verified with the same offline recipe, so a set
+          # that signs it and cannot check it never leaves the runner.
+          sudo --preserve-env=HOME unshare --net -- \
+            "$(command -v node)" dist/verify-package-set.mjs \
+              --manifest dist/package-set.manifest.v2.json \
+              --bundle dist/package-set.manifest.v2.sigstore.json \
+              --cosign-bin "$(command -v cosign)" \
+              --trusted-root "$trusted_root"
 
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver

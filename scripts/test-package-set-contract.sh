@@ -258,6 +258,53 @@ if grep -Eq 'fetch\(|https?\.request|node:(http|https|net|tls|dns)' scripts/expa
 fi
 pass "expander has no network client"
 
+# --- both schemas ride together while the readers migrate (#4005) ------------
+#
+# v2 took the canonical manifest name in 4.0.0 and red-dev — whose verifier
+# mirrors v1 key-for-key — refused every set from that release with "manifest
+# shape or key order is not canonical". A machine that cannot install the
+# release cannot be told about the release. So the canonical name keeps the v1
+# shape until the readers have flipped, and v2 rides beside it.
+
+build_both() {
+  node scripts/build-package-set.mjs \
+    --source-commit "$source_commit" \
+    --release-version "$fixture_version" \
+    --channel "$fixture_channel" \
+    --target "$fixture_target" \
+    --out "$tmp/both.v2.json" \
+    --legacy-out "$tmp/both.v1.json" \
+    --asset "$tmp/assets/alpha.bin" \
+    --asset "$tmp/assets/beta.bin" >/dev/null
+}
+
+build_both
+node -e "
+  const v1 = require('$tmp/both.v1.json');
+  const v2 = require('$tmp/both.v2.json');
+  if (v1.schema !== 'red.package-set.v1') process.exit(11);
+  if (v2.schema !== 'red.package-set.v2') process.exit(12);
+  if (JSON.stringify(Object.keys(v1)) !== JSON.stringify(['schema','sourceCommit','artifacts','wholeSetDigest'])) process.exit(13);
+  if (JSON.stringify(v1.artifacts) !== JSON.stringify(v2.artifacts)) process.exit(14);
+  if (v1.wholeSetDigest === v2.wholeSetDigest) process.exit(15);
+" || fail "the two manifests must describe the same artifacts under their own identities"
+pass "one build emits both schemas over the same artifacts"
+
+cp "$tmp/both.v1.json" "$tmp/assets/package-set.manifest.json"
+sign_fixture "$tmp/assets/package-set.manifest.json" "$tmp/assets/legacy.sigstore.json"
+verify "$tmp/assets/package-set.manifest.json" "$tmp/assets/legacy.sigstore.json" >/dev/null ||
+  fail "the shipped verifier must still verify a v1 manifest"
+pass "the shipped verifier verifies the v1 manifest a migrating reader still reads"
+
+if node scripts/verify-package-set.mjs \
+  --manifest "$tmp/assets/package-set.manifest.json" \
+  --bundle "$tmp/assets/legacy.sigstore.json" \
+  --cosign-bin "$tmp/bin/cosign" \
+  --require-target linux-x64 >/dev/null 2>&1; then
+  fail "--require-target must refuse a v1 manifest, which states no targets"
+fi
+pass "a target requirement refuses a v1 manifest rather than reading one that is absent"
+
 # --- the signed identity carries version, channel and targets (#4005) --------
 #
 # red-dev verifies the published set before it moves `~/.red/skills/current`,
@@ -467,7 +514,8 @@ pass "developer-only artifacts stay out of the workstation package set"
 # The upload is a superset: it also carries the published developer-only
 # evidence and the signed manifest with its Sigstore bundle.
 mapfile -t release_assets < <(node scripts/workstation-package-set.mjs --github-release --version 9.9.9)
-for asset in "${declared_workstation[@]}" dist/package-set.manifest.json dist/package-set.manifest.sigstore.json; do
+for asset in "${declared_workstation[@]}" dist/package-set.manifest.json dist/package-set.manifest.sigstore.json \
+  dist/package-set.manifest.v2.json dist/package-set.manifest.v2.sigstore.json; do
   printf '%s\n' "${release_assets[@]}" | grep -qxF "$asset" || fail "release upload must carry $asset"
 done
 if printf '%s\n' "${release_assets[@]}" | grep -qxF dist/release.bundle.min.mjs; then

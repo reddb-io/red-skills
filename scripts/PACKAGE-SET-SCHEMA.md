@@ -55,9 +55,30 @@ node verify-package-set.mjs \
 without it the verifier checks everything else and reports the declared targets
 on its success line.
 
-## `red.package-set.v1` (superseded)
+## Which file carries which schema
 
-v1 carried `schema`, `sourceCommit`, `artifacts`, `wholeSetDigest` and nothing
+While readers migrate, a Release attaches **both**:
+
+| File | Schema | Who reads it |
+| --- | --- | --- |
+| `package-set.manifest.json` | v1 | every existing verifier, including red-dev's mirror |
+| `package-set.manifest.v2.json` | v2 | readers that need version, channel or targets |
+
+Each has its own Sigstore bundle (`…sigstore.json` beside it), and both are
+built from one pass over the same artifacts, so they cannot describe different
+sets. **The canonical name flips to v2 when the readers have flipped, and v1
+leaves then — not before.** v2 taking that name in 4.0.0 is what made red-dev
+refuse every set from that release with `manifest shape or key order is not
+canonical`, and a machine that cannot install the release cannot be told about
+the release.
+
+The shipped `verify-package-set.mjs` verifies either one. `--require-target`
+needs v2 and says so against a v1 manifest rather than reading a field that is
+absent.
+
+## `red.package-set.v1` (still canonical during the transition)
+
+v1 carries `schema`, `sourceCommit`, `artifacts`, `wholeSetDigest` and nothing
 else. **Adding a key could not be a compatible change**: the canonical key-set
 check makes any addition a different shape, and a key outside the identity would
 sit outside the signature — which is exactly the flaw v2 repairs. `version`,
