@@ -247,6 +247,21 @@ function validateWrite(write: RedskilledGithubWrite): RedskilledGithubWrite {
     const body = typeof write.body === "string" ? write.body : refuse("a pull request needs a body");
     return { kind: "pull-request", head, base, title, body };
   }
+  if (write.kind === "issue-transition") {
+    requireOnlyKeys(write, ["kind", "issue", "add", "remove", "comment"]);
+    if (!Number.isSafeInteger(write.issue) || write.issue <= 0) {
+      return refuse("an Issue transition needs one positive Issue number");
+    }
+    const add = validateLabelList(write.add, "an Issue transition add list");
+    const remove = validateLabelList(write.remove, "an Issue transition remove list");
+    if (add.length === 0 && remove.length === 0) {
+      return refuse("an Issue transition needs at least one label to add or remove");
+    }
+    const comment = write.comment == null
+      ? undefined
+      : nonEmpty(write.comment, "an Issue transition comment must not be empty");
+    return { kind: "issue-transition", issue: write.issue, add, remove, ...(comment == null ? {} : { comment }) };
+  }
   if (write.kind === "issue-publication") {
     requireOnlyKeys(write, ["kind", "issue", "title", "body", "labels"]);
     const body = typeof write.body === "string" ? write.body : refuse("an Issue publication needs a body");
@@ -312,6 +327,12 @@ function validateStoredAuthority(
     throw new RedskilledGithubAuthorityError("the daemon-owned credential profile name is not publishable");
   }
   return { ...authority };
+}
+
+/** Labels are tracker-defined names: non-empty, no exotic validation here. */
+function validateLabelList(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value)) return refuse(`${label} must be an array of labels`);
+  return value.map((entry) => nonEmpty(entry, `${label} holds one empty label`));
 }
 
 function nonEmpty(value: unknown, message: string): string {

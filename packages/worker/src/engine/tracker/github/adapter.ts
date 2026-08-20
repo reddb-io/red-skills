@@ -13,7 +13,6 @@ import type {
   TrackerIssue,
   TrackerPort,
   TrackerIssueCreateSpec,
-  TrackerLabelMutation,
   TrackerIssueReference,
 } from "../port.js";
 import {

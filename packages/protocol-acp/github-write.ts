@@ -15,6 +15,21 @@ export type RedskilledGithubWrite =
       readonly body: string;
     }
   | {
+      /**
+       * Move a Ticket's state labels as one authorized mutation (#4160).
+       *
+       * A gate-blocked verdict that changes nothing on the tracker leaves the
+       * Ticket at the head of the ready queue, so every freed slot re-births a
+       * Worker for the same item. The transition is what makes the queue
+       * advance; the optional comment explains it in the same write.
+       */
+      readonly kind: "issue-transition";
+      readonly issue: number;
+      readonly add: readonly string[];
+      readonly remove: readonly string[];
+      readonly comment?: string;
+    }
+  | {
       readonly kind: "issue-publication";
       /** Absent to open a Ticket; present to publish a comment on that Ticket. */
       readonly issue?: number;
