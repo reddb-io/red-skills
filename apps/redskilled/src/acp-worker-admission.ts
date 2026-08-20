@@ -296,7 +296,13 @@ export function nativeWorkerSpec(
     workspace_path: workspace.worktreePath,
     // ADR 0150 §2: the run declares its Working mode, so a skill written for a
     // human's checkout refuses inside a Worker instead of running there.
-    env: workerModeEnv(workerKind),
+    // redcode#58: concurrent redcode instances sharing one opencode.db die on
+    // "database is locked" mid-turn, so each Worker's child gets its own DB in
+    // the Worker's disposable workspace — it dies with the workspace.
+    env: {
+      ...workerModeEnv(workerKind),
+      ...(childAgent.agent === "redcode" ? { OPENCODE_DB: join(workspace.workspacePath, "redcode.db") } : {}),
+    },
     command: process.execPath,
     args: [
       ...process.execArgv,

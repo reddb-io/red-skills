@@ -29,4 +29,26 @@ describe("native Worker project identity", () => {
     expect(spec.project_label).toBe(project.projectLabel);
     expect(spec.project_label).not.toBe(project.projectId);
   });
+
+  it("gives a redcode child its own database inside the Worker's workspace (redcode#58)", () => {
+    const project: AcpProjectWorkspace = {
+      projectId: "remote:reddb-io/red-skills",
+      projectLabel: "reddb-io/red-skills",
+      checkoutRoot: "/tmp/checkout",
+      workspacePath: "/tmp/project-workspace",
+    };
+    const workspace: MaterializedWorkerWorkspace = {
+      workerId: "VStest02",
+      root: "/tmp/workers",
+      workspacePath: "/tmp/workers/VStest02",
+      worktreePath: "/tmp/workers/VStest02/worktree",
+    } as MaterializedWorkerWorkspace;
+
+    const spec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk");
+
+    // Concurrent redcode instances sharing one opencode.db die on "database is
+    // locked" mid-turn; the DB lives beside (not inside) the worktree, so it
+    // never dirties the git tree and dies with the disposable workspace.
+    expect(spec.env?.OPENCODE_DB).toBe("/tmp/workers/VStest02/redcode.db");
+  });
 });
