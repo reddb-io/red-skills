@@ -32,9 +32,40 @@ export type CastleLaneKind =
   | "worker.heartbeat"
   | "worker.completed"
   | "worker.blocked"
+  | "worker.decision"
   | "supervisor.scaled"
   | "supervisor.retired"
   | (string & {});
+
+/**
+ * The declared vocabulary of decision trail event types. Each type names one
+ * situation a Worker records: a fork taken, a pivot, a revert, a blocker, or
+ * a verified unit. The ratchet validates that every emitted decision row's
+ * `type` is in this list, and that no declared type loses its writer.
+ */
+export const DECISION_KINDS = [
+  "fork",
+  "pivot",
+  "revert",
+  "blocker",
+  "verified-unit",
+] as const;
+
+export type DecisionTrailKind = (typeof DECISION_KINDS)[number];
+
+/**
+ * Payload for a `worker.decision` lane record. The `type` field carries the
+ * decision kind (fork/pivot/revert/blocker/verified-unit); `evidence` is a
+ * pointer (URL, SHA, path — never prose); `decision`, `why`, and `result` are
+ * human-readable but the machine reads `evidence` as the authoritative cite.
+ */
+export interface DecisionTrailPayload {
+  readonly type: DecisionTrailKind;
+  readonly decision: string;
+  readonly why: string;
+  readonly evidence: string;
+  readonly result: string;
+}
 
 export interface CastleLaneRecord {
   at: string;
