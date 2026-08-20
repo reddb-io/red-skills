@@ -104,6 +104,21 @@ export interface DemandTurnRecord {
   readonly detail?: string;
 }
 
+/**
+ * One unattended turn's outcome as a line an operator reads. PURE.
+ *
+ * Lives beside the record it renders rather than at the journal call site: the
+ * daemon's lifecycle decides WHERE narration goes, never what it says.
+ */
+export function describeDemandTurn(record: DemandTurnRecord): string {
+  return (
+    `redskilled: unattended turn ${record.event} for project ${JSON.stringify(record.project_label)}` +
+    `${record.work_item == null ? "" : ` on item ${record.work_item}`}` +
+    `${record.worker_id == null ? "" : ` (worker ${record.worker_id})`}` +
+    `${record.detail == null ? "" : `: ${record.detail}`}\n`
+  );
+}
+
 export interface DemandTurnRequest {
   readonly project: AcpProjectWorkspace;
   /** The project's prompt, with this birth's facts already written into it. */
