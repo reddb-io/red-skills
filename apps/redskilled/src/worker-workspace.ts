@@ -154,20 +154,33 @@ export async function materializeWorkerWorkspace(
   if (input.trunk != null) {
     // Loud-but-non-fatal: a network flake must not stop the drain, and a fork
     // that proceeds stale is the stated exception rather than the invisible
-    // rule — the journal line below is what makes it stated.
-    const branch = input.trunk.branch
-      ?? await git(input.projectWorkspacePath, ["symbolic-ref", "--short", "HEAD"])
-      ?? "main";
-    const fetchUrl = anonymousFetchUrl(input.trunk.remoteUrl);
-    const fetched = await git(input.projectWorkspacePath, ["fetch", "--quiet", fetchUrl, branch]);
-    if (fetched !== undefined) {
-      await git(input.projectWorkspacePath, ["reset", "--hard", "FETCH_HEAD"]);
-    } else {
-      process.stderr.write(
-        `redskilled: Worker ${input.workerId} forks a STALE mirror — the trunk fetch from ` +
-        `${fetchUrl} failed, so this Worker's base and its origin predate today's ${branch}\n`,
-      );
-    }
+    // rule — the journal line below is what makes it stated. Serialized per
+    // mirror, because a read Worker and a demand birth materializing together
+    // race two `git fetch` on one FETCH_HEAD lock and the loser forks stale.
+    const trunk = input.trunk;
+    const previous = mirrorRefreshes.get(input.projectWorkspacePath) ?? Promise.resolve();
+    const refresh = previous.then(async () => {
+      const branch = trunk.branch
+        ?? await git(input.projectWorkspacePath, ["symbolic-ref", "--short", "HEAD"])
+        ?? "main";
+      const fetchUrl = anonymousFetchUrl(trunk.remoteUrl);
+      const fetched = input.git != null
+        ? ((await git(input.projectWorkspacePath, ["fetch", "--quiet", fetchUrl, branch])) !== undefined
+          ? { ok: true as const }
+          : { ok: false as const, detail: "the injected git runner refused" })
+        : await gitCapture(input.projectWorkspacePath, ["fetch", "--quiet", fetchUrl, branch]);
+      if (fetched.ok) {
+        await git(input.projectWorkspacePath, ["reset", "--hard", "FETCH_HEAD"]);
+      } else {
+        process.stderr.write(
+          `redskilled: Worker ${input.workerId} forks a STALE mirror — the trunk fetch from ` +
+          `${fetchUrl} failed (${fetched.detail}), so this Worker's base and its origin predate ` +
+          `today's ${branch}\n`,
+        );
+      }
+    }).catch(() => undefined);
+    mirrorRefreshes.set(input.projectWorkspacePath, refresh);
+    await refresh;
   }
 
   await git(input.projectWorkspacePath, [
@@ -186,6 +199,23 @@ export async function materializeWorkerWorkspace(
     worktreePath,
     ...(baseCommit == null ? {} : { baseCommit }),
   };
+}
+
+/** One refresh at a time per mirror; the map holds only the newest tail. */
+const mirrorRefreshes = new Map<string, Promise<void | undefined>>();
+
+/** Run git capturing the failure's own words — the refresh's loud line needs them. */
+async function gitCapture(
+  cwd: string,
+  args: readonly string[],
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly detail: string }> {
+  return await new Promise((resolve) => {
+    execFile("git", [...args], { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS, windowsHide: true },
+      (error, _stdout, stderr) => {
+        if (error == null) resolve({ ok: true });
+        else resolve({ ok: false, detail: (stderr.trim() || error.message).slice(0, 300) });
+      });
+  });
 }
 
 /**
