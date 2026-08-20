@@ -67,6 +67,14 @@ export interface DrainRegistration {
 export const DRAIN_WORKER_PROMPT =
   "Work issue #{{work_item}} in this repository to a merged pull request, following the /afk skill: " +
   "claim it, implement it in this workspace, run the gate, open the PR, and land it. " +
+  // #4162: an inner agent reading the repository's interactive-mode rules built
+  // a NESTED worktree under .red/tmp/worktrees/manual inside its own worktree.
+  // The Worker's workspace was already materialised by the daemon on the
+  // Ticket's base, so the prompt says so — the worktree rules it would
+  // otherwise follow govern a human's checkout, not a Worker.
+  "You are already standing in your own dedicated worktree on the Ticket's base branch: work and " +
+  "commit right here, and never create another worktree — the repository's worktree lanes govern " +
+  "interactive sessions, not Workers. " +
   "If you cannot claim it or the work is blocked, say so plainly and stop.";
 
 /** Build the registration a drain carries. PURE. */
