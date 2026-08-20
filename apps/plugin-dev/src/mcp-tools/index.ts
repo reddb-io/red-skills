@@ -36,6 +36,7 @@ import {
   createWorktreeTools,
   type WorktreeDependencies,
 } from "./worktree.js";
+import { createStandingOrdersTools, type StandingOrdersDependencies } from "./standing-orders.js";
 
 /**
  * The published name of the dev plugin's Plugin MCP (ADR 0147 rule 2).
@@ -137,7 +138,8 @@ export interface CastleMcpDependencies
     WaitDependencies,
     ReviewDependencies,
     OperatorDependencies,
-    StatuslineDependencies {}
+    StatuslineDependencies,
+    StandingOrdersDependencies {}
 
 /**
  * Compose the published redskilled tool surface from the per-domain registries.
@@ -176,6 +178,7 @@ export function createCastleMcpTools(
     ...createReviewTools(deps),
     ...createStatuslineTools(deps),
     ...createOperatorTools(deps),
+    ...createStandingOrdersTools(deps),
   ];
   publishedTools = applyDangerPosture(applyOutputContracts(tools), posture);
   return publishedTools;

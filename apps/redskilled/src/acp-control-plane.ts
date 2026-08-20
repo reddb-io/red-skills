@@ -21,6 +21,7 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
+import { formatStandingOrdersBrief, type StandingOrdersStore } from "./standing-orders.js";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import {
   ACP_PROTOCOL_VERSION,
@@ -148,6 +149,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly releaseProject?: (projectLabel: string) => unknown;
   /** Stamp a native Worker's turn events as its statusline pulse (#4181). */
   readonly workerPulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
+  /** The standing orders store for injecting orders into Worker briefs. */
+  readonly standingOrdersStore?: StandingOrdersStore;
 }
 
 /** The store handles every connection on this endpoint shares (ADR 0152). */
@@ -394,9 +397,18 @@ async function servePublicConnection(
 
       busy.add(params.sessionId);
       try {
+        // Inject standing orders into the prompt if present
+        let prompt = params.prompt;
+        if (options.standingOrdersStore != null) {
+          const ordersResult = await options.standingOrdersStore.show(session.project.projectLabel);
+          if (ordersResult.orders.length > 0) {
+            const ordersText = formatStandingOrdersBrief(ordersResult.orders);
+            prompt = [{ type: "text", text: ordersText }, ...prompt];
+          }
+        }
         return await runAcpWorkflowTurn({
           sessionId: params.sessionId,
-          prompt: params.prompt,
+          prompt,
           ...(params._meta == null ? {} : { meta: params._meta }),
           ...(dispatch == null ? {} : { dispatch }),
           active,
@@ -617,12 +629,21 @@ async function runV2PublicTurn(
         _meta: notice._meta,
       });
     };
+    // Inject standing orders into the prompt if present
+    let prompt = params.prompt as unknown as PromptRequest["prompt"];
+    if (options.standingOrdersStore != null) {
+      const ordersResult = await options.standingOrdersStore.show(session.project.projectLabel);
+      if (ordersResult.orders.length > 0) {
+        const ordersText = formatStandingOrdersBrief(ordersResult.orders);
+        prompt = [{ type: "text", text: ordersText }, ...prompt];
+      }
+    }
     const turn = await requestWorkflowTurn(
       params.sessionId,
       active,
       {
         sessionId: params.sessionId,
-        prompt: params.prompt as unknown as PromptRequest["prompt"],
+        prompt,
         ...(params._meta == null ? {} : { _meta: params._meta }),
       },
       (replacement) => admitNativeAcpWorker(
