@@ -251,6 +251,8 @@ describe("redskilled MCP tools", () => {
       "codex_statusline",
       "codex_monitor_agent",
       "reconcile_engine",
+      "standing_orders_show",
+      "standing_orders_append",
     ]);
   });
 

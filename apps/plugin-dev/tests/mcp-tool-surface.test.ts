@@ -401,6 +401,20 @@ const SURFACE: ReadonlyArray<{
       "MUTATING: warm the published engine bundle into the stable cache path and re-point a standing registration at it in one operation, then return the version, the bundle path, and what happened to the registration.",
     schema: ["version"],
   },
+  {
+    name: "standing_orders_show",
+    title: "Show standing orders for this project",
+    description:
+      "READ-ONLY: return all standing orders for this project. Standing orders are an append-only, numbered register injected verbatim into every Worker brief.",
+    schema: ["project_label"],
+  },
+  {
+    name: "standing_orders_append",
+    title: "Append a standing order",
+    description:
+      "MUTATING: append a new standing order to this project's register. The order is injected verbatim into every Worker brief at admission and on resume. Append is append-only — existing orders are never mutated or renumbered.",
+    schema: ["text", "project_label"],
+  },
 ];
 
 describe("aggregated rs_dev MCP tool surface", () => {
