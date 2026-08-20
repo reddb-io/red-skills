@@ -19,7 +19,19 @@ const CONTROL_TOOL = new Map<string, "drain" | "stop" | "status">([
  * recognise, so the whole thing became "run this prompt in a Worker" and came
  * back as narration with no answer in it.
  */
-const CONTROL_ARGUMENTS = new Set(["target", "runner", "scope", "registration"]);
+const CONTROL_ARGUMENTS = new Set([
+  "target",
+  "runner",
+  "scope",
+  "registration",
+  // Read shaping, accepted and ignored: `status` declares them in its schema and
+  // the MCP fills the defaults in, so refusing them made the tool unusable —
+  // `status { scope: project }` came back refused for a field that changes
+  // nothing about what the control surface answers.
+  "live_only",
+  "fields",
+  "worker",
+]);
 
 /** Project MCP calls are projections; the adapter never executes a workflow. */
 export async function invokeProjectMcp(
