@@ -27,7 +27,7 @@ import {
   type ScriptLayout,
   type ValidationCheck,
 } from "../engine/gate-executor.js";
-import { KILLED_EXIT_CODE } from "../engine/gate-constants.js";
+import { CASTLE_VALIDATION_SCHEMA, KILLED_EXIT_CODE } from "../engine/gate-constants.js";
 import type { GateStageOutcome } from "../engine/gate-stage-order.js";
 import type { WorkspaceGraph, WorkspacePackage } from "../engine/validation-cone.js";
 import type { TicketGateRun } from "./ticket-loop.js";
@@ -42,6 +42,15 @@ export interface WorkerLocalGateOptions {
   readonly base: string;
   /** The operator's extra commands, run after feedback and only if it passed. */
   readonly backpressureCommands?: readonly string[];
+  /**
+   * The project's DECLARED gate (#4166). When non-empty, the feedback stage
+   * runs exactly these commands and the improvised package-cone suite never
+   * runs: the declared schedule is the sole local validation authority, and
+   * the improvised full suite both contradicted it and flaked under the
+   * Worker's memory ceiling — a different package red each round, none of
+   * them the branch's fault.
+   */
+  readonly validationCommands?: readonly string[];
   /** Test seam over the package suite. Production runs real `pnpm`. */
   readonly feedbackExec?: (args: string[]) => Promise<ExecResult>;
   /** Test seam over the operator's commands. Production runs a real shell. */
@@ -68,6 +77,9 @@ export interface WorkerLocalGateResult extends TicketGateRun {
 export async function runWorkerLocalGate(
   options: WorkerLocalGateOptions,
 ): Promise<WorkerLocalGateResult> {
+  if (options.validationCommands != null && options.validationCommands.length > 0) {
+    return await runDeclaredGate(options, options.validationCommands);
+  }
   const readChanged = options.changedFiles ?? changedFilesSince;
   const changed = await readChanged(options.worktree, options.base);
   const { layout, graph } = readWorkspace(options.worktree);
@@ -106,6 +118,84 @@ export async function runWorkerLocalGate(
     checks: result.checks,
     sidecar: result.sidecar,
   };
+}
+
+/**
+ * The declared gate: each command is one feedback check, run in order, stopped
+ * at the first failure — exactly what the operator wrote, nothing discovered.
+ */
+async function runDeclaredGate(
+  options: WorkerLocalGateOptions,
+  commands: readonly string[],
+): Promise<WorkerLocalGateResult> {
+  const exec = options.backpressureExec
+    ?? (({ command, cwd, timeoutMs }) => runShell(command, cwd, timeoutMs));
+  const now = options.now ?? Date.now;
+  const checks: ValidationCheck[] = [];
+  for (const command of commands) {
+    const startedAt = now();
+    const run = await exec({ command, cwd: options.worktree, timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+    const passed = run.code === 0;
+    checks.push(declaredCheck(`declared:${command}`, command, run.code, now() - startedAt,
+      passed ? undefined : tail(run.stderr || run.stdout, 400)));
+    if (!passed) break;
+  }
+  const backpressureCommands = options.backpressureCommands ?? [];
+  const feedbackOk = checks.every((check) => check.status === "passed");
+  if (feedbackOk) {
+    for (const command of backpressureCommands) {
+      const startedAt = now();
+      const run = await exec({ command, cwd: options.worktree, timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+      const passed = run.code === 0;
+      checks.push(declaredCheck(`backpressure:${command}`, command, run.code, now() - startedAt,
+        passed ? undefined : tail(run.stderr || run.stdout, 400)));
+      if (!passed) break;
+    }
+  }
+  const feedback = checks.filter((check) => check.name.startsWith("declared:"));
+  const backpressure = checks.filter((check) => check.name.startsWith("backpressure:"));
+  const stages: GateStageOutcome[] = [
+    stageOutcome("feedback", feedback),
+    stageOutcome("backpressure", backpressure),
+    { stage: "review", ok: true, skipped: true },
+  ];
+  const detail = failureDetail(checks);
+  return {
+    stages,
+    ...(detail == null ? {} : { detail }),
+    checks,
+    sidecar: checks.map((check) => JSON.stringify(check.record)),
+  };
+}
+
+/** One declared command's outcome, in the gate's own record shape. */
+function declaredCheck(
+  name: string,
+  command: string,
+  exitCode: number,
+  durationMs: number,
+  failureSummary: string | undefined,
+): ValidationCheck {
+  const status = exitCode === 0 ? "passed" as const : "failed" as const;
+  return {
+    name,
+    status,
+    record: {
+      schema: CASTLE_VALIDATION_SCHEMA,
+      name,
+      status,
+      command,
+      exitCode,
+      durationMs: Math.max(0, Math.round(durationMs)),
+      ...(status === "passed" ? {} : { summary: failureSummary || "exited non-zero" }),
+    },
+  };
+}
+
+/** The last `max` characters — the failing part of a long build log. */
+function tail(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length <= max ? trimmed : trimmed.slice(trimmed.length - max);
 }
 
 function stageOutcome(

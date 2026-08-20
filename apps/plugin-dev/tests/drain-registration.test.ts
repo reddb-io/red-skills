@@ -39,6 +39,11 @@ describe("what a drain hands the daemon", () => {
 
   it("tells the Worker to work the item the daemon fills in, and nothing more", () => {
     expect(buildDrainRegistration(input).prompt).toBe(DRAIN_WORKER_PROMPT);
+    // #4166: the declared local gate rides the registration so the Worker
+    // never improvises a suite; a repo that declared none carries none.
+    expect(buildDrainRegistration({ ...input, validationCommands: ["pnpm typecheck"] }).validation_commands)
+      .toEqual(["pnpm typecheck"]);
+    expect(buildDrainRegistration(input).validation_commands).toBeUndefined();
     expect(DRAIN_WORKER_PROMPT).toContain("{{work_item}}");
     expect(DRAIN_WORKER_PROMPT).toContain("/afk");
     // #4162: the Worker's workspace is already materialised on the Ticket's

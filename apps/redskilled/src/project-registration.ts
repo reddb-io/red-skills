@@ -135,38 +135,22 @@ export interface RedskilledProjectRegistrationRequest {
   readonly workspace_path: string;
   /** Explicit git coordinates; optional only for one-release client skew. */
   readonly trunk?: RedskilledTrunk;
-  /**
-   * What to add to a Worker's environment at birth. Opaque, likewise.
-   *
-   * The slot-scoped bag that used to be composed at the spawn site — a retire
-   * file, a worker id, a slot — arrives here, with the per-birth facts written as
-   * `{{worker_id}}`-style placeholders the daemon fills in. Absent means nothing
-   * to add, which is an ordinary answer rather than a missing one.
-   */
+  /** What to add to a Worker's environment at birth; opaque, with
+   * `{{worker_id}}`-style placeholders the daemon fills in. Absent = nothing. */
   readonly env?: Readonly<Record<string, string>>;
-  /**
-   * Where a Worker born for this project writes its output. Opaque, likewise.
-   *
-   * A template, carrying the same `{{worker_id}}`-style placeholders the env
-   * does, because one registration births many Workers and two of them must never
-   * share a file. Absent means this project keeps its Worker's last line entirely
-   * on the heartbeat — legal, and the reason the daemon never refuses a
-   * registration for stating no path.
-   */
+  /** Where a Worker writes its output; a `{{worker_id}}` template so two
+   * Workers never share a file. Absent = the heartbeat carries the last line. */
   readonly log_path?: string;
   /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
-  /**
-   * What to SAY to a Worker born for this project, when saying anything is the
-   * point (#4100).
-   *
-   * A registration's argv births a process; a prompt is what makes that process
-   * do the project's work. Opaque exactly as the argv is — the daemon expands
-   * its own facts (`{{work_item}}`, `{{worker_id}}`) into it and never reads a
-   * word. Absent means this project's Workers are born and not spoken to, which
-   * is the shape every registration had before this field and stays legal.
-   */
+  /** What to SAY to a born Worker (#4100); opaque like the argv, with
+   * `{{work_item}}`-style facts the daemon expands. Absent = born unspoken-to. */
   readonly prompt?: string;
+  /**
+   * The project's DECLARED local gate, run by the Worker instead of an
+   * improvised suite (#4166). Opaque command strings, exactly like the argv.
+   */
+  readonly validation_commands?: readonly string[];
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
   /** Whether project policy declares this drain should remain recoverable. */
@@ -191,6 +175,8 @@ export interface RedskilledProjectRegistration {
   readonly hooks?: RedskilledProjectHooks;
   /** What to say to a Worker born for this project; opaque, expanded at birth. */
   readonly prompt?: string;
+  /** The project's declared local gate; opaque command strings (#4166). */
+  readonly validation_commands?: readonly string[];
   readonly target: number;
   /** True only when the project explicitly declared a standing drain policy. */
   readonly standing?: boolean;
@@ -299,6 +285,11 @@ export function buildProjectRegistration(
   // Blank, not merely empty: a prompt of spaces is a Worker told nothing.
   if (request.prompt !== undefined) requireText(request.prompt.trim(), `a prompt for ${projectLabel}`);
   const prompt = request.prompt;
+  // Same opacity as the argv: shape-checked strings the daemon never reads.
+  const validationCommands = request.validation_commands == null
+    ? undefined
+    : request.validation_commands.map((command, index) =>
+      requireText(command, `validation command ${index} for project ${JSON.stringify(projectLabel)}`));
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
@@ -348,6 +339,7 @@ export function buildProjectRegistration(
     ...(logPath == null ? {} : { log_path: logPath }),
     ...(hooks == null ? {} : { hooks }),
     ...(prompt == null ? {} : { prompt }),
+    ...(validationCommands == null || validationCommands.length === 0 ? {} : { validation_commands: validationCommands }),
     target: request.target,
     ...(request.standing === true ? { standing: true } : {}),
     registered_at: new Date(nowMs).toISOString(),

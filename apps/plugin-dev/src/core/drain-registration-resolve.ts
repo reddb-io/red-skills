@@ -11,6 +11,8 @@ import { resolveProjectIdentityForDir } from "@reddb-io/shared/project-identity-
 import { DEFAULT_FLEET_WIDTH } from "@reddb-io/shared/default-fleet-width.js";
 
 import { buildDrainRegistration, type DrainRegistration } from "./drain-registration.js";
+import { loadConfig, readValidationMoments } from "./config.js";
+import { afkPaths } from "../runtime/wire/paths.js";
 
 /**
  * The registration this checkout's drain carries, or `undefined` when the
@@ -34,6 +36,7 @@ export function drainRegistrationFor(
     ? input.target
     : DEFAULT_FLEET_WIDTH;
   const runner = typeof input.runner === "string" && input.runner.length > 0 ? input.runner : undefined;
+  const declared = declaredGateCommands(root);
   return buildDrainRegistration({
     repo,
     workspacePath: root,
@@ -41,7 +44,26 @@ export function drainRegistrationFor(
     version,
     ...(runner == null ? {} : { runner }),
     ...(trunkBranch(root) == null ? {} : { trunkBranch: trunkBranch(root) }),
+    ...(declared.length === 0 ? {} : { validationCommands: declared }),
   });
+}
+
+/**
+ * The repo's declared local gate, in schedule order (#4166).
+ *
+ * `post_done` then `landing`: the Worker's gate sits between DONE and the
+ * publish, which is exactly those two moments back to back. `iteration` is
+ * the inner agent's while-writing loop and deliberately not repeated here.
+ * A repo that declared nothing gets an empty answer — the Worker then falls
+ * back to its improvised cone, which stays legal for undeclared repos.
+ */
+export function declaredGateCommands(root: string): string[] {
+  try {
+    const moments = readValidationMoments(loadConfig(afkPaths(root).configPath, { warn: () => undefined }));
+    return [...(moments.post_done ?? []), ...(moments.landing ?? [])];
+  } catch {
+    return [];
+  }
 }
 
 /** The branch `origin/HEAD` points at, or `undefined` when git cannot say. */

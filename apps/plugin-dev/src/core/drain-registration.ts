@@ -23,6 +23,8 @@ import {
 export interface DrainRegistrationInput {
   /** The trunk branch this checkout lands against; `main` when unstated. */
   readonly trunkBranch?: string | undefined;
+  /** The declared local gate commands; absent means the repo declared none. */
+  readonly validationCommands?: readonly string[] | undefined;
   /** `owner/name` — the repository whose tracker holds this project's queue. */
   readonly repo: string;
   /** Where a Worker for this project runs; the project's own checkout. */
@@ -53,6 +55,13 @@ export interface DrainRegistration {
    */
   readonly trunk: { readonly remote: string; readonly branch: string };
   readonly prompt: string;
+  /**
+   * The repo's DECLARED local gate, handed to every Worker (#4166). Without
+   * it the Worker improvises a full workspace suite — contradicting the
+   * "sole local validation authority" contract and flaking under the Worker
+   * memory ceiling, a different package red each round.
+   */
+  readonly validation_commands?: readonly string[];
   readonly target: number;
 }
 
@@ -99,6 +108,9 @@ export function buildDrainRegistration(input: DrainRegistrationInput): DrainRegi
     workspace_path: input.workspacePath,
     trunk: { remote: "origin", branch: input.trunkBranch ?? "main" },
     prompt: DRAIN_WORKER_PROMPT,
+    ...(input.validationCommands == null || input.validationCommands.length === 0
+      ? {}
+      : { validation_commands: [...input.validationCommands] }),
     target: input.target,
   };
 }
