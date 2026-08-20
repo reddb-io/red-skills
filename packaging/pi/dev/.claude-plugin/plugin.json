@@ -19,6 +19,7 @@
     "./skills/engineering/dashboard",
     "./skills/engineering/audit-skills",
     "./skills/engineering/diagnose",
+    "./skills/engineering/how",
     "./skills/engineering/ground-truth",
     "./skills/engineering/red-doctor",
     "./skills/engineering/red-gains",
@@ -49,7 +50,8 @@
     "./skills/knowledge/research",
     "./skills/productivity/ff",
     "./skills/productivity/reflect",
-    "./skills/productivity/wait-what",
+    "./skills/productivity/what",
+    "./skills/productivity/unslop",
     "./skills/productivity/to-questionnaire",
     "./skills/productivity/handoff",
     "./skills/productivity/writing-for-agents"

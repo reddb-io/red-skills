@@ -110,9 +110,17 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   dispatch still land on `/afk`, `/go`, and the planning on-ramps.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
-- **The last reply did not land** -> `/wait-what`. It re-pitches that reply in
-  Simplified Technical English and the owning `.red/contexts/<name>/CONTEXT.md`
-  vocabulary without starting a new investigation.
+- **The last reply did not land** -> `/what`. It re-pitches that reply so it
+  stands on its own, in plain human language and the owning
+  `.red/contexts/<name>/CONTEXT.md` vocabulary, without starting a new
+  investigation.
+- **How does X work / is this the right layer** -> `/how`. It explains a
+  subsystem with parallel explorers and a synthesizing explainer, and on
+  request critiques the architecture with an independent panel. `/context`
+  builds the whole context stack; `/how` answers one question.
+- **A prose surface reads AI-generated** -> `/unslop`. It cuts the AI tells
+  from a draft, doc, or PR body and gives it a human voice, preserving the
+  meaning.
 - **The needed knowledge belongs to another person** -> `/to-questionnaire`.
   It asks who will receive the questionnaire and what must come back, then writes
   the questions for that recipient; it does not interview the user about the
@@ -156,7 +164,7 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 `/redskilled`, `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
-`/wait-what`, `/to-questionnaire`, `/handoff`, `/writing-for-agents`, `/wizard`.
+`/how`, `/what`, `/unslop`, `/to-questionnaire`, `/handoff`, `/writing-for-agents`, `/wizard`.
 
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
