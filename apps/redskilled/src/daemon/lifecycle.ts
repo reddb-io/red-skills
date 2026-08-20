@@ -76,7 +76,7 @@ import {
   launchProbeArgv,
   launchProbeRefusal,
 } from "../launch-probe.js";
-import { demandTurnForBirth } from "../acp-demand-turn.js";
+import { demandTurnForBirth, describeDemandTurn } from "../acp-demand-turn.js";
 import { createRedskilledRegistrationIntentStore } from "../registration-intent-store.js";
 import {
   buildRegistrationLapse,
@@ -2400,10 +2400,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       hostState,
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
-      // The one registration path, handed to the endpoint that now needs it
-      // (#4101): a drain that carries its work registers through the same
-      // function `project-register` does, sweep, breaker and all.
+      // The one registration path (#4101): a drain that carries its work
+      // registers through the same function `project-register` does.
       registerProject: (request) => registerProject(request),
+      // **A turn that completes says so** — only its failure path had a surface.
+      recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
     });
   } catch (error) {
     await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);

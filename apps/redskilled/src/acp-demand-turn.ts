@@ -104,6 +104,21 @@ export interface DemandTurnRecord {
   readonly detail?: string;
 }
 
+/**
+ * One unattended turn's outcome as a line an operator reads. PURE.
+ *
+ * Lives beside the record it renders rather than at the journal call site: the
+ * daemon's lifecycle decides WHERE narration goes, never what it says.
+ */
+export function describeDemandTurn(record: DemandTurnRecord): string {
+  return (
+    `redskilled: unattended turn ${record.event} for project ${JSON.stringify(record.project_label)}` +
+    `${record.work_item == null ? "" : ` on item ${record.work_item}`}` +
+    `${record.worker_id == null ? "" : ` (worker ${record.worker_id})`}` +
+    `${record.detail == null ? "" : `: ${record.detail}`}\n`
+  );
+}
+
 export interface DemandTurnRequest {
   readonly project: AcpProjectWorkspace;
   /** The project's prompt, with this birth's facts already written into it. */
@@ -245,7 +260,11 @@ export function createDemandTurnRunner(
           replacement,
         }),
       );
-      const outcome = workflowOutcome(response) ?? response.stopReason;
+      // The workflow outcome when the Worker stated one, and the stop reason
+      // beside it either way: "end_turn" and "completed" are different
+      // sentences, and a turn that ended in under a second is only legible if
+      // the record says which of the two it was.
+      const outcome = `${workflowOutcome(response) ?? "no-workflow-outcome"} (${response.stopReason})`;
       record("demand-turn-completed", worker, outcome);
       // The turn is the Worker's whole life: it was admitted for one work item
       // and has now finished it, so it is reaped here rather than left on an

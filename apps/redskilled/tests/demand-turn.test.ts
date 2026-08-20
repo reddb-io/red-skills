@@ -68,7 +68,7 @@ describe("the daemon's unattended turn", () => {
 
     const result = await run({ project, prompt: "work item 4100", workItem: "4100" });
 
-    expect(result).toMatchObject({ workerId: "W1", outcome: "end_turn" });
+    expect(result).toMatchObject({ workerId: "W1", outcome: "no-workflow-outcome (end_turn)" });
     expect(worker.prompted).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ prompt: [{ type: "text", text: "work item 4100" }] }),
@@ -97,6 +97,9 @@ describe("the daemon's unattended turn", () => {
         project_label: "reddb-io/red-skills",
         work_item: "4100",
         worker_id: "W1",
+        // The stop reason rides along: a turn that ended in under a second is
+        // only legible when the record says which sentence ended it.
+        detail: "no-workflow-outcome (end_turn)",
       }),
     ]);
   });
