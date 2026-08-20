@@ -596,6 +596,8 @@ export function bindProjectControl(deps: {
   readonly readGithubCustody: () => Promise<unknown>;
   /** The daemon's own registration path; absent means this endpoint cannot register. */
   readonly registerProject?: (request: Readonly<Record<string, unknown>>) => unknown;
+  /** The daemon's own release path; a stop hands the registration back through it. */
+  readonly releaseProject?: (projectLabel: string) => unknown;
 }) {
   return {
     mutateProjectControl: async (operation: ProjectControlOperation, request: ProjectControlRequest = {}) => {
@@ -609,15 +611,15 @@ export function bindProjectControl(deps: {
           throw new Error("this endpoint cannot register a project: the daemon handed it no registration path");
         }
         try {
-          // **One key, both sides of the ledger.** Workers are labelled by
-          // `projectId` — the authority key that survives a repository rename —
-          // while this registration was keyed by the display label. The demand
-          // planner counts live Workers against the REGISTRATION's key, so it
-          // never saw its own children: target 1 birthed five Workers, two of
-          // which claimed the same Ticket, until the host ceiling stopped the
-          // sixth. The registration registers under the same key its Workers
-          // will carry.
-          deps.registerProject({ ...request.registration, project_label: project.projectId });
+          // **One key, both sides of the ledger — and the label IS the key.**
+          // #4152 records the admitted Worker under `project.projectLabel`,
+          // which is what the registration store, the demand loop's live count
+          // and queue discovery all key by. This site briefly registered under
+          // `projectId` (#4146) while Workers carried the label, so the planner
+          // never counted its own children: target 1 ran five Workers and the
+          // host ceiling was the only brake (#4158). The registration registers
+          // under the same key its Workers carry.
+          deps.registerProject({ ...request.registration, project_label: project.projectLabel });
         } catch (error) {
           // **A drain is idempotent; a registration is not.** `project-register`
           // refuses a second record so two sessions cannot silently replace each
@@ -634,6 +636,15 @@ export function bindProjectControl(deps: {
         deps.persistProjectControls,
         request,
       );
+      // **A stop hands the registration back, not only the intent.** The
+      // registration is self-sustained off open work (ADR 0130 Amendment 7), so
+      // a stop that flips the intent and leaves the record standing is a drain
+      // the operator cannot end: the sustain renews it, the demand loop keeps
+      // planning off it, and Workers keep being born after the operator said
+      // stop (#4159). Released through the same path `project-deregister` uses;
+      // releasing an already-released project states the outcome and is not an
+      // error, which is what makes a repeated stop safe.
+      if (operation === "stop") deps.releaseProject?.(project.projectLabel);
       // Told at the moment of asking, not only to whoever thinks to read status
       // afterwards: a caller who ran `drain` and got a clean answer has every
       // reason to believe Workers are coming.

@@ -2404,6 +2404,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // The one registration path (#4101): a drain that carries its work
       // registers through the same function `project-register` does.
       registerProject: (request) => registerProject(request),
+      // The matching release path: `project_stop` hands the self-sustaining
+      // registration back through the same function `project-deregister` uses,
+      // so a stopped drain actually stops being polled and birthed for (#4159).
+      releaseProject: (projectLabel) => deregisterProject(projectLabel),
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
     });
   } catch (error) {

@@ -105,10 +105,10 @@ describe("a drain registers the project it drains", () => {
 
     expect(registered).toEqual([
       expect.objectContaining({
-        // The authority key, not the display label: Workers are labelled by
-        // projectId, and a registration keyed any other way is one whose
-        // planner never counts its own children.
-        project_label: "github:1",
+        // The label, matching #4152: admitted Workers are recorded under
+        // `projectLabel`, and a registration keyed any other way is one whose
+        // planner never counts its own children (#4158).
+        project_label: "reddb-io/red-skills",
         selector: "is:issue label:ready-for-agent",
         target: 2,
       }),
@@ -122,7 +122,7 @@ describe("a drain registers the project it drains", () => {
       registration: { project_label: "someone/else", selector: "is:issue", argv: ["x"], target: 1 },
     });
 
-    expect(registered[0]).toMatchObject({ project_label: "github:1" });
+    expect(registered[0]).toMatchObject({ project_label: "reddb-io/red-skills" });
   });
 
   it("refuses when the endpoint was handed no registration path, rather than recording a drain nothing polls", async () => {
@@ -137,6 +137,45 @@ describe("a drain registers the project it drains", () => {
 
     expect(registered).toEqual([]);
     expect(answer).toMatchObject({ drain_intent: "draining", warning: UNREGISTERED_DRAIN_WARNING });
+  });
+});
+
+describe("a stop hands the registration back, not only the intent", () => {
+  const bindStop = (releaseProject?: (projectLabel: string) => unknown) =>
+    bindProjectControl({
+      scopedProject: () => project,
+      projectControls: new Map<string, ProjectControlState>([
+        ["github:1", { drainIntent: "draining", revision: 1, updates: [] }],
+      ]),
+      persistProjectControls: async () => {},
+      hostState: () => hostState(true),
+      clock: () => "2026-08-19T20:00:00.000Z",
+      readGithubCustody: async () => null,
+      ...(releaseProject == null ? {} : { releaseProject }),
+    });
+
+  it("releases through the daemon's own path, under the same label the registration carries", async () => {
+    const released: string[] = [];
+
+    const answer = await bindStop((projectLabel) => released.push(projectLabel)).mutateProjectControl("stop", {});
+
+    // The self-sustaining registration (Amendment 7) renews itself off open
+    // work, so a stop that leaves it standing is a drain the operator cannot
+    // end: Workers kept being born after the stop (#4159).
+    expect(released).toEqual(["reddb-io/red-skills"]);
+    expect(answer).toMatchObject({ drain_intent: "stopped" });
+  });
+
+  it("does not release on a drain", async () => {
+    const released: string[] = [];
+
+    await bindStop((projectLabel) => released.push(projectLabel)).mutateProjectControl("drain", {});
+
+    expect(released).toEqual([]);
+  });
+
+  it("still stops when the endpoint was handed no release path", async () => {
+    expect(await bindStop().mutateProjectControl("stop", {})).toMatchObject({ drain_intent: "stopped" });
   });
 });
 
