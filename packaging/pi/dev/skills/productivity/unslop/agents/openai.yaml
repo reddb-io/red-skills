@@ -1,0 +1,5 @@
+interface:
+  display_name: "Unslop"
+  short_description: "Cut AI tells from a piece of writing and give it a human voice. Use when the user invokes this skill on a draft, a doc, a PR body, or any prose surface."
+policy:
+  allow_implicit_invocation: false

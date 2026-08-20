@@ -1,5 +1,0 @@
-interface:
-  display_name: "Wait What"
-  short_description: "Stop and re-pitch the last reply when it did not land. Use only when the user invokes this skill."
-policy:
-  allow_implicit_invocation: false
