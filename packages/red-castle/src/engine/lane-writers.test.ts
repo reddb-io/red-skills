@@ -212,4 +212,187 @@ describe("castle lane writers", () => {
 
     expect(existsSync(path)).toBe(false);
   });
+
+  it("writes and reads valid decision trail records", async () => {
+    const paths = createEnginePaths(redRoot);
+    const writers = createCastleLaneWriters(paths, {
+      clock: () => "2026-07-16T20:00:00.000Z",
+    });
+
+    await writers.worker("wAB12").append({
+      kind: "decision.fork",
+      worker_id: "wAB12",
+      issue: 4167,
+      attempt: 1,
+      payload: {
+        decision: "fork to handle issue #4167",
+        why: "the issue requires parallel implementation tracks",
+        evidence: "https://github.com/reddb-io/red-skills/issues/4167",
+        result: "forked for parallel work",
+      },
+    });
+
+    const records = await readCastleLaneRecords(castleLanePath(paths, "worker", "wAB12"));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: "decision.fork",
+      worker_id: "wAB12",
+      issue: 4167,
+      payload: {
+        decision: "fork to handle issue #4167",
+        why: "the issue requires parallel implementation tracks",
+        evidence: "https://github.com/reddb-io/red-skills/issues/4167",
+        result: "forked for parallel work",
+      },
+    });
+  });
+
+  it("rejects decision trail records with unknown decision kind", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await expect(
+      appendCastleLaneRecord(path, {
+        at: "2026-07-16T20:00:00.000Z",
+        kind: "decision.unknown",
+        worker_id: "wAB12",
+        issue: 4167,
+        attempt: 1,
+        payload: {
+          decision: "some decision",
+          why: "reason",
+          evidence: "https://example.com",
+          result: "outcome",
+        },
+      }),
+    ).rejects.toThrow(/decision trail kind "decision.unknown" is not in the declared vocabulary/);
+  });
+
+  it("rejects decision trail records when evidence is prose, not a pointer", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await expect(
+      appendCastleLaneRecord(path, {
+        at: "2026-07-16T20:00:00.000Z",
+        kind: "decision.fork",
+        worker_id: "wAB12",
+        issue: 4167,
+        attempt: 1,
+        payload: {
+          decision: "fork to handle issue #4167",
+          why: "the issue requires parallel implementation tracks",
+          evidence: "I think this is the right approach based on my analysis",
+          result: "forked for parallel work",
+        },
+      }),
+    ).rejects.toThrow(/decision trail evidence must be a pointer/);
+  });
+
+  it("accepts file path as evidence pointer", async () => {
+    const paths = createEnginePaths(redRoot);
+    const writers = createCastleLaneWriters(paths, {
+      clock: () => "2026-07-16T20:00:00.000Z",
+    });
+
+    await writers.worker("wAB12").append({
+      kind: "decision.revert",
+      worker_id: "wAB12",
+      issue: 4167,
+      attempt: 1,
+      payload: {
+        decision: "revert the previous change",
+        why: "the change introduced a regression",
+        evidence: "/repo/src/feature.ts",
+        result: "reverted",
+      },
+    });
+
+    const records = await readCastleLaneRecords(castleLanePath(paths, "worker", "wAB12"));
+    expect(records).toHaveLength(1);
+    expect(records[0].kind).toBe("decision.revert");
+  });
+
+  it("accepts SHA as evidence pointer", async () => {
+    const paths = createEnginePaths(redRoot);
+    const writers = createCastleLaneWriters(paths, {
+      clock: () => "2026-07-16T20:00:00.000Z",
+    });
+
+    await writers.worker("wAB12").append({
+      kind: "decision.blocker",
+      worker_id: "wAB12",
+      issue: 4167,
+      attempt: 1,
+      payload: {
+        decision: "block on external dependency",
+        why: "the feature depends on an upstream change",
+        evidence: "abc123def456789012345678901234567890abcd",
+        result: "blocked",
+      },
+    });
+
+    const records = await readCastleLaneRecords(castleLanePath(paths, "worker", "wAB12"));
+    expect(records).toHaveLength(1);
+    expect(records[0].kind).toBe("decision.blocker");
+  });
+
+  it("accepts issue reference as evidence pointer", async () => {
+    const paths = createEnginePaths(redRoot);
+    const writers = createCastleLaneWriters(paths, {
+      clock: () => "2026-07-16T20:00:00.000Z",
+    });
+
+    await writers.worker("wAB12").append({
+      kind: "decision.verified",
+      worker_id: "wAB12",
+      issue: 4167,
+      attempt: 1,
+      payload: {
+        decision: "verified the fix works",
+        why: "the tests pass",
+        evidence: "#4167",
+        result: "verified",
+      },
+    });
+
+    const records = await readCastleLaneRecords(castleLanePath(paths, "worker", "wAB12"));
+    expect(records).toHaveLength(1);
+    expect(records[0].kind).toBe("decision.verified");
+  });
+
+  it("rejects decision trail records missing required payload fields", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await expect(
+      appendCastleLaneRecord(path, {
+        at: "2026-07-16T20:00:00.000Z",
+        kind: "decision.fork",
+        worker_id: "wAB12",
+        issue: 4167,
+        attempt: 1,
+        payload: {
+          decision: "some decision",
+          why: "reason",
+          evidence: "https://example.com",
+        },
+      }),
+    ).rejects.toThrow(/decision trail payload must have non-empty string result/);
+  });
+
+  it("rejects decision trail records without a payload", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await expect(
+      appendCastleLaneRecord(path, {
+        at: "2026-07-16T20:00:00.000Z",
+        kind: "decision.fork",
+        worker_id: "wAB12",
+        issue: 4167,
+        attempt: 1,
+      }),
+    ).rejects.toThrow(/decision trail record must have a payload object/);
+  });
 });

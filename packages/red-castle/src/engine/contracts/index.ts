@@ -26,6 +26,30 @@ export const CASTLE_VALIDATION_SCHEMA_ID = "red.castle.validation.v2" as const;
 export const CASTLE_ENVELOPE_SCHEMA_ID = "red.castle.envelope.v1" as const;
 export const CASTLE_HITL_CARD_SCHEMA_ID = "red.castle.hitl-card.v1" as const;
 
+export const DECISION_TRAIL_SCHEMA_ID = "red.castle.decision-trail.v1" as const;
+
+export type DecisionTrailKind =
+  | "decision.fork"
+  | "decision.pivot"
+  | "decision.revert"
+  | "decision.blocker"
+  | "decision.verified";
+
+export const DECISION_TRAIL_KINDS = [
+  "decision.fork",
+  "decision.pivot",
+  "decision.revert",
+  "decision.blocker",
+  "decision.verified",
+] as const satisfies readonly DecisionTrailKind[];
+
+export interface DecisionTrailPayload {
+  decision: string;
+  why: string;
+  evidence: string;
+  result: string;
+}
+
 export type CastleLaneKind =
   | "worker.claimed"
   | "worker.steered"

@@ -12,6 +12,7 @@ describe("runLinkedSubagent", () => {
       },
       log: async () => {},
       snapshot: async () => {},
+      recordDecision: async () => {},
     };
     const exec: ExecFn = async (_command, _args, options) => {
       options?.onStdoutLine?.(JSON.stringify({
@@ -83,6 +84,7 @@ describe("runLinkedSubagent", () => {
       },
       log: async () => {},
       snapshot: async () => {},
+      recordDecision: async () => {},
     };
     const exec: ExecFn = async (_command, _args, options) => {
       options?.onStdoutLine?.(JSON.stringify({

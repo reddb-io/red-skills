@@ -6,6 +6,7 @@ import {
   writeCastleStateSnapshot,
   type CastleLaneKind,
   type CastleStateSnapshot,
+  type DecisionTrailKind,
 } from "@reddb-io/red-castle/engine";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
@@ -28,11 +29,20 @@ export type WorkerLifecycleKind =
   | "worker.heartbeat"
   | (string & {});
 
+export interface DecisionTrailInput {
+  kind: DecisionTrailKind;
+  decision: string;
+  why: string;
+  evidence: string;
+  result: string;
+}
+
 export interface CastleWorkerLaneBridge {
   record(kind: WorkerLifecycleKind, payload?: Record<string, unknown>, message?: string): Promise<void>;
   /** Append human-readable narration to the Worker's one structured log. */
   log(message: string): Promise<void>;
   snapshot(): Promise<void>;
+  recordDecision(input: DecisionTrailInput): Promise<void>;
 }
 
 export interface CastleWorkerLaneBridgeOptions {
@@ -256,7 +266,25 @@ export function createCastleWorkerLaneBridge(
     });
   }
 
-  return { record, log, snapshot };
+  async function recordDecision(input: DecisionTrailInput): Promise<void> {
+    const state = readAttemptState(options.attemptDir());
+    const issue = state ? currentIssue(state) : undefined;
+    await writers.worker(options.workerId).append({
+      kind: input.kind,
+      worker_id: options.workerId,
+      issue,
+      attempt: 1,
+      payload: {
+        decision: input.decision,
+        why: input.why,
+        evidence: input.evidence,
+        result: input.result,
+      },
+    });
+    await snapshot();
+  }
+
+  return { record, log, snapshot, recordDecision };
 }
 
 /**

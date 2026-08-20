@@ -24,6 +24,7 @@ import {
   CASTLE_LANE_SCHEMA_ID,
   CASTLE_PUBLISHED_CONTRACTS,
   CASTLE_STATE_SCHEMA_ID,
+  DECISION_TRAIL_KINDS,
   type CastleHistoryRecord,
   type CastleLaneRecord,
   type CastleStateKind,
@@ -138,6 +139,67 @@ function assertOptionalObject(
   }
 }
 
+const POINTER_PREFIXES = [
+  "https://",
+  "http://",
+  "file://",
+  "git://",
+  "gh:",
+  "file:",
+] as const;
+
+const SHA_PATTERN = /^[a-f0-9]{40}$/i;
+const ISSUE_REF_PATTERN = /^#\d+$/;
+
+function isEvidencePointer(value: string): boolean {
+  if (POINTER_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+    return true;
+  }
+  if (value.startsWith("/") || /^[a-z]:\\/i.test(value)) {
+    return true;
+  }
+  if (SHA_PATTERN.test(value)) {
+    return true;
+  }
+  if (ISSUE_REF_PATTERN.test(value)) {
+    return true;
+  }
+  return false;
+}
+
+function validateDecisionTrailPayload(payload: Record<string, unknown>): void {
+  const decision = payload.decision;
+  const why = payload.why;
+  const evidence = payload.evidence;
+  const result = payload.result;
+
+  if (typeof decision !== "string" || decision.length === 0) {
+    throw new CastleLaneValidationError(
+      "decision trail payload must have non-empty string decision",
+    );
+  }
+  if (typeof why !== "string" || why.length === 0) {
+    throw new CastleLaneValidationError(
+      "decision trail payload must have non-empty string why",
+    );
+  }
+  if (typeof evidence !== "string" || evidence.length === 0) {
+    throw new CastleLaneValidationError(
+      "decision trail payload must have non-empty string evidence",
+    );
+  }
+  if (!isEvidencePointer(evidence)) {
+    throw new CastleLaneValidationError(
+      "decision trail evidence must be a pointer (URL, file path, SHA, or issue ref), not prose",
+    );
+  }
+  if (typeof result !== "string" || result.length === 0) {
+    throw new CastleLaneValidationError(
+      "decision trail payload must have non-empty string result",
+    );
+  }
+}
+
 export function validateCastleLaneRecord(
   record: CastleLaneRecord,
 ): CastleLaneRecord {
@@ -154,6 +216,20 @@ export function validateCastleLaneRecord(
     throw new CastleLaneValidationError("castle record msg must be string");
   }
   assertOptionalObject(raw, "payload");
+  const kind = String(raw.kind);
+  if (kind.startsWith("decision.")) {
+    if (!DECISION_TRAIL_KINDS.includes(kind as (typeof DECISION_TRAIL_KINDS)[number])) {
+      throw new CastleLaneValidationError(
+        `decision trail kind ${JSON.stringify(kind)} is not in the declared vocabulary: ${DECISION_TRAIL_KINDS.join(", ")}`,
+      );
+    }
+    if (raw.payload == null || typeof raw.payload !== "object") {
+      throw new CastleLaneValidationError(
+        "decision trail record must have a payload object",
+      );
+    }
+    validateDecisionTrailPayload(raw.payload as Record<string, unknown>);
+  }
   return record;
 }
 
