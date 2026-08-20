@@ -138,6 +138,7 @@ describe("reading the Worktree's publication", () => {
 describe("the publication owns its branch", () => {
   it("publishes as the Worker-unique ref regardless of the local branch name", async () => {
     const requests: Array<Record<string, unknown>> = [];
+    const anchored: string[] = [];
     const publisher = createWorkerPublisher({
       cwd: "/tmp/wt",
       idempotencyScope: "worker-turn:s1",
@@ -146,6 +147,7 @@ describe("the publication owns its branch", () => {
         return { ok: true };
       },
       readPublication: async () => ({ branch: "main", commit: "a".repeat(40) }),
+      updateRef: async (_cwd, ref, commit) => void anchored.push(`${ref}@${commit.slice(0, 4)}`),
       publishRef: "red/W1/4157",
     });
 
@@ -155,6 +157,9 @@ describe("the publication owns its branch", () => {
     // (rejected non-fast-forward at the canonical repository), and a reused
     // branch name must not collide with a merged branch's corpse (#4157).
     expect(requests[0]?.branch).toBe("red/W1/4157");
+    // The daemon delivers by fetching refs/heads/<branch> FROM the Worktree,
+    // so the publish-as name must exist there before the request goes out.
+    expect(anchored).toEqual(["refs/heads/red/W1/4157@aaaa"]);
     expect(outcome?.status).toBe("requested");
     expect(outcome && "publication" in outcome ? outcome.publication.branch : null).toBe("red/W1/4157");
   });
