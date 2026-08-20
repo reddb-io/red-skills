@@ -245,7 +245,11 @@ export function createDemandTurnRunner(
           replacement,
         }),
       );
-      const outcome = workflowOutcome(response) ?? response.stopReason;
+      // The workflow outcome when the Worker stated one, and the stop reason
+      // beside it either way: "end_turn" and "completed" are different
+      // sentences, and a turn that ended in under a second is only legible if
+      // the record says which of the two it was.
+      const outcome = `${workflowOutcome(response) ?? "no-workflow-outcome"} (${response.stopReason})`;
       record("demand-turn-completed", worker, outcome);
       // The turn is the Worker's whole life: it was admitted for one work item
       // and has now finished it, so it is reaped here rather than left on an

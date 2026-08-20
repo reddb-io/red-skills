@@ -2404,6 +2404,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // (#4101): a drain that carries its work registers through the same
       // function `project-register` does, sweep, breaker and all.
       registerProject: (request) => registerProject(request),
+      // **A turn that completes says so.** Only the failure path reached a
+      // surface, so an unattended turn that ended in 600ms looked exactly like
+      // one still working: `posture: asking`, `workers: 0`, and nothing
+      // anywhere naming the outcome. The daemon's own journal is where an
+      // operator already reads its narration, and it costs no lane schema.
+      recordDemandTurn: (record) => {
+        process.stderr.write(
+          `redskilled: unattended turn ${record.event} for project ${JSON.stringify(record.project_label)}` +
+            `${record.work_item == null ? "" : ` on item ${record.work_item}`}` +
+            `${record.worker_id == null ? "" : ` (worker ${record.worker_id})`}` +
+            `${record.detail == null ? "" : `: ${record.detail}`}\n`,
+        );
+      },
     });
   } catch (error) {
     await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);
