@@ -121,6 +121,19 @@ describe("focused ACP CI posture", () => {
     }
   });
 
+  it("keeps rsp out of the root test aggregate, matching the removed CI gate", () => {
+    // #3878 removed the broad rsp gates from CI; the root `test` script is the
+    // same aggregate seen by the Worker's local gate whenever a branch touches
+    // a root-level file (every changeset does). rsp riding it re-created the
+    // removed gate for Workers only: telemetry-resident is red without
+    // REDDB_BIN (#4196), so whole Tickets gate-blocked on a suite CI decided
+    // not to run.
+    const rootManifest = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    expect(rootManifest.scripts?.test).toContain("--filter=!@reddb-io/rsp");
+  });
+
   it("leaves the retired engine package name absent from the workflow entirely", () => {
     // `packages/red-castle` became `packages/worker` in #4013. A workflow that
     // still names the old path is not a gate — it is a step that never runs.
