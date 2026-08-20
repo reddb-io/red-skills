@@ -81,7 +81,8 @@ export function createRedskilledGithubWriteUpstream(
       body: JSON.stringify(request.body),
     });
     if (!response.ok) {
-      throw githubUpstreamRefusal("write", "rest", response, clock(), input.project.credentialProfile);
+      const body = await response.text().catch(() => "");
+      throw githubUpstreamRefusal("write", "rest", response, clock(), input.project.credentialProfile, body);
     }
     return responseValue(response);
   };

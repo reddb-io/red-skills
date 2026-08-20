@@ -23,6 +23,8 @@ export function githubUpstreamRefusal(
   response: Response,
   now: string,
   profile: string,
+  /** GitHub's own words, read by the caller that owns the body stream. */
+  bodyText?: string,
 ): Error {
   const observed = {
     status: response.status,
@@ -34,5 +36,6 @@ export function githubUpstreamRefusal(
     return new RedskilledGithubCredentialProfileError("invalid-credentials", profile);
   }
   if (response.status === 403) return githubCredentialScopeRefusal(profile);
-  return new Error(`redskilled GitHub ${surface} failed with status ${response.status}`);
+  const reason = bodyText == null || bodyText.trim() === "" ? "" : `: ${bodyText.trim().slice(0, 300)}`;
+  return new Error(`redskilled GitHub ${surface} failed with status ${response.status}${reason}`);
 }
