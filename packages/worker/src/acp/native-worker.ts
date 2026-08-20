@@ -69,10 +69,14 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
     if (ticketOutcome(response) != null) return;
     const held = sessions.get(sessionId);
     if (held == null) return;
+    const heldTicket = ticketHandoffFromMeta(held.request._meta);
     held.publisher ??= createWorkerPublisher({
       cwd: held.request.cwd,
       idempotencyScope: `worker-turn:${sessionId}`,
       request: boundedRequest(parent),
+      // The publication owns its branch: Worker-unique, so it can never target
+      // the trunk and never collide with a merged branch's corpse (#4157).
+      ...(heldTicket == null ? {} : { publishRef: `red/${heldTicket.worker_id}/${heldTicket.number}` }),
     });
     const outcome = await held.publisher.publishTurn();
     if (outcome == null) return;
@@ -121,6 +125,8 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
       cwd: held.request.cwd,
       idempotencyScope: `worker-turn:${sessionId}`,
       request: boundedRequest(parent),
+      // Same Worker-unique publication branch as the budget-grace path.
+      publishRef: `red/${ticket.worker_id}/${ticket.number}`,
     });
 
     const result = await runTicketLoop({
