@@ -255,4 +255,114 @@ describe("castle lane writers", () => {
 
     expect(existsSync(path)).toBe(false);
   });
+
+  it("writes valid decision trail rows for each declared kind", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+    const clock = () => "2026-07-16T20:05:00.000Z";
+
+    const kinds = ["fork", "pivot", "revert", "blocker", "verified-unit"] as const;
+    for (const type of kinds) {
+      await appendCastleLaneRecord(
+        path,
+        {
+          at: clock(),
+          kind: "worker.decision",
+          worker_id: "wAB12",
+          issue: 4167,
+          payload: {
+            type,
+            decision: `decided to ${type} on issue 4167`,
+            why: `reason for ${type}`,
+            evidence: "https://github.com/reddb-io/red-skills/issues/4167",
+            result: `${type} completed`,
+          },
+        },
+      );
+    }
+
+    const records = await readCastleLaneRecords(path);
+    expect(records).toHaveLength(5);
+    for (let i = 0; i < kinds.length; i++) {
+      const kind = kinds[i] as string;
+      expect(records[i]!.kind).toBe("worker.decision");
+      expect(records[i]!.payload).toMatchObject({
+        type: kind,
+        decision: expect.stringContaining(kind),
+        why: expect.stringContaining(kind),
+        evidence: expect.stringContaining("https://github.com/reddb-io/red-skills/issues/4167"),
+        result: expect.stringContaining(kind),
+      });
+    }
+  });
+
+  it("ratchet fails when decision type is absent from the declaration", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await expect(
+      appendCastleLaneRecord(path, {
+        at: "2026-07-16T20:06:00.000Z",
+        kind: "worker.decision",
+        worker_id: "wAB12",
+        payload: {
+          type: "unknown-type",
+          decision: "a decision",
+          why: "a reason",
+          evidence: "https://example.com/evidence",
+          result: "a result",
+        },
+      }),
+    ).rejects.toThrow(/decision type must be one of/);
+  });
+
+  it("ratchet fails when decision evidence is empty (not a pointer)", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await expect(
+      appendCastleLaneRecord(path, {
+        at: "2026-07-16T20:07:00.000Z",
+        kind: "worker.decision",
+        worker_id: "wAB12",
+        payload: {
+          type: "fork",
+          decision: "a decision",
+          why: "a reason",
+          evidence: "",
+          result: "a result",
+        },
+      }),
+    ).rejects.toThrow(/evidence must be a non-empty string/);
+  });
+
+  it("decision rows are parseable by existing log readers", async () => {
+    const paths = createEnginePaths(redRoot);
+    const path = castleLanePath(paths, "worker", "wAB12");
+
+    await appendCastleLaneRecord(path, {
+      at: "2026-07-16T20:08:00.000Z",
+      kind: "worker.decision",
+      worker_id: "wAB12",
+      issue: 4167,
+      payload: {
+        type: "verified-unit",
+        decision: "verified unit tests pass",
+        why: "tests confirm the implementation",
+        evidence: "sha:abc123def456",
+        result: "verified",
+      },
+    });
+
+    const raw = await readFile(path, "utf8");
+    expect(raw.trimStart().startsWith("{")).toBe(false);
+    const records = parseRecords(raw);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      at: "2026-07-16T20:08:00.000Z",
+      kind: "worker.decision",
+      worker_id: "wAB12",
+      issue: 4167,
+    });
+  });
 });

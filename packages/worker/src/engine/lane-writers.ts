@@ -24,10 +24,12 @@ import {
   CASTLE_LANE_SCHEMA_ID,
   CASTLE_PUBLISHED_CONTRACTS,
   CASTLE_STATE_SCHEMA_ID,
+  DECISION_KINDS,
   type CastleHistoryRecord,
   type CastleLaneRecord,
   type CastleStateKind,
   type CastleStateSnapshot,
+  type DecisionTrailPayload,
 } from "./contracts/index.js";
 import type { EnginePaths } from "./paths.js";
 
@@ -154,7 +156,42 @@ export function validateCastleLaneRecord(
     throw new CastleLaneValidationError("castle record msg must be string");
   }
   assertOptionalObject(raw, "payload");
+  if (raw.kind === "worker.decision") {
+    validateDecisionPayload(raw.payload);
+  }
   return record;
+}
+
+function validateDecisionPayload(
+  payload: unknown,
+): asserts payload is DecisionTrailPayload {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    throw new CastleLaneValidationError(
+      "decision payload must be a record",
+    );
+  }
+  const p = payload as Record<string, unknown>;
+  if (typeof p.type !== "string" || !DECISION_KINDS.includes(p.type as DecisionTrailPayload["type"])) {
+    throw new CastleLaneValidationError(
+      `decision type must be one of: ${DECISION_KINDS.join(", ")}`,
+    );
+  }
+  if (typeof p.decision !== "string" || p.decision.length === 0) {
+    throw new CastleLaneValidationError("decision payload decision must be a non-empty string");
+  }
+  if (typeof p.why !== "string" || p.why.length === 0) {
+    throw new CastleLaneValidationError("decision payload why must be a non-empty string");
+  }
+  if (typeof p.evidence !== "string" || p.evidence.length === 0) {
+    throw new CastleLaneValidationError("decision payload evidence must be a non-empty string");
+  }
+  if (typeof p.result !== "string" || p.result.length === 0) {
+    throw new CastleLaneValidationError("decision payload result must be a non-empty string");
+  }
 }
 
 export function validateCastleStateSnapshot(
