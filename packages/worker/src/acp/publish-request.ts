@@ -34,6 +34,8 @@ export interface WorkerPublisherOptions {
   readonly idempotencyScope: string;
   /** Test seam over `git rev-parse`. Production reads the real Worktree. */
   readonly readPublication?: (cwd: string) => Promise<WorkerPublication | null>;
+  /** Test seam over `git update-ref`. Production writes the real Worktree. */
+  readonly updateRef?: (cwd: string, ref: string, commit: string) => Promise<void>;
   /**
    * The branch this publication PUBLISHES AS, regardless of the Worktree's
    * local branch name. An inner agent that commits on `main` would otherwise
@@ -70,6 +72,21 @@ export function createWorkerPublisher(options: WorkerPublisherOptions): WorkerPu
         ? null
         : options.publishRef == null ? local : { ...local, branch: options.publishRef };
       if (publication == null || publication.commit === published) return null;
+      // The publish-as ref must EXIST in the Worktree: the daemon delivers by
+      // fetching `refs/heads/<branch>` from here, and a name that is only a
+      // request field fetches nothing ("couldn't find remote ref", #4157).
+      if (options.publishRef != null) {
+        const anchored = await (options.updateRef ?? updateWorktreeRef)(
+          options.cwd, `refs/heads/${options.publishRef}`, publication.commit,
+        ).then(() => true).catch(() => false);
+        if (!anchored) {
+          return {
+            status: "refused",
+            publication,
+            detail: `the Worktree refused to anchor ${options.publishRef} at ${publication.commit}`,
+          };
+        }
+      }
       published = publication.commit;
       const request: RedskilledPublishRequest = {
         idempotency_key: `${options.idempotencyScope}:${publication.commit}`,
@@ -97,6 +114,16 @@ export async function readWorktreePublication(cwd: string): Promise<WorkerPublic
   if (branch == null || branch === "HEAD") return null;
   const commit = await git(cwd, ["rev-parse", "HEAD"]);
   return commit == null ? null : { branch, commit };
+}
+
+/** Anchor the publish-as ref at the commit, so the daemon's fetch finds it. */
+async function updateWorktreeRef(cwd: string, ref: string, commit: string): Promise<void> {
+  const done = await git(cwd, ["update-ref", ref, commit]);
+  // `update-ref` prints nothing on success, so only an error resolves null AND
+  // leaves the ref absent; verify by reading it back.
+  void done;
+  const at = await git(cwd, ["rev-parse", ref]);
+  if (at !== commit) throw new Error(`could not anchor ${ref} at ${commit}`);
 }
 
 function git(cwd: string, args: readonly string[]): Promise<string | null> {
