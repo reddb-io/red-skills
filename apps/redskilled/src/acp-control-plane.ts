@@ -143,6 +143,12 @@ export interface StartRedskillsAcpControlPlaneOptions {
    * drain then answers exactly as it did before registrations reached it.
    */
   readonly registerProject?: (request: RedskilledProjectRegistrationRequest) => unknown;
+  /**
+   * The daemon's own release path, for the same reason: a stop must hand the
+   * self-sustaining registration back (#4159), and the lifecycle owns that
+   * record. Absent means a stop flips the intent only — legal in a test.
+   */
+  readonly releaseProject?: (projectLabel: string) => unknown;
 }
 
 /** The store handles every connection on this endpoint shares (ADR 0152). */
@@ -268,6 +274,9 @@ async function servePublicConnection(
     ...(options.registerProject == null
       ? {}
       : { registerProject: (request) => options.registerProject!(request as never) }),
+    ...(options.releaseProject == null
+      ? {}
+      : { releaseProject: (projectLabel) => options.releaseProject!(projectLabel) }),
   });
 
   const { v1: v1Methods, v2: v2Methods } = connectionMethodTables({

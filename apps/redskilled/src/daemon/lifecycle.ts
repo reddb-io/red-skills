@@ -2401,9 +2401,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       hostState,
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
-      // The one registration path (#4101): a drain that carries its work
-      // registers through the same function `project-register` does.
+      // One registration path (#4101); a stop hands the record back too (#4159).
       registerProject: (request) => registerProject(request),
+      releaseProject: (projectLabel) => deregisterProject(projectLabel),
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
     });
   } catch (error) {
