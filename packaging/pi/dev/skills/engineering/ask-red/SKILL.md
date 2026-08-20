@@ -114,6 +114,10 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   stands on its own, in plain human language and the owning
   `.red/contexts/<name>/CONTEXT.md` vocabulary, without starting a new
   investigation.
+- **How does X work / is this the right layer** -> `/how`. It explains a
+  subsystem with parallel explorers and a synthesizing explainer, and on
+  request critiques the architecture with an independent panel. `/context`
+  builds the whole context stack; `/how` answers one question.
 - **A prose surface reads AI-generated** -> `/unslop`. It cuts the AI tells
   from a draft, doc, or PR body and gives it a human voice, preserving the
   meaning.
@@ -160,7 +164,7 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 `/redskilled`, `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
-`/what`, `/unslop`, `/to-questionnaire`, `/handoff`, `/writing-for-agents`, `/wizard`.
+`/how`, `/what`, `/unslop`, `/to-questionnaire`, `/handoff`, `/writing-for-agents`, `/wizard`.
 
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.

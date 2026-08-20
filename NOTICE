@@ -65,8 +65,9 @@ License:
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-The skills plugins/dev/skills/productivity/unslop and the bro-derived content
-in plugins/dev/skills/productivity/what are adapted from the pstack plugin
+The skills plugins/dev/skills/productivity/unslop and
+plugins/dev/skills/engineering/how, and the bro-derived content
+in plugins/dev/skills/productivity/what, are adapted from the pstack plugin
 (cursor/plugins), originally licensed under the MIT License:
 
     MIT License

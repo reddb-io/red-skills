@@ -1,0 +1,5 @@
+interface:
+  display_name: "How"
+  short_description: "Explain how a subsystem works - \"how does X work\", code walkthroughs before changing something, placement and layering questions (\"where should this live\", \"is this the right layer\") - and, on request, critique its architecture with an independent panel. Use /context for the project context stack, /research for external sources, /diagnose for bugs."
+policy:
+  allow_implicit_invocation: false
