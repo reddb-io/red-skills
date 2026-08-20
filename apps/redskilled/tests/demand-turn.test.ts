@@ -139,6 +139,17 @@ describe("the daemon's unattended turn", () => {
 
     expect(opened).toHaveLength(1);
     expect(opened[0]?.sessionId).toContain("github:1");
+    // Unique across daemon lifetimes (#4157's land 422): the sequence restarts
+    // with the process, so the id carries a per-runner nonce and two runners
+    // never mint the same session — or the publication outbox replays the
+    // previous boot's receipt for a publish that never pushed.
+    const again: Array<{ sessionId: string }> = [];
+    const second = runner(async (input) => {
+      void input;
+      return workerStub({ result: { stopReason: "end_turn" } });
+    }, [], again);
+    await second.run({ project, prompt: "p" });
+    expect(again[0]?.sessionId).not.toBe(opened[0]?.sessionId);
   });
 
   it("refuses permission on nobody's behalf, and says why", async () => {

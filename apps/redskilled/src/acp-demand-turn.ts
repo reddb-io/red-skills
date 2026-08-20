@@ -24,6 +24,8 @@ import type {
   RequestPermissionResponse,
 } from "@agentclientprotocol/sdk";
 
+import { randomBytes } from "node:crypto";
+
 import { parkGateBlockedTurn } from "./demand-park.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { expandLaunchTemplate } from "./launch-template.js";
@@ -318,6 +320,12 @@ export function createDemandTurnRunner(
 ): (request: DemandTurnRequest) => Promise<DemandTurnResult> {
   const active = new Map<string, ActiveWorkflowWorker>();
   let sequence = 0;
+  // Unique across daemon lifetimes: the sequence alone restarts at zero with
+  // the process, so `demand-3-<project>` recurred after every restart and the
+  // publication outbox replayed the PREVIOUS boot's durable receipt for the
+  // same idempotency scope — a publish that "succeeded" without pushing, and a
+  // land that 422'd on a head no push had created.
+  const runnerNonce = randomBytes(4).toString("hex");
   const admit = deps.admit ?? ((input: DemandTurnAdmission) => admitNativeAcpWorker(
     {
       paths: deps.paths,
@@ -341,7 +349,7 @@ export function createDemandTurnRunner(
     // Synthetic and unique per turn: the session id keys the admission map and
     // the journal, and a reused one would make two unattended turns look like
     // one session being replaced.
-    const sessionId = `demand-${sequence}-${request.project.projectId}`;
+    const sessionId = `demand-${runnerNonce}-${sequence}-${request.project.projectId}`;
     const record = (event: string, worker?: ActiveWorkflowWorker, detail?: string): void => {
       deps.record?.({
         event,
