@@ -113,6 +113,16 @@ export interface MaterializeWorkerWorkspaceInput {
    * testable without a clone.
    */
   readonly git?: (cwd: string, args: readonly string[], required?: boolean) => Promise<string | undefined>;
+  /**
+   * The canonical remote this fork's trunk is refreshed from (#4188).
+   *
+   * The Project mirror is cloned once and never fetched again, and its own
+   * `origin` is the human checkout — so without this, every Worker forks a
+   * days-old tree, the agent's `git fetch origin` fetches the past, and the
+   * gate judges code main no longer has. Absent means fork as-is (a generic
+   * ACP client may bind a directory with no remote at all).
+   */
+  readonly trunk?: { readonly remoteUrl: string; readonly branch?: string };
 }
 
 /**
@@ -139,6 +149,19 @@ export async function materializeWorkerWorkspace(
   if (!isRepository) {
     await mkdir(worktreePath, { recursive: true, mode: 0o700 });
     return { workerId: input.workerId, root: input.root, workspacePath, worktreePath };
+  }
+
+  if (input.trunk != null) {
+    // Loud-but-non-fatal: a network flake must not stop the drain, and a fork
+    // that proceeds stale is the stated exception rather than the invisible
+    // rule — the clone below records the base commit either way.
+    const branch = input.trunk.branch
+      ?? await git(input.projectWorkspacePath, ["symbolic-ref", "--short", "HEAD"])
+      ?? "main";
+    const fetched = await git(input.projectWorkspacePath, ["fetch", "--quiet", input.trunk.remoteUrl, branch]);
+    if (fetched !== undefined) {
+      await git(input.projectWorkspacePath, ["reset", "--hard", "FETCH_HEAD"]);
+    }
   }
 
   await git(input.projectWorkspacePath, [

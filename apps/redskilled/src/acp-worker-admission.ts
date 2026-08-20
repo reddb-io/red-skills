@@ -115,6 +115,9 @@ export async function admitNativeAcpWorker(
     root: options.workspaceRoot ?? workerWorkspaceRoot(),
     workerId,
     projectWorkspacePath: session.project.workspacePath,
+    // #4188: refresh the mirror's trunk from the canonical remote before the
+    // fork, so the Worker's base — and its `origin` — are today's main.
+    ...(session.project.remoteUrl == null ? {} : { trunk: { remoteUrl: session.project.remoteUrl } }),
   });
   const rendezvous = await bindWorkerRendezvous(endpoint);
   // Every failure from here on releases the workspace: a Worker that never
