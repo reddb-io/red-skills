@@ -247,3 +247,23 @@ export function isRedskilledWorkerDisplay(value: unknown): value is RedskilledWo
   }
   return true;
 }
+
+/**
+ * A display that published no heartbeat gets the age of its last pulse (#4181).
+ *
+ * The native Worker's pulse is stamped by the daemon on every turn update, so
+ * `published_at` IS its last sign of life; deriving at payload-build time keeps
+ * the wire shape and every renderer untouched while `hb=?` becomes an honest age.
+ */
+export function displayWithDerivedHeartbeat(
+  record: RedskilledWorkerDisplayRecord | undefined,
+  nowMs: number | null,
+): RedskilledWorkerDisplay | null {
+  if (record == null) return null;
+  if (record.display.heartbeat != null || nowMs == null) return record.display;
+  const at = Date.parse(record.published_at);
+  if (!Number.isFinite(at)) return record.display;
+  const seconds = Math.max(0, Math.round((nowMs - at) / 1000));
+  const heartbeat = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
+  return { ...record.display, heartbeat };
+}

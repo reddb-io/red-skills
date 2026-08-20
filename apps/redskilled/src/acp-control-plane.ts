@@ -143,12 +143,11 @@ export interface StartRedskillsAcpControlPlaneOptions {
    * drain then answers exactly as it did before registrations reached it.
    */
   readonly registerProject?: (request: RedskilledProjectRegistrationRequest) => unknown;
-  /**
-   * The daemon's own release path, for the same reason: a stop must hand the
-   * self-sustaining registration back (#4159), and the lifecycle owns that
-   * record. Absent means a stop flips the intent only — legal in a test.
-   */
+  /** The matching release path: a stop hands the self-sustaining registration
+   * back (#4159). Absent means a stop flips the intent only — legal in a test. */
   readonly releaseProject?: (projectLabel: string) => unknown;
+  /** Stamp a native Worker's turn events as its statusline pulse (#4181). */
+  readonly workerPulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
 }
 
 /** The store handles every connection on this endpoint shares (ADR 0152). */

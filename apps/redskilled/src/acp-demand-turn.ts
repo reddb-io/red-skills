@@ -79,6 +79,14 @@ export interface DemandTurnDeps {
     response: PromptResponse,
     workerId: string,
   ) => Promise<string | null>;
+  /**
+   * Where a turn's session updates land as Worker liveness (#4181).
+   *
+   * A native Worker publishes no heartbeat op, so without this every statusline
+   * row reads `hb=?` while the turn streams. The runner stamps the work item at
+   * admission and each update's text line as it arrives.
+   */
+  readonly pulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
 }
 
 /**
@@ -269,6 +277,7 @@ export function demandTurnRunnerFor(
     readonly evidenceRoot?: string;
     readonly evidenceTtlMs?: number;
     readonly recordDemandTurn?: (record: DemandTurnRecord) => void;
+    readonly workerPulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
   },
   sessionJournal: AcpSessionJournal,
 ): (request: DemandTurnRequest) => Promise<DemandTurnResult> {
@@ -281,6 +290,7 @@ export function demandTurnRunnerFor(
     ...(options.evidenceRoot == null ? {} : { evidenceRoot: options.evidenceRoot }),
     ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
     ...(options.recordDemandTurn == null ? {} : { record: options.recordDemandTurn }),
+    ...(options.workerPulse == null ? {} : { pulse: options.workerPulse }),
     park: parkGateBlockedTurn(options.githubGateway),
   });
 }
@@ -330,9 +340,14 @@ export function createDemandTurnRunner(
         ...(detail == null ? {} : { detail }),
       });
     };
-    // Nobody is listening, so a notification is a record. The shape is kept so
-    // the admission path cannot tell the difference between this and a client.
-    const notify: AgentConnection["client"]["notify"] = async () => {};
+    // Nobody is listening, so a notification is a record — and a pulse (#4181):
+    // the turn's own updates are the only liveness a native Worker ever emits.
+    let born: ActiveWorkflowWorker | null = null;
+    const notify: AgentConnection["client"]["notify"] = async (_method: string, params?: unknown) => {
+      if (born == null || deps.pulse == null) return;
+      const line = sessionUpdateLine(params);
+      deps.pulse({ workerId: born.workerId, ...(line == null ? {} : { line }) });
+    };
 
     try {
       // **A turn nobody opened is a turn the journal refuses.** Admission and
@@ -362,6 +377,10 @@ export function createDemandTurnRunner(
           notify,
           permission: async (permission) => refusePermission(permission),
           replacement,
+        }).then((worker) => {
+          born = worker;
+          deps.pulse?.({ workerId: worker.workerId, ...(request.workItem == null ? {} : { issue: `#${request.workItem}` }) });
+          return worker;
         }),
       );
       const outcome = describeTurnOutcome(response);
@@ -387,4 +406,11 @@ export function createDemandTurnRunner(
       throw error;
     }
   };
+}
+
+/** The text a session update carries, when it carries any. PURE. */
+function sessionUpdateLine(params: unknown): string | null {
+  const update = (params as { update?: { content?: { text?: unknown } } } | undefined)?.update;
+  const text = update?.content?.text;
+  return typeof text === "string" && text.trim() !== "" ? text.trim() : null;
 }

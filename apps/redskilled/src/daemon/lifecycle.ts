@@ -618,12 +618,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   /**
    * Hold every registration up that the project's own work still speaks for.
    *
-   * ADR 0130 Amendment 7: the renewal's owner is this process. It runs off the
-   * facts the daemon already holds at the instant it holds them — the depth its
-   * last poll counted and the Workers it is itself running — so a drain survives
-   * the terminal that started it without one message from a session, and a project
-   * with neither still lapses at its deadline. Nothing here reads a selector: the
-   * decision is made from one integer per project (ADR 0130 rule 3).
+   * ADR 0130 Amendment 7: the renewal's owner is this process, off the facts it
+   * already holds — the depth its last poll counted and the Workers it runs —
+   * so a drain survives its terminal, a project with neither lapses at its
+   * deadline, and no selector is read (ADR 0130 rule 3).
    */
   function sustainRegistrations(now: string): void {
     if (registrations.size === 0) return;
@@ -637,9 +635,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
     let changed = false;
     for (const held of [...registrations.values()]) {
-      // A read is not a new observation. Reusing a positive depth forever would
-      // let status reads keep a closed project alive; one registration window is
-      // the most an observed queue may speak for without another poll.
+      // A read is not a new observation: one registration window is the most an
+      // observed queue may speak for without another poll.
       const pollFresh = Number.isFinite(pollAt) && nowMs - pollAt <= held.renew_within_ms;
       const poll = pollFresh ? polled.get(held.project_label) : undefined;
       const sustained = sustainProjectRegistration(held, {
@@ -663,8 +660,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
     let changed = false;
     for (const [label, lapsed] of [...recoverableRegistrations]) {
-      // Recovery is a belt, not immortal intent. After one original window there
-      // is no live statement left to restore, so the extra polling stops.
+      // Recovery is a belt, not immortal intent: one original window, no more.
       if (!mayRecoverRegistration(lapsed, nowMs)) {
         recoverableRegistrations.delete(label);
         changed = true;
@@ -1021,12 +1017,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       for (const birth of plan.births) {
         let launched: LaunchedWorker;
         const registered = registrations.get(birth.project_label);
-        // **A birth nobody speaks to does nothing** (#4100). A project that
-        // stated a prompt gets the daemon's own unattended turn: admission,
-        // session and prompt, exactly as an attached client would drive it.
-        // The turn is not awaited — it is the Worker's whole life, and a demand
-        // tick that blocked on one would stop planning for every other project
-        // on the host.
+        // **A birth nobody speaks to does nothing** (#4100): a project with a
+        // prompt gets the daemon's own unattended turn, not awaited — it is the
+        // Worker's whole life, and a blocked tick would stop every project.
         if (registered?.prompt != null && acpControlPlane != null) {
           try {
             const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()),
@@ -1048,10 +1041,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           }
           continue;
         }
-        // The id is minted HERE rather than inside the launch, because the launch
-        // template may mention it: an id substituted into an argv, an env or a log
-        // path and a different id on the record would be one Worker the host and
-        // the work disagree about.
+        // Minted HERE because the launch template may mention the id; a different
+        // id on the record would be one Worker the host and the work disagree about.
         const workerId = mintHostWorkerId(workers.keys());
         const registration = registered;
         const spec = workerSpecFromLaunch(
@@ -1257,12 +1248,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     void resourceLeases.releaseHolder(workerId).catch(() => undefined);
   }
 
+  // #4181: a native Worker publishes no heartbeat op; its turn events ARE its
+  // pulse, stamped into the same maps the op feeds, so every read path works.
+  function recordWorkerPulse(pulse: { workerId: string; line?: string; issue?: string }): void {
+    if (workers.get(pulse.workerId) == null) return;
+    const publishedAt = clock();
+    const line = pulse.line?.trim();
+    if (line != null && line !== "") {
+      logLines.set(pulse.workerId, { line, published_at: publishedAt, source: "heartbeat" });
+    }
+    const display = coerceWorkerDisplay({
+      ...(displays.get(pulse.workerId)?.display ?? {}),
+      ...(pulse.issue == null ? {} : { issue: pulse.issue }),
+    });
+    if (display != null) displays.set(pulse.workerId, { display, published_at: publishedAt });
+  }
+
   /**
-   * Record one heartbeat's line, once reach has permitted it.
-   *
-   * Reach is checked against the TARGET's project, exactly as a command is, so a
-   * session cannot publish a line into another project's statusline. A refusal
-   * throws and stores nothing.
+   * Record one heartbeat's line, once reach has permitted it. Reach is checked
+   * against the TARGET's project, exactly as a command is, so a session cannot
+   * publish a line into another project's statusline; a refusal stores nothing.
    */
   function publishWorkerHeartbeat(request: RedskilledWorkerHeartbeatRequest): RedskilledWorkerHeartbeatAck {
     const target = workers.get(request.worker_id);
@@ -1285,17 +1290,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     }
     const publishedAt = clock();
     logLines.set(request.worker_id, { line: request.last_log_line, published_at: publishedAt, source: "heartbeat" });
-    // Shape-checked and stored, exactly as the line above it is. A record whose
-    // fields the daemon cannot recognise degrades field by field rather than
-    // failing the heartbeat: a project shipping a newer bundle than its neighbour
-    // is the ordinary state of a host-scoped daemon (ADR 0130 rule 3).
+    // Shape-checked and stored; unrecognised fields degrade field by field,
+    // because mixed bundle versions are a host daemon's ordinary state (rule 3).
     const display = request.display === undefined ? null : coerceWorkerDisplay(request.display);
     if (display != null) {
       const previous = displays.get(request.worker_id)?.display;
       const stored = { display, published_at: publishedAt };
       displays.set(request.worker_id, stored);
-      // Kept as well as stored: the map answers "what is it doing now" and the
-      // history answers "how fast", and one cannot be recovered from the other.
+      // Kept as well as stored: "what now" and "how fast" need both records.
       observeWorkerCounters(stored, target);
       if (display.phase !== previous?.phase || display.step !== previous?.step) {
         record("worker-activity", target, null, { phase: display.phase, step: display.step });
@@ -1521,12 +1523,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
-   * Give one project's registration back.
-   *
-   * Reach is checked against the project being released — its own label, exactly
-   * as at registration — so a session cannot stop another project's work. What is
-   * NOT checked is whether a record stood: a release states the outcome and lets
-   * the caller decide what an already-released project means to it.
+   * Give one project's registration back. Reach is checked against the project
+   * being released, so a session cannot stop another project's work; whether a
+   * record stood is NOT checked — a release states the outcome to its caller.
    */
   function deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered {
     const reach = authorize("project-deregister", sessionProject, projectLabel);
@@ -2404,6 +2403,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // One registration path (#4101); a stop hands the record back too (#4159).
       registerProject: (request) => registerProject(request),
       releaseProject: (projectLabel) => deregisterProject(projectLabel),
+      workerPulse: (pulse) => recordWorkerPulse(pulse),
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
     });
   } catch (error) {

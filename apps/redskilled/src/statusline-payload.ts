@@ -43,7 +43,7 @@ import {
 } from "./remote-counters.js";
 import type { RedskilledRepositoryActivity } from "./repository-activity.js";
 import type { RedskilledStatuslineExtra } from "./statusline-extras.js";
-import type { RedskilledWorkerDisplay, RedskilledWorkerDisplayRecord } from "./worker-display.js";
+import { displayWithDerivedHeartbeat, type RedskilledWorkerDisplay, type RedskilledWorkerDisplayRecord } from "./worker-display.js";
 import {
   buildDeaths,
   REDSKILLED_RECENT_DEATH_LIMIT,
@@ -666,7 +666,7 @@ function buildWorker(
       enforceable: enforced != null,
     },
     log: workerLog(ctx.log),
-    display: ctx.display?.display ?? null,
+    display: displayWithDerivedHeartbeat(ctx.display, ctx.nowMs),
     display_published_at: ctx.display?.published_at ?? null,
   };
 }
