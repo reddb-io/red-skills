@@ -272,7 +272,7 @@ export async function admitNativeAcpWorker(
   return admitted;
 }
 
-function nativeWorkerSpec(
+export function nativeWorkerSpec(
   project: AcpProjectWorkspace,
   workspace: MaterializedWorkerWorkspace,
   endpoint: string,
@@ -284,9 +284,12 @@ function nativeWorkerSpec(
   const childAgent = pinChildAgentExecutable(defaultChildAgentEndpoint());
   return {
     worker_id: workspace.workerId,
-    // The host's authority key must survive a repository rename. The current
-    // GitHub full name remains display metadata on the public session.
-    project_label: project.projectId,
+    // The registration store, the demand loop's live count, and queue discovery
+    // all key a project by the registration's project_label. A Worker recorded
+    // under projectId is invisible to every one of them: the demand loop reads
+    // live=0 forever, births another Worker each tick, and the host ceiling
+    // fills with connected Workers no ticket route can find (#4129 drain).
+    project_label: project.projectLabel,
     // The Worker stands in ITS OWN worktree in temporary storage (ADR 0149 §1);
     // the Project workspace is what that worktree was forked from, never a cwd
     // two Workers could share.
