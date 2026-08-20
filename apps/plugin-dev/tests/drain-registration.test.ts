@@ -57,3 +57,11 @@ describe("what a drain hands the daemon", () => {
     expect(registration.workspace_path).toBe("/home/op/src/red-skills");
   });
 });
+
+describe("a registration that can actually drain", () => {
+  it("states the trunk — the handoff refuses to exist without a base", () => {
+    expect(buildDrainRegistration(input).trunk).toEqual({ remote: "origin", branch: "main" });
+    expect(buildDrainRegistration({ ...input, trunkBranch: "develop" }).trunk)
+      .toEqual({ remote: "origin", branch: "develop" });
+  });
+});

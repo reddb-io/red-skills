@@ -60,6 +60,25 @@ deprecating it, so an unreachable tool surface means the daemon is down or this
 project is not registered. Name that, and repair it with `/redskilled`. Do not
 hand-roll the operation in shell.
 
+## The calls, in order
+
+The whole lane is four tools; anything done by hand instead of these is a
+defect to file, never a workaround to keep:
+
+1. `project_activation` — read: did this repo opt in, and what would a bare
+   drain register?
+2. `drain { target, runner?, selector? }` — mutate: registers this project with
+   the daemon (work query, poll plan, trunk, Worker prompt all composed by the
+   tool) and arms the drain. Repeat calls are safe and report what was kept.
+3. `status { scope: project }` and `events_since { cursor }` — observe. Workers
+   are born, briefed, and driven by the daemon; nothing here polls a mutating
+   tool.
+4. `project_stop` — hand the registration back when done.
+
+**Never** `git worktree add`, never a hand-built Worker argv, never watching CI
+in a shell loop: the daemon owns birth, placement, and landing. If a step
+cannot be done through these tools, that is a gap to file against the MCP.
+
 ## When To Use
 
 Each verb names the tool that serves it.

@@ -21,6 +21,8 @@ import {
 } from "./registration-query.js";
 
 export interface DrainRegistrationInput {
+  /** The trunk branch this checkout lands against; `main` when unstated. */
+  readonly trunkBranch?: string | undefined;
   /** `owner/name` — the repository whose tracker holds this project's queue. */
   readonly repo: string;
   /** Where a Worker for this project runs; the project's own checkout. */
@@ -40,6 +42,16 @@ export interface DrainRegistration {
   readonly queue_poll: RegistrationPollPlan;
   readonly argv: readonly string[];
   readonly workspace_path: string;
+  /**
+   * The trunk a Worker's Ticket is measured and landed against.
+   *
+   * **A registration without a trunk drains nothing**: the daemon states the
+   * Ticket handoff only when every fact it requires is present, and `base` is
+   * one of them — so a drain that omitted the trunk birthed Workers that were
+   * never briefed and idled. That was the hand-written mistake of the first
+   * live drain, and the product path repeated it.
+   */
+  readonly trunk: { readonly remote: string; readonly branch: string };
   readonly prompt: string;
   readonly target: number;
 }
@@ -77,6 +89,7 @@ export function buildDrainRegistration(input: DrainRegistrationInput): DrainRegi
       input.version,
     ).split(" "),
     workspace_path: input.workspacePath,
+    trunk: { remote: "origin", branch: input.trunkBranch ?? "main" },
     prompt: DRAIN_WORKER_PROMPT,
     target: input.target,
   };
