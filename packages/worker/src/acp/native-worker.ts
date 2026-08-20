@@ -27,6 +27,7 @@ import {
   socketStream,
   ticketHandoffFromMeta,
   waitForAbort,
+  withTimeout,
   type AcpEndpoint,
   type AcpSessionRecoveryCheckpoint,
   type RedskillsTicketHandoff,
@@ -71,7 +72,7 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
     held.publisher ??= createWorkerPublisher({
       cwd: held.request.cwd,
       idempotencyScope: `worker-turn:${sessionId}`,
-      request: (method, write) => parent.request(method, write),
+      request: boundedRequest(parent),
     });
     const outcome = await held.publisher.publishTurn();
     if (outcome == null) return;
@@ -119,7 +120,7 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
     held.publisher ??= createWorkerPublisher({
       cwd: held.request.cwd,
       idempotencyScope: `worker-turn:${sessionId}`,
-      request: (method, write) => parent.request(method, write),
+      request: boundedRequest(parent),
     });
 
     const result = await runTicketLoop({
@@ -135,7 +136,7 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
       ...(ticket.runner == null ? {} : { runner: ticket.runner }),
       ...(ticket.run_mode == null ? {} : { runMode: ticket.run_mode }),
       ...(ticket.reseed_budget == null ? {} : { reseedBudget: ticket.reseed_budget }),
-      request: (method, request) => parent.request(method, request),
+      request: boundedRequest(parent),
       implement: async (handoff) => {
         if (signal.aborted) return { stopReason: "cancelled" };
         const response = await child.prompt({
@@ -376,6 +377,37 @@ function notifyTicketStage(
       },
     },
   });
+}
+
+/**
+ * How long a Worker waits for the daemon to answer one request.
+ *
+ * **A Worker waiting on the daemon has a deadline, or it is a Worker doing
+ * nothing.** The Ticket loop claims, publishes and lands by ASKING the daemon —
+ * a Worker holds no credential (ADR 0144 §3) — and those asks were unbounded.
+ * On 2026-08-20 five Workers sat alive for eleven minutes each on a pending
+ * claim: no branch, no narration, no claim comment, 15 seconds of CPU between
+ * them, and every liveness surface reporting them healthy. An unbounded wait
+ * inside a Worker is the orphan-poll shape the repo already refuses in its own
+ * engine (`DECLARED_WAITS`), and it looks exactly like work.
+ *
+ * Generous on purpose: a forge write behind a cold credential is slow, not
+ * broken. What the deadline buys is that a stall ENDS, and ends saying so.
+ */
+export const WORKER_REQUEST_DEADLINE_MS = 120_000;
+
+/**
+ * Ask the daemon, bounded, and name the method when the deadline passes so the
+ * refusal an operator reads says which ask went unanswered.
+ */
+function boundedRequest(
+  parent: AgentContext,
+): (method: string, params: unknown) => Promise<unknown> {
+  return (method, params) => withTimeout(
+    parent.request(method, params),
+    WORKER_REQUEST_DEADLINE_MS,
+    `the daemon did not answer ${method}`,
+  );
 }
 
 /**
