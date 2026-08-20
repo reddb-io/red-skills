@@ -609,7 +609,15 @@ export function bindProjectControl(deps: {
           throw new Error("this endpoint cannot register a project: the daemon handed it no registration path");
         }
         try {
-          deps.registerProject({ ...request.registration, project_label: project.projectLabel });
+          // **One key, both sides of the ledger.** Workers are labelled by
+          // `projectId` — the authority key that survives a repository rename —
+          // while this registration was keyed by the display label. The demand
+          // planner counts live Workers against the REGISTRATION's key, so it
+          // never saw its own children: target 1 birthed five Workers, two of
+          // which claimed the same Ticket, until the host ceiling stopped the
+          // sixth. The registration registers under the same key its Workers
+          // will carry.
+          deps.registerProject({ ...request.registration, project_label: project.projectId });
         } catch (error) {
           // **A drain is idempotent; a registration is not.** `project-register`
           // refuses a second record so two sessions cannot silently replace each

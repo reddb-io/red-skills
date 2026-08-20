@@ -105,7 +105,10 @@ describe("a drain registers the project it drains", () => {
 
     expect(registered).toEqual([
       expect.objectContaining({
-        project_label: "reddb-io/red-skills",
+        // The authority key, not the display label: Workers are labelled by
+        // projectId, and a registration keyed any other way is one whose
+        // planner never counts its own children.
+        project_label: "github:1",
         selector: "is:issue label:ready-for-agent",
         target: 2,
       }),
@@ -119,7 +122,7 @@ describe("a drain registers the project it drains", () => {
       registration: { project_label: "someone/else", selector: "is:issue", argv: ["x"], target: 1 },
     });
 
-    expect(registered[0]).toMatchObject({ project_label: "reddb-io/red-skills" });
+    expect(registered[0]).toMatchObject({ project_label: "github:1" });
   });
 
   it("refuses when the endpoint was handed no registration path, rather than recording a drain nothing polls", async () => {
