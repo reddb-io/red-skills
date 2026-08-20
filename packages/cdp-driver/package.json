@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/cdp-driver",
-  "version": "4.0.6",
+  "version": "4.0.7",
   "private": true,
   "type": "module",
   "description": "CDP-based live-app driver for red-browser: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots with numbered refs, validates stale refs, and streams console/network events.",
