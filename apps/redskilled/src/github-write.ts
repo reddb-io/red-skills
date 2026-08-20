@@ -191,8 +191,14 @@ async function pushCanonicalRepository(input: RedskilledGithubWriteUpstreamInput
   if (input.write.kind !== "repository-push") throw new Error("repository push received a non-push write");
   const write = input.write;
   const authorization = Buffer.from(`x-access-token:${input.credential.secret}`, "utf8").toString("base64");
+  // The CANONICAL repository by URL, never the mirror's `origin`: the Project
+  // mirror is cloned from the human checkout, so its `origin` is a local path —
+  // the auth header is meaningless there, the refusal wrapped into a bare
+  // "Internal error", and even a push that succeeded would have delivered the
+  // branch to the wrong place. Every publish on this machine died here.
+  const remote = `https://github.com/${input.project.projectLabel}.git`;
   await new Promise<void>((resolve, reject) => {
-    execFile("git", ["push", "origin", `${write.sha}:${write.ref}`], {
+    execFile("git", ["push", remote, `${write.sha}:${write.ref}`], {
       cwd: input.project.workspacePath,
       env: {
         ...process.env,
@@ -203,7 +209,11 @@ async function pushCanonicalRepository(input: RedskilledGithubWriteUpstreamInput
       },
       windowsHide: true,
       timeout: 60_000,
-    }, (error) => error == null ? resolve() : reject(new Error("redskilled repository push failed", { cause: error })));
+    }, (error, _stdout, stderr) => error == null
+      ? resolve()
+      : reject(new Error(
+        `redskilled repository push to ${remote} failed: ${String(stderr ?? "").trim() || error.message}`,
+      )));
   });
   return { pushed: true, ref: write.ref, sha: write.sha };
 }
