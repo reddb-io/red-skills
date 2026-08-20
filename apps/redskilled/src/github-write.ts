@@ -60,8 +60,14 @@ export function createRedskilledGithubWriteUpstream(
     if (input.write.kind === "repository-push") return pushRepository(input);
     const repository = input.project.projectLabel.split("/").map(encodeURIComponent).join("/");
     const marker = githubOutboxMarker(input.idempotencyKey);
-    const request = apiWriteRequest(input.write, repository, marker);
     const headers = { ...githubHeaders(input.credential.secret), "content-type": "application/json" };
+    if (input.write.kind === "issue-transition") {
+      return applyIssueTransition(input.write, {
+        repository, marker, origin, fetchImpl, headers, clock,
+        credentialProfile: input.project.credentialProfile,
+      });
+    }
+    const request = apiWriteRequest(input.write, repository, marker);
     const lookup = await fetchImpl(`${origin}/${request.lookup}`, { method: "GET", headers });
     if (!lookup.ok) {
       throw githubUpstreamRefusal("write reconciliation", "rest", lookup, clock(), input.project.credentialProfile);
@@ -81,8 +87,62 @@ export function createRedskilledGithubWriteUpstream(
   };
 }
 
+/**
+ * Apply one Ticket state transition: label adds and removes are naturally
+ * idempotent upstream (adding a held label repeats it, deleting an absent one
+ * answers 404), so only the explanatory comment rides the outbox marker.
+ */
+async function applyIssueTransition(
+  write: Extract<RedskilledGithubWrite, { readonly kind: "issue-transition" }>,
+  ctx: {
+    readonly repository: string;
+    readonly marker: string;
+    readonly origin: string;
+    readonly fetchImpl: typeof fetch;
+    readonly headers: Record<string, string>;
+    readonly clock: () => string;
+    readonly credentialProfile: string;
+  },
+): Promise<unknown> {
+  const issuePath = `${ctx.origin}/repos/${ctx.repository}/issues/${write.issue}`;
+  if (write.add.length > 0) {
+    const added = await ctx.fetchImpl(`${issuePath}/labels`, {
+      method: "POST",
+      headers: ctx.headers,
+      body: JSON.stringify({ labels: [...write.add] }),
+    });
+    if (!added.ok) throw githubUpstreamRefusal("issue transition add", "rest", added, ctx.clock(), ctx.credentialProfile);
+  }
+  for (const label of write.remove) {
+    const removed = await ctx.fetchImpl(`${issuePath}/labels/${encodeURIComponent(label)}`, {
+      method: "DELETE",
+      headers: ctx.headers,
+    });
+    // 404 is the label already absent — the state this removal wanted.
+    if (!removed.ok && removed.status !== 404) {
+      throw githubUpstreamRefusal("issue transition remove", "rest", removed, ctx.clock(), ctx.credentialProfile);
+    }
+  }
+  let commented = false;
+  if (write.comment != null) {
+    const lookup = await ctx.fetchImpl(`${issuePath}/comments?per_page=100`, { method: "GET", headers: ctx.headers });
+    if (!lookup.ok) throw githubUpstreamRefusal("issue transition reconciliation", "rest", lookup, ctx.clock(), ctx.credentialProfile);
+    if (findMarkedPublication(await responseValue(lookup), ctx.marker) == null) {
+      const body = `${write.comment}${write.comment.endsWith("\n") ? "" : "\n\n"}${ctx.marker}`;
+      const posted = await ctx.fetchImpl(`${issuePath}/comments`, {
+        method: "POST",
+        headers: ctx.headers,
+        body: JSON.stringify({ body }),
+      });
+      if (!posted.ok) throw githubUpstreamRefusal("issue transition comment", "rest", posted, ctx.clock(), ctx.credentialProfile);
+    }
+    commented = true;
+  }
+  return { issue: write.issue, added: [...write.add], removed: [...write.remove], commented };
+}
+
 function apiWriteRequest(
-  write: Exclude<RedskilledGithubWrite, { readonly kind: "repository-push" }>,
+  write: Exclude<RedskilledGithubWrite, { readonly kind: "repository-push" | "issue-transition" }>,
   repository: string,
   marker: string,
 ): { readonly lookup: string; readonly path: string; readonly body: Record<string, unknown> } {

@@ -24,6 +24,7 @@ import type {
   RequestPermissionResponse,
 } from "@agentclientprotocol/sdk";
 
+import { parkGateBlockedTurn } from "./demand-park.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { expandLaunchTemplate } from "./launch-template.js";
 import {
@@ -63,6 +64,21 @@ export interface DemandTurnDeps {
    * only way to learn a drain is working is to watch for commits.
    */
   readonly record?: (line: DemandTurnRecord) => void;
+  /**
+   * What happens to the Ticket after a completed turn whose gate blocked.
+   *
+   * Answers a one-line record of the transition it performed (or refused), or
+   * `null` for every other verdict. Absent in tests that assert the turn
+   * alone; the control plane wires `parkGateBlockedTurn` (#4160), because a
+   * gate-blocked Ticket left in the ready queue is re-taken by the very next
+   * birth — the infinite grinder the park exists to end.
+   */
+  readonly park?: (
+    project: AcpProjectWorkspace,
+    ticket: Readonly<Record<string, unknown>>,
+    response: PromptResponse,
+    workerId: string,
+  ) => Promise<string | null>;
 }
 
 /**
@@ -265,6 +281,7 @@ export function demandTurnRunnerFor(
     ...(options.evidenceRoot == null ? {} : { evidenceRoot: options.evidenceRoot }),
     ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
     ...(options.recordDemandTurn == null ? {} : { record: options.recordDemandTurn }),
+    park: parkGateBlockedTurn(options.githubGateway),
   });
 }
 
@@ -349,6 +366,14 @@ export function createDemandTurnRunner(
       );
       const outcome = describeTurnOutcome(response);
       record("demand-turn-completed", worker, outcome);
+      if (deps.park != null && request.ticket != null) {
+        try {
+          const parked = await deps.park(request.project, request.ticket, response, worker.workerId);
+          if (parked != null) record("demand-park", worker, parked);
+        } catch (error) {
+          record("demand-park-failed", worker, error instanceof Error ? error.message : String(error));
+        }
+      }
       // The turn is the Worker's whole life: it was admitted for one work item
       // and has now finished it, so it is reaped here rather than left on an
       // idle timer nobody will come back to.
