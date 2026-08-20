@@ -19,6 +19,7 @@
     "./skills/engineering/dashboard",
     "./skills/engineering/audit-skills",
     "./skills/engineering/diagnose",
+    "./skills/engineering/how",
     "./skills/engineering/ground-truth",
     "./skills/engineering/red-doctor",
     "./skills/engineering/red-gains",
