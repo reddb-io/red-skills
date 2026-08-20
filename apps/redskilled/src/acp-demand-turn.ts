@@ -17,7 +17,12 @@
  * The daemon still reads nothing: the prompt is a project-authored string with
  * the daemon's own facts expanded into it, exactly as the argv already was.
  */
-import type { AgentConnection, RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk";
+import type {
+  AgentConnection,
+  PromptResponse,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+} from "@agentclientprotocol/sdk";
 
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { expandLaunchTemplate } from "./launch-template.js";
@@ -58,6 +63,30 @@ export interface DemandTurnDeps {
    * only way to learn a drain is working is to watch for commits.
    */
   readonly record?: (line: DemandTurnRecord) => void;
+}
+
+/**
+ * What one turn's answer says happened. PURE.
+ *
+ * **A Ticket turn states its verdict in `_meta.redskills.ticket`, and sets
+ * `workflowOutcome` only when it LANDED** — so a record that read the workflow
+ * outcome alone printed `no-workflow-outcome (end_turn)` for a landed-less
+ * turn and for a refusal alike, hiding the stage and the reason the Worker had
+ * already written down. Read the verdict first; fall back to the stop reason
+ * for the ordinary prompt turns that carry none.
+ */
+export function describeTurnOutcome(response: PromptResponse): string {
+  const ticket = (response._meta as { redskills?: { ticket?: unknown } } | undefined)?.redskills?.ticket;
+  const verdict = ticket == null || typeof ticket !== "object"
+    ? undefined
+    : (ticket as { outcome?: unknown; stage?: unknown; failedStage?: unknown; detail?: unknown });
+  if (verdict?.outcome != null) {
+    const where = verdict.stage ?? verdict.failedStage;
+    return `${String(verdict.outcome)}` +
+      `${where == null ? "" : ` at ${String(where)}`}` +
+      `${verdict.detail == null ? "" : `: ${String(verdict.detail)}`}`;
+  }
+  return `${workflowOutcome(response) ?? "no-workflow-outcome"} (${response.stopReason})`;
 }
 
 /**
@@ -318,11 +347,7 @@ export function createDemandTurnRunner(
           replacement,
         }),
       );
-      // The workflow outcome when the Worker stated one, and the stop reason
-      // beside it either way: "end_turn" and "completed" are different
-      // sentences, and a turn that ended in under a second is only legible if
-      // the record says which of the two it was.
-      const outcome = `${workflowOutcome(response) ?? "no-workflow-outcome"} (${response.stopReason})`;
+      const outcome = describeTurnOutcome(response);
       record("demand-turn-completed", worker, outcome);
       // The turn is the Worker's whole life: it was admitted for one work item
       // and has now finished it, so it is reaped here rather than left on an

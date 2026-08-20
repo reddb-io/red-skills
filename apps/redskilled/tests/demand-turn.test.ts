@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createDemandTurnRunner,
   demandTurnForBirth,
+  describeTurnOutcome,
   queueBriefing,
   DEMAND_TURN_PERMISSION_REFUSAL,
   type DemandTurnAdmission,
@@ -225,5 +226,29 @@ describe("the birth briefs its Worker with a Ticket", () => {
     expect(queueBriefing(projects, "a/b", "4119")).toBeUndefined();
     expect(queueBriefing(projects, "c/d", "4118")).toBeUndefined();
     expect(queueBriefing(projects, "a/b", undefined)).toBeUndefined();
+  });
+});
+
+describe("what a turn's answer says happened", () => {
+  it("reads a Ticket verdict, with the stage and the reason the Worker wrote down", () => {
+    expect(describeTurnOutcome({
+      stopReason: "end_turn",
+      _meta: { redskills: { ticket: { outcome: "refused", stage: "claim", detail: "the lane implies scout" } } },
+    } as never)).toBe("refused at claim: the lane implies scout");
+
+    expect(describeTurnOutcome({
+      stopReason: "end_turn",
+      _meta: { redskills: { ticket: { outcome: "gate-blocked", failedStage: "typecheck", detail: "2 errors" } } },
+    } as never)).toBe("gate-blocked at typecheck: 2 errors");
+
+    expect(describeTurnOutcome({
+      stopReason: "end_turn",
+      _meta: { redskills: { ticket: { outcome: "landed" }, workflowOutcome: "completion" } },
+    } as never)).toBe("landed");
+  });
+
+  it("falls back to the stop reason for an ordinary prompt turn that states no verdict", () => {
+    expect(describeTurnOutcome({ stopReason: "end_turn", _meta: {} } as never))
+      .toBe("no-workflow-outcome (end_turn)");
   });
 });
