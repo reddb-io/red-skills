@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/red-skills-internal",
-  "version": "4.0.10",
+  "version": "4.0.11",
   "description": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/reddb-io/red-skills",
