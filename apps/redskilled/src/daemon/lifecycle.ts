@@ -2401,12 +2401,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       hostState,
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
-      // The one registration path (#4101): a drain that carries its work
-      // registers through the same function `project-register` does.
+      // One registration path (#4101); a stop hands the record back too (#4159).
       registerProject: (request) => registerProject(request),
-      // The matching release path: `project_stop` hands the self-sustaining
-      // registration back through the same function `project-deregister` uses,
-      // so a stopped drain actually stops being polled and birthed for (#4159).
       releaseProject: (projectLabel) => deregisterProject(projectLabel),
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
     });
