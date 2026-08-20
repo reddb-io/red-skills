@@ -109,6 +109,8 @@ that block, startup preserves the explicit-only `drain`/`project_start` behavior
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
 | `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `status {scope: project}` at `birth_latch.repair`; the structured repair supplies the exact args. |
 | `project_stop` | mutating | Give this project's registration back and stop what it still holds; pass `force: true` to hard-stop only its attributed workers. |
+| `standing_orders_show` | read | Return this project's standing orders — the append-only, numbered instruction register injected verbatim into every Worker brief (ADR 0156). |
+| `standing_orders_append` | mutating | Append one standing order to this project's register; existing orders are never mutated or renumbered, and every subsequent Worker brief carries the new order verbatim. |
 
 ### Host daemon diagnostics
 
