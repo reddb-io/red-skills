@@ -18,7 +18,7 @@ import {
   REDSKILLS_WIRE_MAJOR,
   type AcpEndpoint,
 } from "@reddb-io/protocol-acp";
-import { credentialFreeEnv } from "@reddb-io/shared/credential-free-env.js";
+import { _credentialFreeEnvWithHome } from "@reddb-io/shared/credential-free-env.js";
 import type { SpinPattern } from "../engine/spin-evaluator.js";
 import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./child-spin.js";
 import { createWorkerTerminalHost, type WorkerTerminalHost } from "./terminal-host.js";
@@ -62,7 +62,7 @@ export class WorkflowChildAgent {
     // the terminals its predecessor opened rather than orphaning them.
     this.#terminals = createWorkerTerminalHost({
       cwd: options.cwd,
-      env: credentialFreeEnv(process.env),
+      env: _credentialFreeEnvWithHome(process.env),
       onDenial: (denial) => void this.#terminalDenial(denial),
     });
   }
@@ -142,7 +142,7 @@ export class WorkflowChildAgent {
     // strips them again rather than trusting a hop it cannot see.
     const child = spawn(endpoint.command, endpoint.args, {
       cwd: this.#options.cwd,
-      env: credentialFreeEnv(process.env),
+      env: _credentialFreeEnvWithHome(process.env),
       stdio: ["pipe", "pipe", "ignore"],
     });
     if (child.stdin == null || child.stdout == null) throw new Error("child ACP Agent did not expose stdio");

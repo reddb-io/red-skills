@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { credentialFreeEnv, isCredentialEnvironmentName } from "./credential-free-env.js";
+import {
+  _credentialFreeEnvWithHome,
+  credentialFreeEnv,
+  isCredentialEnvironmentName,
+} from "./credential-free-env.js";
 
 describe("the environment a disposable process may inherit", () => {
   it("refuses every GitHub and Git credential name", () => {
@@ -43,5 +47,22 @@ describe("the environment a disposable process may inherit", () => {
       RED_MODE: "spec-driven",
       UNSET: undefined,
     })).toEqual({ PATH: "/usr/bin", RED_MODE: "spec-driven" });
+  });
+
+  it("replaces HOME with the ghost home so gh keyring and git credential helper are unreachable", () => {
+    const result = _credentialFreeEnvWithHome({
+      PATH: "/usr/bin",
+      HOME: "/home/user",
+      GITHUB_TOKEN: "secret",
+      RED_MODE: "spec-driven",
+    });
+    expect(result.HOME).toBe(process.env.TMPDIR ?? process.env.TEMP ?? "/tmp");
+    expect(result.GITHUB_TOKEN).toBeUndefined();
+    expect(result.RED_MODE).toBe("spec-driven");
+  });
+
+  it("leaves HOME absent when it was absent in the input", () => {
+    const result = _credentialFreeEnvWithHome({ PATH: "/usr/bin" });
+    expect(result.HOME).toBeUndefined();
   });
 });

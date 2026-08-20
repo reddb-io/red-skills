@@ -41,3 +41,32 @@ export function credentialFreeEnv(env: NodeJS.ProcessEnv): Record<string, string
   }
   return kept;
 }
+
+/**
+ * ADR 0144 §3: a disposable process holds no credential anywhere, including not
+ * in files the process can reach through its own home directory.
+ *
+ * `credentialFreeEnv` strips credential env vars, but gh stores tokens in
+ * `~/.cache/gh/` and git reads `~/.gitconfig` — both reachable through `HOME`.
+ * This function replaces `HOME` with a temp directory that has no credential
+ * store, so even if a command somehow bypasses the terminal policy, it finds no
+ * token to use.
+ *
+ * The replacement is only applied when `HOME` is present (a missing `HOME` is
+ * left alone — most processes handle that gracefully, and the Worktree's own
+ * files are the working directory, not the home directory).
+ */
+export function credentialFreeHomeDir(env: NodeJS.ProcessEnv): string | undefined {
+  return env.HOME ? env.HOME : undefined;
+}
+
+const GHOST_HOME = process.env.TMPDIR ?? process.env.TEMP ?? "/tmp";
+
+/** @internal */
+export function _credentialFreeEnvWithHome(env: NodeJS.ProcessEnv): Record<string, string> {
+  const credentialFree = credentialFreeEnv(env);
+  if (credentialFree.HOME !== undefined) {
+    return { ...credentialFree, HOME: GHOST_HOME };
+  }
+  return credentialFree;
+}
