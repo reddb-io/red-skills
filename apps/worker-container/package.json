@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/afk-container",
-  "version": "4.1.13",
+  "version": "4.1.14",
   "private": true,
   "description": "AFK-in-a-box — a self-sufficient Docker image that drains ready-for-agent issues from GitHub repos through the existing AFK engine (red-skills-dev), one ephemeral run at a time. Stateless by construction: the issue and the run branch are the only state.",
   "license": "Apache-2.0",
