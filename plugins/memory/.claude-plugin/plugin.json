@@ -1,6 +1,6 @@
 {
   "name": "memory",
-  "version": "4.1.28",
+  "version": "4.1.29",
   "description": "reddb.io memory plugin — governed operational memory for code agents that lives on top of `dev`. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
   "dependencies": [
     "dev"
