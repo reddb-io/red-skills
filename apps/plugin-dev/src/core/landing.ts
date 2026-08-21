@@ -38,7 +38,10 @@ import {
   type WaitForReviewInput,
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
-import { resolveRemoteBranchTip, staleHeadVerdict } from "./stale-head.js";
+import { landHeadPrecondition } from "./land-precondition.js";
+import { landingMergeTitle } from "./landing-merge-title.js";
+import { resolveRemoteBranchTip } from "./stale-head.js";
+import type { LandVerdictGate } from "@reddb-io/shared/land-verdict.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { restagePiPackages } from "./pi-package-restage.js";
 import type {
@@ -193,6 +196,15 @@ export interface LandingDeps {
    * state vocabulary.
    */
   landingPhase?(phase: LandingPhase, detail?: Record<string, unknown>): void | Promise<void>;
+  /**
+   * ADR 0154's land precondition, as the port `land-precondition.ts` builds
+   * (#4138): the ledger is asked whether a non-voided PASSING verdict judges
+   * the head this landing is about to merge, and a refusal stops the merge
+   * before the pre_merge hook. Which callers supply one is declared in
+   * `LAND_ENTRY_POINTS` and pinned by its ratchet, so an unarmed landing is a
+   * stated fact rather than a silence.
+   */
+  verdictGate?: LandVerdictGate;
 }
 
 export type LandingPhase = "gate" | "push-pr" | "merge" | "cascade" | "wait" | "close";
@@ -260,62 +272,10 @@ export interface LandingInput {
   claimHeld?: boolean;
 }
 
-function isDocsOnlyPath(path: string): boolean {
-  const normalized = path.trim().toLowerCase();
-  return normalized !== "" && (
-    normalized.startsWith("docs/") ||
-    normalized.startsWith(".github/issue_template/") ||
-    normalized.endsWith(".md") ||
-    normalized.endsWith(".mdx") ||
-    normalized.endsWith(".txt") ||
-    normalized.endsWith(".adoc") ||
-    normalized.endsWith(".rst")
-  );
-}
-
-function isRuntimePath(path: string): boolean {
-  const normalized = path.trim().toLowerCase();
-  if (normalized === "" || isDocsOnlyPath(normalized)) return false;
-  if (normalized.startsWith("apps/") || normalized.startsWith("packages/") || normalized.startsWith("plugins/")) {
-    return /\.(cjs|cts|js|jsx|mjs|mts|sh|ts|tsx)$/.test(normalized);
-  }
-  if (normalized.startsWith("src/")) {
-    return /\.(cjs|cts|js|jsx|mjs|mts|sh|ts|tsx)$/.test(normalized);
-  }
-  if (normalized.startsWith("scripts/") && !normalized.startsWith("scripts/test-")) {
-    return /\.(cjs|cts|js|jsx|mjs|mts|sh|ts|tsx)$/.test(normalized);
-  }
-  return false;
-}
-
-export function landingMergeTitle(input: {
-  issue: number;
-  title: string;
-  labels?: readonly string[];
-  changedFiles?: readonly string[];
-}): string {
-  const labels = new Set((input.labels ?? []).map((label) => label.trim().toLowerCase()));
-  let prefix = "chore";
-  const changedFiles = input.changedFiles ?? [];
-  if (changedFiles.length > 0 && changedFiles.every(isDocsOnlyPath)) {
-    prefix = "docs";
-  } else if (labels.has("type:bug") || labels.has("bug") || labels.has("type:fix") || labels.has("fix")) {
-    prefix = "fix";
-  } else if (
-    labels.has("type:feature") ||
-    labels.has("feature") ||
-    labels.has("type:enhancement") ||
-    labels.has("enhancement")
-  ) {
-    prefix = "feat";
-  } else if (changedFiles.some(isRuntimePath)) {
-    prefix = "fix";
-  }
-  return `${prefix}: #${input.issue} ${input.title}`;
-}
-
 /** The pre_merge / post_merge hook context builders the caller owns (so the
  * exact JSON shape stays defined once, next to the other hook contexts). */
+export { landingMergeTitle };
+
 export interface LandingHookContexts {
   preMerge(): string;
   postMerge(mergeSha?: string): string;
@@ -385,7 +345,12 @@ export type LandingResult =
         // differs). Landing the live head would merge commits nothing
         // validated; landing the validated tip would silently drop the
         // advance. Refuse, naming both SHAs in `message`.
-        | "stale-head";
+        | "stale-head"
+        // #4138: nothing in the verdicts ledger authorizes the head this
+        // landing would merge — no row, a voided one, a judgement of a
+        // different tree, or a verifier that refused or could not conclude.
+        // `message` carries the refusal and the repair it names.
+        | "unverified-head";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -485,14 +450,11 @@ export async function doLanding(
     };
   }
   await deps.landingPhase?.("gate", { step: "push", status: "done" });
-  // #4134: one SHA passed the gate; a different one must not be what this merge ships (stale-head.ts).
-  if (input.validatedBranchTip) {
-    const { repoDir, remote, branch, base, intentBaseRef, validatedBranchTip } = input;
-    const verdict = await staleHeadVerdict(deps.mergeExec, {
-      repoDir, remote, branch, base, validatedBranchTip, ...(intentBaseRef == null ? {} : { intentBaseRef }),
-    });
-    if (verdict.stale) return { ok: false, reason: "stale-head", locked: input.locked, message: verdict.message };
-  }
+  // The head this merge would ship must be the head the gate validated (#4134)
+  // AND the head some other identity judged (#4138) — one precondition, because
+  // both fail for one reason: the merged tree is not the judged tree.
+  const refusal = await landHeadPrecondition(deps.mergeExec, input, deps.verdictGate);
+  if (refusal) return { ok: false, reason: refusal.reason, locked, message: refusal.message };
 
 
   // 2. pre_merge hook.

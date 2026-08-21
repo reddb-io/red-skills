@@ -121,3 +121,46 @@ describe("the armed head on merge custody (#4130)", () => {
     custodian.close();
   });
 });
+
+/**
+ * Entry point `acp-land-method` (Ticket #4138, ADR 0154). `bindAcpWorkerLand`
+ * is the daemon's door, and its verdict source is the `commit` the request
+ * carries: validated as one full object name and pinned as the custody
+ * record's `armed_head`, so a head that moves after arming is REPORTED rather
+ * than merged. The ledger question is deliberately not asked here — a daemon
+ * that read a project's verdicts would hold the per-issue policy ADR 0144 keeps
+ * out of it, so the Worker asks it before the request is ever sent.
+ */
+describe("the ACP land method's verdict source is the head it was handed (#4138)", () => {
+  it("refuses a handoff whose armed head is not one full object name", async () => {
+    const path = await custodyPath();
+    const { upstream } = upstreamFixture(() => ARMED);
+    const custodian = createGithubCustodian({
+      path, upstream, clock: () => new Date().toISOString(), tickMs: 3_600_000, inertMs: 3_600_000,
+    });
+
+    await expect(
+      custodian.handoff(PROJECT, CREDENTIAL, {
+        pull_request: 76, owner_ticket: 4138, branch: "afk/4138", base: "main", armed_head: "abc",
+      }),
+    ).rejects.toThrow(/full commit object name/);
+    custodian.close();
+  });
+
+  it("a head that moved after arming never merges — it is reported and watched", async () => {
+    const path = await custodyPath();
+    const { upstream, armCalls } = upstreamFixture(() => MOVED);
+    const custodian = createGithubCustodian({
+      path, upstream, clock: () => new Date().toISOString(), tickMs: 5, inertMs: 60_000,
+    });
+    await custodian.handoff(PROJECT, CREDENTIAL, {
+      pull_request: 77, owner_ticket: 4138, branch: "afk/4138-moved", base: "main", armed_head: ARMED,
+    });
+    await tickOnce();
+
+    expect(armCalls()).toBe(0);
+    const status = await custodian.status(PROJECT, CREDENTIAL);
+    expect(status.records[0]?.next_action).toBe("report-moved-head");
+    custodian.close();
+  });
+});

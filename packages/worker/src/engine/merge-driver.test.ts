@@ -266,3 +266,77 @@ describe("merge driver file store", () => {
     expect(state.prs["21"]).toMatchObject({ pr: 21, status: "armed", attempts: 0 });
   });
 });
+
+/**
+ * Entry point `merge-driver` (Ticket #4138, ADR 0154). Its verdict source is
+ * the pull request number on the armed record: the driver never chose the head
+ * and cannot see it, so the gate resolves the live head itself and is asked
+ * IMMEDIATELY before `io.merge` rather than at arming — a head that moves in
+ * between is exactly the gap the ticket closes.
+ */
+describe("merge driver requires a fresh verdict (#4138)", () => {
+  const CLEAN_GREEN: MergeDriverPrView = { state: "OPEN", mergeStateStatus: "CLEAN", checks: "green" };
+
+  it("refuses to merge a green PR nothing judged, and parks it terminally", async () => {
+    const store = memoryStore();
+    await armPr(store, 77, NOW);
+    const gh = io({ 77: [CLEAN_GREEN] });
+    const asked: unknown[] = [];
+
+    const entries = await runMergeDriverPass(gh, store, {
+      nowEpoch: NOW,
+      verdictGate: {
+        check: async (subject) => {
+          asked.push(subject);
+          return { allowed: false, reason: "no-verdict", message: "nobody judged pull request 77" };
+        },
+      },
+    });
+
+    expect(gh.merge).not.toHaveBeenCalled();
+    expect(entries).toEqual([
+      { pr: 77, action: "terminal-human", note: "nobody judged pull request 77" },
+    ]);
+    expect(store.value.prs["77"]).toMatchObject({ status: "needs-human", note: "nobody judged pull request 77" });
+    // The subject is the pull request; the gate resolves the head it will merge.
+    expect(asked).toEqual([{ kind: "pull-request", pr: 77 }]);
+  });
+
+  it("merges when a standing verdict judges the PR", async () => {
+    const store = memoryStore();
+    await armPr(store, 78, NOW);
+    const gh = io({ 78: [CLEAN_GREEN] });
+
+    const entries = await runMergeDriverPass(gh, store, {
+      nowEpoch: NOW,
+      verdictGate: {
+        check: async () => ({
+          allowed: true, matchedBy: "head-sha", verdict: "test-verified", identity: "codex:gpt-5",
+        }),
+      },
+    });
+
+    expect(gh.merge).toHaveBeenCalledWith(78, "merge");
+    expect(entries).toEqual([{ pr: 78, action: "merged" }]);
+  });
+
+  it("asks only when the pass would otherwise merge — a BEHIND branch is not a landing", async () => {
+    const store = memoryStore();
+    await armPr(store, 79, NOW);
+    const gh = io({ 79: [{ state: "OPEN", mergeStateStatus: "BEHIND", checks: "green" }] });
+    let calls = 0;
+
+    await runMergeDriverPass(gh, store, {
+      nowEpoch: NOW,
+      verdictGate: {
+        check: async () => {
+          calls += 1;
+          return { allowed: false, reason: "no-verdict", message: "unjudged" };
+        },
+      },
+    });
+
+    expect(gh.updateBranch).toHaveBeenCalledWith(79);
+    expect(calls).toBe(0);
+  });
+});

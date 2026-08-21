@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import type { LandVerdictGate } from "@reddb-io/shared/land-verdict.js";
 import type { EnginePaths } from "./paths.js";
 
 /**
@@ -379,7 +380,20 @@ export async function releasePr(
 export async function runMergeDriverPass(
   io: MergeDriverIo,
   store: MergeDriverStore,
-  options: { nowEpoch: number; maxAttempts?: number },
+  options: {
+    nowEpoch: number;
+    maxAttempts?: number;
+    /**
+     * ADR 0154's land precondition (#4138). The driver merges a PR whose head
+     * it never chose and cannot see, which is precisely the shape the rule
+     * exists for: green checks at pass time say the forge is happy, not that
+     * anyone judged this tree. Asked immediately before the merge and never
+     * cached, so a head that moved between the ask and the pass is judged
+     * again. Absent → the driver merges on the forge's assessment alone, which
+     * `LAND_ENTRY_POINTS` declares and its ratchet pins.
+     */
+    verdictGate?: LandVerdictGate;
+  },
 ): Promise<MergeDriverPassEntry[]> {
   const maxAttempts = options.maxAttempts ?? MERGE_DRIVER_MAX_ATTEMPTS;
   const state = await store.read();
@@ -456,6 +470,12 @@ export async function runMergeDriverPass(
       (view.mergeStateStatus === "CLEAN" || view.mergeStateStatus === "UNSTABLE") &&
       view.checks === "green"
     ) {
+      const judged = await options.verdictGate?.check({ kind: "pull-request", pr: record.pr });
+      if (judged && !judged.allowed) {
+        stamp({ status: "needs-human", attempts, lastState, proof, note: judged.message });
+        entries.push({ pr: record.pr, action: "terminal-human", note: judged.message });
+        continue;
+      }
       try {
         await io.merge(record.pr, "merge");
         stamp({ status: "merged", attempts, lastState, proof });

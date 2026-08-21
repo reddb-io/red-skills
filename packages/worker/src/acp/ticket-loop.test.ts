@@ -428,3 +428,63 @@ describe("the outcomes that reach no remote", () => {
     expect(result.detail).toContain("no pull request");
   });
 });
+
+/**
+ * Entry point `worker-land-request` (Ticket #4138, ADR 0154). Its verdict
+ * source is the commit its own publish stage produced — the exact object name
+ * the land request is about to carry (#4130) — asked before the request is
+ * sent. The ledger question lives here rather than on the daemon because a
+ * daemon that read per-project verdicts would hold the per-issue policy
+ * ADR 0144 keeps out of it.
+ */
+describe("the Ticket loop lands nothing nobody judged (#4138)", () => {
+  it("refuses at the land stage and never issues the request", async () => {
+    const methods: string[] = [];
+    const result = await runTicketLoop(
+      deps({
+        request: async (method) => {
+          methods.push(method);
+          return { version: 1, pull_request: 4321 };
+        },
+        landVerdictGate: {
+          check: async () => ({
+            allowed: false,
+            reason: "stale-verdict",
+            message: "the published head is judged only at another head",
+          }),
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("refused");
+    if (result.outcome !== "refused") return;
+    expect(result.stage).toBe("land");
+    expect(result.detail).toContain("judged only at another head");
+    expect(methods).not.toContain(REDSKILLS_ACP_METHODS.land);
+    expect(stages(result.records).at(-1)).toBe("land");
+  });
+
+  it("asks about the PUBLISHED commit, then lands", async () => {
+    const asked: unknown[] = [];
+    const result = await runTicketLoop(
+      deps({
+        landVerdictGate: {
+          check: async (subject) => {
+            asked.push(subject);
+            return {
+              allowed: true, matchedBy: "head-sha", verdict: "test-verified", identity: "codex:gpt-5",
+            };
+          },
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("landed");
+    expect(asked).toEqual([{ kind: "head", headSha: PUBLICATION.commit }]);
+  });
+
+  it("lands as before when no gate is wired", async () => {
+    const result = await runTicketLoop(deps());
+    expect(result.outcome).toBe("landed");
+  });
+});
