@@ -29,6 +29,10 @@
  */
 import { appendFile, mkdir, open, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type {
+  AttributionConfidence,
+  DeathSenderClass,
+} from "@reddb-io/shared/death-attribution.js";
 import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { encodeToonlLines } from "@reddb-io/toon";
 import {
@@ -247,6 +251,18 @@ export interface RedskilledHostEvent {
   readonly pids_peak: number | null;
   /** Bounded unit journal tail retained when the transient unit was collected. */
   readonly journal_tail: string | null;
+  /**
+   * WHO ended the Worker, in the shared attribution vocabulary (ADR 0155 §1).
+   *
+   * Carried STRUCTURALLY beside `detail` for the same reason `exit_code` is: a
+   * recovery policy turns on this word — a cgroup OOM earns a memory bump, a
+   * requested stop earns a plain retry — and a policy that recovered it by
+   * parsing the daemon's sentence would break the day the sentence was reworded.
+   * `null` on every event that is not a death.
+   */
+  readonly sender_class: DeathSenderClass | null;
+  /** How far the evidence behind {@link sender_class} goes; `null` beside it. */
+  readonly confidence: AttributionConfidence | null;
 }
 
 /** A host-event record whose discriminator carries the public stability promise. */
@@ -282,6 +298,8 @@ export interface RecordEventInput {
   readonly memorySwapPeakBytes?: number | null;
   readonly pidsPeak?: number | null;
   readonly journalTail?: string | null;
+  readonly senderClass?: DeathSenderClass | null;
+  readonly confidence?: AttributionConfidence | null;
   readonly reason?: string | null;
 }
 
@@ -298,6 +316,8 @@ export interface RecordWorkerEventInput {
   readonly memorySwapPeakBytes?: number | null;
   readonly pidsPeak?: number | null;
   readonly journalTail?: string | null;
+  readonly senderClass?: DeathSenderClass | null;
+  readonly confidence?: AttributionConfidence | null;
   readonly admissionVerdict?: string | null;
   readonly phase?: string | null;
   readonly step?: string | null;
@@ -359,6 +379,8 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     memory_swap_peak_bytes: input.memorySwapPeakBytes ?? null,
     pids_peak: input.pidsPeak ?? null,
     journal_tail: input.journalTail ?? null,
+    sender_class: input.senderClass ?? null,
+    confidence: input.confidence ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
   };
 }
@@ -399,6 +421,8 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     memory_swap_peak_bytes: null,
     pids_peak: null,
     journal_tail: null,
+    sender_class: null,
+    confidence: null,
     reason: null,
   };
 }

@@ -147,7 +147,6 @@ export const COMPLEXITY_COVERAGE_BASELINE: readonly ComplexityCoverageBaselineEn
   { path: "apps/redskilled/src/acp-workflow-turn.ts", name: "runAcpWorkflowTurn", crap: 380 },
   { path: "apps/redskilled/src/admission.ts", name: "isRedskilledAdmissionVerdict", crap: 702 },
   { path: "apps/redskilled/src/daemon/lifecycle.ts", name: "startRedskilledDaemon", crap: 422 },
-  { path: "apps/redskilled/src/daemon/tunables.ts", name: "observedWorkerDeath", crap: 1482 },
   { path: "apps/redskilled/src/host-state.ts", name: "isRedskilledUpgradeState", crap: 702 },
   { path: "apps/redskilled/src/project-registration-queue.ts", name: "isQueuePollPlanShape", crap: 420 },
   { path: "apps/redskilled/src/protocol.ts", name: "isRedskilledReapResult", crap: 462 },

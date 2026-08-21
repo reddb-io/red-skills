@@ -184,6 +184,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "no NEW function may carry more complexity than its package's tests reach (#4132, Spec #4129); the judged tree spans apps/ and packages/, the ceiling and its baseline live in apps/plugin-dev",
   },
   {
+    name: "invariants:daemon-death-evidence",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "the daemon may classify a death but may never learn what it cost (ADR 0155 §1, #4133): every death-evidence carrier under apps/redskilled/src must stay free of an issue number, a triage label and a tracker call, and the declaration and its suite live in apps/plugin-dev",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/plugin-dev",
     script: "test:invariants",

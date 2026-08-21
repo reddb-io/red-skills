@@ -87,14 +87,29 @@ export const DEATH_ATTRIBUTION_LANE_MAX_BYTES =
 const DEATH_ATTRIBUTION_LANE_TARGET_RATIO =
   LANE_RETENTION_REGISTRY["death-attributions"].targetRatio;
 
-/** Who ended the process. Five classes, one of which is honest ignorance. */
-export type DeathSenderClass =
-  | "oomd"
-  | "user-signal"
-  | "parent-death"
-  | "teardown"
-  | "boot-refused"
-  | "unknown";
+/**
+ * Who ended the process. Five classes, one of which is honest ignorance.
+ *
+ * Declared as a runtime tuple rather than a bare union because the classes now
+ * travel on a durable lane (ADR 0155): a reader decoding a row somebody else
+ * wrote has to be able to REFUSE a word this vocabulary does not contain, and a
+ * type alone refuses nothing at run time.
+ */
+export const DEATH_SENDER_CLASSES = [
+  "oomd",
+  "user-signal",
+  "parent-death",
+  "teardown",
+  "boot-refused",
+  "unknown",
+] as const;
+
+export type DeathSenderClass = typeof DEATH_SENDER_CLASSES[number];
+
+/** True when `value` names a sender class this version understands. */
+export function isDeathSenderClass(value: unknown): value is DeathSenderClass {
+  return typeof value === "string" && (DEATH_SENDER_CLASSES as readonly string[]).includes(value);
+}
 
 /**
  * How far the evidence goes.
@@ -105,7 +120,14 @@ export type DeathSenderClass =
  * `unknown` alone, so a reader can filter on the verdict or on the confidence and
  * get the same set.
  */
-export type AttributionConfidence = "high" | "medium" | "low" | "none";
+export const ATTRIBUTION_CONFIDENCES = ["high", "medium", "low", "none"] as const;
+
+export type AttributionConfidence = typeof ATTRIBUTION_CONFIDENCES[number];
+
+/** True when `value` names a confidence this version understands. */
+export function isAttributionConfidence(value: unknown): value is AttributionConfidence {
+  return typeof value === "string" && (ATTRIBUTION_CONFIDENCES as readonly string[]).includes(value);
+}
 
 /** The reaper's verdict for one absent-but-expected record. */
 export interface DeathAttribution {

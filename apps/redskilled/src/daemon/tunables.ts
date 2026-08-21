@@ -112,8 +112,19 @@ export function observedWorkerDeath(
     // finer heartbeat or phase, and inventing either would be worse than saying so.
     last_seen: event.ts,
     last_phase: bootRefused ? "boot-refused" : "unreported",
-    sender_class: hostEndedWorker ? "teardown" : bootRefused ? "boot-refused" : unitOom ? "oomd" : signalled ? "user-signal" : "unknown",
-    confidence: hostEndedWorker || bootRefused || signalled || unitAttributed ? "high" : "none",
+    // The daemon's own act and a boot refusal are CONTEXT, known here and
+    // nowhere else. Everything else was already classified where the receipt was
+    // read (`daemon/unit-death.ts`), so this surface reads that verdict rather
+    // than deriving a second one — two classifiers over one receipt is two
+    // answers to one question, and the durable lane holds only one of them.
+    sender_class: hostEndedWorker
+      ? "teardown"
+      : bootRefused
+        ? "boot-refused"
+        : event.sender_class ?? (unitOom ? "oomd" : signalled ? "user-signal" : "unknown"),
+    confidence: hostEndedWorker || bootRefused
+      ? "high"
+      : event.confidence ?? (signalled || unitAttributed ? "high" : "none"),
     signal: event.signal,
     host_boot_changed: false,
     // A budget kill is the daemon's own act and therefore evidence. A spontaneous
