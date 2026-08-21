@@ -702,7 +702,7 @@ The **Label family** that declares at triage time the minimum **Countersign** cl
 _Avoid_: verification tier (tier names the model policy), risk label
 
 **Standing orders**:
-The operator's append-only per-drain register of numbered instructions, written through the daemon and injected verbatim into every Worker brief and resume. The reflex: an instruction the operator catches themselves repeating is appended before acting. Orders that stabilise are promoted into CLAUDE.md by PR; the register is drain-scoped, not a second permanent home.
+The operator's append-only per-drain register of numbered instructions, written through the daemon and injected verbatim into every Worker brief and resume. The reflex: an instruction the operator catches themselves repeating is appended before acting. Orders that stabilise are promoted into CLAUDE.md by PR; the register is drain-scoped, not a second permanent home. **Recurrence is the promotion signal**: `weekly_review` reports an order appended under more than one of the week's drains as a promotion candidate, naming the drains it recurred in — and stops there, because promotion is the human PR and a review that edited CLAUDE.md would be a second writer nobody approved.
 _Avoid_: preferences file, steering (**runner_steer** is a point-in-time nudge, not a standing register)
 
 **Harvest deadline**:

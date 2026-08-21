@@ -56,6 +56,39 @@ export interface ActivityReviewTokenSummary {
   sourceRecords: number;
 }
 
+/**
+ * One **Standing order** as it was observed inside one drain of the review
+ * window. The register itself is append-only and drain-scoped (ADR 0156), so
+ * the same instruction an operator keeps repeating shows up once per drain —
+ * which is exactly the signal the weekly window reads.
+ */
+export interface ActivityReviewStandingOrder {
+  /** The drain the order was appended under. */
+  drain: string;
+  /** Its number in that drain's register. */
+  n: number;
+  /** The order verbatim, as the operator wrote it. */
+  text: string;
+  /** When it was appended, or null when the register row carries no stamp. */
+  ts: string | null;
+}
+
+/**
+ * A Standing order that recurred across drains, reported as a candidate for
+ * promotion into CLAUDE.md. **The review only surfaces the signal** — promotion
+ * is a human PR, and nothing here writes to CLAUDE.md or to the register.
+ */
+export interface ActivityReviewStandingOrderPromotion {
+  /** The order as it was first spelled in the window. */
+  text: string;
+  /** The distinct drains it recurred in, oldest first. */
+  drains: string[];
+  /** How many times it was appended across those drains. */
+  occurrences: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+}
+
 export interface ActivityReviewInput {
   kind: ActivityReviewKind;
   now: Date;
@@ -65,6 +98,8 @@ export interface ActivityReviewInput {
   history: HistoryRecord[];
   activeWorkers: ActivityReviewActiveWorker[];
   tokenSummary: ActivityReviewTokenSummary;
+  /** Standing orders observed in the window, one row per append. */
+  standingOrders?: ActivityReviewStandingOrder[];
 }
 
 export interface ActivityReviewInterval {
@@ -126,6 +161,7 @@ export interface ActivityReviewReport {
   };
   workers: ActivityReviewWorkerSummary[];
   challenges: ActivityReviewChallenge[];
+  standing_order_promotions: ActivityReviewStandingOrderPromotion[];
   issue_cycle_times: ActivityReviewCycleRow[];
   pr_cycle_times: ActivityReviewCycleRow[];
   warnings: string[];
@@ -282,6 +318,79 @@ function cycleRow(
   };
 }
 
+/**
+ * How many distinct drains an order must recur in before the weekly review
+ * calls it a promotion candidate. **Two is the smallest number that is a
+ * pattern** — an order appended once is that drain's correction, not a standing
+ * rule the repo should carry in CLAUDE.md.
+ */
+export const STANDING_ORDER_PROMOTION_MIN_DRAINS = 2;
+
+/**
+ * The same instruction, differently spelled. Case, inner spacing and trailing
+ * sentence punctuation carry no rule, so they must not split one recurring
+ * order into two singletons that nothing flags. PURE.
+ */
+function standingOrderKey(text: string): string {
+  return text.replace(/\s+/g, " ").trim().replace(/[.;!]+$/, "").toLowerCase();
+}
+
+interface DatedStandingOrder {
+  order: ActivityReviewStandingOrder;
+  at: Date;
+}
+
+/**
+ * Standing orders that recurred across drains inside the interval, oldest
+ * spelling kept and drains listed in the order they first carried the order.
+ *
+ * **Read-only by construction**: this reads rows the caller already gathered
+ * and returns a report. Promotion into CLAUDE.md is a human PR, so nothing here
+ * touches CLAUDE.md, the register, or any other file. An order stamped outside
+ * the interval, or carrying no usable stamp, is not part of "the week's drains"
+ * and is left out rather than attributed to a drain nobody can name. PURE.
+ */
+export function standingOrderPromotionCandidates(
+  orders: readonly ActivityReviewStandingOrder[],
+  interval: ActivityReviewInterval,
+): ActivityReviewStandingOrderPromotion[] {
+  const dated: DatedStandingOrder[] = [];
+  for (const order of orders) {
+    const at = parseDate(order.ts);
+    if (!inRange(at, interval) || at === null) continue;
+    dated.push({ order, at });
+  }
+  dated.sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  const groups = new Map<string, ActivityReviewStandingOrderPromotion>();
+  for (const { order, at } of dated) {
+    const key = standingOrderKey(order.text);
+    if (key === "") continue;
+    const stamp = at.toISOString();
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = { text: order.text.trim(), drains: [], occurrences: 0, firstSeen: stamp, lastSeen: stamp };
+      groups.set(key, group);
+    }
+    group.occurrences += 1;
+    group.lastSeen = stamp;
+    if (!group.drains.includes(order.drain)) group.drains.push(order.drain);
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.drains.length >= STANDING_ORDER_PROMOTION_MIN_DRAINS)
+    .sort((a, b) => b.drains.length - a.drains.length || b.occurrences - a.occurrences || a.text.localeCompare(b.text));
+}
+
+/**
+ * How many observed orders the promotion comparison could not place in the
+ * week — a row with no usable stamp belongs to no drain the report can name.
+ * PURE.
+ */
+function undatedStandingOrders(orders: readonly ActivityReviewStandingOrder[]): number {
+  return orders.filter((order) => parseDate(order.ts) === null).length;
+}
+
 export function buildActivityReviewReport(input: ActivityReviewInput): ActivityReviewReport {
   const interval = activityReviewInterval(input.kind, input.now);
   const issuesCreated = input.issues.filter((issue) => inRange(parseDate(issue.createdAt), interval));
@@ -310,9 +419,22 @@ export function buildActivityReviewReport(input: ActivityReviewInput): ActivityR
     }))
     .sort((a, b) => a.issue - b.issue);
 
+  // Promotion candidates are a WEEKLY judgement: one day of drains is one
+  // operator sitting down once, and calling that a standing rule of the repo
+  // would promote today's correction. `daily_review` stays the operational read.
+  const standingOrders = input.standingOrders ?? [];
+  const standingOrderPromotions = input.kind === "weekly"
+    ? standingOrderPromotionCandidates(standingOrders, interval)
+    : [];
+
   const warnings: string[] = [];
   if (!input.tokenSummary.available) {
     warnings.push("Token spend was not available in retained local worker logs; runner usage is best-effort and not guaranteed by the AFK artifact schema.");
+  }
+
+  const undated = input.kind === "weekly" ? undatedStandingOrders(standingOrders) : 0;
+  if (undated > 0) {
+    warnings.push(`${undated} standing order(s) carry no usable timestamp and were left out of the promotion comparison.`);
   }
 
   return {
@@ -339,6 +461,7 @@ export function buildActivityReviewReport(input: ActivityReviewInput): ActivityR
     },
     workers,
     challenges,
+    standing_order_promotions: standingOrderPromotions,
     issue_cycle_times: issuesClosed
       .map((issue) => cycleRow(issue, issue.closedAt, interval))
       .sort((a, b) => a.number - b.number),
@@ -370,6 +493,28 @@ function fmtTokenSummary(tokens: ActivityReviewTokenSummary): string {
   if (tokens.input !== null) parts.push(`input ${tokens.input}`);
   if (tokens.output !== null) parts.push(`output ${tokens.output}`);
   return parts.length > 0 ? parts.join(" / ") : "observed";
+}
+
+/**
+ * The promotion-candidates section: which orders recurred, and in which drains.
+ * The weekly window is the only one that carries it, and the section states its
+ * own limit — **the review surfaces the signal, a human PR promotes**. PURE.
+ */
+export function renderStandingOrderPromotions(report: ActivityReviewReport): string[] {
+  if (report.kind !== "weekly") return [];
+  const lines = ["", "Standing order promotion candidates"];
+  if (report.standing_order_promotions.length === 0) {
+    lines.push("  (no standing order recurred across drains this week)");
+    return lines;
+  }
+  for (const candidate of report.standing_order_promotions) {
+    lines.push(`  ${candidate.text}`);
+    lines.push(
+      `    recurred in ${candidate.drains.length} drains (${candidate.drains.join(", ")}), ${candidate.occurrences} appends`,
+    );
+  }
+  lines.push("  promote by PR into CLAUDE.md; this review writes nothing.");
+  return lines;
 }
 
 export function renderActivityReviewReport(report: ActivityReviewReport): string {
@@ -418,6 +563,8 @@ export function renderActivityReviewReport(report: ActivityReviewReport): string
       lines.push(`    resolution: ${challenge.resolution}`);
     }
   }
+
+  lines.push(...renderStandingOrderPromotions(report));
 
   lines.push("", "Issue cycle times");
   if (report.issue_cycle_times.length === 0) {
@@ -470,6 +617,10 @@ function toToonSafeActivityReviewReport(report: ActivityReviewReport): ToonValue
     challenges: report.challenges.map((challenge) => ({
       ...challenge,
       labels: challenge.labels.join(","),
+    })),
+    standing_order_promotions: report.standing_order_promotions.map((candidate) => ({
+      ...candidate,
+      drains: candidate.drains.join(","),
     })),
   };
   return JSON.parse(JSON.stringify(payload)) as ToonValue;

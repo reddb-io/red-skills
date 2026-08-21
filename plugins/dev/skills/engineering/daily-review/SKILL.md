@@ -1,7 +1,7 @@
 ---
 name: daily-review
 working-mode: spec-driven
-description: Generates a RedSkills operational review for a requested period. Default period is yesterday midnight to now (one day); pass `--period week` for a six-day window. Covers delivered work, local AFK workers, cycle times, and HITL/blocker challenges. Use when the user invokes `/daily-review`, `/weekly-review`, asks for daily or weekly delivery numbers, issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
+description: Generates a RedSkills operational review for a requested period. Default period is yesterday midnight to now (one day); pass `--period week` for a six-day window. Covers delivered work, local AFK workers, cycle times, HITL/blocker challenges, and — for the week — Standing orders recurring across drains as CLAUDE.md promotion candidates. Use when the user invokes `/daily-review`, `/weekly-review`, asks for daily or weekly delivery numbers, issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
 argument-hint: "[--period day|week] [--json] [--human]"
 disable-model-invocation: true
 ---
@@ -58,6 +58,13 @@ empty tables use the definitive `key[0]:` empty state.
   labels, issue bodies/comments, and local AFK history reasons.
 - Issue and PR cycle times: closed-in-interval rows include items opened before
   the interval, so old work closed in the review window remains visible.
+- Standing order promotion candidates (**week only**): Standing orders appended
+  under more than one of the week's drains, each naming the drains it recurred
+  in. One drain is that drain's correction; two are a pattern worth carrying in
+  the repo. **The report writes nothing** — it neither edits CLAUDE.md nor
+  touches the register, because promotion is a human PR. An order stamped
+  outside the window, or carrying no usable timestamp, is left out and counted
+  in the warnings rather than attributed to a drain nobody can name.
 
 ## Notes
 
