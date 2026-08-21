@@ -31,6 +31,7 @@ import { parkGateBlockedTurn } from "./demand-park.js";
 import { readProjectTicketBody } from "./acp-github.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { ACP_AGENT_IDS, type AcpAgentId } from "@reddb-io/protocol-acp";
+import { briefWithStandingOrders } from "@reddb-io/shared/standing-orders.js";
 import { expandLaunchTemplate } from "./launch-template.js";
 import {
   cleanupWorkflowWorker,
@@ -147,7 +148,7 @@ export function queueBriefing(
  * as it always did, and a template naming a fact this birth does not have is
  * refused BEFORE anything is spawned. PURE.
  *
- * @param standingOrders - Optional standing orders to prepend to the prompt
+ * @param standingOrders - The operator's standing orders, verbatim and untagged
  */
 export function demandTurnForBirth(
   registration: {
@@ -175,10 +176,12 @@ export function demandTurnForBirth(
     workspace_path: birth.workspace_path,
     ...(birth.work_item == null ? {} : { work_item: birth.work_item }),
   }).argv[0]!;
-  // Prepend standing orders to the prompt if present
-  const withOrders = standingOrders != null && standingOrders !== ""
-    ? `${standingOrders}\n${expanded}`
-    : expanded;
+  // The prompt has one channel, so the orders ride in front of it, in the same
+  // `<standing-orders>` section the Worker's Ticket loop emits. The Ticket has
+  // two channels and uses the second: spliced into `handoff` the orders were
+  // linted as if they were the brief's acceptance criteria, and dropped by the
+  // first re-seed that replaced the brief (#4141).
+  const withOrders = briefWithStandingOrders(standingOrders, expanded);
   // The handoff is stated only when every fact it requires is present: a Ticket
   // briefed with an empty title or no trunk is one the Worker refuses, and a
   // refusal the daemon could have avoided is a Worker born to fail.
@@ -198,8 +201,9 @@ export function demandTurnForBirth(
           title: ticket!.title,
           labels: [...ticket!.labels],
           base: base!,
-          handoff: withOrders,
+          handoff: expanded,
           worker_id: workerId,
+          ...(standingOrders == null || standingOrders === "" ? {} : { standing_orders: standingOrders }),
           ...(registration.validation_commands == null || registration.validation_commands.length === 0
             ? {}
             : { validation_commands: [...registration.validation_commands] }),

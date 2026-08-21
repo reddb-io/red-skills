@@ -44,6 +44,7 @@
     "./rsp-entry.js": "./rsp-entry.ts",
     "./self-update.js": "./self-update.ts",
     "./served-version.js": "./served-version.ts",
+    "./standing-orders.js": "./standing-orders.ts",
     "./toon-migration.js": "./toon-migration.ts",
     "./worker-scope.js": "./worker-scope.ts",
     "./worker-workspace.js": "./worker-workspace.ts",

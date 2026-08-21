@@ -111,7 +111,14 @@ export const WORKING_MODE_DOC_CONTRACT: readonly SkillToolBinding[] = [
     skill: "plugins/dev/skills/engineering/ask-red/SKILL.md",
     mode: "interactive",
     server: "rs_dev",
-    tools: ["project_reset", "reconcile_engine", "runner_detect", "runner_list"],
+    tools: [
+      "project_reset",
+      "reconcile_engine",
+      "runner_detect",
+      "runner_list",
+      "standing_orders_append",
+      "standing_orders_show",
+    ],
     why: "the router names the tool each destination is reached by, so a route is callable rather than descriptive",
   },
   {

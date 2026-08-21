@@ -67,6 +67,21 @@ export interface RedskillsTicketHandoff {
    * under the Worker's memory ceiling.
    */
   readonly validation_commands?: readonly string[];
+  /**
+   * The operator's standing orders, verbatim (Spec #4129, #4141).
+   *
+   * Its OWN field, and that is the whole point. The daemon used to splice the
+   * orders onto the front of `handoff`, which made them indistinguishable from
+   * the brief: the brief contract linted them as if they were acceptance
+   * criteria, a re-seed's replacement text dropped them, and the Worker had no
+   * way to render them as the authoritative block the exit protocol names. A
+   * directive that survives every respawn has to travel as a directive.
+   *
+   * Refined like its peers — DROPPED, never refused, when malformed. An
+   * operator's typo in their orders should cost the orders, not the Ticket:
+   * refusing the handoff would strand the work with no channel to say why.
+   */
+  readonly standing_orders?: string;
 }
 
 /** The six fields a handoff must state; the rest are refinements. */
@@ -131,6 +146,9 @@ function optionalTicketFields(ticket: Record<string, unknown>): Partial<Redskill
       : {}),
     ...(isStringArray(ticket.validation_commands)
       ? { validation_commands: ticket.validation_commands }
+      : {}),
+    ...(typeof ticket.standing_orders === "string" && ticket.standing_orders.trim() !== ""
+      ? { standing_orders: ticket.standing_orders }
       : {}),
   };
 }

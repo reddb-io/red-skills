@@ -142,6 +142,7 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
         labels: ticket.labels,
         base: ticket.base,
         handoff: ticket.handoff,
+        ...(ticket.standing_orders == null ? {} : { standingOrders: ticket.standing_orders }),
       },
       workerId: ticket.worker_id,
       sessionId,

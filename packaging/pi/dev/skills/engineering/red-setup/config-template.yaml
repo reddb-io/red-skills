@@ -40,6 +40,13 @@ plugins:
   #       runner: codex           # both runner and target are required
   #       target: 4               # MCP sessions auto-register; the daemon keeps
   #                               # recoverable intent while queued work remains
+  #     standing_orders:          # durable maintainer directives (#4141)
+  #       enabled: false          # opt OUT only. When left alone, `.red/
+  #                               # STANDING-ORDERS.md` (if it exists) is read at
+  #                               # every handoff composition and emitted verbatim
+  #                               # as the handoff's <standing-orders> section, so
+  #                               # an instruction given once survives every
+  #                               # respawn. An absent file emits nothing.
   #     setup:                    # required repository-owned dependency setup
   #       - LEFTHOOK=0 pnpm install --frozen-lockfile
   #                               # /red-setup detects the package/hook managers,
