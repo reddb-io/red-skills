@@ -140,6 +140,42 @@ describe("the registered runner reaches the born Worker", () => {
   });
 });
 
+describe("the daemon-owned claude-code credential home (#4278 follow-up)", () => {
+  it("points the adapter at a daemon-owned config dir, never the operator's", () => {
+    const env = childAgentWorkspaceEnv("claude-code", "/tmp/w", "/home/op");
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/home/op/.red/redskilled/agent-homes/claude-code");
+    expect(env.CLAUDE_CONFIG_DIR).not.toContain("/home/op/.claude");
+  });
+
+  it("seeds the operator credential, re-seeds on re-login, and keeps a child's own refresh", async () => {
+    const home = await mkdtemp(join(tmpdir(), "redskilled-cc-home-"));
+    roots.push(home);
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(join(home, ".claude", ".credentials.json"), '{"t":"operator-1"}');
+
+    await ensureChildAgentHome("claude-code", home);
+    const seeded = join(home, ".red/redskilled/agent-homes/claude-code/.credentials.json");
+    expect(await readFile(seeded, "utf8")).toBe('{"t":"operator-1"}');
+    expect(((await stat(seeded)).mode & 0o777)).toBe(0o600);
+
+    await writeFile(seeded, '{"t":"child-refreshed"}');
+    const past = new Date(Date.now() - 60_000);
+    await utimes(join(home, ".claude", ".credentials.json"), past, past);
+    await ensureChildAgentHome("claude-code", home);
+    expect(await readFile(seeded, "utf8")).toBe('{"t":"child-refreshed"}');
+
+    await writeFile(join(home, ".claude", ".credentials.json"), '{"t":"operator-2"}');
+    await ensureChildAgentHome("claude-code", home);
+    expect(await readFile(seeded, "utf8")).toBe('{"t":"operator-2"}');
+  });
+
+  it("refuses by name when the operator never logged in, naming the login command", async () => {
+    const home = await mkdtemp(join(tmpdir(), "redskilled-cc-home-"));
+    roots.push(home);
+    await expect(ensureChildAgentHome("claude-code", home)).rejects.toThrow(/claude login/);
+  });
+});
+
 describe("the daemon-owned codex home", () => {
   it("is refused loudly when the operator never logged in", async () => {
     const home = await mkdtemp(join(tmpdir(), "redskilled-agent-home-"));

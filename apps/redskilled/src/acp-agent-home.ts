@@ -24,6 +24,39 @@ import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
  */
 const OPENCODE_ENGINE_AGENTS = new Set<AcpAgentId>(["redcode", "opencode"]);
 
+/**
+ * The Agents whose credential the daemon seeds into a home of its own.
+ *
+ * An Agent that authenticates through a login file cannot use the operator's
+ * home: a Worker inherits no interactive dotfiles (that is the point — the
+ * operator's `~/.codex/config.toml` named a model the pinned adapter could not
+ * run), and inheriting nothing means it authenticates as nobody. Observed as
+ * `Authentication required` on the first live claude-code drain (#4278's
+ * posture half was proven while its credential half was not). Each entry
+ * states the env var the Agent reads, the operator file it logs into, and the
+ * file name inside the daemon's home.
+ */
+const CREDENTIAL_HOMES = {
+  codex: { env: "CODEX_HOME", operatorDir: ".codex", file: "auth.json", login: "codex login" },
+  "claude-code": {
+    env: "CLAUDE_CONFIG_DIR",
+    operatorDir: ".claude",
+    file: ".credentials.json",
+    login: "claude login",
+  },
+} as const satisfies Partial<Record<AcpAgentId, {
+  readonly env: string;
+  readonly operatorDir: string;
+  readonly file: string;
+  readonly login: string;
+}>>;
+
+type CredentialAgent = keyof typeof CREDENTIAL_HOMES;
+
+function credentialHome(agent: AcpAgentId): (typeof CREDENTIAL_HOMES)[CredentialAgent] | undefined {
+  return (CREDENTIAL_HOMES as Record<string, (typeof CREDENTIAL_HOMES)[CredentialAgent] | undefined>)[agent];
+}
+
 /** The env one child Agent needs to stand apart from its siblings and the operator. PURE. */
 export function childAgentWorkspaceEnv(
   agent: AcpAgentId,
@@ -34,13 +67,19 @@ export function childAgentWorkspaceEnv(
   // workspace, named for the Agent that owns it — so the file dies with the
   // workspace and two Agents in one workspace never collide either.
   if (OPENCODE_ENGINE_AGENTS.has(agent)) return { OPENCODE_DB: join(workspacePath, `${agent}.db`) };
-  if (agent === "codex") return { CODEX_HOME: codexAgentHome(homeDirPath) };
+  const credential = credentialHome(agent);
+  if (credential != null) return { [credential.env]: agentCredentialHome(agent, homeDirPath) };
   return {};
 }
 
-/** The daemon-owned codex home; the operator's `~/.codex` is never a Worker's. */
+/** The daemon-owned home for one Agent; the operator's own is never a Worker's. */
+export function agentCredentialHome(agent: AcpAgentId, homeDirPath: string = homedir()): string {
+  return join(redskilledHomeDir(homeDirPath), "agent-homes", agent);
+}
+
+/** The daemon-owned codex home. Kept as the name its callers already import. */
 export function codexAgentHome(homeDirPath: string = homedir()): string {
-  return join(redskilledHomeDir(homeDirPath), "agent-homes", "codex");
+  return agentCredentialHome("codex", homeDirPath);
 }
 
 /**
@@ -52,16 +91,18 @@ export function codexAgentHome(homeDirPath: string = homedir()): string {
  * loudly here, before a Worker is born to fail on it.
  */
 export async function ensureChildAgentHome(agent: AcpAgentId, homeDirPath: string = homedir()): Promise<void> {
-  if (agent !== "codex") return;
-  const home = codexAgentHome(homeDirPath);
+  const credential = credentialHome(agent);
+  if (credential == null) return;
+  const home = agentCredentialHome(agent, homeDirPath);
   await mkdir(home, { recursive: true, mode: 0o700 });
-  const seeded = join(home, "auth.json");
-  const operator = join(homeDirPath, ".codex", "auth.json");
+  const seeded = join(home, credential.file);
+  const operator = join(homeDirPath, credential.operatorDir, credential.file);
   const [seededAt, operatorAt] = await Promise.all([mtimeOf(seeded), mtimeOf(operator)]);
   if (operatorAt == null) {
     if (seededAt != null) return;
     throw new Error(
-      "codex has no host login: ~/.codex/auth.json is absent. Run `codex login` as the operator first.",
+      `${agent} has no host login: ~/${credential.operatorDir}/${credential.file} is absent. ` +
+        `Run \`${credential.login}\` as the operator first.`,
     );
   }
   if (seededAt == null || operatorAt > seededAt) {
