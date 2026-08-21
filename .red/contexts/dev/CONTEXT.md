@@ -713,6 +713,10 @@ _Avoid_: soft deadline, timeout (the drain is not killed — admission stops, la
 Decision-level rows in `worker.log.toonl` — one row per fork taken, pivot, revert, blocker, or verified unit, with the why and an evidence pointer, never prose. At drain end an **Attention audit** (a different model family than the workers) reads trails against outcomes and emits the "Attention" section the operator reads first; `daily_review` consumes it.
 _Avoid_: narration (lifecycle events already exist), audit log
 
+**Attention audit**:
+The drain-end read of the **Decision trail** against the drain's outcomes, written by an identity on a **different model family** than the drain's Workers — a mind grading its own night re-accepts the evidence it already accepted. Three findings are computed, not judged: **weak evidence** (an `evidence` field holding prose instead of a pointer), **unproven claims** (a `verified-unit` row for an issue the drain never landed), and **unlogged pivots** (more re-entries than the trail has pivot/revert rows). The model call is the judgment step alone. `daily_review` prints the result as the "Attention" section, first — before the numbers, or the numbers frame the audit.
+_Avoid_: postmortem (a postmortem follows a death; this follows every drain), lint
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
