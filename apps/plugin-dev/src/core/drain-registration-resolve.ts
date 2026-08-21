@@ -37,6 +37,11 @@ export function drainRegistrationFor(
     : DEFAULT_FLEET_WIDTH;
   const runner = typeof input.runner === "string" && input.runner.length > 0 ? input.runner : undefined;
   const declared = declaredGateCommands(root);
+  // The operator's harvest budget, carried only when they stated one: a default
+  // here would be the daemon inventing a deadline nobody asked for (#4170).
+  const budgetMs = typeof input.budget_ms === "number" && Number.isFinite(input.budget_ms) && input.budget_ms > 0
+    ? input.budget_ms
+    : undefined;
   return buildDrainRegistration({
     repo,
     workspacePath: root,
@@ -45,6 +50,7 @@ export function drainRegistrationFor(
     ...(runner == null ? {} : { runner }),
     ...(trunkBranch(root) == null ? {} : { trunkBranch: trunkBranch(root) }),
     ...(declared.length === 0 ? {} : { validationCommands: declared }),
+    ...(budgetMs == null ? {} : { budgetMs }),
   });
 }
 

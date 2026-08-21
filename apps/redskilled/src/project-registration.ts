@@ -57,6 +57,7 @@ import {
   type RedskilledPublicHostEventKind,
 } from "./event-lane.js";
 import type { RedskilledQueueOutcome } from "./queue-discovery.js";
+import { requireHarvestDeclaration, type RedskilledHarvestDeclaration } from "./harvest-deadline.js";
 import {
   isQueuePollPlanShape,
   requireQueuePollPlan,
@@ -122,7 +123,7 @@ export interface RedskilledTrunk {
  * stating it in a clock the daemon cannot check, and a few seconds of skew would
  * silently lengthen or shorten every registration on the host.
  */
-export interface RedskilledProjectRegistrationRequest {
+export interface RedskilledProjectRegistrationRequest extends RedskilledHarvestDeclaration {
   /** The repository identity, carried as the same opaque label a Worker carries. */
   readonly project_label: string;
   /** The query that names this project's work. Opaque — carried, never read. */
@@ -160,7 +161,7 @@ export interface RedskilledProjectRegistrationRequest {
 }
 
 /** One project the daemon holds, as it reports it back. */
-export interface RedskilledProjectRegistration {
+export interface RedskilledProjectRegistration extends RedskilledHarvestDeclaration {
   readonly version: 1;
   readonly project_label: string;
   readonly selector: string;
@@ -293,6 +294,9 @@ export function buildProjectRegistration(
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
+  // The operator's harvest budget, checked exactly as opaquely: two numbers
+  // compared against the daemon's own clock, never a sentence (#4170).
+  const harvest = requireHarvestDeclaration(request, projectLabel);
   const workspacePath = requireText(
     request.workspace_path,
     `a workspace path for project ${JSON.stringify(projectLabel)}`,
@@ -340,6 +344,7 @@ export function buildProjectRegistration(
     ...(hooks == null ? {} : { hooks }),
     ...(prompt == null ? {} : { prompt }),
     ...(validationCommands == null || validationCommands.length === 0 ? {} : { validation_commands: validationCommands }),
+    ...harvest,
     target: request.target,
     ...(request.standing === true ? { standing: true } : {}),
     registered_at: new Date(nowMs).toISOString(),

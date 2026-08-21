@@ -409,6 +409,14 @@ jobs:
         if: env.RUN_ACP == 'true'
         run: pnpm -C apps/redskilled test:acp-agent-conformance
 
+      # The harvest deadline decides whether a budgeted drain admits a claim or
+      # spends its last third landing what is in flight (#4170). Both halves are
+      # daemon answers over the socket, so they need the daemon — and the broad
+      # gate that used to carry it is gone.
+      - name: Test the harvest deadline over ACP
+        if: env.RUN_ACP == 'true'
+        run: pnpm -C apps/redskilled test:acp-harvest-deadline
+
       - name: Report narrowed scope
         if: env.RUN_ACP != 'true'
         run: echo "apps/redskilled is not in the affected cone — no local ACP transport check to run."

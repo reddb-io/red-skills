@@ -53,6 +53,11 @@ const FOCUSED_ACP_SUITES = [
     suite: "tests/acp-agent-conformance.test.ts",
     why: "the five supported Agents, each probed at the ACP baseline before a Worker may reach it",
   },
+  {
+    script: "test:acp-harvest-deadline",
+    suite: "tests/acp-harvest-deadline.test.ts",
+    why: "a budgeted drain refusing a new claim past the harvest fraction while a landing in flight completes",
+  },
 ] as const;
 
 /** The broad gates #3878 removed, each with the focused surface that answers it. */

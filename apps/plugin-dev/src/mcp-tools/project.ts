@@ -136,10 +136,11 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       name: "drain",
       title: "Make this project drain",
       description:
-        "MUTATING: ensure the daemon is reachable and this project is registered. Omitted runner and target resolve from this project's canonical RedSkills configuration; repeated calls report what was kept.",
+        "MUTATING: ensure the daemon is reachable and this project is registered. Omitted runner and target resolve from this project's canonical RedSkills configuration; repeated calls report what was kept. An optional budget_ms arms the harvest deadline: past 70% of it the daemon admits no new claim and spends the rest landing what is in flight. No budget_ms, no deadline.",
       inputSchema: {
         runner: z.string().min(1).optional(),
         target: z.number().int().min(0).optional(),
+        budget_ms: z.number().int().positive().optional(),
       },
       invoke: async (input) => deps.drain(input as unknown as ProjectDrainInput),
     },

@@ -52,8 +52,8 @@ const SURFACE: ReadonlyArray<{
     name: "drain",
     title: "Make this project drain",
     description:
-      "MUTATING: ensure the daemon is reachable and this project is registered. Omitted runner and target resolve from this project's canonical RedSkills configuration; repeated calls report what was kept.",
-    schema: ["runner", "target"],
+      "MUTATING: ensure the daemon is reachable and this project is registered. Omitted runner and target resolve from this project's canonical RedSkills configuration; repeated calls report what was kept. An optional budget_ms arms the harvest deadline: past 70% of it the daemon admits no new claim and spends the rest landing what is in flight. No budget_ms, no deadline.",
+    schema: ["runner", "target", "budget_ms"],
   },
   {
     name: "project_start",

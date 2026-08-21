@@ -104,7 +104,7 @@ that block, startup preserves the explicit-only `drain`/`project_start` behavior
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `project_activation` | read | Report whether this project opted into RedSkills and the canonical runner and target that a no-argument `drain` would register. |
-| `drain` | mutating | Ensure the daemon is reachable and this project is registered at the requested runner and target. Repeated calls succeed with a four-dimension difference report; a runner change is refused with the explicit stop-then-drain repair. |
+| `drain` | mutating | Ensure the daemon is reachable and this project is registered at the requested runner and target. Repeated calls succeed with a four-dimension difference report; a runner change is refused with the explicit stop-then-drain repair. An optional `budget_ms` arms the **Harvest deadline**: past 70% of the declared budget the daemon admits no new claim and spends the rest landing what is in flight, and `project_status` reports `harvest` with the harvested and stranded counts. Declare it only when you mean it — no `budget_ms`, no deadline. |
 | `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
 | `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `status {scope: project}` at `birth_latch.repair`; the structured repair supplies the exact args. |
