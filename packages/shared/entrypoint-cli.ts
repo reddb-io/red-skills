@@ -27,6 +27,7 @@
  * is npm's tarball shasum. See ADR 0091 / 0084 / 0039 / 0038.
  */
 
+import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -404,7 +405,10 @@ async function main(): Promise<void> {
 }
 
 // Only execute when invoked directly (`node red-fetch.mjs …`), never when
-// imported (e.g. the unit test importing `parseEntrypoint`).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// imported (e.g. the unit test importing `parseEntrypoint`). The comparison
+// must go through pathToFileURL: a raw `file://${argv[1]}` never matches a
+// Windows backslash path, so the pre-warm silently exited 0 without running
+// on every Windows host (#4095).
+if (process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main();
 }
