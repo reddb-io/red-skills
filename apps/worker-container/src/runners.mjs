@@ -1,24 +1,25 @@
 /**
- * Runner cadence + credential policy for the AFK container lane.
+ * Runner cadence + credential policy for the container lane.
  *
- * The container drives the SAME engine runners as every other AFK lane
- * (`red-skills-dev run --runner <id>`). This module owns only two decisions:
- * which runner a given run uses (round-robin over the cadence) and whether that
- * runner has a credential to use at all (fallback when it does not).
+ * The container names the coder Agent a Worker runs — the daemon carries the
+ * name into the birth argv as `--child-agent <id>` and decides everything else
+ * about the Worker. This module owns only two decisions: which runner a given
+ * run uses (round-robin over the cadence) and whether that runner has a
+ * credential to use at all (fallback when it does not).
  *
  * `claude-minimax` is deliberately absent from `DEFAULT_CADENCE`: MiniMax-M3 does
  * not reliably emit the DONE sentinel, so it is the evaluation lane, entered only
  * when an operator names it in `RED_AFK_RUNNER_CADENCE`.
  */
 
-/** Every runner id the engine's `--runner` flag accepts on this lane. */
+/** Every runner id this lane may name as a Worker's child Agent. */
 export const KNOWN_RUNNERS = Object.freeze(["claude", "codex", "opencode", "claude-minimax"]);
 
 /** The cadence used when `RED_AFK_RUNNER_CADENCE` is unset. Never includes claude-minimax. */
 export const DEFAULT_CADENCE = Object.freeze(["claude", "codex", "opencode"]);
 
 /**
- * Credential env vars per runner, in the engine's own precedence order. A runner
+ * Credential env vars per runner, in the same precedence order the Agent catalog uses. A runner
  * is credentialed when ANY of its vars carries a non-blank value: opencode reads
  * the first set key of OPENAI_API_KEY > MINIMAX_API_KEY > OPENROUTER_API_KEY
  * (opencode-env.ts), and the claude CLI accepts either an API key or an OAuth token.

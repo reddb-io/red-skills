@@ -46,10 +46,6 @@ importers:
         version: 5.9.3
 
   apps/worker-container:
-    dependencies:
-      '@reddb-io/github':
-        specifier: workspace:*
-        version: link:../../packages/github
     devDependencies:
       vitest:
         specifier: 'catalog:'

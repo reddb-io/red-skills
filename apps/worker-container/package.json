@@ -2,12 +2,9 @@
   "name": "@reddb-io/afk-container",
   "version": "4.1.15",
   "private": true,
-  "description": "AFK-in-a-box — a self-sufficient Docker image that drains ready-for-agent issues from GitHub repos through the existing AFK engine (red-skills-dev), one ephemeral run at a time. Stateless by construction: the issue and the run branch are the only state.",
+  "description": "AFK-in-a-box — a self-sufficient Docker image that becomes a RedSkills host: it supervises the redskilled daemon, registers each target repository as a Project, and lets the daemon's demand loop drain the queue. Stateless by construction: the issue and the branch are the only state.",
   "license": "Apache-2.0",
   "type": "module",
-  "dependencies": {
-    "@reddb-io/github": "workspace:*"
-  },
   "scripts": {
     "test": "vitest run",
     "entrypoint": "node src/entrypoint.mjs"

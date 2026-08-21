@@ -214,6 +214,11 @@
       "moveKey": "6f14a5d8a8ad"
     },
     {
+      "id": "apps/worker-container/src/acp.mjs#json-stringify-wire-write#03012f250b38",
+      "classification": "external",
+      "reason": "ACP is JSON-RPC 2.0 over newline-delimited frames by the Agent Client Protocol's own contract; the container writes the same frames the SDK writes into the daemon's launch edge, and a TOON frame there would not be ACP."
+    },
+    {
       "id": "benchmarks/code-understanding/src/runner.ts#json-stringify-file-write#1a95f6559ad4",
       "classification": "external",
       "reason": "MCP runtime config is JSON for MCP client interoperability.",
