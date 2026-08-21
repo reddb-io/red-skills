@@ -37,6 +37,13 @@ export interface WorkerPublisherOptions {
   /** Test seam over `git update-ref`. Production writes the real Worktree. */
   readonly updateRef?: (cwd: string, ref: string, commit: string) => Promise<void>;
   /**
+   * The commit the Worktree held BEFORE the implementer ran (#4157). A turn
+   * that produced no new commit still had a HEAD, and publishing it opened a
+   * doomed land: the branch equalled main and GitHub answered "No commits
+   * between". A HEAD equal to the baseline publishes nothing.
+   */
+  readonly baselineCommit?: string;
+  /**
    * The branch this publication PUBLISHES AS, regardless of the Worktree's
    * local branch name. An inner agent that commits on `main` would otherwise
    * publish `refs/heads/main` (rejected non-fast-forward at the canonical
@@ -64,7 +71,7 @@ export type WorkerPublishOutcome =
 
 export function createWorkerPublisher(options: WorkerPublisherOptions): WorkerPublisher {
   const readPublication = options.readPublication ?? readWorktreePublication;
-  let published: string | undefined;
+  let published: string | undefined = options.baselineCommit;
   return {
     async publishTurn() {
       const local = await readPublication(options.cwd).catch(() => null);
@@ -114,6 +121,11 @@ export async function readWorktreePublication(cwd: string): Promise<WorkerPublic
   if (branch == null || branch === "HEAD") return null;
   const commit = await git(cwd, ["rev-parse", "HEAD"]);
   return commit == null ? null : { branch, commit };
+}
+
+/** The Worktree's HEAD commit, or null when it has none. */
+export async function worktreeHead(cwd: string): Promise<string | null> {
+  return await git(cwd, ["rev-parse", "HEAD"]);
 }
 
 /** Anchor the publish-as ref at the commit, so the daemon's fetch finds it. */

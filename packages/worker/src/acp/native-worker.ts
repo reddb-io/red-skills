@@ -34,7 +34,7 @@ import {
 } from "@reddb-io/protocol-acp";
 import { WorkflowChildAgent } from "./child-agent.js";
 import { runWorkerLocalGate } from "./local-gate.js";
-import { createWorkerPublisher, type WorkerPublisher } from "./publish-request.js";
+import { createWorkerPublisher, worktreeHead, type WorkerPublisher } from "./publish-request.js";
 import { runTicketLoop, type TicketLoopRecord, type TicketLoopResult } from "./ticket-loop.js";
 
 /** One public session this Worker holds, and what it retains across its turns. */
@@ -127,6 +127,11 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
       request: boundedRequest(parent),
       // Same Worker-unique publication branch as the budget-grace path.
       publishRef: `red/${ticket.worker_id}/${ticket.number}`,
+      // Captured BEFORE the implementer runs: a turn that commits nothing must
+      // answer nothing-to-publish, not publish main's own tip (#4157).
+      ...(await worktreeHead(held.request.cwd).then(
+        (commit) => (commit == null ? {} : { baselineCommit: commit }),
+      )),
     });
 
     const result = await runTicketLoop({
