@@ -1,7 +1,7 @@
 ---
 name: daily-review
 working-mode: spec-driven
-description: Generates a RedSkills operational review for a requested period. Default period is yesterday midnight to now (one day); pass `--period week` for a six-day window. Covers delivered work, local AFK workers, cycle times, HITL/blocker challenges, and — for the week — Standing orders recurring across drains as CLAUDE.md promotion candidates. Use when the user invokes `/daily-review`, `/weekly-review`, asks for daily or weekly delivery numbers, issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
+description: Generates a RedSkills operational review for a requested period. Default period is yesterday midnight to now (one day); pass `--period week` for a six-day window. Opens with the drain-end Attention audit, then covers delivered work, local AFK workers, cycle times, HITL/blocker challenges, and — for the week — Standing orders recurring across drains as CLAUDE.md promotion candidates. Use when the user invokes `/daily-review`, `/weekly-review`, asks for daily or weekly delivery numbers, issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
 argument-hint: "[--period day|week] [--json] [--human]"
 disable-model-invocation: true
 ---
@@ -47,6 +47,13 @@ empty tables use the definitive `key[0]:` empty state.
 
 ## Report Sections
 
+- Attention (**first, before the numbers**): the drain-end **Attention audit** —
+  the latest drain's **Decision trail** read against its outcomes by an identity
+  on a different model family than the drain's Workers. It names weak evidence
+  (an `evidence` field holding prose instead of a pointer), unproven claims (a
+  `verified-unit` row for an issue the drain never landed), and unlogged pivots
+  (more re-entries than the trail has pivot/revert rows). A window with no drain
+  end says so; a clean drain says so; the section is never silently absent.
 - Big numbers: issues created/closed, PRs created/closed/merged, commits, lines
   added/removed, local workers, local attempts, local worker time, token spend
   when retained runner logs expose usage fields.

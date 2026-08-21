@@ -1,3 +1,4 @@
+import { renderAttentionSection, type AttentionAudit } from "./attention-audit.js";
 import type { HistoryRecord } from "./history.js";
 import { LABEL_HUMAN } from "./triage-labels.js";
 import { blockedKindOf, blockedLabelsIn } from "./state-transition.js";
@@ -100,6 +101,8 @@ export interface ActivityReviewInput {
   tokenSummary: ActivityReviewTokenSummary;
   /** Standing orders observed in the window, one row per append. */
   standingOrders?: ActivityReviewStandingOrder[];
+  /** The latest drain-end Attention audit, or absent when no drain ended here. */
+  attentionAudit?: AttentionAudit | null;
 }
 
 export interface ActivityReviewInterval {
@@ -159,6 +162,8 @@ export interface ActivityReviewReport {
     local_worker_seconds: number;
     tokens: ActivityReviewTokenSummary;
   };
+  /** The drain-end Attention audit the morning read starts from (#4171). */
+  attention: AttentionAudit | null;
   workers: ActivityReviewWorkerSummary[];
   challenges: ActivityReviewChallenge[];
   standing_order_promotions: ActivityReviewStandingOrderPromotion[];
@@ -459,6 +464,7 @@ export function buildActivityReviewReport(input: ActivityReviewInput): ActivityR
       local_worker_seconds: workers.reduce((sum, worker) => sum + worker.durationSeconds + worker.activeSeconds, 0),
       tokens: input.tokenSummary,
     },
+    attention: input.attentionAudit ?? null,
     workers,
     challenges,
     standing_order_promotions: standingOrderPromotions,
@@ -523,6 +529,9 @@ export function renderActivityReviewReport(report: ActivityReviewReport): string
     title,
     `generated: ${report.generated_at}`,
     `interval: ${report.interval.start} -> ${report.interval.end}`,
+    // Attention leads: the audit is read BEFORE the numbers, or it is read after
+    // the operator has already formed an opinion from them.
+    ...renderAttentionSection(report.attention),
     "",
     "Big numbers",
     `  issues created: ${report.big_numbers.issues_created}`,
@@ -608,6 +617,9 @@ export function renderActivityReviewReportToon(report: ActivityReviewReport): st
 function toToonSafeActivityReviewReport(report: ActivityReviewReport): ToonValue {
   const payload = {
     ...report,
+    attention: report.attention === null
+      ? null
+      : { ...report.attention, warnings: report.attention.warnings.join(" | ") },
     workers: report.workers.map((worker) => ({
       ...worker,
       issues: worker.issues.length > 0 ? worker.issues.map((issue) => `#${issue}`).join(",") : "",
