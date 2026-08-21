@@ -168,13 +168,13 @@ export const CONFIG_DEFAULTS = {
   // cheapest tier counted as non-mechanical (validate|simple|complex|think).
   "afk.review_gate.enabled": "false",
   "afk.review_gate.threshold": "complex",
-  // Advisory adversarial review (ADR 0110, #2207). Default off: validated AFK
-  // attempts land exactly as before. When enabled, AFK opens/resolves the PR,
-  // runs one isolated reviewer pass over ONLY the Issue + diff, posts the full
-  // findings to both the PR and Issue, then continues landing regardless of the
-  // advisory verdict. Folded from `plugins.dev.review.*` to `dev.review.*`,
-  // matching castle's fold and the `plugins.dev.* → dev.*` convention (#2244).
-  "dev.review.enabled": "false",
+  // Adversarial review (ADR 0110/0154, #2207, #4137). Default ON and FAIL-CLOSED:
+  // one isolated reviewer pass over the Issue + worktree diff, written to the
+  // verdicts ledger under an identity that did not implement the change. A
+  // reviewer that throws or has no runner is `verifier-blocked` + a visible park,
+  // never a silent skip; `mode: advisory` is the operator escape hatch (#2244).
+  "dev.review.enabled": "true",
+  "dev.review.mode": "blocking",
   "dev.review.max_iterations": "1",
   "dev.review.reviewer_count": "1",
   "dev.review.quorum": "any",

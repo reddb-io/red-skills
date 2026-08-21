@@ -321,13 +321,16 @@ describe("config", () => {
 
   it("folds plugins.dev.review.* to dev.review.* like every other dev accessor (#2207, #2244)", () => {
     const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
-    expect(getConfig(defaults, "dev.review.enabled")).toBe("false");
+    // Default ON since ADR 0154 / #4137: the review is the verifier now, and a
+    // verifier that ships off is a landing nobody judged.
+    expect(getConfig(defaults, "dev.review.enabled")).toBe("true");
+    expect(getConfig(defaults, "dev.review.mode")).toBe("blocking");
     expect(getConfig(defaults, "dev.review.max_iterations")).toBe("1");
     expect(getConfig(defaults, "dev.review.reviewer_count")).toBe("1");
     expect(getConfig(defaults, "dev.review.quorum")).toBe("any");
     expect(getConfig(defaults, "dev.review.appraisal_floor")).toBe("off");
     expect(resolveAdversarialReviewConfig((key) => getConfig(defaults, key))).toEqual({
-      enabled: false,
+      enabled: true,
       maxIterations: 1,
       reviewerCount: 1,
       quorum: "any",
