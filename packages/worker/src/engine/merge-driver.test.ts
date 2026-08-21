@@ -76,11 +76,15 @@ describe("merge driver (#2512)", () => {
   it("DIRTY: classified terminal needs-medic and never retried in a loop", async () => {
     const store = memoryStore();
     await armPr(store, 7, NOW);
-    const gh = io({ 7: [{ state: "OPEN", mergeStateStatus: "DIRTY", checks: "green" }] });
+    const gh = io({ 7: [{ state: "OPEN", mergeStateStatus: "DIRTY", mergeable: "CONFLICTING", checks: "green" }] });
 
     const first = await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
-    expect(first).toEqual([{ pr: 7, action: "terminal-medic", note: "merge conflict" }]);
+    expect(first).toEqual([{ pr: 7, action: "terminal-medic", note: "GitHub reports merge conflicts" }]);
     expect(store.value.prs["7"]!.status).toBe("needs-medic");
+    expect(store.value.prs["7"]!.proof?.blocker).toMatchObject({
+      class: "conflict",
+      nextAction: "Rebase or merge the base branch locally, resolve conflicts, then push the repaired head.",
+    });
 
     // Terminal records are skipped on every subsequent pass — no loop.
     const second = await runMergeDriverPass(gh, store, { nowEpoch: NOW + 2 });
@@ -94,7 +98,91 @@ describe("merge driver (#2512)", () => {
     const gh = io({ 8: [{ state: "OPEN", mergeStateStatus: "BLOCKED", checks: "failing" }] });
 
     const entries = await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
-    expect(entries).toEqual([{ pr: 8, action: "terminal-medic", note: "failing checks" }]);
+    expect(entries).toEqual([{ pr: 8, action: "terminal-medic", note: "CI has failing checks" }]);
+    expect(store.value.prs["8"]!.proof?.blocker).toMatchObject({
+      class: "ci",
+      nextAction: "Inspect the failing check logs, fix the branch, and push a new head.",
+    });
+  });
+
+  it("previously-green CI now failing is distinct from never-green", async () => {
+    const store = memoryStore();
+    await armPr(store, 18, NOW);
+    await armPr(store, 19, NOW);
+    const gh = io({
+      18: [
+        { state: "OPEN", mergeStateStatus: "BEHIND", checks: "green" },
+        { state: "OPEN", mergeStateStatus: "BLOCKED", checks: "failing" },
+      ],
+      19: [{ state: "OPEN", mergeStateStatus: "BLOCKED", checks: "failing" }],
+    });
+
+    await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
+    await runMergeDriverPass(gh, store, { nowEpoch: NOW + 2 });
+
+    expect(store.value.prs["18"]!.proof?.ci).toMatchObject({
+      state: "failing",
+      previousState: "green",
+      wasGreenRegression: true,
+    });
+    expect(store.value.prs["18"]!.proof?.blocker.summary).toBe("CI regressed from green to failing");
+    expect(store.value.prs["19"]!.proof?.ci.wasGreenRegression).toBe(false);
+    expect(store.value.prs["19"]!.proof?.blocker.summary).toBe("CI has failing checks");
+  });
+
+  it("unresolved review threads name the threads blocker and next action", async () => {
+    const store = memoryStore();
+    await armPr(store, 15, NOW);
+    const gh = io({
+      15: [{ state: "OPEN", mergeStateStatus: "CLEAN", checks: "green", unresolvedReviewThreads: 2 }],
+    });
+
+    const entries = await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
+    expect(entries).toEqual([{ pr: 15, action: "terminal-medic", note: "2 review threads unresolved" }]);
+    expect(store.value.prs["15"]!.proof?.blocker).toMatchObject({
+      class: "threads",
+      nextAction: "Resolve the review threads in GitHub, then let the merge driver read the PR again.",
+    });
+  });
+
+  it("platform gate blocks even when checks look clean", async () => {
+    const store = memoryStore();
+    await armPr(store, 16, NOW);
+    const gh = io({ 16: [{ state: "OPEN", mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", checks: "green" }] });
+
+    const entries = await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
+    expect(entries).toEqual([
+      {
+        pr: 16,
+        action: "terminal-human",
+        note: "GitHub merge assessment is blocked after visible checks and reviews",
+      },
+    ]);
+    expect(store.value.prs["16"]!.proof?.blocker).toMatchObject({
+      class: "gate",
+      nextAction: "Inspect branch protection and merge queue requirements in GitHub.",
+    });
+  });
+
+  it("draft and review holds are represented as proof object blockers", async () => {
+    const store = memoryStore();
+    await armPr(store, 17, NOW);
+    await armPr(store, 20, NOW);
+    const gh = io({
+      17: [{ state: "OPEN", mergeStateStatus: "CLEAN", checks: "green", isDraft: true }],
+      20: [{ state: "OPEN", mergeStateStatus: "CLEAN", checks: "green", reviewDecision: "REVIEW_REQUIRED" }],
+    });
+
+    await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
+    expect(store.value.prs["17"]!.proof?.blocker).toMatchObject({
+      class: "draft",
+      nextAction: "Mark the pull request ready for review.",
+    });
+    expect(store.value.prs["20"]!.proof?.blocker).toMatchObject({
+      class: "review",
+      nextAction: "Obtain the required approval or address the requested changes.",
+    });
+    expect(typeof store.value.prs["20"]!.proof?.mergeability).toBe("object");
   });
 
   it("merges with the merge-commit strategy and the port has no admin override", async () => {
@@ -140,7 +228,7 @@ describe("merge driver (#2512)", () => {
 
     const entries = await runMergeDriverPass(gh, store, { nowEpoch: NOW + 1 });
     expect(entries).toContainEqual({ pr: 11, action: "already-merged" });
-    expect(entries).toContainEqual({ pr: 12, action: "terminal-human", note: "closed without merge" });
+    expect(entries).toContainEqual({ pr: 12, action: "terminal-human", note: "pull request is closed without merge" });
     expect(gh.updateBranch).not.toHaveBeenCalled();
     expect(gh.merge).not.toHaveBeenCalled();
   });

@@ -30,7 +30,7 @@ export function createMergeTools(deps: MergeDependencies): CastleMcpTool[] {
       description:
         "Return whether the merge-driver process is ticking plus durable per-PR records: " +
         "armed records labeled driver-ticking or orphaned, attempts, last observed state, " +
-        "and terminal classifications.",
+        "and proof objects that name GitHub's merge assessment, blocker class, and next action.",
       inputSchema: {},
       invoke: () => deps.mergeStatus(),
     },

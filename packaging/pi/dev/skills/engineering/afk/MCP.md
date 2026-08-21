@@ -224,7 +224,7 @@ labels by hand.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `merge_arm` | mutating | Hand one open PR to a live `merge-driver` process; refuses when that process is missing so custody cannot become orphaned. |
-| `merge_status` | read | Whether the `merge-driver` process is `ticking` or `missing`, plus durable per-PR records whose `actionability` distinguishes armed records as `driver-ticking` or `orphaned`. |
+| `merge_status` | read | Whether the `merge-driver` process is `ticking` or `missing`, plus durable per-PR records whose `actionability` distinguishes armed records as `driver-ticking` or `orphaned`, and whose proof object names GitHub's merge assessment, blocker class, and next action. |
 | `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
 
 When the recovery driver (#2512) is running, its fixed cadence handles BEHIND →
@@ -236,6 +236,10 @@ The ordinary MCP session no longer starts this loop (ADR 0136): native intent
 and the Queue Custodian own the normal landing tail. Therefore `merge_arm`
 fails loudly unless a live recovery process owns the `merge-driver` singleton;
 `merge_status` marks any older armed record `orphaned` when that owner is gone.
+Each observed PR record carries the driver's constructive proof object rather
+than a bare mergeable boolean: mergeability source, unresolved review-thread
+count, CI state with `wasGreenRegression`, gate/draft/review state, and the
+blocker class plus next action.
 
 ### Worktree — the disposable pool
 

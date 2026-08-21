@@ -42,13 +42,21 @@ export function createMergeDriverIo(ctx: GhContext, github: GithubMergeRead): Me
       const parsed = JSON.parse(await github.driverPr(ctx.repo, pr)) as {
         state?: string;
         mergeStateStatus?: string;
+        mergeable?: string;
         statusCheckRollup?: CheckRow[] | null;
+        unresolvedReviewThreads?: number;
+        isDraft?: boolean;
+        reviewDecision?: string;
       };
       const state = (parsed.state ?? "OPEN").toUpperCase();
       return {
         state: state === "MERGED" ? "MERGED" : state === "CLOSED" ? "CLOSED" : "OPEN",
         mergeStateStatus: (parsed.mergeStateStatus ?? "UNKNOWN").toUpperCase(),
+        mergeable: (parsed.mergeable ?? "UNKNOWN").toUpperCase(),
         checks: foldChecks(parsed.statusCheckRollup ?? []),
+        unresolvedReviewThreads: parsed.unresolvedReviewThreads,
+        isDraft: parsed.isDraft,
+        reviewDecision: parsed.reviewDecision,
       };
     },
     async updateBranch(pr) {

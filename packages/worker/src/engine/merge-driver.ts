@@ -32,6 +32,8 @@ export interface MergeDriverPrRecord {
   readonly updatedAtEpoch: number;
   /** Last observed `state/mergeStateStatus/checks` triple, for observability. */
   readonly lastState?: string;
+  /** Constructive proof behind the driver's last merge assessment. */
+  readonly proof?: MergeDriverProof;
   /** Human-readable reason for a terminal classification. */
   readonly note?: string;
 }
@@ -51,7 +53,55 @@ export interface MergeDriverPrView {
   readonly state: "OPEN" | "MERGED" | "CLOSED";
   /** GitHub mergeStateStatus vocabulary (BEHIND/CLEAN/UNSTABLE/DIRTY/BLOCKED/…). */
   readonly mergeStateStatus: string;
+  /** GitHub mergeable vocabulary (MERGEABLE/CONFLICTING/UNKNOWN). */
+  readonly mergeable?: string;
   readonly checks: "green" | "pending" | "failing";
+  /** Unresolved GitHub review threads. */
+  readonly unresolvedReviewThreads?: number;
+  readonly isDraft?: boolean;
+  readonly reviewDecision?: string;
+}
+
+export type MergeDriverBlockerClass =
+  | "none"
+  | "conflict"
+  | "threads"
+  | "ci"
+  | "gate"
+  | "draft"
+  | "review"
+  | "closed"
+  | "attempts"
+  | "unknown";
+
+export interface MergeDriverProof {
+  readonly authority: "github-merge-assessment";
+  readonly mergeability: {
+    readonly state: string;
+    readonly source: "mergeable" | "mergeStateStatus";
+  };
+  readonly reviewThreads: {
+    readonly unresolved: number;
+  };
+  readonly ci: {
+    readonly state: "green" | "pending" | "failing";
+    readonly wasGreenRegression: boolean;
+    readonly previousState?: "green" | "pending" | "failing";
+  };
+  readonly gate: {
+    readonly state: string;
+  };
+  readonly draft: {
+    readonly isDraft: boolean;
+  };
+  readonly review: {
+    readonly decision: string;
+  };
+  readonly blocker: {
+    readonly class: MergeDriverBlockerClass;
+    readonly summary: string;
+    readonly nextAction: string;
+  };
 }
 
 export interface MergeDriverIo {
@@ -99,10 +149,152 @@ function validateState(value: unknown): MergeDriverState {
       attempts: Number.isSafeInteger(r.attempts) ? (r.attempts as number) : 0,
       updatedAtEpoch: Number.isSafeInteger(r.updatedAtEpoch) ? (r.updatedAtEpoch as number) : 0,
       ...(typeof r.lastState === "string" ? { lastState: r.lastState } : {}),
+      ...(isMergeDriverProof(r.proof) ? { proof: r.proof } : {}),
       ...(typeof r.note === "string" ? { note: r.note } : {}),
     };
   }
   return { version: 1, prs };
+}
+
+function isMergeDriverProof(value: unknown): value is MergeDriverProof {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proof = value as Partial<MergeDriverProof>;
+  const blocker = proof.blocker as Partial<MergeDriverProof["blocker"]> | undefined;
+  return proof.authority === "github-merge-assessment" &&
+    typeof proof.mergeability === "object" &&
+    proof.mergeability !== null &&
+    typeof proof.ci === "object" &&
+    proof.ci !== null &&
+    typeof blocker?.class === "string" &&
+    typeof blocker.summary === "string" &&
+    typeof blocker.nextAction === "string";
+}
+
+function upper(value: string | undefined): string {
+  return (value ?? "").trim().toUpperCase();
+}
+
+function count(value: number | undefined): number {
+  if (value === undefined) return 0;
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function buildMergeProof(
+  view: MergeDriverPrView,
+  previous: MergeDriverProof | undefined,
+): MergeDriverProof {
+  const mergeable = upper(view.mergeable);
+  const mergeStateStatus = upper(view.mergeStateStatus) || "UNKNOWN";
+  const unresolved = count(view.unresolvedReviewThreads);
+  const reviewDecision = upper(view.reviewDecision) || "UNKNOWN";
+  const previousCi = previous?.ci.state;
+  const base = {
+    authority: "github-merge-assessment" as const,
+    mergeability: {
+      state: mergeable || mergeStateStatus,
+      source: mergeable ? "mergeable" as const : "mergeStateStatus" as const,
+    },
+    reviewThreads: { unresolved },
+    ci: {
+      state: view.checks,
+      wasGreenRegression: previousCi === "green" && view.checks === "failing",
+      ...(previousCi ? { previousState: previousCi } : {}),
+    },
+    gate: { state: mergeStateStatus },
+    draft: { isDraft: view.isDraft === true },
+    review: { decision: reviewDecision },
+  };
+
+  if (view.state === "CLOSED") {
+    return {
+      ...base,
+      blocker: {
+        class: "closed",
+        summary: "pull request is closed without merge",
+        nextAction: "Open a replacement PR or release the driver record.",
+      },
+    };
+  }
+  if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") {
+    return {
+      ...base,
+      blocker: {
+        class: "conflict",
+        summary: "GitHub reports merge conflicts",
+        nextAction: "Rebase or merge the base branch locally, resolve conflicts, then push the repaired head.",
+      },
+    };
+  }
+  if (unresolved > 0) {
+    return {
+      ...base,
+      blocker: {
+        class: "threads",
+        summary: `${unresolved} review thread${unresolved === 1 ? "" : "s"} unresolved`,
+        nextAction: "Resolve the review threads in GitHub, then let the merge driver read the PR again.",
+      },
+    };
+  }
+  if (view.checks === "failing") {
+    return {
+      ...base,
+      blocker: {
+        class: "ci",
+        summary: base.ci.wasGreenRegression
+          ? "CI regressed from green to failing"
+          : "CI has failing checks",
+        nextAction: "Inspect the failing check logs, fix the branch, and push a new head.",
+      },
+    };
+  }
+  if (view.isDraft === true) {
+    return {
+      ...base,
+      blocker: {
+        class: "draft",
+        summary: "pull request is still a draft",
+        nextAction: "Mark the pull request ready for review.",
+      },
+    };
+  }
+  if (reviewDecision === "REVIEW_REQUIRED" || reviewDecision === "CHANGES_REQUESTED") {
+    return {
+      ...base,
+      blocker: {
+        class: "review",
+        summary: `review decision is ${reviewDecision}`,
+        nextAction: "Obtain the required approval or address the requested changes.",
+      },
+    };
+  }
+  if (mergeStateStatus === "BLOCKED") {
+    return {
+      ...base,
+      blocker: {
+        class: "gate",
+        summary: "GitHub merge assessment is blocked after visible checks and reviews",
+        nextAction: "Inspect branch protection and merge queue requirements in GitHub.",
+      },
+    };
+  }
+  if (view.checks === "pending" || mergeStateStatus === "BEHIND" || mergeStateStatus === "UNKNOWN") {
+    return {
+      ...base,
+      blocker: {
+        class: "unknown",
+        summary: "merge assessment is not settled",
+        nextAction: "Wait for GitHub to finish computing mergeability and checks.",
+      },
+    };
+  }
+  return {
+    ...base,
+    blocker: {
+      class: "none",
+      summary: "GitHub reports the PR mergeable",
+      nextAction: "Merge with the merge-commit strategy.",
+    },
+  };
 }
 
 export function mergeDriverPath(paths: EnginePaths): string {
@@ -221,35 +413,41 @@ export async function runMergeDriverPass(
       entries.push({ pr: record.pr, action: "retrying", note: "view failed" });
       continue;
     }
+    const proof = buildMergeProof(view, record.proof);
     const lastState = `${view.state}/${view.mergeStateStatus}/${view.checks}`;
 
     if (view.state === "MERGED") {
-      stamp({ status: "merged", attempts, lastState });
+      stamp({ status: "merged", attempts, lastState, proof });
       entries.push({ pr: record.pr, action: "already-merged" });
       continue;
     }
     if (view.state === "CLOSED") {
-      stamp({ status: "needs-human", attempts, lastState, note: "closed without merge" });
-      entries.push({ pr: record.pr, action: "terminal-human", note: "closed without merge" });
+      stamp({ status: "needs-human", attempts, lastState, proof, note: proof.blocker.summary });
+      entries.push({ pr: record.pr, action: "terminal-human", note: proof.blocker.summary });
       continue;
     }
-    if (view.mergeStateStatus === "DIRTY") {
-      stamp({ status: "needs-medic", attempts, lastState, note: "merge conflict" });
-      entries.push({ pr: record.pr, action: "terminal-medic", note: "merge conflict" });
+    if (proof.blocker.class === "conflict") {
+      stamp({ status: "needs-medic", attempts, lastState, proof, note: proof.blocker.summary });
+      entries.push({ pr: record.pr, action: "terminal-medic", note: proof.blocker.summary });
       continue;
     }
-    if (view.checks === "failing") {
-      stamp({ status: "needs-medic", attempts, lastState, note: "failing checks" });
-      entries.push({ pr: record.pr, action: "terminal-medic", note: "failing checks" });
+    if (proof.blocker.class === "threads" || proof.blocker.class === "ci") {
+      stamp({ status: "needs-medic", attempts, lastState, proof, note: proof.blocker.summary });
+      entries.push({ pr: record.pr, action: "terminal-medic", note: proof.blocker.summary });
+      continue;
+    }
+    if (proof.blocker.class === "draft" || proof.blocker.class === "review" || proof.blocker.class === "gate") {
+      stamp({ status: "needs-human", attempts, lastState, proof, note: proof.blocker.summary });
+      entries.push({ pr: record.pr, action: "terminal-human", note: proof.blocker.summary });
       continue;
     }
     if (view.mergeStateStatus === "BEHIND") {
       try {
         await io.updateBranch(record.pr);
-        stamp({ attempts, lastState });
+        stamp({ attempts, lastState, proof });
         entries.push({ pr: record.pr, action: "updated-branch" });
       } catch (error) {
-        stamp({ attempts, lastState, note: `update-branch failed: ${error instanceof Error ? error.message : String(error)}` });
+        stamp({ attempts, lastState, proof, note: `update-branch failed: ${error instanceof Error ? error.message : String(error)}` });
         entries.push({ pr: record.pr, action: "retrying", note: "update-branch failed" });
       }
       continue;
@@ -260,15 +458,15 @@ export async function runMergeDriverPass(
     ) {
       try {
         await io.merge(record.pr, "merge");
-        stamp({ status: "merged", attempts, lastState });
+        stamp({ status: "merged", attempts, lastState, proof });
         entries.push({ pr: record.pr, action: "merged" });
       } catch (error) {
-        stamp({ attempts, lastState, note: `merge failed: ${error instanceof Error ? error.message : String(error)}` });
+        stamp({ attempts, lastState, proof, note: `merge failed: ${error instanceof Error ? error.message : String(error)}` });
         entries.push({ pr: record.pr, action: "retrying", note: "merge failed" });
       }
       continue;
     }
-    stamp({ attempts, lastState });
+    stamp({ attempts, lastState, proof });
     entries.push({ pr: record.pr, action: "waiting" });
   }
 
