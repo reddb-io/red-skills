@@ -21,10 +21,12 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import { ACP_AGENT_CATALOG, type AcpEndpoint } from "./acp-agent-catalog.js";
+import { declaredChildAgentEndpoint, type AcpAgentId, type AcpEndpoint } from "./acp-agent-catalog.js";
+import { childAgentWorkspaceEnv, ensureChildAgentHome } from "./acp-agent-home.js";
 import { githubMethodDomain } from "./acp-github.js";
 import { publicationMethodDomain } from "./acp-publication.js";
 import {
+  ACP_AGENT_IDS,
   ACP_PROTOCOL_VERSION,
   REDSKILLS_WIRE_MAJOR,
   bindWorkerRendezvous,
@@ -128,10 +130,15 @@ export async function admitNativeAcpWorker(
     await releaseWorkerWorkspace(workspace).catch(() => undefined);
     throw error;
   };
+  // The runner the registration declared travels on the session meta; a session
+  // that names none gets the governed default. The choice is admission's, never
+  // the Worker's (ADR 0148) — the Worker receives only the resolved endpoint.
+  const runner = runnerFromSessionMeta(session.request._meta) ?? "redcode";
   let launched: LaunchedWorker;
   try {
+    await ensureChildAgentHome(runner);
     launched = options.startWorker(
-      nativeWorkerSpec(session.project, workspace, endpoint, options.paths.runtimeDir, dispatch?.workerKind),
+      nativeWorkerSpec(session.project, workspace, endpoint, options.paths.runtimeDir, dispatch?.workerKind, runner),
     );
   } catch (error) {
     return await abandon(error);
@@ -281,10 +288,11 @@ export function nativeWorkerSpec(
   endpoint: string,
   runtimeDir: string,
   workerKind: "afk" | "go" | "scout" | undefined,
+  runner: AcpAgentId = "redcode",
 ): RedskilledWorkerSpec {
   const entry = process.argv[1];
   if (entry == null || entry === "") throw new Error("redskilled cannot resolve its Worker entry");
-  const childAgent = pinChildAgentExecutable(defaultChildAgentEndpoint());
+  const childAgent = pinChildAgentExecutable(declaredChildAgentEndpoint(runner));
   return {
     worker_id: workspace.workerId,
     // The registration store, the demand loop's live count, and queue discovery
@@ -299,12 +307,9 @@ export function nativeWorkerSpec(
     workspace_path: workspace.worktreePath,
     // ADR 0150 §2: the run declares its Working mode, so a skill written for a
     // human's checkout refuses inside a Worker instead of running there.
-    // redcode#58: concurrent redcode instances sharing one opencode.db die on
-    // "database is locked" mid-turn, so each Worker's child gets its own DB in
-    // the Worker's disposable workspace — it dies with the workspace.
     env: {
       ...workerModeEnv(workerKind),
-      ...(childAgent.agent === "redcode" ? { OPENCODE_DB: join(workspace.workspacePath, "redcode.db") } : {}),
+      ...childAgentWorkspaceEnv(childAgent.agent, workspace.workspacePath),
     },
     command: process.execPath,
     args: [
@@ -342,15 +347,10 @@ function pinChildAgentExecutable(endpoint: AcpEndpoint): AcpEndpoint {
   return endpoint;
 }
 
-function defaultChildAgentEndpoint(): AcpEndpoint {
-  const descriptor = ACP_AGENT_CATALOG.find(({ id }) => id === "redcode");
-  if (descriptor == null || descriptor.kind !== "native") {
-    throw new Error("the governed Redcode child ACP endpoint is not configured");
-  }
-  return {
-    agent: descriptor.id,
-    transport: "stdio",
-    command: descriptor.command[0],
-    args: descriptor.command.slice(1),
-  };
+/** The runner the session's daemon-side composer declared; null when it declared none. */
+export function runnerFromSessionMeta(meta: unknown): AcpAgentId | null {
+  const candidate = (meta as { redskills?: { runner?: unknown } } | undefined)?.redskills?.runner;
+  return typeof candidate === "string" && (ACP_AGENT_IDS as readonly string[]).includes(candidate)
+    ? (candidate as AcpAgentId)
+    : null;
 }

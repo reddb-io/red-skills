@@ -32,6 +32,8 @@ export interface AcpAdapterArtifact {
   readonly integrity: `sha512-${string}`;
   /** Entrypoint inside the unpacked npm artifact. */
   readonly entrypoint: string;
+  /** The package's launchable bin name, for the npx-pinned admission form. */
+  readonly bin?: string;
 }
 
 export interface NativeAcpAgentDescriptor {
@@ -66,6 +68,7 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       version: "0.16.2",
       integrity: "sha512-D8BJe6CCD49RtNFbZYPsfZOpQI8Z/EzhyYC9zAGMwN/HVunEtVY2sXqYl1iDSkkayzhqABfaDkDZfeqDM1T/aA==",
       entrypoint: "package/dist/index.js",
+      bin: "claude-code-acp",
     },
   },
   {
@@ -77,6 +80,7 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       version: "0.16.0",
       integrity: "sha512-XKzqztT5R8Wg1BVFnk6/U4JVx5GNUaZgxpf9gP2Cw6BsknvJWh3aefcAGZQljgdMivRqczjNKYL4F6H65dc5vA==",
       entrypoint: "package/bin/codex-acp.js",
+      bin: "codex-acp",
     },
   },
   {
@@ -88,6 +92,7 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       version: "0.0.33",
       integrity: "sha512-vX9kY1tK14E72G4dBAx+RGCk/k7XPjTHls6dLUxA8WSkBav6B6JHuSBv3eusp50LCR/GTRsR2kIKsG0Z5jANzw==",
       entrypoint: "package/dist/index.js",
+      bin: "pi-acp",
     },
   },
   { id: "opencode", label: "OpenCode", kind: "native", command: ["opencode", "acp"] },
@@ -306,6 +311,30 @@ export class AcpAgentCatalog {
 /** Canonical host-owned catalog location; no repository path participates. */
 export function redskilledAcpAgentCatalogRoot(homeDir: string = homedir()): string {
   return join(redskilledHomeDir(homeDir), "acp-agents");
+}
+
+/**
+ * The launch a Worker's child Agent is admitted WITH, before any provisioning.
+ *
+ * A native Agent launches from the host PATH. A pinned adapter launches through
+ * the npx-pinned form every shipped binary already rides (ADR 0091): exact
+ * version, no floating range, resolved by npm at spawn. The staged, SRI-checked
+ * activation under the catalog root remains the provisioning upgrade path; this
+ * is the admission-time answer, and it never substitutes another Agent.
+ */
+export function declaredChildAgentEndpoint(id: AcpAgentId): AcpEndpoint {
+  const descriptor = ACP_AGENT_CATALOG.find((candidate) => candidate.id === id);
+  if (descriptor == null) throw new AcpAgentUnavailableError(id, "it is not configured in the host catalog");
+  if (descriptor.kind === "native") return nativeEndpoint(descriptor);
+  if (descriptor.artifact.bin == null) {
+    throw new AcpAgentUnavailableError(id, "its pinned adapter declares no launchable bin");
+  }
+  return {
+    agent: id,
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "-p", `${descriptor.artifact.package}@${descriptor.artifact.version}`, descriptor.artifact.bin],
+  };
 }
 
 function nativeEndpoint(descriptor: NativeAcpAgentDescriptor): AcpEndpoint {
