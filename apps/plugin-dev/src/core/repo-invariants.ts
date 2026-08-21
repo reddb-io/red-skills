@@ -222,6 +222,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every published `rs_dev` tool must state what answers it — a control call, a named `_redskills/*` method, or a declared absence (#4113); the tool registry and the ACP adapter live in apps/plugin-dev, the method registry in packages/protocol-acp, and the unserved list only ever shrinks",
   },
   {
+    name: "invariants:declared-config-consumers",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "every declared configuration key must be read by shipped code, never only by its own tests (#4293): a reader with no production caller makes an operator's declared block behave exactly like silence, and the readers span apps/ and packages/ while the inventory lives in apps/plugin-dev",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/plugin-dev",
     script: "test:invariants",

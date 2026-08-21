@@ -688,6 +688,24 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
     expect(readStandingDrain(values)).toEqual({ runner: "codex", target: 4 });
   });
 
+  it("accepts the child ACP Agent ids the registration argv actually speaks (#4293)", () => {
+    // The declaration's destination is `--child-agent`, which the daemon
+    // resolves through its Agent catalog. Validating against the legacy
+    // `Runner` union refused `claude-code` — the value the first repository to
+    // declare a standing drain wrote — while accepting `claude`, which the
+    // catalog cannot launch.
+    const declaring = (runner: string) =>
+      readStandingDrain(loadConfig("/x/.red/config.yaml", {
+        ignoreActivationGate: true,
+        read: () => `plugins:\n  dev:\n    afk:\n      standing:\n        runner: ${runner}\n        target: 1\n`,
+      }));
+
+    expect(declaring("claude-code")).toEqual({ runner: "claude-code", target: 1 });
+    expect(declaring("redcode")).toEqual({ runner: "redcode", target: 1 });
+    expect(declaring("claude")).toBeNull();
+    expect(declaring("hermes")).toBeNull();
+  });
+
   it("refuses incomplete or invalid standing drain declarations", () => {
     for (const standing of [
       "runner: codex",

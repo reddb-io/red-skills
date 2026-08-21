@@ -37,9 +37,12 @@ plugins:
   #                               # out, builds, tests, or executes PR code.
   #   afk:
   #     standing:                 # optional persistent project drain
-  #       runner: codex           # both runner and target are required
-  #       target: 4               # MCP sessions auto-register; the daemon keeps
-  #                               # recoverable intent while queued work remains
+  #       runner: codex           # one of redcode, claude-code, codex, pi,
+  #                               # opencode — the child ACP Agent a Worker runs
+  #       target: 4               # both leaves are required; a half-written block
+  #                               # stays inert. MCP startup registers the block,
+  #                               # and the daemon keeps recoverable intent while
+  #                               # queued work remains
   #     standing_orders:          # durable maintainer directives (#4141)
   #       enabled: false          # opt OUT only. When left alone, `.red/
   #                               # STANDING-ORDERS.md` (if it exists) is read at

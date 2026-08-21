@@ -105,4 +105,28 @@ describe("dev:afk MCP entrypoint routing", () => {
     await running;
     expect(finished).toBe(true);
   });
+
+  it("runs boot-time project work once the transport is live, and does not wait on it (#4293)", async () => {
+    // The seam a standing declaration registers through. It fires AFTER the
+    // transport is up — so the session can already serve — and it is not
+    // awaited, because a daemon that does not answer must not hold stdio.
+    const protocol: { onclose?: () => void } = {};
+    const order: string[] = [];
+    const server = {
+      server: protocol,
+      connect: vi.fn(async () => { order.push("connect"); }),
+    };
+    let finished = false;
+    const running = connectProjectMcp({
+      server: server as never,
+      transport: {} as never,
+      afterConnect: () => { order.push("afterConnect"); },
+    }).then(() => { finished = true; });
+
+    await vi.waitFor(() => expect(order).toEqual(["connect", "afterConnect"]));
+    expect(finished).toBe(false);
+
+    protocol.onclose?.();
+    await running;
+  });
 });
