@@ -53,9 +53,45 @@ interface RequiredPullRequestReviews {
   readonly required_approving_review_count?: number | null;
 }
 
+interface ReviewThreadNode {
+  readonly isResolved?: boolean | null;
+}
+
+interface ReviewThreadsAnswer {
+  readonly repository?: {
+    readonly pullRequest?: {
+      readonly reviewThreads?: {
+        readonly nodes?: ReadonlyArray<ReviewThreadNode | null> | null;
+        readonly pageInfo?: {
+          readonly hasNextPage?: boolean | null;
+          readonly endCursor?: string | null;
+        } | null;
+      } | null;
+    } | null;
+  } | null;
+}
+
 const PR_VIEW_OPERATION = routeGithubArgs(["pr", "view"]);
 const PR_CHECKS_OPERATION = routeGithubArgs(["pr", "checks"]);
 const API_REST_OPERATION = routeGithubArgs(["api", "rest"]);
+
+const UNRESOLVED_REVIEW_THREADS_QUERY = `
+  query RedSkillsMergeDriverReviewThreads($owner: String!, $repo: String!, $number: Int!, $after: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100, after: $after) {
+          nodes {
+            isResolved
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  }
+`;
 
 function object(value: unknown): JsonObject | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -226,7 +262,39 @@ export function createGithubMergeRead(client: GithubClient, actor: string): Gith
     },
 
     async driverPr(slug, prNumber) {
-      return JSON.stringify(await composite(slug, prNumber, ["state", "mergeStateStatus", "headRefOid"]));
+      const pull = await composite(slug, prNumber, [
+        "state",
+        "mergeStateStatus",
+        "mergeable",
+        "headRefOid",
+        "isDraft",
+        "reviewDecision",
+      ]);
+      const repo = repoParts(slug);
+      let unresolvedReviewThreads = 0;
+      try {
+        let after: string | null = null;
+        for (;;) {
+          const answer: ReviewThreadsAnswer = await client.graphql<ReviewThreadsAnswer>(UNRESOLVED_REVIEW_THREADS_QUERY, {
+            owner: repo.owner,
+            repo: repo.repo,
+            number: prNumber,
+            after,
+          }, {
+            operation: PR_VIEW_OPERATION,
+            actor,
+          });
+          const threads = answer.repository?.pullRequest?.reviewThreads;
+          unresolvedReviewThreads += (threads?.nodes ?? [])
+            .filter((node) => node != null && node.isResolved === false)
+            .length;
+          if (threads?.pageInfo?.hasNextPage !== true || !threads.pageInfo.endCursor) break;
+          after = threads.pageInfo.endCursor;
+        }
+      } catch {
+        unresolvedReviewThreads = 0;
+      }
+      return JSON.stringify({ ...pull, unresolvedReviewThreads });
     },
 
     async shipPr(slug, prNumber) {
