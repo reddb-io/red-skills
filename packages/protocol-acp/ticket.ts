@@ -29,13 +29,34 @@
 // acceptance criteria? — and refuses the handoff when it does not, exactly the
 // way it refuses a missing `base`.
 //
-// The refusal is `undefined` rather than a throw, unchanged and for the
-// original reason: the same Worker body serves ordinary prompt turns, so a
-// decoder that threw would fail every turn that never claimed to carry a
-// Ticket. What that costs is a diagnostic, which is why the door AFTER this one
-// — the Worker preflight in the Ticket loop — states the refusal in words.
+// The refusal is not a throw, unchanged and for the original reason: the same
+// Worker body serves ordinary prompt turns, so a decoder that threw would fail
+// every turn that never claimed to carry a Ticket.
+//
+// ## Absent and refused are not the same answer (#4296)
+//
+// #4139 spelled the brief refusal as `return undefined`, "exactly the way it
+// refuses a missing `base`". At this door `undefined` means **no Ticket
+// handoff**, and the Worker's fallback for that is not a refusal — it is the
+// ordinary prompt path: echo the prompt, end the turn. So a Ticket the contract
+// rejected produced `no-workflow-outcome (end_turn)`, the daemon read a healthy
+// turn, the item kept `ready-for-agent`, and the planner birthed again every
+// ~15s. Observed on an operator's host: ~60 Workers on one item, twice.
+//
+// **A fail-closed check that answers `undefined` into a path whose fallback is
+// "echo" is not fail-closed; it is fail-silent-and-loop.** The missing-`base`
+// precedent it copied is safe only because a daemon never states a handoff
+// without a base — it never states one with a brief it composed itself either,
+// which is precisely why a refused brief has to reach the Worker as a REASON.
+//
+// So the decoder answers a decision: `absent` (nothing claimed a Ticket, or the
+// shape is not one — the legal prompt-turn answer, unchanged), `refused` (a
+// complete handoff arrived and the brief contract rejected it, carrying the
+// contract's own sentence), or the handoff itself. `ticketHandoffFromMeta` is
+// kept as the yes/no reading of that decision, so every caller that only wants
+// a handoff is unchanged.
 
-import { briefStatesExecutableAcceptance } from "@reddb-io/shared/brief-contract.js";
+import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
 
 /** One Ticket, as the daemon hands it to the Worker body for a turn. */
 export interface RedskillsTicketHandoff {
@@ -91,28 +112,73 @@ type RequiredTicketFields = Pick<
 >;
 
 /**
- * The Ticket a turn's `_meta` carries, or `undefined` when it carries none.
+ * What one turn's `_meta` says about a Ticket, in the three answers that differ.
+ *
+ * `absent` and `refused` are separate cases on purpose: they used to share
+ * `undefined`, and the Worker's handling of "absent" is to run an ordinary
+ * prompt turn — which turned a refused brief into a silent echo and an endless
+ * re-birth (#4296).
+ */
+export type TicketHandoffDecision =
+  /**
+   * This turn claims no Ticket — nothing under `_meta.redskills.ticket`, or a
+   * shape that is not a handoff. The legal prompt-turn answer, and the reason
+   * a malformed shape stays here: an ordinary turn's unrelated `_meta` must
+   * not be read as a Ticket somebody got wrong.
+   */
+  | { readonly kind: "absent" }
+  /**
+   * A complete handoff arrived and the brief contract rejected it. The reason
+   * is the lint's own sentence, verbatim, because whoever is sent back needs
+   * to know which acceptance-criteria item to fix.
+   */
+  | { readonly kind: "refused"; readonly reason: string }
+  /** A handoff the decoder accepts, refinements included. */
+  | { readonly kind: "handoff"; readonly ticket: RedskillsTicketHandoff };
+
+/**
+ * Read a turn's `_meta` into the decision it states. PURE.
  *
  * A turn without a Ticket is not an error: the same Worker body serves ordinary
  * prompt turns, and a parser that threw would make every one of them fail on
- * the absence of something they never claimed to have. A MALFORMED Ticket is
- * refused the same way, and since #4139 a vague brief counts as malformed.
+ * the absence of something they never claimed to have. A structurally malformed
+ * Ticket is `absent` for the same reason — the wire decoder still refuses every
+ * invalid shape exactly as it did. A brief the contract rejects is `refused`,
+ * and it is the one refusal that keeps its reason: the daemon composed that
+ * brief itself, so somebody upstream can act on the sentence.
+ */
+export function decodeTicketHandoff(meta: unknown): TicketHandoffDecision {
+  const candidate = (meta as { redskills?: { ticket?: unknown } } | undefined)?.redskills?.ticket;
+  if (candidate == null || typeof candidate !== "object") return { kind: "absent" };
+  const ticket = candidate as Record<string, unknown>;
+  if (!statesRequiredTicketFields(ticket)) return { kind: "absent" };
+  const refusal = briefContractRefusal(ticket.handoff);
+  if (refusal != null) return { kind: "refused", reason: refusal };
+  return {
+    kind: "handoff",
+    ticket: {
+      number: ticket.number,
+      title: ticket.title,
+      labels: ticket.labels,
+      base: ticket.base,
+      handoff: ticket.handoff,
+      worker_id: ticket.worker_id,
+      ...optionalTicketFields(ticket),
+    },
+  };
+}
+
+/**
+ * The Ticket a turn's `_meta` carries, or `undefined` when it carries none the
+ * decoder accepts.
+ *
+ * The yes/no reading of {@link decodeTicketHandoff}, for the callers that only
+ * ever wanted a handoff. A caller that must tell a refusal from an absence — the
+ * Worker deciding what KIND of turn this is — asks the decision instead.
  */
 export function ticketHandoffFromMeta(meta: unknown): RedskillsTicketHandoff | undefined {
-  const candidate = (meta as { redskills?: { ticket?: unknown } } | undefined)?.redskills?.ticket;
-  if (candidate == null || typeof candidate !== "object") return undefined;
-  const ticket = candidate as Record<string, unknown>;
-  if (!statesRequiredTicketFields(ticket)) return undefined;
-  if (!briefStatesExecutableAcceptance(ticket.handoff)) return undefined;
-  return {
-    number: ticket.number,
-    title: ticket.title,
-    labels: ticket.labels,
-    base: ticket.base,
-    handoff: ticket.handoff,
-    worker_id: ticket.worker_id,
-    ...optionalTicketFields(ticket),
-  };
+  const decision = decodeTicketHandoff(meta);
+  return decision.kind === "handoff" ? decision.ticket : undefined;
 }
 
 /** Every required field present, of the right type, and non-empty. */

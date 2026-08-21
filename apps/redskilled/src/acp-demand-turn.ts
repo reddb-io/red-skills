@@ -27,7 +27,7 @@ import type {
 
 import { randomBytes } from "node:crypto";
 
-import { parkGateBlockedTurn } from "./demand-park.js";
+import { parkTerminalTurn } from "./demand-park.js";
 import { demandBriefVerdict } from "./demand-birth-brief.js";
 import { readProjectTicketBody } from "./acp-github.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
@@ -81,13 +81,14 @@ export interface DemandTurnDeps {
    */
   readonly record?: (line: DemandTurnRecord) => void;
   /**
-   * What happens to the Ticket after a completed turn whose gate blocked.
+   * What happens to the Ticket after a completed turn whose verdict is terminal
+   * — a gate that blocked (#4160) or a brief the contract refused (#4296).
    *
    * Answers a one-line record of the transition it performed (or refused), or
    * `null` for every other verdict. Absent in tests that assert the turn
-   * alone; the control plane wires `parkGateBlockedTurn` (#4160), because a
-   * gate-blocked Ticket left in the ready queue is re-taken by the very next
-   * birth — the infinite grinder the park exists to end.
+   * alone; the control plane wires `parkTerminalTurn`, because a Ticket left in
+   * the ready queue after a verdict its next birth would reproduce exactly is
+   * re-taken by that very birth — the infinite grinder the park exists to end.
    */
   readonly park?: (
     project: AcpProjectWorkspace,
@@ -339,7 +340,7 @@ export function demandTurnRunnerFor(
     ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
     ...(options.recordDemandTurn == null ? {} : { record: options.recordDemandTurn }),
     ...(options.workerPulse == null ? {} : { pulse: options.workerPulse }),
-    park: parkGateBlockedTurn(options.githubGateway),
+    park: parkTerminalTurn(options.githubGateway),
   });
 }
 

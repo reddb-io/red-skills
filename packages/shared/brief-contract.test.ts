@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   BRIEF_CONTRACT_REFUSAL_PREFIX,
   briefContractRefusal,
-  briefStatesExecutableAcceptance,
   lintExecutableAcceptanceCriteria,
 } from "./brief-contract.js";
 
@@ -45,14 +44,6 @@ describe("lintExecutableAcceptanceCriteria", () => {
       .toBe("missing acceptance-criteria section");
     expect(lintExecutableAcceptanceCriteria("## Acceptance criteria\n\nProse, no checklist.").reason)
       .toBe("acceptance-criteria section has no checklist items");
-  });
-});
-
-describe("briefStatesExecutableAcceptance", () => {
-  it("is the lint's verdict as a predicate, for the decoder that has no room for a reason", () => {
-    expect(briefStatesExecutableAcceptance(EXECUTABLE_BRIEF)).toBe(true);
-    expect(briefStatesExecutableAcceptance(VAGUE_BRIEF)).toBe(false);
-    expect(briefStatesExecutableAcceptance("")).toBe(false);
   });
 });
 

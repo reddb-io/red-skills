@@ -100,17 +100,6 @@ export function lintExecutableAcceptanceCriteria(body: string): AcceptanceCriter
 export const BRIEF_CONTRACT_REFUSAL_PREFIX = "brief contract refused";
 
 /**
- * True when the brief carries executable acceptance criteria. PURE.
- *
- * The predicate the DECODER wants: a decoder has no channel to say why (it
- * answers `undefined` or a handoff), so it asks the yes/no question and leaves
- * the findings to the doors that can quote them.
- */
-export function briefStatesExecutableAcceptance(brief: string): boolean {
-  return lintExecutableAcceptanceCriteria(brief).ok;
-}
-
-/**
  * The refusal one brief earns, or `null` when it satisfies the contract. PURE.
  *
  * The lint's finding travels VERBATIM: the whole point of refusing at a door is
