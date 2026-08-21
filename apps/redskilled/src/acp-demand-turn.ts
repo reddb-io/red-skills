@@ -28,6 +28,7 @@ import type {
 import { randomBytes } from "node:crypto";
 
 import { parkGateBlockedTurn } from "./demand-park.js";
+import { demandBriefVerdict } from "./demand-birth-brief.js";
 import { readProjectTicketBody } from "./acp-github.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { ACP_AGENT_IDS, type AcpAgentId } from "@reddb-io/protocol-acp";
@@ -45,6 +46,12 @@ import type { RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 import type { RedskilledWorkerPulse } from "./worker-display.js";
+
+// Re-exported where every demand-turn consumer already looks: the briefing facts
+// and the turn they feed are one surface, split across two files only because
+// `demand-birth-brief` must stay callable without this module — the demand loop
+// refuses a birth it cannot brief before it composes any turn at all (#4292).
+export { queueBriefing, refuseUnbriefableBirth, unbriefableBirthRefusal } from "./demand-birth-brief.js";
 
 /** What one unattended turn needs to exist. The daemon's own facts, no client's. */
 export interface DemandTurnDeps {
@@ -123,25 +130,6 @@ export function describeTurnOutcome(response: PromptResponse): string {
 }
 
 /**
- * What the last poll knows about the item a birth is for. PURE.
- *
- * Beside the handoff it feeds rather than in the demand loop: the lifecycle
- * decides that a birth happens, never what the Worker is told about it.
- */
-export function queueBriefing(
-  projects: readonly {
-    readonly project_label: string;
-    readonly tickets?: readonly { readonly id: string; readonly title: string; readonly labels: readonly string[] }[];
-  }[],
-  projectLabel: string,
-  workItem: string | undefined,
-): { readonly id: string; readonly title: string; readonly labels: readonly string[] } | undefined {
-  if (workItem == null) return undefined;
-  return projects.find((project) => project.project_label === projectLabel)
-    ?.tickets?.find((candidate) => candidate.id === workItem);
-}
-
-/**
  * The turn one birth owes, or `null` when this project states no prompt.
  *
  * Pure and separate from the loop that calls it, because the interesting part
@@ -185,11 +173,12 @@ export function demandTurnForBirth(
   const withOrders = briefWithStandingOrders(standingOrders, expanded);
   // The handoff is stated only when every fact it requires is present: a Ticket
   // briefed with an empty title or no trunk is one the Worker refuses, and a
-  // refusal the daemon could have avoided is a Worker born to fail.
+  // refusal the daemon could have avoided is a Worker born to fail. The verdict
+  // is `demand-birth-brief`'s, so the lifecycle can refuse the birth outright
+  // (#4292) off the same rule this handoff is built from.
   const number = Number(ticket?.id);
   const base = registration.trunk?.branch;
-  const briefed = ticket != null && Number.isInteger(number) && number > 0 &&
-    ticket.title !== "" && base != null && base !== "";
+  const briefed = demandBriefVerdict(registration, ticket).briefed;
   return {
     workspacePath: birth.workspace_path,
     prompt: withOrders,

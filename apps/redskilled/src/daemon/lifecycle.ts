@@ -77,7 +77,7 @@ import {
   launchProbeArgv,
   launchProbeRefusal,
 } from "../launch-probe.js";
-import { demandTurnForBirth, describeDemandTurn, queueBriefing } from "../acp-demand-turn.js";
+import { demandTurnForBirth, describeDemandTurn, queueBriefing, refuseUnbriefableBirth } from "../acp-demand-turn.js";
 import { createRedskilledRegistrationIntentStore } from "../registration-intent-store.js";
 import {
   buildRegistrationLapse,
@@ -1027,9 +1027,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       for (const birth of plan.births) {
         let launched: LaunchedWorker;
         const registered = registrations.get(birth.project_label);
-        // **A birth nobody speaks to does nothing** (#4100): a project with a
-        // prompt gets the daemon's own unattended turn, not awaited — it is the
-        // Worker's whole life, and a blocked tick would stop every project.
+        // **A birth nobody speaks to does nothing** (#4100): a project with a prompt gets the daemon's own
+        // unattended turn, not awaited — it is the Worker's whole life, and a blocked tick would stop every
+        // project. And **a birth the daemon cannot brief is a birth it does not perform** (#4292): with no
+        // handoff it would echo its prompt and die with the item still queued.
         if (registered?.prompt != null && acpControlPlane != null) {
           try {
             // Read standing orders for this project and prepend to prompt
@@ -1037,19 +1038,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             const standingOrdersText = ordersResult.orders.length > 0
               ? formatStandingOrdersBody(ordersResult.orders)
               : undefined;
+            const polled = lastQueue?.projects ?? [];
+            refuseUnbriefableBirth(registered, birth, polled);
             const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()),
-              queueBriefing(lastQueue?.projects ?? [], birth.project_label, birth.work_item), standingOrdersText)!;
+              queueBriefing(polled, birth.project_label, birth.work_item), standingOrdersText)!;
             void acpControlPlane.runDemandTurn(turn).catch(async (error: unknown) => {
-              await eventLane.recordDemandRefusal({
-                ts: clock(),
-                projectLabel: birth.project_label,
-                detail: `the unattended turn for project ${JSON.stringify(birth.project_label)} failed: ` +
-                  `${error instanceof Error ? error.message : String(error)}`,
-              }).catch(() => undefined);
+              const detail = `the unattended turn for project ${JSON.stringify(birth.project_label)} failed: ${error instanceof Error ? error.message : String(error)}`;
+              await eventLane.recordDemandRefusal({ ts: clock(), projectLabel: birth.project_label, detail }).catch(() => undefined);
             });
           } catch (err) {
-            // A template naming a fact this birth does not have is refused
-            // before anything is spawned, and stated where a stall is read.
+            // A fact this birth does not have — one its template names, or one
+            // its brief requires — is refused before a spawn, where a stall is read.
             refusal = err instanceof Error ? err.message : String(err);
             demandBackoffUntilMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) + demandBackoffMs;
             break;
