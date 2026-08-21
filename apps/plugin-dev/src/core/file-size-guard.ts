@@ -34,7 +34,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/plugin-dev/src/core/config.ts", lines: 1401 },
   { path: "apps/plugin-dev/src/core/execution/runtime.ts", lines: 1266 },
   { path: "apps/plugin-dev/src/core/feedback.ts", lines: 1206 },
-  { path: "apps/plugin-dev/src/core/landing.ts", lines: 1183 },
+  { path: "apps/plugin-dev/src/core/landing.ts", lines: 1181 },
   { path: "apps/plugin-dev/src/core/merge.ts", lines: 2672 },
   { path: "apps/plugin-dev/src/core/process-issue/lifecycle.ts", lines: 2240 },
   { path: "apps/plugin-dev/src/core/process-issue/terminal.ts", lines: 1308 },
