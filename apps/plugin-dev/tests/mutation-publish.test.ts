@@ -52,10 +52,10 @@ import {
   foldMutationIntoReview,
   runReviewStage,
   type ReviewStageDecision,
-  type VerdictLedgerSink,
+  type CountersignLedgerSink,
 } from "../src/core/review-fail-closed.js";
 import { DECLARED_WAITS } from "../src/core/declared-wait-guard.js";
-import type { VerdictAppendInput, VerdictRow } from "../src/core/verdict-ledger.js";
+import type { CountersignAppendInput, CountersignRow } from "../src/core/countersign-ledger.js";
 import type { ReviewVerifier } from "../src/core/review-verifier-identity.js";
 import type {
   AdversarialReviewContext,
@@ -370,12 +370,12 @@ function passingDecision(): ReviewStageDecision {
   });
 }
 
-function recordingLedger(): VerdictLedgerSink & { rows: VerdictRow[] } {
-  const rows: VerdictRow[] = [];
+function recordingLedger(): CountersignLedgerSink & { rows: CountersignRow[] } {
+  const rows: CountersignRow[] = [];
   return {
     rows,
-    async append(input: VerdictAppendInput): Promise<VerdictRow> {
-      const row: VerdictRow = {
+    async append(input: CountersignAppendInput): Promise<CountersignRow> {
+      const row: CountersignRow = {
         at: "2026-08-21T00:00:00.000Z",
         voided: false,
         evidence: null,
@@ -416,7 +416,7 @@ describe("mutation evidence in the publish verdict row", () => {
     const { result, rows } = await publish(outcome);
 
     expect(result.decision.stage.ok).toBe(false);
-    expect(result.decision.verdict).toBe("verifier-failed");
+    expect(result.decision.countersign).toBe("verifier-failed");
     expect(result.decision.park).toBeNull();
     expect(result.decision.reason).toContain("mutation testing refused the publish");
     expect(rows).toHaveLength(1);
@@ -432,7 +432,7 @@ describe("mutation evidence in the publish verdict row", () => {
     const { result, rows } = await publish(outcome);
 
     expect(result.decision.stage.ok).toBe(true);
-    expect(result.decision.verdict).toBe("test-verified");
+    expect(result.decision.countersign).toBe("test-verified");
     expect(rows[0]?.evidence).toContain("mutation killed-all: 1/1 killed");
   });
 
@@ -444,7 +444,7 @@ describe("mutation evidence in the publish verdict row", () => {
     const { result, rows } = await publish(outcome);
 
     expect(result.decision.stage.ok).toBe(true);
-    expect(result.decision.verdict).toBe("test-verified");
+    expect(result.decision.countersign).toBe("test-verified");
     expect(result.decision.reason).toContain("wall-clock budget");
     expect(rows[0]?.evidence).toContain("mutation budget-exhausted");
   });
@@ -460,7 +460,7 @@ describe("mutation evidence in the publish verdict row", () => {
       policy: POLICY,
     });
     const folded = foldMutationIntoReview(blocked, survivors, true);
-    expect(folded.verdict).toBe("verifier-blocked");
+    expect(folded.countersign).toBe("verifier-blocked");
     expect(folded.park?.label).toBe("ready-for-human");
     expect(folded.reason).toContain("mutation testing refused");
   });
@@ -476,7 +476,7 @@ describe("mutation evidence in the publish verdict row", () => {
     });
     const advisory = foldMutationIntoReview(passingDecision(), survivors, false);
     expect(advisory.stage.ok).toBe(true);
-    expect(advisory.verdict).toBe("verifier-failed");
+    expect(advisory.countersign).toBe("verifier-failed");
     expect(foldMutationIntoReview(passingDecision(), null, true)).toEqual(passingDecision());
     expect(composeReviewEvidence(null, null)).toBeNull();
     expect(composeReviewEvidence("  ", null)).toBeNull();

@@ -133,7 +133,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     deadline:
       "the publish's SHARED `dev.review.mutation.budget_ms` wall (default 120s), never a per-mutant one, so a slow first mutant cannot buy the run more clock",
     escalation:
-      "cancels the in-flight run and ends the whole check as `budget-exhausted`: an ADVISORY note in the verdict row and exit 0, because a truncated score is not the score of the change (#4140)",
+      "cancels the in-flight run and ends the whole check as `budget-exhausted`: an ADVISORY note in the Countersign row and exit 0, because a truncated score is not the score of the change (#4140)",
     heartbeat: { sink: "onWait" },
   },
   {

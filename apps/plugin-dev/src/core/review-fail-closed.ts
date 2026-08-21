@@ -246,11 +246,11 @@ export function foldMutationIntoReview(
   if (mutation === null) return decision;
   const note = mutation.blocking ? mutationRefusal(mutation) : mutation.advisory;
   const reason = note === null ? decision.reason : `${decision.reason} | ${note}`;
-  if (decision.verdict === "verifier-blocked") return { ...decision, reason };
+  if (decision.countersign === "verifier-blocked") return { ...decision, reason };
   if (!mutation.blocking) return { ...decision, reason };
   return {
     ...decision,
-    verdict: "verifier-failed",
+    countersign: "verifier-failed",
     stage: blocking ? RAN_BUT_BLOCKED : RAN_AND_PASSED,
     park: null,
     reason,
