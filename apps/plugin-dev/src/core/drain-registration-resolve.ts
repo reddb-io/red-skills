@@ -8,10 +8,14 @@
 import { execFileSync } from "node:child_process";
 
 import { resolveProjectIdentityForDir } from "@reddb-io/shared/project-identity-resolve.js";
-import { DEFAULT_FLEET_WIDTH } from "@reddb-io/shared/default-fleet-width.js";
 
 import { buildDrainRegistration, type DrainRegistration } from "./drain-registration.js";
 import { loadConfig, readValidationMoments } from "./config.js";
+import {
+  declaredStandingDrain,
+  resolveDrainRunner,
+  resolveDrainTarget,
+} from "./standing-drain-declaration.js";
 import { afkPaths } from "../runtime/wire/paths.js";
 
 /**
@@ -32,10 +36,13 @@ export function drainRegistrationFor(
 ): DrainRegistration | undefined {
   const repo = repositoryOf(root, resolve);
   if (repo == null) return undefined;
-  const target = typeof input.target === "number" && Number.isInteger(input.target) && input.target >= 0
-    ? input.target
-    : DEFAULT_FLEET_WIDTH;
-  const runner = typeof input.runner === "string" && input.runner.length > 0 ? input.runner : undefined;
+  // The caller's words first, the project's declaration second, the governed
+  // default last (#4293). Before this, a `drain` with no runner argument dropped
+  // the declared one on the floor and the argv carried no `--child-agent` — so
+  // the maintainer's declared executor was silently not the one that ran.
+  const standing = declaredStandingDrain(root);
+  const target = resolveDrainTarget(input.target, standing);
+  const runner = resolveDrainRunner(input.runner, standing);
   const declared = declaredGateCommands(root);
   // The operator's harvest budget, carried only when they stated one: a default
   // here would be the daemon inventing a deadline nobody asked for (#4170).
@@ -52,6 +59,34 @@ export function drainRegistrationFor(
     ...(declared.length === 0 ? {} : { validationCommands: declared }),
     ...(budgetMs == null ? {} : { budgetMs }),
   });
+}
+
+/**
+ * The whole drain input this checkout carries: the caller's words, completed by
+ * the project's declaration.
+ *
+ * ONE namer for the resolution. The registration's `argv` and its `target` and
+ * the control call's own `runner` and `target` describe the same decision, so a
+ * seam that resolved the registration and left the control pair raw would put
+ * two answers on one wire. Keys stay OMITTED rather than set to `undefined`: an
+ * absent runner is the governed default, and a null on the wire is a caller
+ * stating one.
+ */
+export function drainInputFor(
+  root: string,
+  version: string,
+  input: Readonly<Record<string, unknown>> = {},
+  resolve = resolveProjectIdentityForDir,
+): Record<string, unknown> {
+  const standing = declaredStandingDrain(root);
+  const runner = resolveDrainRunner(input.runner, standing);
+  const registration = drainRegistrationFor(root, version, input, resolve);
+  return {
+    ...input,
+    ...(runner == null ? {} : { runner }),
+    target: resolveDrainTarget(input.target, standing),
+    ...(registration == null ? {} : { registration }),
+  };
 }
 
 /**

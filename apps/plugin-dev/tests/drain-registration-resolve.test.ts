@@ -1,6 +1,13 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { drainRegistrationFor, repositoryOf } from "../src/core/drain-registration-resolve.js";
+import {
+  drainInputFor,
+  drainRegistrationFor,
+  repositoryOf,
+} from "../src/core/drain-registration-resolve.js";
 import { DRAIN_WORKER_PROMPT } from "../src/core/drain-registration.js";
 
 /**
@@ -42,5 +49,69 @@ describe("the registration a checkout's drain carries", () => {
 
   it("accepts the owner/name a checkout does state", () => {
     expect(repositoryOf("/x", () => ({ name: "reddb-io/red-skills" }) as never)).toBe("reddb-io/red-skills");
+  });
+});
+
+/**
+ * The declared standing runner reaches the registration (#4293).
+ *
+ * `drainRegistrationFor` used to take the runner from the tool call alone, so a
+ * `drain` with no runner argument composed an argv with no `--child-agent` and
+ * admission fell back to the governed default — while the repository's own
+ * config declared an executor.
+ */
+describe("what a drain that states nothing resolves", () => {
+  const identity = () => ({ name: "reddb-io/design-system" }) as never;
+
+  function checkout(standing: string | null): string {
+    const root = mkdtempSync(join(tmpdir(), "drain-standing-"));
+    mkdirSync(join(root, ".red"), { recursive: true });
+    writeFileSync(
+      join(root, ".red", "config.yaml"),
+      `plugins:\n  dev:\n    enabled: true\n${standing ?? ""}`,
+      "utf8",
+    );
+    return root;
+  }
+
+  const DECLARED = "    afk:\n      standing:\n        runner: claude-code\n        target: 3\n";
+
+  it("carries the declared runner and target when the caller states neither", () => {
+    const input = drainInputFor(checkout(DECLARED), "4.0.1", {}, identity);
+
+    expect(input.runner).toBe("claude-code");
+    expect(input.target).toBe(3);
+    const registration = input.registration as { argv: readonly string[]; target: number };
+    expect(registration.argv).toEqual(expect.arrayContaining(["--child-agent", "claude-code"]));
+    expect(registration.target).toBe(3);
+  });
+
+  it("lets an explicitly stated runner and target win over the declaration", () => {
+    const input = drainInputFor(checkout(DECLARED), "4.0.1", { runner: "codex", target: 1 }, identity);
+
+    expect(input.runner).toBe("codex");
+    expect(input.target).toBe(1);
+    expect((input.registration as { argv: readonly string[] }).argv)
+      .toEqual(expect.arrayContaining(["--child-agent", "codex"]));
+  });
+
+  it("leaves a repo that declared nothing exactly as it was", () => {
+    const input = drainInputFor(checkout(null), "4.0.1", {}, identity);
+
+    expect(input).not.toHaveProperty("runner");
+    expect(input.target).toBe(1);
+    expect((input.registration as { argv: readonly string[] }).argv).not.toContain("--child-agent");
+  });
+
+  it("keeps an incomplete declaration inert — it registers the governed default, not a guess", () => {
+    const input = drainInputFor(
+      checkout("    afk:\n      standing:\n        runner: claude-code\n"),
+      "4.0.1",
+      {},
+      identity,
+    );
+
+    expect(input).not.toHaveProperty("runner");
+    expect(input.target).toBe(1);
   });
 });

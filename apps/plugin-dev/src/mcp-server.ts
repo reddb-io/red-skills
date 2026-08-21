@@ -14,7 +14,8 @@ import {
 } from "./mcp-tools/index.js";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 import { invokeProjectMcp } from "./project-acp-adapter.js";
-import { drainRegistrationFor } from "./core/drain-registration-resolve.js";
+import { drainInputFor } from "./core/drain-registration-resolve.js";
+import { ensureStandingDrain } from "./runtime/standing-drain-start.js";
 import {
   registerLaneEventSubscription,
   type LaneSubscriptionServer,
@@ -52,9 +53,12 @@ export function createRedskilledMcpServer(
   // this project's work IS — a repository, a ready label, a target. Building it
   // here rather than in a tool handler keeps the tool a schema and the semantics
   // where the checkout is.
+  // Since #4293 the same seam also completes an UNDERSPECIFIED drain from the
+  // project's `afk.standing` declaration, so `drain` with no runner argument
+  // runs the executor the repository declared rather than the governed default.
   const enrich = (tool: string, input: Record<string, unknown>): Record<string, unknown> =>
     tool === "drain" && input.registration == null
-      ? { ...input, registration: drainRegistrationFor(root, buildInfo.version, input) }
+      ? drainInputFor(root, buildInfo.version, input)
       : input;
   for (const tool of createCastleMcpTools(dependencies)) {
     registerTool(
@@ -108,6 +112,14 @@ export interface ProjectMcpConnection {
 export interface ConnectProjectMcpOptions {
   readonly server: ProjectMcpConnection;
   readonly transport: StdioServerTransport;
+  /**
+   * Ran once the stdio transport is live, before the session serves anything.
+   *
+   * Synchronous and unawaited on purpose: this is where boot-time project work
+   * goes, and boot-time project work that can block would hold the tool surface
+   * hostage to a daemon that is not answering.
+   */
+  readonly afterConnect?: () => void;
 }
 
 export interface McpRootClient {
@@ -152,6 +164,7 @@ export async function connectProjectMcp(
   });
   options.server.server.onclose = notifyClosed;
   await options.server.connect(options.transport);
+  options.afterConnect?.();
   await closed;
 }
 
@@ -209,9 +222,12 @@ async function runRsGithub(): Promise<void> {
 async function run(): Promise<void> {
   const fallbackRoot = process.cwd();
   let projectPromise: ReturnType<typeof connectRedskillsProjectAcp> | undefined;
+  let rootPromise: Promise<string> | undefined;
   let server!: McpServer;
+  const projectRoot = () =>
+    (rootPromise ??= resolveMcpProjectRoot(server.server, process.env, fallbackRoot));
   const project = () => {
-    projectPromise ??= resolveMcpProjectRoot(server.server, process.env, fallbackRoot).then((root) =>
+    projectPromise ??= projectRoot().then((root) =>
       connectRedskillsProjectAcp({
         cwd: root,
         name: "RedSkills MCP adapter",
@@ -230,6 +246,18 @@ async function run(): Promise<void> {
     await connectProjectMcp({
       server,
       transport: new StdioServerTransport(),
+      // **The declaration registers here or nowhere** (#4293). This is the one
+      // surface an enabled project runs without a human typing anything, so a
+      // registration the daemon lost to a restart is re-stated by the next
+      // session. Fired and not awaited: `ensureStandingDrain` never rejects, and
+      // the stdio lane must start serving whatever the daemon is doing.
+      afterConnect: () => {
+        void ensureStandingDrain({
+          version: buildInfo.version,
+          root: projectRoot,
+          drain: async (input) => invokeProjectMcp(await project(), "drain", input),
+        });
+      },
     });
   } finally {
     if (projectPromise !== undefined) {
