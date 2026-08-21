@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   type BundleIO,
   bundleFileName,
+  DEV_WARM_BUNDLE,
   companionBundlePlugins,
   ensureBundle,
   packagedBundleRelPath,
@@ -221,14 +222,15 @@ describe("daemon bundle resolution (#3074)", () => {
    * literal, so renaming the cache key fails HERE.
    *
    * Only `dev` is asserted because it is the host's single producer. `redskilled`
-   * is still WARMED — the dev command reaches its daemon over the local socket —
-   * but the published shell must not invoke the daemon bundle a second time.
+   * is still WARMED — it is the anchor of the dev warm path (ADR 0147, #4112),
+   * and the dev command reaches its daemon over the local socket — but the
+   * published shell must not invoke the daemon bundle a second time.
    */
   it("globs a name the dev warm path actually writes, for every bundle it invokes", () => {
     const [canonical] = readStatuslineCommands(REPO_ROOT);
     const body = shellBody(canonical!.body);
 
-    expect(companionBundlePlugins("dev")).toContain("redskilled");
+    expect([DEV_WARM_BUNDLE, ...companionBundlePlugins(DEV_WARM_BUNDLE)]).toContain("redskilled");
     const warmed = bundleFileName("dev", PROVISIONED_VERSION);
     expect(
       statuslineGlobResolves(body, warmed),

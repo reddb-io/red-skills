@@ -36,7 +36,9 @@ import { dirname, join } from "node:path";
 import {
   BundleFetchError,
   type BundleIO,
+  DEV_WARM_BUNDLE,
   NPM_PACKAGE,
+  companionBundlePlugins,
   ensureBundle,
   isCacheableVersion,
   resolveBundle,
@@ -186,7 +188,7 @@ function parseFetchArgs(argv: readonly string[]): FetchPlan {
  * the build define still names the role the binary was built with, and a build
  * that names anything else is a stale artifact rather than a second mode: every
  * argv shape lands in fetch. The explicit `fetch` subcommand still wins, and the
- * no-subcommand form is the legacy positional fetch (`red-fetch.mjs dev 1.2.3`).
+ * no-subcommand form is the legacy positional fetch (`red-fetch.mjs <plugin> 1.2.3`).
  */
 export function parseEntrypoint(argv: readonly string[], _role: string): EntrypointPlan {
   if (argv[0] === "fetch") return parseFetchArgs(argv.slice(1));
@@ -232,13 +234,24 @@ function readProjectConfig(): string | undefined {
 // ── Plugin gate (ADR 0067) ───────────────────────────────────────────────────
 
 /**
- * The config flag a fetch for `plugin` gates on. `code-nav` ships under the dev
- * plugin's umbrella (dev's SessionStart hook warms it, there is no separate
- * `plugins.code-nav` block), so it gates on `dev` — not a `code-nav` flag that
- * would never be set.
+ * Bundles that ship under the dev plugin's umbrella rather than as a plugin of
+ * their own: the warm anchor the SessionStart hook names, the siblings that ride
+ * with it, and `code-nav`.
+ */
+const DEV_UMBRELLA_BUNDLES = new Set([
+  "code-nav",
+  DEV_WARM_BUNDLE,
+  ...companionBundlePlugins(DEV_WARM_BUNDLE),
+]);
+
+/**
+ * The config flag a fetch for `plugin` gates on. Nothing under the dev umbrella
+ * has a `plugins.<name>` block of its own — dev's SessionStart hook is what
+ * warms them — so each gates on `dev` rather than on a flag that would never be
+ * set.
  */
 export function gatePluginName(plugin: string): string {
-  return plugin === "code-nav" ? "dev" : plugin;
+  return DEV_UMBRELLA_BUNDLES.has(plugin) ? "dev" : plugin;
 }
 
 // ── Fetch mode (IO) ──────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
   NPM_PACKAGE,
   NPM_REGISTRY_BASE,
   bundleFileName,
+  DEV_WARM_BUNDLE,
   companionBundlePlugins,
   ensureBundle,
   fetchNewestSameMajor,
@@ -27,6 +28,8 @@ import {
 } from "./bundle-fetch.js";
 
 const PLUGIN = "dev";
+/** The bundle the dev plugin's SessionStart hook warms, and its companions. */
+const WARM = DEV_WARM_BUNDLE;
 const CACHE = "/cache/bundles";
 const INSTALL_ROOT = "/installed/red-skills";
 const VERSION = "1.140.0";
@@ -112,17 +115,17 @@ function makeIO(opts: {
   return { io, files, materializes, writes, fetches, renames };
 }
 
-/** The dev warm path's companion bundles as a fake package's `dist/` entries. */
+/** The warm anchor's companion bundles as a fake package's `dist/` entries. */
 function packagedCompanions(suffix = ""): Record<string, Uint8Array> {
   return Object.fromEntries(
-    companionBundlePlugins(PLUGIN).map((companion) => [companion, bundleBytesFor(`${companion}${suffix}`)]),
+    companionBundlePlugins(WARM).map((companion) => [companion, bundleBytesFor(`${companion}${suffix}`)]),
   );
 }
 
 /** The same companions, already sitting in the cache under their keyed names. */
 function cachedCompanions(version = VERSION): Record<string, Uint8Array> {
   return Object.fromEntries(
-    companionBundlePlugins(PLUGIN).map((companion) => [
+    companionBundlePlugins(WARM).map((companion) => [
       resolveBundle({ plugin: companion, version, cacheDir: CACHE }),
       bundleBytesFor(companion),
     ]),
@@ -173,8 +176,12 @@ describe("cache filename", () => {
     );
   });
 
-  it("treats rsp and redskilled as companions of the dev warm path", () => {
-    expect(companionBundlePlugins("dev")).toEqual(["rsp", "rsp-core", "redskilled"]);
+  it("anchors the dev warm path on the daemon bundle, with rsp riding along", () => {
+    // ADR 0147 deleted the dev runtime bundle, so `dev` names no bundle at all
+    // and a fetch for it could only ever fail `bundle-missing` (#4112).
+    expect(WARM).toBe("redskilled");
+    expect(companionBundlePlugins(WARM)).toEqual(["rsp", "rsp-core"]);
+    expect(companionBundlePlugins("dev")).toEqual([]);
     expect(companionBundlePlugins("memory")).toEqual([]);
   });
 
@@ -232,12 +239,12 @@ describe("ensureBundle never writes an unversioned cache entry (#3153)", () => {
     const poisoned = `${CACHE}/${unversionedBundleFileName(PLUGIN)}`;
     const { io, files, materializes, renames } = makeIO({
       files: { [poisoned]: enc("// written by the empty-version fetch") },
-      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION), ...packagedCompanions() } },
+      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION) } },
     });
 
     const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
 
-    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION)]);
     expect(path).toBe(resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE }));
     // Moved aside, not inherited: a host already in this state must recover on
     // its next boot without hand-editing the cache.
@@ -248,20 +255,20 @@ describe("ensureBundle never writes an unversioned cache entry (#3153)", () => {
 
   it("retires a companion's unversioned entry too", async () => {
     const spec = npmPackageSpec(VERSION);
-    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
-    const poisoned = `${CACHE}/${unversionedBundleFileName("redskilled")}`;
+    const dest = resolveBundle({ plugin: WARM, version: VERSION, cacheDir: CACHE });
+    const poisoned = `${CACHE}/${unversionedBundleFileName("rsp")}`;
     const { io, files } = makeIO({
-      files: { [poisoned]: enc("// the daemon bundle that pinned the host") },
-      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION), ...packagedCompanions() } },
+      files: { [poisoned]: enc("// the launcher that pinned the host") },
+      packageBundles: { [spec]: { [WARM]: bundleBytesFor(VERSION), ...packagedCompanions() } },
     });
 
-    await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    await ensureBundle(io, { plugin: WARM, version: VERSION, cacheDir: CACHE });
 
-    // The one the statusline glob was picking up is gone, and the versioned one
-    // it should have had is beside the dev bundle, on the same version.
+    // The one the glob was picking up is gone, and the versioned one it should
+    // have had is beside the anchor bundle, on the same version.
     expect(files[poisoned]).toBeUndefined();
     expect(files[dest]).toBeDefined();
-    expect(files[resolveBundle({ plugin: "redskilled", version: VERSION, cacheDir: CACHE })]).toBeDefined();
+    expect(files[resolveBundle({ plugin: "rsp", version: VERSION, cacheDir: CACHE })]).toBeDefined();
   });
 
   it("succeeds even when the cache refuses the rename", async () => {
@@ -269,7 +276,7 @@ describe("ensureBundle never writes an unversioned cache entry (#3153)", () => {
     const poisoned = `${CACHE}/${unversionedBundleFileName(PLUGIN)}`;
     const { io, files } = makeIO({
       files: { [poisoned]: enc("// stuck") },
-      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION), ...packagedCompanions() } },
+      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION) } },
     });
     const readOnly: BundleIO = { ...io, async rename() { throw new Error("EPERM"); } };
 
@@ -311,9 +318,7 @@ describe("ensureBundle (npm transport)", () => {
     const { io, files, materializes } = makeIO({
       files: { [installed]: bundleBytesFor(VERSION) },
       distTags: { canary: published },
-      packageBundles: {
-        [npmPackageSpec(published)]: { [PLUGIN]: bytes, ...packagedCompanions("-canary") },
-      },
+      packageBundles: { [npmPackageSpec(published)]: { [PLUGIN]: bytes } },
     });
 
     const path = await ensureBundle(io, {
@@ -338,7 +343,7 @@ describe("ensureBundle (npm transport)", () => {
     const bytes = bundleBytesFor(VERSION);
     const { io, files, materializes } = makeIO({
       files: { [skewed]: bundleBytesFor("1.139.9") },
-      packageBundles: { [spec]: { [PLUGIN]: bytes, ...packagedCompanions() } },
+      packageBundles: { [spec]: { [PLUGIN]: bytes } },
     });
 
     const path = await ensureBundle(io, {
@@ -350,7 +355,7 @@ describe("ensureBundle (npm transport)", () => {
 
     const cached = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(cached);
-    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
+    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION)]);
     expect(files[cached]).toEqual(bytes);
   });
 
@@ -358,10 +363,7 @@ describe("ensureBundle (npm transport)", () => {
     const spec = npmBundlePackageSpec(PLUGIN, VERSION);
     const bytes = bundleBytesFor(VERSION);
     const { io, files, materializes } = makeIO({
-      packageBundles: {
-        [spec]: { [PLUGIN]: bytes },
-        [npmPackageSpec(VERSION)]: packagedCompanions(),
-      },
+      packageBundles: { [spec]: { [PLUGIN]: bytes } },
     });
 
     const path = await ensureBundle(io, {
@@ -373,16 +375,16 @@ describe("ensureBundle (npm transport)", () => {
 
     const cached = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(cached);
-    expect(materializes).toEqual([spec, npmPackageSpec(VERSION)]);
+    expect(materializes).toEqual([spec]);
     expect(files[cached]).toEqual(bytes);
   });
 
   it("is cache-first: a present cached bundle never invokes npm", async () => {
-    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    const dest = resolveBundle({ plugin: WARM, version: VERSION, cacheDir: CACHE });
     const { io, materializes } = makeIO({
       files: { [dest]: bundleBytesFor(VERSION), ...cachedCompanions() },
     });
-    const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    const path = await ensureBundle(io, { plugin: WARM, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(dest);
     expect(materializes).toEqual([]);
   });
@@ -391,49 +393,51 @@ describe("ensureBundle (npm transport)", () => {
     const spec = npmPackageSpec(VERSION);
     const bytes = bundleBytesFor(VERSION);
     const { io, files, materializes } = makeIO({
-      packageBundles: { [spec]: { [PLUGIN]: bytes, ...packagedCompanions() } },
+      packageBundles: { [spec]: { [WARM]: bytes, ...packagedCompanions() } },
     });
-    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
-    const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    const dest = resolveBundle({ plugin: WARM, version: VERSION, cacheDir: CACHE });
+    const path = await ensureBundle(io, { plugin: WARM, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(dest);
-    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
+    // The anchor and its companions ride in the ONE core package, so one
+    // materialisation warms all three.
+    expect(materializes).toEqual([spec]);
     expect(files[dest]).toEqual(bytes);
-    for (const companion of companionBundlePlugins(PLUGIN)) {
+    for (const companion of companionBundlePlugins(WARM)) {
       const companionDest = resolveBundle({ plugin: companion, version: VERSION, cacheDir: CACHE });
       expect(files[companionDest], companion).toEqual(bundleBytesFor(companion));
     }
   });
 
-  it("warms every companion when the dev bundle is cached but a companion is missing", async () => {
+  it("warms every companion when the anchor bundle is cached but a companion is missing", async () => {
     const spec = npmPackageSpec(VERSION);
-    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
-    const devBytes = bundleBytesFor(VERSION);
+    const dest = resolveBundle({ plugin: WARM, version: VERSION, cacheDir: CACHE });
+    const anchorBytes = bundleBytesFor(VERSION);
     const { io, files, materializes } = makeIO({
-      files: { [dest]: devBytes },
-      packageBundles: { [spec]: { [PLUGIN]: devBytes, ...packagedCompanions() } },
+      files: { [dest]: anchorBytes },
+      packageBundles: { [spec]: { [WARM]: anchorBytes, ...packagedCompanions() } },
     });
-    const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    const path = await ensureBundle(io, { plugin: WARM, version: VERSION, cacheDir: CACHE });
     expect(path).toBe(dest);
-    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, VERSION), spec]);
-    expect(files[dest]).toEqual(devBytes);
-    for (const companion of companionBundlePlugins(PLUGIN)) {
+    expect(materializes).toEqual([spec]);
+    expect(files[dest]).toEqual(anchorBytes);
+    for (const companion of companionBundlePlugins(WARM)) {
       const companionDest = resolveBundle({ plugin: companion, version: VERSION, cacheDir: CACHE });
       expect(files[companionDest], companion).toEqual(bundleBytesFor(companion));
     }
   });
 
   /**
-   * The daemon bundle is what the documented `statusLine` globs (#3074), so a
-   * warm that skipped it left the render command resolving nothing at all.
+   * The daemon bundle is what the documented `statusLine` globs (#3074) and what
+   * births every Worker, and after ADR 0147 it is the warm path's ANCHOR rather
+   * than a passenger of a dev bundle that no longer exists (#4112).
    */
   it("warms the redskilled daemon bundle the statusLine command globs for", async () => {
     const spec = npmPackageSpec(VERSION);
-    const devBytes = bundleBytesFor(VERSION);
     const { io, files } = makeIO({
-      packageBundles: { [spec]: { [PLUGIN]: devBytes, ...packagedCompanions() } },
+      packageBundles: { [spec]: { [WARM]: bundleBytesFor(VERSION), ...packagedCompanions() } },
     });
-    await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
-    expect(files[`${CACHE}/redskilled-${VERSION}.bundle.min.mjs`]).toEqual(bundleBytesFor("redskilled"));
+    await ensureBundle(io, { plugin: WARM, version: VERSION, cacheDir: CACHE });
+    expect(files[`${CACHE}/redskilled-${VERSION}.bundle.min.mjs`]).toEqual(bundleBytesFor(VERSION));
   });
 
   it("canary resolves the dist-tag to a published stable version and writes the canary cache file", async () => {
@@ -443,7 +447,7 @@ describe("ensureBundle (npm transport)", () => {
     const bytes = bundleBytesFor(published);
     const { io, files, materializes } = makeIO({
       distTags: { canary: published },
-      packageBundles: { [publishedSpec]: { [PLUGIN]: bytes, ...packagedCompanions("-canary") } },
+      packageBundles: { [publishedSpec]: { [PLUGIN]: bytes } },
     });
     const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE, channel: "canary" });
     const path = await ensureBundle(io, {
@@ -458,7 +462,29 @@ describe("ensureBundle (npm transport)", () => {
       npmBundlePackageSpec(PLUGIN, published),
     ]);
     expect(files[dest]).toEqual(bytes);
-    for (const companion of companionBundlePlugins(PLUGIN)) {
+  });
+
+  it("canary warms the anchor and its companions from the one core package", async () => {
+    const published = "1.146.0";
+    const bytes = bundleBytesFor(published);
+    const { io, files, materializes } = makeIO({
+      distTags: { canary: published },
+      packageBundles: {
+        [npmPackageSpec(published)]: { [WARM]: bytes, ...packagedCompanions("-canary") },
+      },
+    });
+
+    const path = await ensureBundle(io, {
+      plugin: WARM,
+      version: VERSION,
+      cacheDir: CACHE,
+      channel: "canary",
+    });
+
+    expect(path).toBe(`${CACHE}/${WARM}-canary.bundle.min.mjs`);
+    expect(materializes).toEqual([npmPackageSpec(VERSION, "canary")]);
+    expect(files[path]).toEqual(bytes);
+    for (const companion of companionBundlePlugins(WARM)) {
       expect(files[`${CACHE}/${companion}-canary.bundle.min.mjs`], companion).toEqual(
         bundleBytesFor(`${companion}-canary`),
       );
@@ -474,7 +500,7 @@ describe("ensureBundle (npm transport)", () => {
     const { io, files, materializes } = makeIO({
       files: { [dest]: bundleBytesFor("old-canary") },
       distTags: { canary: published },
-      packageBundles: { [publishedSpec]: { [PLUGIN]: bytes, ...packagedCompanions("-canary") } },
+      packageBundles: { [publishedSpec]: { [PLUGIN]: bytes } },
     });
     const path = await ensureBundle(io, {
       plugin: PLUGIN,
@@ -488,11 +514,6 @@ describe("ensureBundle (npm transport)", () => {
       npmBundlePackageSpec(PLUGIN, published),
     ]);
     expect(files[dest]).toEqual(bytes);
-    for (const companion of companionBundlePlugins(PLUGIN)) {
-      expect(files[`${CACHE}/${companion}-canary.bundle.min.mjs`], companion).toEqual(
-        bundleBytesFor(`${companion}-canary`),
-      );
-    }
   });
 
   it("classifies an unresolvable package as package-missing and never writes cache", async () => {

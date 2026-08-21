@@ -19,7 +19,7 @@
  * class rather than a detail.
  */
 import { readBuildInfo } from "@reddb-io/build-info";
-import { resolvePublishedDevBundleVersion, semverParts } from "../core/bundle-version.js";
+import { resolvePublishedWarmBundleVersion, semverParts } from "../core/bundle-version.js";
 
 /** Injected environment. Every field defaults to this process, so tests can pose as a stale host. */
 export interface PublishedEntryLookup {
@@ -50,7 +50,7 @@ export function publishedEntryVersion(lookup: PublishedEntryLookup = {}): string
   if (isLocalDevBuild(installed)) return installed;
   let published: string | undefined;
   try {
-    published = (lookup.resolvePublished ?? resolvePublishedDevBundleVersion)(installed, env);
+    published = (lookup.resolvePublished ?? resolvePublishedWarmBundleVersion)(installed, env);
   } catch {
     return installed;
   }

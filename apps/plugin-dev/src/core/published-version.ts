@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   compareSemver,
-  fetchNpmNewestDevBundleVersion,
-  readDevBundleCacheState,
+  fetchNpmNewestWarmBundleVersion,
+  readWarmBundleCacheState,
   redSkillsCacheDir,
   semverParts,
 } from "./bundle-version.js";
@@ -223,7 +223,7 @@ export async function refreshPublishedBundleVersion(
   installedVersion: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
   nowMs = Date.now(),
-  fetchNewest = fetchNpmNewestDevBundleVersion,
+  fetchNewest = fetchNpmNewestWarmBundleVersion,
 ): Promise<PublishedVersionObservation> {
   const fetched = await fetchNewest(installedVersion);
   if (normalizeVersion(fetched)) writePublishedVersionRecord({ version: fetched as string, observedAtMs: nowMs }, env);
@@ -288,7 +288,7 @@ export function publishedVersionReport(
  * who asks.
  */
 function newestPublishedEvidenceInCache(env: NodeJS.ProcessEnv): string | undefined {
-  const state = readDevBundleCacheState("0.0.0", env);
+  const state = readWarmBundleCacheState("0.0.0", env);
   const candidates = [state.laneNewestVersion, state.pointerVersion].filter(
     (v): v is string => Boolean(normalizeVersion(v)),
   );

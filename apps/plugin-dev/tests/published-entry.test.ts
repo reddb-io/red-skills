@@ -16,7 +16,8 @@ import {
   publishedEntryVersion,
   type PublishedEntryLookup,
 } from "../src/runtime/published-entry.js";
-import { resolvePublishedDevBundleVersion } from "../src/core/bundle-version.js";
+import { DEV_WARM_BUNDLE } from "@reddb-io/shared/bundle-fetch.js";
+import { resolvePublishedWarmBundleVersion } from "../src/core/bundle-version.js";
 import { runFleetTruthProbe } from "../src/core/operational-probes/fleet-truth.js";
 
 const dirs: string[] = [];
@@ -76,17 +77,21 @@ describe("published entry version (#2808)", () => {
 describe("the prescribed fix clears the finding it is prescribed for (#2808)", () => {
   it("reports the version the boot probe resolves as published", async () => {
     const cache = await root();
-    await writeFile(join(cache, `dev-${PUBLISHED}.bundle.min.mjs`), "//published\n", "utf8");
+    await writeFile(
+      join(cache, `${DEV_WARM_BUNDLE}-${PUBLISHED}.bundle.min.mjs`),
+      "//published\n",
+      "utf8",
+    );
     const env = { RED_SKILLS_CACHE_DIR: cache };
 
     // The probe's `latestBundleVersion` and the version a Worker reports are ONE
     // function, so a restart cannot land on a version the probe still calls
     // skewed.
-    const probePublished = resolvePublishedDevBundleVersion(STALE, env);
+    const probePublished = resolvePublishedWarmBundleVersion(STALE, env);
     const entryVersion = publishedEntryVersion({
       installedVersion: STALE,
       env,
-      resolvePublished: resolvePublishedDevBundleVersion,
+      resolvePublished: resolvePublishedWarmBundleVersion,
     });
 
     expect(probePublished).toBe(PUBLISHED);
