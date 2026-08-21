@@ -207,6 +207,9 @@ plus the `iteration`, `post_done`, and `landing` moments) ->
 `/afk` Appraisal promotion (`plugins.dev.review.appraisal_floor`, advisory `off`
 or a blocking 0–1 floor) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/afk` adversarial review as the fail-closed verifier (`plugins.dev.review.enabled`
+default on, `plugins.dev.review.mode` `blocking` | `advisory`) ->
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` inner-agent GitHub reads (explicit `gh api` REST forms for issues, pull
 requests, and check runs) -> `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`;
 Path briefs across Claude Code, Codex, and OpenCode (automatic first-touch
