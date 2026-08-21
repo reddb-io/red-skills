@@ -155,6 +155,7 @@ export function bindAcpWorkerLand(deps: AcpPublicationDeps) {
       owner_ticket: params.owner_ticket,
       branch: params.branch,
       base: params.base,
+      armed_head: params.commit,
     });
     return {
       version: 1,
@@ -186,16 +187,21 @@ export function publishParams(value: unknown): RedskilledPublishRequest {
 export function landParams(value: unknown): RedskilledLandRequest {
   const params = exactly(
     value,
-    ["idempotency_key", "branch", "base", "title", "body", "owner_ticket"],
+    ["idempotency_key", "branch", "commit", "base", "title", "body", "owner_ticket"],
     "a Worker landing",
   );
   const ticket = params.owner_ticket;
   if (typeof ticket !== "number" || !Number.isSafeInteger(ticket) || ticket <= 0) {
     throw new RedskilledGithubAuthorityError("a Worker landing names the Ticket that inherits the merge");
   }
+  const commit = params.commit;
+  if (typeof commit !== "string" || !OBJECT_NAME.test(commit)) {
+    throw new RedskilledGithubAuthorityError("a Worker landing names the full commit object name its publish carried");
+  }
   return {
     idempotency_key: text(params.idempotency_key, "idempotency key"),
     branch: branchName(params.branch),
+    commit,
     base: branchName(params.base),
     title: text(params.title, "title"),
     body: text(params.body, "body"),

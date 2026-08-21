@@ -249,6 +249,9 @@ export async function runTicketLoop(deps: TicketLoopDeps): Promise<TicketLoopRes
     const landed = await deps.request(REDSKILLS_ACP_METHODS.land, {
       idempotency_key: `${deps.sessionId}:land:${published.publication.commit}`,
       branch: published.publication.branch,
+      // #4130: the land names the exact commit its publish validated, so the
+      // merge driver can tell an armed head from one that moved after arming.
+      commit: published.publication.commit,
       base: deps.ticket.base,
       title: deps.ticket.title,
       body: landingBody(deps.ticket, rounds),

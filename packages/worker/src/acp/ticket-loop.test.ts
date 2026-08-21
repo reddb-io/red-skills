@@ -79,11 +79,18 @@ describe("the Ticket loop's declared arc", () => {
     expect(claim.write.issue).toBe(4020);
     expect(claim.write.body).toContain("worker=host:VSk6WPt");
 
-    const land = requests[1]!.params as { owner_ticket: number; base: string; body: string };
+    const land = requests[1]!.params as {
+      owner_ticket: number;
+      base: string;
+      body: string;
+      commit: string;
+    };
     expect(requests[1]!.method).toBe(REDSKILLS_ACP_METHODS.land);
     expect(land.owner_ticket).toBe(4020);
     expect(land.base).toBe("main");
     expect(land.body).toContain("Refs #4020");
+    // #4130: the land names the exact commit its publish validated.
+    expect(land.commit).toBe(result.publication.commit);
   });
 });
 

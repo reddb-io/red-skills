@@ -22,11 +22,20 @@ export interface RedskilledGithubCustodyHandoff {
   readonly owner_ticket: number;
   readonly branch: string;
   readonly base: string;
+  /**
+   * The head SHA the landing validated and armed (#4130). Optional only for
+   * records written before it existed; every new handoff carries it, and a
+   * driver pass whose observed head differs reports the mismatch instead of
+   * arming a commit nobody validated.
+   */
+  readonly armed_head?: string;
 }
 
 export interface RedskilledGithubCustodyForgeView {
   readonly forge_state: Exclude<RedskilledGithubForgeState, "unknown" | "unavailable">;
   readonly native_intent: boolean;
+  /** The pull request's CURRENT head, for the armed-head comparison (#4130). */
+  readonly head_sha?: string;
 }
 
 export interface RedskilledGithubCustodyUpstreamInput {
@@ -59,7 +68,13 @@ export interface RedskilledGithubCustodyRecord extends RedskilledGithubCustodyHa
   readonly state: "active" | "terminal";
   readonly last_tick_at: string | null;
   readonly last_forge_state: RedskilledGithubForgeState;
-  readonly next_action: "observe-forge" | "await-forge" | "retry-forge" | "repair-custodian" | "none";
+  readonly next_action:
+    | "observe-forge"
+    | "await-forge"
+    | "retry-forge"
+    | "repair-custodian"
+    | "report-moved-head"
+    | "none";
   readonly terminal_outcome: "merged" | "closed" | null;
   readonly fault?: RedskilledGithubCustodyFault;
 }
@@ -188,7 +203,14 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
         pullRequest: ticking.pull_request,
       };
       let view = validateForgeView(await options.upstream.observe(input));
-      if (view.forge_state !== "merged" && view.forge_state !== "closed" && !view.native_intent) {
+      const open = view.forge_state !== "merged" && view.forge_state !== "closed";
+      // #4130: an armed head that moved is a commit nobody validated. The pass
+      // reports the mismatch instead of proceeding — it neither arms nor
+      // pretends the obligation is on track — and keeps watching, because the
+      // head may be forced back or a new landing may restate it.
+      const movedHead = open && ticking.armed_head != null && view.head_sha != null &&
+        view.head_sha !== ticking.armed_head;
+      if (open && !movedHead && !view.native_intent) {
         view = validateForgeView(await options.upstream.arm(input));
       }
       const terminal = view.forge_state === "merged" || view.forge_state === "closed";
@@ -196,7 +218,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
         ...record,
         state: terminal ? "terminal" : "active",
         last_forge_state: view.forge_state,
-        next_action: terminal ? "none" : "await-forge",
+        next_action: terminal ? "none" : movedHead ? "report-moved-head" : "await-forge",
         terminal_outcome: view.forge_state === "merged"
           ? "merged"
           : view.forge_state === "closed" ? "closed" : null,
@@ -243,6 +265,17 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
             existing.base !== valid.base || existing.credential_profile !== project.credentialProfile
           ) {
             throw new Error("one pull request cannot have two merge custody owners");
+          }
+          // #4130: a re-landing after a re-publish restates the validated
+          // head; the newest validated commit is the one custody defends.
+          if (valid.armed_head != null && valid.armed_head !== existing.armed_head) {
+            const index = current.records.indexOf(existing);
+            const restated = { ...existing, armed_head: valid.armed_head };
+            const records = [...current.records];
+            records[index] = restated;
+            snapshot = { version: 1, records };
+            await persist(snapshot);
+            return restated;
           }
           return existing;
         }
@@ -316,6 +349,7 @@ function publicRecord(
           owner_ticket: record.owner_ticket,
           branch: record.branch,
           base: record.base,
+          ...(record.armed_head == null ? {} : { armed_head: record.armed_head }),
         },
       },
     },
@@ -341,11 +375,16 @@ function validateHandoff(value: RedskilledGithubCustodyHandoff): RedskilledGithu
   if (!Number.isSafeInteger(value.owner_ticket) || value.owner_ticket <= 0) {
     throw new Error("merge custody needs one positive owner Ticket number");
   }
+  const armedHead = value.armed_head;
+  if (armedHead != null && (typeof armedHead !== "string" || !/^[0-9a-f]{40}$/.test(armedHead))) {
+    throw new Error("merge custody needs the armed head as one full commit object name");
+  }
   return {
     pull_request: value.pull_request,
     owner_ticket: value.owner_ticket,
     branch: branch(value.branch, "branch"),
     base: branch(value.base, "base"),
+    ...(armedHead == null ? {} : { armed_head: armedHead }),
   };
 }
 
@@ -364,7 +403,8 @@ function validateForgeView(value: RedskilledGithubCustodyForgeView): RedskilledG
   if (
     value == null || typeof value !== "object" ||
     !["open-clean", "open-pending", "open-blocked", "merged", "closed"].includes(value.forge_state) ||
-    typeof value.native_intent !== "boolean"
+    typeof value.native_intent !== "boolean" ||
+    (value.head_sha != null && (typeof value.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(value.head_sha)))
   ) {
     throw new Error("the GitHub custody upstream returned an invalid forge view");
   }
@@ -392,6 +432,7 @@ function parseRecord(value: unknown): RedskilledGithubCustodyRecord {
     owner_ticket: record.owner_ticket as number,
     branch: record.branch as string,
     base: record.base as string,
+    ...(record.armed_head == null ? {} : { armed_head: record.armed_head as string }),
   });
   const state = record.state === "active" || record.state === "terminal" ? record.state : invalidState();
   const forge = typeof record.last_forge_state === "string" && [
@@ -425,7 +466,10 @@ function scalar(value: unknown): string {
 }
 
 function nextAction(value: unknown): RedskilledGithubCustodyRecord["next_action"] {
-  if (["observe-forge", "await-forge", "retry-forge", "repair-custodian", "none"].includes(String(value))) {
+  if (
+    ["observe-forge", "await-forge", "retry-forge", "repair-custodian", "report-moved-head", "none"]
+      .includes(String(value))
+  ) {
     return value as RedskilledGithubCustodyRecord["next_action"];
   }
   throw new Error("redskilled GitHub custody contains an invalid next action");

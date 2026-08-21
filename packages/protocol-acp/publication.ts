@@ -44,6 +44,13 @@ export interface RedskilledPublishAnswer {
 export interface RedskilledLandRequest {
   readonly idempotency_key: string;
   readonly branch: string;
+  /**
+   * The commit this landing is FOR — the same full object name its publish
+   * carried (#4130). Publish validated it; a land without it would hand
+   * custody a mutable branch ref, and the merge driver could not tell an
+   * armed head from one that moved after arming.
+   */
+  readonly commit: string;
   readonly base: string;
   readonly title: string;
   readonly body: string;
