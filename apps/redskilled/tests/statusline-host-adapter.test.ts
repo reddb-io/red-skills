@@ -97,18 +97,20 @@ describe("the shipped Claude Code adapter", () => {
     expect(shippedAdapterRecipes().map((recipe) => recipe.path)).not.toEqual([]);
   });
 
-  it("asks exactly one producer for the Worker rows — the dev bundle, until #3151", () => {
+  it("asks exactly one producer for the Worker rows — the redskilled bundle", () => {
     const offenders: string[] = [];
     for (const recipe of shippedAdapterRecipes()) {
       for (const command of recipe.commands) {
-        // The daemon's own bundle under the dev bundle's rows is a second block
-        // of Workers on screen, saying less than the block above it.
-        if (/redskilled[\w.*-]*\.bundle\.min\.mjs/.test(command)) {
-          offenders.push(`${recipe.path}: runs the daemon renderer under the dev bundle's rows — double-render until #3151 lands`);
+        // ADR 0147 deleted the dev runtime. `dev-3.21.0.bundle.min.mjs` is the
+        // last one that will ever exist, so a recipe that resolves it pins the
+        // host to a 3.21.0-era renderer reading v4 state lanes it cannot parse:
+        // a frozen line that reports success and says nothing about Workers.
+        if (/(?:^|[^\w-])(?:dev-[\w.*-]*\.bundle\.min\.mjs|afk\.mjs)/.test(command)) {
+          offenders.push(`${recipe.path}: resolves the dev runtime ADR 0147 deleted — the line freezes at its last version`);
         }
         // `--no-workers` mutes the only producer left, and nothing draws a row.
-        if (/dev-\*\.bundle\.min\.mjs|afk\.mjs/.test(command) && command.includes("--no-workers")) {
-          offenders.push(`${recipe.path}: mutes the dev bundle's Worker rows with nothing left to draw them (#3166)`);
+        if (command.includes("--no-workers")) {
+          offenders.push(`${recipe.path}: mutes the Worker rows with nothing left to draw them (#3166)`);
         }
       }
     }

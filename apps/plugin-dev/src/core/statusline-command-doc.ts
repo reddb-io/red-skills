@@ -2,10 +2,12 @@
 // published in more than one doc, so it must be ONE string and it must end in
 // success (issue #3073).
 //
-// The command has ONE host producer: the dev bundle renders the local bedrock,
-// performs one bounded daemon probe for the remote tail, and composes both into
-// one document (ADR 0141). The published shell must not invoke redskilled again:
-// that retired adapter prints the daemon document twice (#3559).
+// The command has ONE host producer: the **redskilled bundle** renders the whole
+// document — the local bedrock and the Worker tail — out of the daemon's
+// host-scoped home. The published shell must not invoke a `dev` bundle: ADR 0147
+// deleted the dev runtime, so `dev-3.21.0.bundle.min.mjs` is the last one that
+// will ever exist and a machine still holding it runs a 3.21.0-era renderer
+// against v4 state lanes it cannot read (#4235 and this slice).
 //
 // **The first defect this closes (issue #3073).** The command's last statement was the bare test
 // `[ -n "$r" ] && "$N" "$r" statusline 2>/dev/null`. With no cached daemon
@@ -21,15 +23,22 @@
 // on the machine lived inside the npx cache. `$r` was empty on EVERY host, the
 // daemon was never contacted, and the operator read a blank region below the
 // header as "this machine has no Workers". The fix has two halves and this
-// module guards the render one: provisioning warms the daemon bundle beside its
-// siblings (`companionBundlePlugins` in `packages/shared/bundle-fetch.ts`), and
-// the command STATES the absence when it still resolves nothing.
+// module guards the render one: the command resolves the copy the daemon itself
+// keeps, and STATES the absence when it still resolves nothing.
 //
 // **The third defect, same command (issues #3166 and #3559).** `--no-workers`
 // plus a second redskilled invocation first replaced the rich dev output with a
 // poor daemon line, then became an exact duplicate after the dev command learned
-// to compose the daemon tail itself. The stable contract is one shell producer:
-// the dev command owns the bedrock/tail seam and redskilled owns the tail data.
+// to compose the daemon tail itself. The stable contract is one shell producer.
+//
+// **The fourth defect, same command (this slice).** The producer named by rules 3
+// and 5 was the thing ADR 0147 deleted. A host that had ever warmed a dev bundle
+// kept resolving it, so the line froze at the last dev release and said nothing
+// about Workers; a host that had not resolved nothing at all. The producer is
+// redeclared here as the bundle the daemon stabilizes under its own home
+// (`redskilledStableBundleDir` / `redskilledStableBundleName`), which is the copy
+// that survives every cache prune on the machine — and `dev-*` becomes the
+// rejected fossil, so the deleted renderer can never be resolved again.
 //
 // Five rules — #3074 added 3 and 4; #3166/#3559 added 5:
 //
@@ -41,23 +50,22 @@
 //     canonical skill docs and mirrored into the generated `packaging/pi/` tree.
 //     Four copies with no guard is four chances to fix one and leave three; the
 //     sweep compares them byte-for-byte so the next edit cannot half-land.
-//  3. EVERY GLOB RESOLVES WHAT PROVISIONING WRITES. The command names cache
+//  3. EVERY GLOB RESOLVES WHAT PROVISIONING WRITES. The command names bundle
 //     files by pattern, and a pattern is only correct relative to the filename
-//     the warm path mints. {@link statuslineBundleGlobs} lifts the patterns out
-//     so a test can hold them against `bundleFileName(plugin, version)` rather
-//     than against a human's memory of it.
+//     the daemon mints. {@link statuslineBundleGlobs} lifts the patterns out
+//     so a test can hold them against the daemon's own namer rather than
+//     against a human's memory of it.
 //  4. AN UNRESOLVED RENDERER SAYS SO. When no bundle answers the glob the command
 //     prints {@link STATUSLINE_COMMAND_ABSENCE} itself. This is not the host
 //     rendering a Worker row — ADR 0130 rule 10 still holds, and there is no
 //     Worker here to render. It is the host reporting that no renderer exists on
 //     this machine, because a blank region and a quiet machine look identical.
-//  5. EXACTLY ONE HOST PRODUCER EMITS THE DOCUMENT. The dev command always draws
-//     the stdin/local-git bedrock, then appends the daemon-fed tail. The published
-//     shell therefore invokes only the dev bundle. {@link
+//  5. EXACTLY ONE HOST PRODUCER EMITS THE DOCUMENT, AND IT IS A LIVE ONE. The
+//     redskilled bundle draws the bedrock and the Worker tail in one process, so
+//     the published shell invokes it once and nothing else. {@link
 //     statuslineCommandsDelegatingWorkers} rejects both fossils of the retired
-//     adapter: `--no-workers` and a second `redskilled*.bundle.min.mjs` command.
-//     The daemon remains the source and renderer of the tail; it is reached
-//     through the dev command's bounded socket probe, not as a second host line.
+//     recipe: `--no-workers`, and any reach for the deleted dev runtime — the
+//     `dev-*.bundle.min.mjs` cache entry or the `afk.mjs` launcher behind it.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -81,8 +89,15 @@ export const STATUSLINE_COMMAND_TERMINATOR = "; exit 0";
  */
 export const STATUSLINE_COMMAND_ABSENCE = "redskilled unreachable — Worker state unknown";
 
-/** The bundle cache directory every published glob hangs off. */
-const BUNDLE_CACHE_SEGMENT = "/.cache/red-skills/bundles/";
+/**
+ * The bundle directory every published glob hangs off.
+ *
+ * The daemon's own home, not a cache: `~/.cache/` is GC'd and an npx or mise
+ * store is pruned, while `~/.red/redskilled/bundles/` is the copy the daemon
+ * stabilizes for its own unit and therefore the only one a render path may
+ * assume is still there.
+ */
+const BUNDLE_DIR_SEGMENT = "/.red/redskilled/bundles/";
 
 /**
  * The dev-bundle flag that renders the repo header and no Worker rows.
@@ -92,8 +107,15 @@ const BUNDLE_CACHE_SEGMENT = "/.cache/red-skills/bundles/";
  */
 const WORKER_ROWS_OFF = "--no-workers";
 
-/** The daemon bundle the delegated half invoked. Matched as a glob OR a filename. */
-const DAEMON_BUNDLE = /redskilled[\w.*-]*\.bundle\.min\.mjs/;
+/**
+ * The deleted dev runtime, in either spelling it was ever reached by.
+ *
+ * ADR 0147 removed the dev bundle and the launcher that fetched it, so a match
+ * here is not a stale preference — it is a command that resolves 3.21.0-era code
+ * on any machine that still holds a copy. Anchored left so `redskilled-…` and a
+ * path segment ending in `dev` are not swept in.
+ */
+const DEV_RUNTIME_FOSSIL = /(?:^|[^\w-])(?:dev-[\w.*-]*\.bundle\.min\.mjs|afk\.mjs)/;
 
 /**
  * Every doc surface that publishes the command verbatim.
@@ -210,44 +232,43 @@ export function describeStatuslineAbsence(
 }
 
 /**
- * The copies that still carry a retired two-producer adapter fragment.
- * PURE.
+ * The copies that still carry a fossil of the retired recipe. PURE.
  *
- * One check, two fossils of one obsolete recipe: `--no-workers` asks the dev
- * command for a split it no longer exposes, and a `redskilled` bundle glob runs
- * the daemon renderer a second time after the dev command already appended it.
+ * One check, two fossils: `--no-workers` asks for a split no renderer exposes,
+ * and any reach for the dev runtime resolves a renderer ADR 0147 deleted — the
+ * frozen line this rule exists to make impossible.
  */
 export function statuslineCommandsDelegatingWorkers(
   sites: readonly StatuslineCommandSite[],
 ): StatuslineCommandSite[] {
-  return sites.filter((site) => site.body.includes(WORKER_ROWS_OFF) || DAEMON_BUNDLE.test(site.body));
+  return sites.filter((site) => site.body.includes(WORKER_ROWS_OFF) || DEV_RUNTIME_FOSSIL.test(site.body));
 }
 
-/** A failure message naming every copy that still carries the retired adapter. */
+/** A failure message naming every copy that still carries a retired producer. */
 export function describeStatuslineDelegation(sites: readonly StatuslineCommandSite[]): string {
   const delegating = statuslineCommandsDelegatingWorkers(sites);
   if (delegating.length === 0) return "";
   return [
-    `${delegating.length} statusLine command cop${delegating.length === 1 ? "y" : "ies"} still carry the retired two-producer adapter.`,
-    "Invoke the dev bundle once: it renders the local bedrock and appends the daemon-fed tail through one bounded socket probe (#3559, ADR 0141).",
-    `Drop \`${WORKER_ROWS_OFF}\` and drop the second redskilled bundle invocation.`,
+    `${delegating.length} statusLine command cop${delegating.length === 1 ? "y" : "ies"} still carry a retired statusline producer.`,
+    "Invoke the redskilled bundle once: it renders the local bedrock and the Worker tail in one process (#3559, ADR 0141).",
+    `Drop \`${WORKER_ROWS_OFF}\` and drop every reach for the dev runtime ADR 0147 deleted.`,
     ...delegating.map((site) => `  ${site.path}:${site.line}`),
   ].join("\n");
 }
 
 /**
- * Every bundle-cache filename PATTERN the command globs, in the order it globs
- * them (`dev-*.bundle.min.mjs`, `redskilled*.bundle.min.mjs`, …). PURE.
+ * Every bundle filename PATTERN the command globs, in the order it globs them
+ * (`redskilled-*.bundle.min.mjs`, …). PURE.
  *
  * Takes the shell text so a caller may pass the published body escaped or
- * resolved: the cache paths carry no JSON escape, so both spellings read alike.
+ * resolved: the bundle paths carry no JSON escape, so both spellings read alike.
  */
 export function statuslineBundleGlobs(body: string): string[] {
   const globs: string[] = [];
   // A glob ends where the shell word does: whitespace or a metacharacter. `\S+`
   // would swallow the `);` that closes a `$(ls …)` and report a pattern the
   // shell never expands.
-  const pattern = new RegExp(`${BUNDLE_CACHE_SEGMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\s;)|&"']+)`, "g");
+  const pattern = new RegExp(`${BUNDLE_DIR_SEGMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\s;)|&"']+)`, "g");
   for (const match of body.matchAll(pattern)) {
     const glob = match[1];
     if (glob) globs.push(glob);
@@ -258,8 +279,8 @@ export function statuslineBundleGlobs(body: string): string[] {
 /**
  * Does any published glob resolve `fileName`? PURE.
  *
- * The question the render command actually asks of provisioning: the warm path
- * mints `<plugin>-<version>.bundle.min.mjs`, and a glob that does not match it
+ * The question the render command actually asks of provisioning: the daemon
+ * mints `redskilled-<version>.bundle.min.mjs`, and a glob that does not match it
  * is the whole of #3074 — a command that looked in the right directory for a
  * name nothing writes.
  */

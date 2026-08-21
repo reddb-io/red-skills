@@ -248,7 +248,12 @@ describe("red-setup docs", () => {
     expect(script).toContain("dist/rsp.bundle.min.mjs");
     expect(script).toContain(".codex/plugins/cache/red-skills/dev");
     expect(script).toContain(".claude/plugins/cache/red-skills/dev");
-    expect(script).toContain(".cache/red-skills/bundles");
+    // ADR 0147 deleted the dev runtime bundle, so the shim must resolve NO dev
+    // bundle: `dev-3.21.0` is the last one that will ever exist, and running it
+    // is 3.21.0-era code against v4 state. The cache path survives in the shim
+    // only as the cleanup hint for a machine that still holds a copy.
+    expect(script).not.toContain('exec node "$bundle"');
+    expect(script).toContain(".cache/red-skills/bundles/dev-*.bundle.min.mjs is inert");
   });
 
   it("documents tq as a pinned required host binary installed by setup", async () => {
