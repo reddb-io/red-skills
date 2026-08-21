@@ -96,7 +96,7 @@ import {
 } from "../project-registration.js";
 import { createRedskilledProjectHookRuntime } from "../project-hook.js";
 import { meteredRedskilledEventLane, redskilledMetrics } from "../telemetry-metrics.js";
-import { createRedskilledHostEventSinkRuntime } from "../host-event-sink.js";
+import { createRedskilledHostEventSinkRuntime, REDSKILLED_HOST_EVENT_PROJECT } from "../host-event-sink.js";
 import { detectRedskilledHostTopology } from "../host-topology.js";
 import { pingAnswer } from "./ping-answer.js";
 import {
@@ -1368,7 +1368,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const reported = tail ?? logLines.get(worker.worker_id)?.line ?? null;
     forgetWorker(worker.worker_id);
     record("worker-death", worker, refusal == null ? death.detail : `session-error: ${refusal}`, {
-      ...death.facts, refusal, birthOutcome: workerTerminalOutcome({ exitCode: code, signal, tail: reported }),
+      ...death.facts, refusal, birthOutcome: workerTerminalOutcome({ exitCode: code, signal, tail: reported,
+        oneShot: worker.project_label === REDSKILLED_HOST_EVENT_PROJECT }),
     });
   }
 

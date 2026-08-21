@@ -38,6 +38,26 @@ function streak(n: number, lifetimeMs: number, nowMs = NOW_MS) {
   return health;
 }
 
+describe("one-shot sink Workers and the breaker (#4266)", () => {
+  it("reads a clean one-shot exit as a completion, sentinel or not", () => {
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: null, oneShot: true }))
+      .toBe("work-reported");
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: "removed 1 superseded redwall(s)", oneShot: true }))
+      .toBe("work-reported");
+  });
+
+  it("still surfaces a hook that genuinely failed", () => {
+    expect(workerTerminalOutcome({ exitCode: 1, signal: null, tail: null, oneShot: true })).toBe("unreported");
+    expect(workerTerminalOutcome({ exitCode: null, signal: "SIGKILL", tail: null, oneShot: true })).toBe("unreported");
+  });
+
+  it("changes nothing for demand Workers, which still owe the sentinel", () => {
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: null })).toBe("unreported");
+    expect(workerTerminalOutcome({ exitCode: 0, signal: null, tail: "<promise>DONE</promise>" }))
+      .toBe("work-reported");
+  });
+});
+
 describe("foldWorkerDeath", () => {
   it("does not halt before the streak completes", () => {
     const health = streak(REDSKILLED_SHORT_LIFE_STREAK - 1, 13_000);
