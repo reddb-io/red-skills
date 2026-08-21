@@ -1,0 +1,11 @@
+// A fixture standing in for `apps/host-opencode/src/probe.ts`: one runtime
+// reaching sideways into a sibling runtime's src/ by relative path. No manifest
+// records this edge, which is exactly why a manifest audit cannot see it.
+
+import { openDaemonSocket } from "@reddb-io/redskilled";
+import { graphRecall } from "../../plugin-memory/src/graph-recall.js";
+
+export const probe = async (): Promise<unknown> => {
+  const socket = await openDaemonSocket();
+  return graphRecall(socket);
+};
