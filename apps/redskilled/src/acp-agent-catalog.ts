@@ -12,12 +12,24 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { ACP_AGENT_IDS, type AcpAgentId, type AcpEndpoint } from "@reddb-io/protocol-acp";
+import {
+  ACP_UNATTENDED_POSTURES,
+  unattendedLaunchArgs,
+  unattendedSessionMode,
+  type AcpUnattendedPosture,
+} from "./acp-unattended-posture.js";
 
 // The Agent identities and the resolved endpoint are shared wire (ADR 0148):
 // the Worker body reads an endpoint it never resolves, so it must not have to
 // import this catalog to do it. Re-exported here so daemon-side callers keep
 // asking the authority that owns discovery.
 export { ACP_AGENT_IDS, type AcpAgentId, type AcpEndpoint };
+export {
+  ACP_UNATTENDED_POSTURES,
+  unattendedPostureFor,
+  unattendedSessionMode,
+  type AcpUnattendedPosture,
+} from "./acp-unattended-posture.js";
 
 export const ACP_AGENT_REQUIRED_CAPABILITIES = [
   "session/new",
@@ -36,30 +48,31 @@ export interface AcpAdapterArtifact {
   readonly bin?: string;
 }
 
-export interface NativeAcpAgentDescriptor {
+/**
+ * What every Agent declares, whatever kind it is.
+ *
+ * `unattendedPosture` is REQUIRED, and that is the whole point: three of the
+ * five Agents were admissible and undeployable at once because a missing
+ * posture reads exactly like an Agent that needs none (#4278). A sixth Agent
+ * cannot land unpostured, because a descriptor without the field does not
+ * compile.
+ */
+interface AcpAgentDescriptorBase {
   readonly id: AcpAgentId;
   readonly label: string;
+  /** How this Agent is made able to work with nobody at the keyboard. */
+  readonly unattendedPosture: AcpUnattendedPosture;
+}
+
+export interface NativeAcpAgentDescriptor extends AcpAgentDescriptorBase {
   readonly kind: "native";
   /** Native ACP argv; the first element is the executable. */
   readonly command: readonly [string, ...string[]];
 }
 
-export interface AdapterAcpAgentDescriptor {
-  readonly id: AcpAgentId;
-  readonly label: string;
+export interface AdapterAcpAgentDescriptor extends AcpAgentDescriptorBase {
   readonly kind: "adapter";
   readonly artifact: AcpAdapterArtifact;
-  /**
-   * Arguments the adapter is LAUNCHED with, after the bin.
-   *
-   * A Worker's child runs unattended: nobody answers a permission dialog, so
-   * an adapter whose defaults ask for approval aborts its turn on the first
-   * write. The launch declares the unattended posture instead — the same
-   * trust the native redcode child already runs with, because the product's
-   * isolation is the disposable Worker workspace and its cgroup, not the
-   * adapter's own prompt-for-approval loop.
-   */
-  readonly launchArgs?: readonly string[];
 }
 
 export type AcpAgentDescriptor = NativeAcpAgentDescriptor | AdapterAcpAgentDescriptor;
@@ -69,7 +82,13 @@ export type AcpAgentDescriptor = NativeAcpAgentDescriptor | AdapterAcpAgentDescr
  * deliberately exact: changing either is a reviewed catalog update.
  */
 export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
-  { id: "redcode", label: "Redcode", kind: "native", command: ["redcode", "acp"] },
+  {
+    id: "redcode",
+    label: "Redcode",
+    kind: "native",
+    command: ["redcode", "acp"],
+    unattendedPosture: ACP_UNATTENDED_POSTURES.redcode,
+  },
   {
     id: "claude-code",
     label: "Claude Code",
@@ -81,6 +100,7 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       entrypoint: "package/dist/index.js",
       bin: "claude-code-acp",
     },
+    unattendedPosture: ACP_UNATTENDED_POSTURES["claude-code"],
   },
   {
     id: "codex",
@@ -93,7 +113,7 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       entrypoint: "package/bin/codex-acp.js",
       bin: "codex-acp",
     },
-    launchArgs: ["-c", "approval_policy=never", "-c", "sandbox_mode=danger-full-access"],
+    unattendedPosture: ACP_UNATTENDED_POSTURES.codex,
   },
   {
     id: "pi",
@@ -106,8 +126,15 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       entrypoint: "package/dist/index.js",
       bin: "pi-acp",
     },
+    unattendedPosture: ACP_UNATTENDED_POSTURES.pi,
   },
-  { id: "opencode", label: "OpenCode", kind: "native", command: ["opencode", "acp"] },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    kind: "native",
+    command: ["opencode", "acp"],
+    unattendedPosture: ACP_UNATTENDED_POSTURES.opencode,
+  },
 ] as const;
 
 /** Credential-free launch projection handed to a Worker. */
@@ -341,26 +368,32 @@ export function declaredChildAgentEndpoint(id: AcpAgentId): AcpEndpoint {
   if (descriptor.artifact.bin == null) {
     throw new AcpAgentUnavailableError(id, "its pinned adapter declares no launchable bin");
   }
+  const sessionMode = unattendedSessionMode(descriptor.unattendedPosture);
   return {
     agent: id,
     transport: "stdio",
     command: "npx",
+    ...(sessionMode == null ? {} : { unattendedSessionMode: sessionMode }),
     args: [
       "-y",
       "-p",
       `${descriptor.artifact.package}@${descriptor.artifact.version}`,
       descriptor.artifact.bin,
-      ...(descriptor.launchArgs ?? []),
+      ...unattendedLaunchArgs(descriptor.unattendedPosture),
     ],
   };
 }
 
 function nativeEndpoint(descriptor: NativeAcpAgentDescriptor): AcpEndpoint {
+  const sessionMode = unattendedSessionMode(descriptor.unattendedPosture);
   return {
     agent: descriptor.id,
     transport: "stdio",
     command: descriptor.command[0],
-    args: descriptor.command.slice(1),
+    ...(sessionMode == null ? {} : { unattendedSessionMode: sessionMode }),
+    // A native Agent carries its posture the same way an adapter does; the
+    // seam is the launch, not the kind (#4278).
+    args: [...descriptor.command.slice(1), ...unattendedLaunchArgs(descriptor.unattendedPosture)],
   };
 }
 
@@ -431,6 +464,7 @@ function assertDescriptors(descriptors: readonly AcpAgentDescriptor[]): void {
   for (const descriptor of descriptors) {
     if (seen.has(descriptor.id)) throw new Error(`duplicate ACP Agent descriptor: ${descriptor.id}`);
     seen.add(descriptor.id);
+    assertPosture(descriptor);
     if (descriptor.kind === "adapter") {
       if (!/^\d+\.\d+\.\d+$/.test(descriptor.artifact.version)) {
         throw new Error(`ACP adapter ${descriptor.id} must use an exact semantic version`);
@@ -439,6 +473,22 @@ function assertDescriptors(descriptors: readonly AcpAgentDescriptor[]): void {
         throw new Error(`ACP adapter ${descriptor.id} has an unsafe entrypoint`);
       }
     }
+  }
+}
+
+/**
+ * A posture that establishes nothing is worse than none: it reads as a decision
+ * somebody made. Empty args, an empty mode id and an empty reason all fail here.
+ */
+function assertPosture(descriptor: AcpAgentDescriptor): void {
+  const posture = descriptor.unattendedPosture;
+  const stated = posture.kind === "launch-args"
+    ? posture.args.length > 0 && posture.args.every((arg) => arg.length > 0)
+    : posture.kind === "session-mode"
+      ? posture.modeId.length > 0
+      : posture.reason.length > 0;
+  if (!stated) {
+    throw new Error(`ACP Agent ${descriptor.id} declares an empty ${posture.kind} unattended posture`);
   }
 }
 

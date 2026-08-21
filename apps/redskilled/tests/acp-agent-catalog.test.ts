@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ACP_AGENT_CATALOG,
+  ACP_UNATTENDED_POSTURES,
   ACP_AGENT_IDS,
   ACP_AGENT_REQUIRED_CAPABILITIES,
   AcpAgentCatalog,
@@ -166,6 +167,7 @@ function adapterDescriptor(id: "pi", version: string, bytes: Uint8Array): AcpAge
       integrity: integrityOf(bytes),
       entrypoint: "package/dist/index.js",
     },
+    unattendedPosture: ACP_UNATTENDED_POSTURES.pi,
   };
 }
 

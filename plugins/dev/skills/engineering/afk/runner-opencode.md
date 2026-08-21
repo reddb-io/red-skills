@@ -1,5 +1,9 @@
 # Runner: OpenCode
 
+> **Unattended posture.** What makes this Agent able to work with nobody at the
+> keyboard — and the evidence behind it — is
+> [`runner-unattended-posture.md`](./runner-unattended-posture.md).
+
 How `/afk` invokes OpenCode as the inner agent for one issue (ADR 0059, amended).
 OpenCode is the **API-auth** runner: it reaches OpenAI-compatible endpoints
 through its own `<provider>/<model>` slug and an API key, with no host session

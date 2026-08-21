@@ -19,4 +19,15 @@ export interface AcpEndpoint {
   readonly transport: "stdio";
   readonly command: string;
   readonly args: readonly string[];
+  /**
+   * The ACP session mode the Worker must set right after `session/new`.
+   *
+   * Some Agents take their unattended posture from argv and some take it from a
+   * session mode — claude-code-acp parses no argv at all, and `bypassPermissions`
+   * is the only door it has (#4278). The mode travels ON the endpoint because
+   * the endpoint is already the one thing that crosses the body/control cut:
+   * the daemon's catalog decides it, and the Worker applies what it was handed
+   * without ever asking which Agent it is holding.
+   */
+  readonly unattendedSessionMode?: string;
 }

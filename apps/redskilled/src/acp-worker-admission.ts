@@ -319,6 +319,11 @@ export function nativeWorkerSpec(
       "--socket", endpoint,
       "--child-agent", childAgent.agent,
       "--child-command", childAgent.command,
+      // The unattended posture of an Agent that parses no argv (#4278): the
+      // Worker sets it as a session mode, so it has to reach the Worker.
+      ...(childAgent.unattendedSessionMode == null
+        ? []
+        : ["--child-session-mode", childAgent.unattendedSessionMode]),
       // Inline form, because an adapter's args start with dashes (`-y`, `-p`)
       // and the pair form reads the next dash token as a flag, not a value.
       ...childAgent.args.map((arg) => `--child-arg=${arg}`),
