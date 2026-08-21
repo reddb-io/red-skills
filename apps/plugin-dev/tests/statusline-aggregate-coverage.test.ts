@@ -27,15 +27,28 @@ import { renderStatusline } from "../src/core/statusline.js";
  * it.
  */
 
-const STATUSLINE_SRC = readFileSync(
+/**
+ * The render's input interfaces, read as TEXT from both modules that declare
+ * them. `ProjectInput` and `ClaudeInput` moved down to `@reddb-io/shared` when
+ * the `redskilled` daemon took over drawing the Statusline Bedrock, so a reader
+ * that looked only at `core/statusline.ts` would stop seeing the contract it
+ * exists to pin — and a green suite would mean the field list went missing,
+ * which is precisely the failure this test refuses.
+ */
+const STATUSLINE_SRC = [
   join(dirname(fileURLToPath(import.meta.url)), "..", "src", "core", "statusline.ts"),
-  "utf8",
-);
+  join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..", "..", "..", "packages", "shared", "statusline-bedrock.ts",
+  ),
+]
+  .map((path) => readFileSync(path, "utf8"))
+  .join("\n");
 
-/** Field names declared on one exported interface in `core/statusline.ts`. */
+/** Field names declared on one exported interface of the render's input surface. */
 function interfaceFields(name: string): string[] {
   const start = STATUSLINE_SRC.indexOf(`export interface ${name} {`);
-  expect(start, `interface ${name} not found in core/statusline.ts`).toBeGreaterThan(-1);
+  expect(start, `interface ${name} not found on the statusline input surface`).toBeGreaterThan(-1);
   const body = STATUSLINE_SRC.slice(start, STATUSLINE_SRC.indexOf("\n}", start));
   const fields = new Set<string>();
   for (const line of body.split("\n").slice(1)) {

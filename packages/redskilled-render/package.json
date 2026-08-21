@@ -7,6 +7,7 @@
   "license": "Apache-2.0",
   "exports": {
     ".": "./index.ts",
+    "./bedrock-style.js": "./bedrock-style.ts",
     "./counters.js": "./counters.ts",
     "./dashboard.js": "./dashboard.ts",
     "./decode.js": "./decode.ts",

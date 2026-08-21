@@ -15,6 +15,14 @@
  * a line and always exits 0, because a statusline that printed nothing when the
  * daemon was down would render an outage as calm. An unreachable host is a
  * stated absence on stdout and a diagnosis on stderr.
+ *
+ * **This command owns BOTH halves of the line** (ADR 0141 §1). The Bedrock —
+ * model, directory, branch, context, the running version — is drawn from the
+ * Claude Code stdin payload and local git, with zero network and zero daemon,
+ * and LEADS the header the daemon tail supplies. It shipped inside the dev
+ * bundle ADR 0147 deleted, so between that deletion and its arrival here the
+ * operator's bar carried the tail alone; the seam is one process now, which is
+ * what the ADR meant by the bedrock/tail seam being permanent.
  */
 import {
   readRedskilledStatuslineRender,
@@ -33,6 +41,10 @@ import {
   renderRedskilledStatuslineAbsence,
   type RedskilledStatuslineRender,
 } from "@reddb-io/redskilled-render";
+import {
+  composeStatuslineWithBedrock,
+  type StatuslineBedrockIO,
+} from "./statusline-bedrock-host.js";
 
 export interface RedskilledStatuslineProbe {
   readonly payload: RedskilledStatuslinePayload;
@@ -89,6 +101,8 @@ export async function runStatusline(
     readonly client?: RedskilledClientConfig;
     /** The clock, for the one instant no daemon supplies: an absence's own. */
     readonly now?: () => string;
+    /** The bedrock's own seams — the host payload, local git, the build stamp. */
+    readonly bedrock?: StatuslineBedrockIO;
   } = {},
 ): Promise<number> {
   const write = io.write ?? ((line: string) => process.stdout.write(line));
@@ -121,6 +135,19 @@ export async function runStatusline(
   // Every line the shared render produced, in order — one write, whatever the
   // taste. With `--verbose` that is the Worker line plus a second line per
   // Worker; the host still decides nothing about shape.
-  write(`${render.lines.join("\n")}\n`);
+  //
+  // The bedrock LEADS the header. It is wrapped because it must never be able to
+  // cost the tail: the whole reason this half exists is that it renders when the
+  // other one cannot, and a bedrock that threw would invert that promise.
+  let lines = render.lines;
+  try {
+    lines = await composeStatuslineWithBedrock(render.lines, {
+      ...(io.cwd == null ? {} : { cwd: io.cwd }),
+      ...(io.bedrock ?? {}),
+    });
+  } catch (err) {
+    warn(`redskilled statusline: bedrock unavailable — ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+  write(`${lines.join("\n")}\n`);
   return 0;
 }

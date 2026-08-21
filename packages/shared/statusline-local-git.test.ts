@@ -3,10 +3,10 @@ import { decode } from "@reddb-io/toon";
 import {
   STATUSLINE_GIT_MICRO_TTL_MS,
   collectStatuslineLocalGit,
+  statuslineGitCachePath,
   type StatuslineLocalGit,
   type StatuslineLocalGitDeps,
-} from "../src/runtime/wire/statusline-git.js";
-import { afkPaths } from "../src/runtime/wire/paths.js";
+} from "./statusline-local-git.js";
 
 const ROOT = "/tmp/statusline-micro-ttl-fixture";
 
@@ -84,7 +84,7 @@ describe("statusline bedrock local git — the ~5s micro-TTL", () => {
 
     await collectStatuslineLocalGit(ROOT, h.deps);
 
-    const path = afkPaths(ROOT).statuslineGitCachePath;
+    const path = statuslineGitCachePath(ROOT);
     expect(path).toBe(`${ROOT}/.red/state/statusline/statusline-git-cache.toon`);
     const written = h.files.get(path) ?? "";
     expect(written.startsWith("{")).toBe(false);

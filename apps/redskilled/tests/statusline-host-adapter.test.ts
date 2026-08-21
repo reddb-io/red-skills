@@ -35,6 +35,7 @@ import { readRedskilledStatuslineString } from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
+import type { StatuslineBedrockIO } from "../src/statusline-bedrock-host.js";
 import { resolveRedskilledStatuslineOptions } from "../src/statusline-config.js";
 
 const running: RedskilledDaemon[] = [];
@@ -118,6 +119,18 @@ describe("the shipped Claude Code adapter", () => {
   });
 });
 
+/**
+ * A stated bedrock: this suite is about the DAEMON's half of the line, so the
+ * half the operator's own machine answers is injected rather than read.
+ */
+const BEDROCK_IO: StatuslineBedrockIO = {
+  readStdin: async () => null,
+  readLocalGit: async () => ({ basename: "widgets", branch: "main", localAdded: 0, localRemoved: 0 }),
+  version: "0.0.0-test",
+  env: { NO_COLOR: "1" },
+};
+const BEDROCK = "widgets (main) v0.0.0-test";
+
 describe("what the host prints", () => {
   it("is the string the daemon produced, byte for byte", async () => {
     const paths = await sessionPaths();
@@ -155,7 +168,15 @@ describe("what the host prints", () => {
     );
 
     const written: string[] = [];
-    const code = await runStatusline([], { cwd, paths, write: (line) => written.push(line), warn: () => undefined });
+    const code = await runStatusline([], {
+      cwd,
+      paths,
+      write: (line) => written.push(line),
+      warn: () => undefined,
+      // The bedrock is the operator's own machine, so it is stated rather than
+      // read here: this test is about the DAEMON's half surviving the seam.
+      bedrock: BEDROCK_IO,
+    });
 
     // The same taste the command resolved, asked for again through the client:
     // whatever the host printed has to BE this, with nothing added or reordered.
@@ -166,7 +187,9 @@ describe("what the host prints", () => {
     const served = await readRedskilledStatuslineString(paths, resolved.options, { sessionProject: "acme/widgets" });
 
     expect(code).toBe(0);
-    expect(written).toEqual([`${served.lines.join("\n")}\n`]);
+    // The bedrock LEADS the header (ADR 0141 §1) and the daemon's document
+    // follows byte for byte, with nothing added, reordered or dropped.
+    expect(written).toEqual([`${BEDROCK} · ${served.lines.join("\n")}\n`]);
     // `--verbose` is the interesting case: the extra rows carry each Worker's
     // last logged line, published by the Worker and stored opaque by the daemon.
     expect(served.lines.length).toBe(5);
