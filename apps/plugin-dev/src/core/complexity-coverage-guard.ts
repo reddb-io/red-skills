@@ -159,7 +159,6 @@ export const COMPLEXITY_COVERAGE_BASELINE: readonly ComplexityCoverageBaselineEn
   { path: "apps/rsp/src/fast-boundary.ts", name: "resolveFastBoundary", crap: 600 },
   { path: "apps/rsp/src/wait/probes.ts", name: "probeRelease", crap: 380 },
   { path: "packages/github/balance.ts", name: "isGithubBalanceReport", crap: 306 },
-  { path: "packages/protocol-acp/ticket.ts", name: "ticketHandoffFromMeta", crap: 462 },
   { path: "packages/redskilled-render/dashboard-sections.ts", name: "projectLines", crap: 306 },
   { path: "packages/redskilled-render/dashboard.ts", name: "workerCells", crap: 870 },
   { path: "packages/redskilled-render/payload.ts", name: "isRedskilledRenderPayload", crap: 272 },

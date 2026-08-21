@@ -214,7 +214,15 @@ function ticket(overrides: Partial<RedskillsTicketHandoff> = {}): RedskillsTicke
     title: "fix: #4020 The ACP Worker runs the whole Ticket loop end-to-end",
     labels: ["ready-for-agent"],
     base: "main",
-    handoff: "Implement Ticket #4020 in this Worktree and commit.",
+    // The brief contract (#4139) refuses a handoff with no executable
+    // acceptance criteria at the decoder, before the Ticket loop is entered.
+    handoff: [
+      "Implement Ticket #4020 in this Worktree and commit.",
+      "",
+      "## Acceptance criteria",
+      "",
+      "- [ ] Running `pnpm -C apps/redskilled test` passes.",
+    ].join("\n"),
     worker_id: "stub-host:VSk6WPt",
     runner: "redcode",
     ...overrides,

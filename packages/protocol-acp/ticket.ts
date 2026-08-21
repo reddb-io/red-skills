@@ -18,6 +18,24 @@
 //     hold must be refused before the claim, not after the push.
 //   - **A gate verdict.** The gate runs locally, inside the turn, because a
 //     verdict computed elsewhere cannot be what a re-seed reacts to (ADR 0129).
+//
+// ## The brief is a REQUIRED field with a shape, not just a non-empty string
+//
+// Ticket #4139 made the brief contract the decoder's business. `handoff` was
+// already required to be non-empty, which only ever refused the empty string;
+// a brief reading "make it better" decoded cleanly and cost a Worker its whole
+// workspace to discover it could not be finished. So the decoder now asks the
+// same question the triage promotion asks — does this brief carry executable
+// acceptance criteria? — and refuses the handoff when it does not, exactly the
+// way it refuses a missing `base`.
+//
+// The refusal is `undefined` rather than a throw, unchanged and for the
+// original reason: the same Worker body serves ordinary prompt turns, so a
+// decoder that threw would fail every turn that never claimed to carry a
+// Ticket. What that costs is a diagnostic, which is why the door AFTER this one
+// — the Worker preflight in the Ticket loop — states the refusal in words.
+
+import { briefStatesExecutableAcceptance } from "@reddb-io/shared/brief-contract.js";
 
 /** One Ticket, as the daemon hands it to the Worker body for a turn. */
 export interface RedskillsTicketHandoff {
@@ -51,27 +69,26 @@ export interface RedskillsTicketHandoff {
   readonly validation_commands?: readonly string[];
 }
 
+/** The six fields a handoff must state; the rest are refinements. */
+type RequiredTicketFields = Pick<
+  RedskillsTicketHandoff,
+  "number" | "title" | "labels" | "base" | "handoff" | "worker_id"
+>;
+
 /**
  * The Ticket a turn's `_meta` carries, or `undefined` when it carries none.
  *
  * A turn without a Ticket is not an error: the same Worker body serves ordinary
  * prompt turns, and a parser that threw would make every one of them fail on
- * the absence of something they never claimed to have.
+ * the absence of something they never claimed to have. A MALFORMED Ticket is
+ * refused the same way, and since #4139 a vague brief counts as malformed.
  */
 export function ticketHandoffFromMeta(meta: unknown): RedskillsTicketHandoff | undefined {
   const candidate = (meta as { redskills?: { ticket?: unknown } } | undefined)?.redskills?.ticket;
   if (candidate == null || typeof candidate !== "object") return undefined;
   const ticket = candidate as Record<string, unknown>;
-  if (
-    typeof ticket.number !== "number" || !Number.isInteger(ticket.number) || ticket.number <= 0 ||
-    typeof ticket.title !== "string" || ticket.title === "" ||
-    typeof ticket.base !== "string" || ticket.base === "" ||
-    typeof ticket.handoff !== "string" || ticket.handoff === "" ||
-    typeof ticket.worker_id !== "string" || ticket.worker_id === "" ||
-    !isStringArray(ticket.labels)
-  ) {
-    return undefined;
-  }
+  if (!statesRequiredTicketFields(ticket)) return undefined;
+  if (!briefStatesExecutableAcceptance(ticket.handoff)) return undefined;
   return {
     number: ticket.number,
     title: ticket.title,
@@ -79,6 +96,31 @@ export function ticketHandoffFromMeta(meta: unknown): RedskillsTicketHandoff | u
     base: ticket.base,
     handoff: ticket.handoff,
     worker_id: ticket.worker_id,
+    ...optionalTicketFields(ticket),
+  };
+}
+
+/** Every required field present, of the right type, and non-empty. */
+function statesRequiredTicketFields(
+  ticket: Record<string, unknown>,
+): ticket is Record<string, unknown> & RequiredTicketFields {
+  return (
+    typeof ticket.number === "number" && Number.isInteger(ticket.number) && ticket.number > 0 &&
+    typeof ticket.title === "string" && ticket.title !== "" &&
+    typeof ticket.base === "string" && ticket.base !== "" &&
+    typeof ticket.handoff === "string" && ticket.handoff !== "" &&
+    typeof ticket.worker_id === "string" && ticket.worker_id !== "" &&
+    isStringArray(ticket.labels)
+  );
+}
+
+/**
+ * The refinements a handoff may carry, each DROPPED rather than refused when it
+ * is malformed: an operator's typo in a backpressure list should cost the list,
+ * never the Ticket.
+ */
+function optionalTicketFields(ticket: Record<string, unknown>): Partial<RedskillsTicketHandoff> {
+  return {
     ...(typeof ticket.runner === "string" ? { runner: ticket.runner } : {}),
     ...(typeof ticket.run_mode === "string" ? { run_mode: ticket.run_mode } : {}),
     ...(typeof ticket.reseed_budget === "number" && Number.isFinite(ticket.reseed_budget)
