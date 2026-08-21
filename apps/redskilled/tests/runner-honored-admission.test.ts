@@ -79,14 +79,14 @@ describe("the registered runner reaches the born Worker", () => {
 
   it("hands the runner through nativeWorkerSpec argv and keeps redcode's workspace DB", () => {
     const codexSpec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk", "codex");
-    const agentAt = codexSpec.args.indexOf("--child-agent");
-    expect(codexSpec.args[agentAt + 1]).toBe("codex");
+    const codexArgs = codexSpec.args ?? [];
+    expect(codexArgs[codexArgs.indexOf("--child-agent") + 1]).toBe("codex");
     expect(codexSpec.env?.OPENCODE_DB).toBeUndefined();
     expect(codexSpec.env?.CODEX_HOME).toBe(codexAgentHome());
 
     const redcodeSpec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk");
-    const redcodeAt = redcodeSpec.args.indexOf("--child-agent");
-    expect(redcodeSpec.args[redcodeAt + 1]).toBe("redcode");
+    const redcodeArgs = redcodeSpec.args ?? [];
+    expect(redcodeArgs[redcodeArgs.indexOf("--child-agent") + 1]).toBe("redcode");
     expect(redcodeSpec.env?.OPENCODE_DB).toBe(join(workspace.workspacePath, "redcode.db"));
   });
 });
