@@ -260,6 +260,9 @@ command, and the `statusline` line it shares a render with) ->
 engine delivery repair (the `reconcile-engine` dev CLI subcommand) ->
 `apps/plugin-dev/src/runtime/reconcile-engine.ts`;
 territory scoping (`tag:<value>` labels, `/afk --tags`/`--user`) ->
+`plugins/dev/skills/engineering/red-setup/triage-labels.md`;
+the verification bar a Ticket's land requires (`verify:<value>` labels,
+ADR 0156 §2) ->
 `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
 
 Troubleshooting references registered by owner:

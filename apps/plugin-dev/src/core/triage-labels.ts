@@ -41,6 +41,24 @@ export function tagLabel(value: string): string {
   return `${TAG_LABEL_PREFIX}${value}`;
 }
 
+// Selective-verification label family (ADR 0156 §2, Spec #4164, issue #4174):
+// `verify:live`, `verify:tests` and `verify:gate-only` name the minimum
+// Countersign class a Ticket's land requires. Declared in `@reddb-io/shared` and
+// re-exported HERE because the land precondition, the merge surfaces and the
+// triage paths must all spell the family the same way, and this module is where
+// every triage label is spelled. A triage human stamps it; an unlabeled Ticket
+// fails closed to the full bar. Never drives lifecycle transitions.
+export {
+  VERIFY_LABELS,
+  VERIFY_LABEL_CONTRACT,
+  VERIFY_LABEL_PREFIX,
+  UNLABELED_VERIFY_REQUIREMENT,
+  isVerifyLabel,
+  resolveVerifyRequirement,
+  type VerifyLabel,
+  type VerifyRequirement,
+} from "@reddb-io/shared/verify-labels.js";
+
 // Per-issue MANUAL-LANDING mode (issue #1049). A `ready-for-agent` issue carrying
 // THIS label runs the full normal AFK pipeline — claim, worktree, inner agent,
 // salvage, feedback gate, push, open the PR — then STOPS before any merge and

@@ -23,6 +23,7 @@
  * answer refuses, because the whole point of ADR 0154 is that an absence of
  * judgement stopped being indistinguishable from a passing one.
  */
+import type { VerifyRequirement } from "./verify-labels.js";
 
 /**
  * Why a landing was refused. The list is closed, and every entry names a
@@ -41,6 +42,13 @@ export type LandRefusalReason =
   | "verifier-failed"
   /** A verifier could not conclude — runner down, unwired, identity unpinnable. */
   | "verifier-blocked"
+  /**
+   * A verifier passed, but below the bar the Ticket's `verify:<value>` label
+   * declared (ADR 0156 §2). Its own reason rather than `no-countersign`, because
+   * a judgement exists and the repair is either a stronger review or a triage
+   * human moving the label — neither of which "nobody judged it" would suggest.
+   */
+  | "insufficient-countersign"
   /** The entry point could not even name the head it was about to merge. */
   | "unresolvable-head";
 
@@ -50,6 +58,7 @@ export const LAND_REFUSAL_REASONS: readonly LandRefusalReason[] = [
   "stale-countersign",
   "verifier-failed",
   "verifier-blocked",
+  "insufficient-countersign",
   "unresolvable-head",
 ];
 
@@ -91,9 +100,19 @@ export type LandCountersignDecision =
 /**
  * The port an entry point holds. One method, one question, no escape hatch —
  * a caller that wants to land asks, and a gate that cannot answer refuses.
+ *
+ * The second argument is HOW STRONG the answer must be (ADR 0156 §2): the
+ * requirement the Ticket's `verify:<value>` label declared, resolved by
+ * `resolveVerifyRequirement`. An entry point that holds no labels omits it and
+ * is judged at `UNLABELED_VERIFY_REQUIREMENT` — the fail-closed default,
+ * never the discount, because an entry point that cannot see a declaration has
+ * no grounds to assume a generous one.
  */
 export interface LandCountersignGate {
-  check(subject: LandSubject): Promise<LandCountersignDecision>;
+  check(
+    subject: LandSubject,
+    requirement?: VerifyRequirement,
+  ): Promise<LandCountersignDecision>;
 }
 
 /** Name a subject in one phrase, so every refusal says what it refused. PURE. */
@@ -127,6 +146,8 @@ export function landRefusalMessage(
       return `the verifier refused ${where}${tail} — a refusal is work for the implementer, not a merge; address the finding and publish a new head`;
     case "verifier-blocked":
       return `the verifier could not conclude on ${where}${tail} — repair the reviewer runner (or set \`dev.review.mode: advisory\` while you do), then re-review`;
+    case "insufficient-countersign":
+      return `${where} is countersigned below the bar its Ticket declared${tail} — the \`verify:<value>\` label names the minimum class this land requires; re-review at that class, or have a triage human declare a different one`;
     case "unresolvable-head":
       return `the landing could not name the head it was about to merge for ${where}${tail} — a Countersign cannot be matched to a head nobody resolved, so nothing merges`;
   }

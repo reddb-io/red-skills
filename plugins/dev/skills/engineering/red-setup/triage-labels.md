@@ -171,6 +171,23 @@ These exist for filtering and don't drive lifecycle transitions:
 
 On autonomous creation: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so that cleanup never fails just because the label has not been provisioned. The creation surfaces (`/go --tags`, `/to-spec`, `/to-tickets`) likewise auto-create missing `tag:<v>` labels before stamping them. The `/afk` **selection** side never creates labels — a tag-scoped drain naming a nonexistent label just yields an empty scoped queue (the gate census reports whether the requested labels exist). Provision common labels up front via `/red-setup` to keep colour/description consistent across repos.
 
+## Verification bar (`verify:<value>`) — declared at triage, enforced at the land
+
+**The label names the minimum Countersign class a Ticket's land requires** (ADR 0156 §2). A **Countersign** is the second signature ADR 0154 demands: a judgement written by an identity that did not implement the change, pinned to the exact head being merged. One bar for every Ticket prices a mechanical one-liner at the same full review as a behavioural change, so the bar is selective — and the choice belongs to a **triage human**, never to a daemon heuristic over the diff and never to the author's own opinion of their change.
+
+| Label | Minimum Countersign | Lands on | Applied by |
+| ----- | ------------------- | -------- | ---------- |
+| `verify:live` | `live-verified` | only a verifier that RAN the change | `/triage` or maintainer |
+| `verify:tests` | `test-verified` | a second identity reading the diff on a green feedback stage, or stronger | `/triage` or maintainer |
+| `verify:gate-only` | `type-check-only` | the gate's own SHA-pinned row, under the implementer's identity | maintainer (human declaration only) |
+| *(no label)* | `test-verified` | ADR 0154's full bar — a second identity judged the tree | — |
+
+**An unlabeled Ticket fails closed.** Forgetting the label buys nothing: the default is ADR 0154's own bar and is deliberately not the weakest row in the table, because a default that drifted toward the discount would make the discount the silent norm.
+
+**`verify:gate-only` is the family's one exemption, and a human must type it.** It is the only value that admits `type-check-only` — the class the gate's own row carries, signed under the implementer's identity rather than by a second one — and it means a triage human judged the change mechanical. The label is what makes it a decision somebody signed rather than a hole nothing audits.
+
+A Ticket carrying two values resolves to the **strictest** of them: a triage disagreement must not let the cheapest label in the set decide. Values outside the family are not declarations and leave the Ticket at the fail-closed default. Never drives lifecycle transitions; created on demand like the other auxiliary labels and provisioned by `/red-setup`.
+
 ## Blocked Reasons (`blocked:<reason>`) — typed, auto-classified
 
 `/afk` already computes a precise terminal outcome for every iteration; instead of flattening every failure to one `blocked`, it tags the issue with the matching **`blocked:<reason>`** label so the backlog is filterable by *what kind* of block it is. The reason is derived automatically from the outcome — **no human classification**.

@@ -46,6 +46,7 @@
     "./served-version.js": "./served-version.ts",
     "./standing-orders.js": "./standing-orders.ts",
     "./toon-migration.js": "./toon-migration.ts",
+    "./verify-labels.js": "./verify-labels.ts",
     "./worker-scope.js": "./worker-scope.ts",
     "./worker-workspace.js": "./worker-workspace.ts",
     "./working-mode.js": "./working-mode.ts"

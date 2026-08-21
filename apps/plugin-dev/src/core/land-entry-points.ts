@@ -101,7 +101,7 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     entry: "doLanding",
     enforcement: "ledger",
     countersignSource:
-      "the head is `LandingInput.validatedBranchTip` when the caller pinned the tip its gate validated, else the freshly resolved `<remote>/<branch>` tip; `landHeadPrecondition` asks the injected gate about that exact object name and refuses `unverified-head` before the pre_merge hook fires.",
+      "the head is `LandingInput.validatedBranchTip` when the caller pinned the tip its gate validated, else the freshly resolved `<remote>/<branch>` tip; `landHeadPrecondition` asks the injected gate about that exact object name and refuses `unverified-head` before the pre_merge hook fires. HOW STRONG the answer must be comes from `LandingInput.labels` — the Ticket's `verify:<value>` declaration (#4174), or the fail-closed default when it carries none.",
     proof: "landHeadPrecondition",
     test: "apps/plugin-dev/tests/landing-countersign.test.ts",
     why: "the flag-toggled landing every AFK path funnels through — PR admin-merge or direct merge, both from here.",
@@ -134,7 +134,7 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     entry: "runMergeDriverPass",
     enforcement: "port",
     countersignSource:
-      "the pull request number on the armed record; the gate resolves the live head itself, and is asked immediately before `io.merge` rather than at arming, because the head may move between the two.",
+      "the pull request number on the armed record; the gate resolves the live head itself, and is asked immediately before `io.merge` rather than at arming, because the head may move between the two. The driver holds no Ticket labels, so it asks at the fail-closed default bar rather than assuming a `verify:<value>` discount it cannot see (#4174).",
     proof: "countersignGate",
     test: "packages/worker/src/engine/merge-driver.test.ts",
     why: "the castle-owned loop that lands armed PRs without the forge's native auto-merge (Spec #2511).",
@@ -145,7 +145,7 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     entry: "runTicketLoop",
     enforcement: "port",
     countersignSource:
-      "the commit its own publish stage produced (`published.publication.commit`, #4130) — the exact object name the land request is about to carry, asked before the request is sent.",
+      "the commit its own publish stage produced (`published.publication.commit`, #4130) — the exact object name the land request is about to carry, asked before the request is sent, at the bar `deps.ticket.labels` declares through the `verify:<value>` family (#4174).",
     proof: "landCountersignGate",
     test: "packages/worker/src/acp/ticket-loop.test.ts",
     why: "the only thing in the tree that issues an ACP land request.",
