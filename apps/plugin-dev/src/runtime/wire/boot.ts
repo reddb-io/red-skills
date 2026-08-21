@@ -6,7 +6,7 @@ import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/worker/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
-import { readDevBundleCacheState } from "../../core/bundle-version.js";
+import { readWarmBundleCacheState } from "../../core/bundle-version.js";
 import { readPublishedBundleVersion, refreshPublishedBundleVersion } from "../../core/published-version.js";
 import { resolveBaseWithSource } from "../../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../../core/pin-reader.js";
@@ -299,7 +299,7 @@ export async function collectPrecheckFacts(
   const lockTargetExists = lockedBranch ? await gitx.branchExists(gitCtx, lockedBranch) : undefined;
   const pnpmInstalled = pnpmProbe.code !== 127;
   const installedBundleVersion = readBuildInfo("dev").version;
-  const bundleCache = readDevBundleCacheState(installedBundleVersion);
+  const bundleCache = readWarmBundleCacheState(installedBundleVersion);
   // One definition of "published", shared with the fleet launch, so the skew the
   // probe reports is the skew a relaunch actually clears (#2808). That owner is
   // now `published-version.ts` (#2809), which additionally RECORDS the answer and

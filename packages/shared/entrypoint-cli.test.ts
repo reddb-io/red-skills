@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEV_WARM_BUNDLE, companionBundlePlugins } from "./bundle-fetch.js";
 import {
   configuredChannelValue,
   type EntrypointPlan,
@@ -12,6 +13,15 @@ const DEFAULT_REPO = "reddb-io/red-skills";
 describe("gatePluginName (ADR 0067)", () => {
   it("maps code-nav to dev (code-nav ships under the dev plugin)", () => {
     expect(gatePluginName("code-nav")).toBe("dev");
+  });
+  it("maps the warm anchor and its companions to dev", () => {
+    // The SessionStart hook fetches `redskilled` (#4112), and nothing under the
+    // dev umbrella has a `plugins.<name>` block — a gate on its own name would
+    // read a flag no config ever sets and silently warm nothing.
+    expect(gatePluginName(DEV_WARM_BUNDLE)).toBe("dev");
+    for (const companion of companionBundlePlugins(DEV_WARM_BUNDLE)) {
+      expect(gatePluginName(companion), companion).toBe("dev");
+    }
   });
   it("leaves first-class plugins unchanged", () => {
     expect(gatePluginName("dev")).toBe("dev");

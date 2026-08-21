@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   NPM_PACKAGE,
   companionBundlePlugins,
-  npmBundlePackageSpec,
   packagedBundleRelPath,
   registryPackageUrl,
   resolveBundle,
@@ -23,7 +22,8 @@ import {
   selectInRangeUpdate,
 } from "./self-update.js";
 
-const PLUGIN = "dev";
+/** The bundle the dev plugin's warm path anchors on (ADR 0147, #4112). */
+const PLUGIN = "redskilled";
 const REPO = "reddb-io/red-skills";
 const CACHE = "/cache/bundles";
 const INSTALLED = "1.140.0";
@@ -45,8 +45,8 @@ function registryMetadata(versions: string[]): string {
  * In-memory self-update IO backed by a fake npm registry + package store.
  *
  * `registryVersions` are the versions the registry advertises; `packageBundles`
- * maps a version -> the dev bundle bytes its `@reddb-io/red-skills@<version>`
- * tarball carries. The fake also stages every dev-owned companion bundle, read
+ * maps a version -> the anchor bundle bytes its `@reddb-io/red-skills@<version>`
+ * tarball carries. The fake also stages every companion bundle, read
  * from `companionBundlePlugins` rather than listed here, so adding a companion
  * cannot leave this fixture describing a package the real one no longer is.
  * Every fetch (registry query),
@@ -384,7 +384,8 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
     expect(fetches).toEqual([registryPackageUrl()]);
     expect(fetches.every((u) => !u.includes("releases/download"))).toBe(true);
     // The pinned target package was materialised.
-    expect(materializes).toEqual([npmBundlePackageSpec(PLUGIN, updated), npmSpec(updated)]);
+    // Anchor and companions ride in the one core package: one materialisation.
+    expect(materializes).toEqual([npmSpec(updated)]);
     // Bundle cached under the target version.
     const bundlePath = resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE });
     expect(files[bundlePath]).toEqual(bundleBytesFor(updated));

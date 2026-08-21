@@ -2,18 +2,19 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_WARM_BUNDLE } from "@reddb-io/shared/bundle-fetch.js";
 import { statusFileName } from "@reddb-io/shared/self-update.js";
 import { describe, expect, it } from "vitest";
-import { readDevBundleCacheState } from "../src/core/bundle-version.js";
+import { readWarmBundleCacheState } from "../src/core/bundle-version.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 
-describe("dev bundle cache state", () => {
+describe("warm bundle cache state", () => {
   it("reads the self-update state through the TOON sniff decoder", async () => {
     const root = await mkdtemp(join(tmpdir(), "dev-bundle-cache-"));
     try {
       mkdirSync(root, { recursive: true });
       writeFileSync(
-        join(root, statusFileName("dev")),
+        join(root, statusFileName(DEV_WARM_BUNDLE)),
         encodeDevSnapshotToon({
           lastFailureAtMs: 100,
           lastError: "fetch failed",
@@ -21,7 +22,7 @@ describe("dev bundle cache state", () => {
         "utf8",
       );
 
-      expect(readDevBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 160)).toMatchObject({
+      expect(readWarmBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 160)).toMatchObject({
         installedVersion: "2.71.0",
         lastFailureAtMs: 100,
         lastFailureAgeMs: 60,
@@ -37,7 +38,7 @@ describe("dev bundle cache state", () => {
     try {
       mkdirSync(root, { recursive: true });
       writeFileSync(
-        join(root, statusFileName("dev")),
+        join(root, statusFileName(DEV_WARM_BUNDLE)),
         encodeDevSnapshotToon({
           lastCheckAtMs: 200,
           lastFailureAtMs: 100,
@@ -47,7 +48,7 @@ describe("dev bundle cache state", () => {
         "utf8",
       );
 
-      const state = readDevBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000);
+      const state = readWarmBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000);
       expect(state.lastFailureAgeMs).toBeUndefined();
       expect(state).toMatchObject({
         lastStatus: "up-to-date",
@@ -64,7 +65,7 @@ describe("dev bundle cache state", () => {
     try {
       mkdirSync(root, { recursive: true });
       writeFileSync(
-        join(root, statusFileName("dev")),
+        join(root, statusFileName(DEV_WARM_BUNDLE)),
         encodeDevSnapshotToon({
           lastFailureAtMs: 300,
           lastSuccessAtMs: 200,
@@ -74,7 +75,7 @@ describe("dev bundle cache state", () => {
         "utf8",
       );
 
-      expect(readDevBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000)).toMatchObject({
+      expect(readWarmBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000)).toMatchObject({
         lastFailureAtMs: 300,
         lastFailureAgeMs: 100_000_000 - 300,
       });

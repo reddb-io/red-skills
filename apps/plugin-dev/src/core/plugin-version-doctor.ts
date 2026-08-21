@@ -1,7 +1,7 @@
 // plugin-version-doctor — is the plugin that answers actually current? (#3147)
 //
 // **Two update lanes exist and only one was watched.** The BUNDLE lane
-// self-updates and works: `dev-stable.current` tracks the published version, the
+// self-updates and works: `redskilled-stable.current` tracks the published version, the
 // status file says `up-to-date`, and a registration's argv correctly names the
 // newest cached bundle. The PLUGIN lane — the host's own install, which carries
 // the MCP server and the skills — is updated by the agent host's plugin manager,

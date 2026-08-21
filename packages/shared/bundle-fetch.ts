@@ -173,31 +173,43 @@ export function resolveBundle(input: ResolveBundleInput): string {
 }
 
 /**
+ * The bundle the dev plugin's SessionStart hook warms.
+ *
+ * It used to be `dev` itself. ADR 0147 rule 1 deleted the dev runtime bundle
+ * along with the binary it was, so `dist/dev.bundle.min.mjs` ships in no package
+ * — `@reddb-io/red-skills-dev` is a skills-only pi package and core stopped
+ * building the asset — and every warm since has failed `bundle-missing`. The
+ * failure did not stay in the fetcher: the detached self-update wrote the same
+ * error into `dev-stable.self-update.json`, where the AFK coherence probe read
+ * it as `stale-failed-check` and refused to start on a host with nothing wrong
+ * with it (#4112).
+ *
+ * What the dev plugin cannot run without is the daemon bundle: it births every
+ * Worker, and the documented `statusLine` globs
+ * `~/.cache/red-skills/bundles/redskilled*.bundle.min.mjs` out of this same
+ * cache (ADR 0130 rule 10) on a render path that must do no network and no
+ * resolution work (ADR 0084). It was already riding along as a companion for
+ * exactly that reason (#3074); now it is the anchor, so the pointer that follows
+ * the warm path names a bundle that is actually published.
+ */
+export const DEV_WARM_BUNDLE = "redskilled";
+
+/**
  * Bundles that ship under another plugin's warm path.
  *
  * **A companion is a bundle nothing asks for by name.** `red-fetch.mjs <plugin>
- * <version>` is invoked for `dev` and `code-nav` only, so any other bundle a
- * host resolves from the shared cache must be warmed by the plugin it ships
- * beside or it never lands there at all.
+ * <version>` is invoked for the dev warm anchor and `code-nav` only, so any
+ * other bundle a host resolves from the shared cache must be warmed by the
+ * plugin it ships beside or it never lands there at all.
  *
  * `rsp` and its lazy `rsp-core` asset are part of the dev plugin surface: the
  * PATH shim and shell hooks resolve the launcher from the shared bundle cache,
  * and modeled commands import the same-version core beside it. No SessionStart
- * hook invokes either companion directly.
- *
- * `redskilled` is the same shape and the failure was worse (#3074). The
- * documented Claude Code `statusLine` globs
- * `~/.cache/red-skills/bundles/redskilled*.bundle.min.mjs` for the daemon that
- * renders the Worker rows (ADR 0130 rule 10), and the render path is
- * cached-first by contract — it must do no network and no resolution work (ADR
- * 0084). Nothing wrote that file: the only copy on a host provisioned through
- * `npx` lived inside the npx cache, so the glob resolved nothing, the daemon was
- * never contacted, and the operator read a blank region as "no Workers". Warming
- * `dev` warms the daemon bundle from the SAME npm package materialization, so
- * the artifact the render command needs is already on disk when it looks.
+ * hook invokes either companion directly, and both ride in the same core npm
+ * package as the anchor, so one materialisation warms all three.
  */
 export function companionBundlePlugins(plugin: string): readonly string[] {
-  return plugin === "dev" ? ["rsp", "rsp-core", "redskilled"] : [];
+  return plugin === DEV_WARM_BUNDLE ? ["rsp", "rsp-core"] : [];
 }
 
 /** Bundle filename inside the npm package tarball's `dist/`. */
@@ -241,7 +253,11 @@ export function npmPackageSpec(
 }
 
 /** Non-plugin runtimes that remain in the core package after ADR 0146. */
-const CORE_PACKAGE_BUNDLES = new Set(["code-nav", ...companionBundlePlugins("dev")]);
+const CORE_PACKAGE_BUNDLES = new Set([
+  "code-nav",
+  DEV_WARM_BUNDLE,
+  ...companionBundlePlugins(DEV_WARM_BUNDLE),
+]);
 
 /** The package that owns one bundle after the per-plugin package split. */
 export function npmBundlePackage(plugin: string): string {

@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { decode } from "@reddb-io/toon";
+import { DEV_WARM_BUNDLE } from "@reddb-io/shared/bundle-fetch.js";
 import { statusFileName } from "@reddb-io/shared/self-update.js";
 import { parseCurrentBlocker } from "../src/core/blocker-state.js";
-import { readDevBundleCacheState } from "../src/core/bundle-version.js";
+import { readWarmBundleCacheState } from "../src/core/bundle-version.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 import {
   applyOperationalProbeFixes,
@@ -174,7 +175,7 @@ describe("operational probe registry", () => {
     const root = await mkdtemp(join(tmpdir(), "probe-bundle-cache-"));
     try {
       await writeFile(
-        join(root, statusFileName("dev")),
+        join(root, statusFileName(DEV_WARM_BUNDLE)),
         encodeDevSnapshotToon({
           lastCheckAtMs: 100_000_000,
           lastSuccessAtMs: 100_000_000,
@@ -187,7 +188,7 @@ describe("operational probe registry", () => {
       const report = await runOperationalProbes({
         remoteUrls: [],
         bundleCoherence: {
-          ...readDevBundleCacheState("2.87.3", { RED_SKILLS_CACHE_DIR: root }, 100_000_000),
+          ...readWarmBundleCacheState("2.87.3", { RED_SKILLS_CACHE_DIR: root }, 100_000_000),
           pointerVersion: "2.87.3",
         },
       });

@@ -119,8 +119,11 @@ export async function readWarmPathFacts(io: {
   readonly readFile?: (path: string) => Promise<string>;
   readonly companions?: readonly string[];
 } = {}): Promise<WarmPathFacts> {
-  const { companionBundlePlugins } = await import("@reddb-io/shared/bundle-fetch.js");
-  const companions = io.companions ?? companionBundlePlugins("dev");
+  const { DEV_WARM_BUNDLE, companionBundlePlugins } = await import("@reddb-io/shared/bundle-fetch.js");
+  // The anchor is asked about too: after ADR 0147 it is the daemon bundle, and a
+  // fetcher old enough to still name `dev` warms nothing this host can run.
+  const companions =
+    io.companions ?? [DEV_WARM_BUNDLE, ...companionBundlePlugins(DEV_WARM_BUNDLE)];
   const home = (io.homedir ?? (() => process.env.HOME ?? ""))();
   const root = `${home}/.claude/plugins/cache/red-skills/dev`;
 

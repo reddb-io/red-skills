@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_WARM_BUNDLE } from "@reddb-io/shared/bundle-fetch.js";
 import { decode } from "@reddb-io/toon";
 import {
   PUBLISHED_VERSION_STALE_AFTER_MS,
@@ -124,7 +125,7 @@ describe("published version resolution (#2809)", () => {
     try {
       // The reported outage: the cache lane held 2.87.5 while the registry had
       // already published 2.87.7.
-      writeFileSync(join(dir, "dev-2.87.5.bundle.min.mjs"), "", "utf8");
+      writeFileSync(join(dir, `${DEV_WARM_BUNDLE}-2.87.5.bundle.min.mjs`), "", "utf8");
       writePublishedVersionRecord({ version: "2.87.7", observedAtMs: 5_000 }, env);
       expect(readPublishedBundleVersion(env, 5_000)).toMatchObject({
         version: "2.87.7",
@@ -140,8 +141,8 @@ describe("published version resolution (#2809)", () => {
     const { env, dir } = cacheEnv();
     try {
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "dev-2.87.5.bundle.min.mjs"), "", "utf8");
-      writeFileSync(join(dir, "dev-2.86.0.bundle.min.mjs"), "", "utf8");
+      writeFileSync(join(dir, `${DEV_WARM_BUNDLE}-2.87.5.bundle.min.mjs`), "", "utf8");
+      writeFileSync(join(dir, `${DEV_WARM_BUNDLE}-2.86.0.bundle.min.mjs`), "", "utf8");
       expect(readPublishedBundleVersion(env, 5_000)).toMatchObject({
         version: "2.87.5",
         source: "bundle-cache",
@@ -200,7 +201,7 @@ describe("published version resolution (#2809)", () => {
     try {
       // The observed case: the operator updated the plugin to 3.0.4 while this
       // host's newest cached bundle is still 3.0.3.
-      writeFileSync(join(dir, "dev-3.0.3.bundle.min.mjs"), "", "utf8");
+      writeFileSync(join(dir, `${DEV_WARM_BUNDLE}-3.0.3.bundle.min.mjs`), "", "utf8");
       for (const version of ["2.88.0", "3.0.0", "3.0.1", "3.0.3", "3.0.4"]) {
         installPlugin(join(dir, "home"), version);
       }

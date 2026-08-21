@@ -104,7 +104,7 @@ If the cutover misbehaves, this returns the machine to a working state:
    confirm no supervisor or Worker process survives.
 3. **Roll the bundle back to the pre-cutover version.** Point the stable
    self-update pointer at the last known-good version
-   (`<cache>/dev-stable.self-update.json`) and materialise that version's bundle.
+   (`<cache>/redskilled-stable.self-update.json`) and materialise that version's bundle.
    The classic supervisor path returns with it.
 4. **Delete `.red/state/castle/cutover.toon`.** It is the run-once gate: leaving
    it in place would make a later re-cutover skip the migration and leave the
