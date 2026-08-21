@@ -109,6 +109,11 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     runs: "drives one Ticket from claim to land inside the turn: claim, implement, gate, re-seed in place, publish, land",
   },
   {
+    module: "retry-policy.ts",
+    defines: ["WORKER_FAILURE_RETRY_CLASSES", "WORKER_FAILURE_RETRY_TABLE"],
+    runs: "bounds every retry by its declared failure mode (#4175): the table decides how many times and with what remedy a failed round re-enters",
+  },
+  {
     module: "gate-lock.ts",
     defines: ["acquireHostGateLock"],
     runs: "holds the host-wide slot that keeps two Workers from running Validation at the same time (#4161)",
