@@ -19,6 +19,7 @@
  */
 import type {
   AgentConnection,
+  NewSessionRequest,
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -225,6 +226,8 @@ export function runnerFromLaunchArgv(argv: readonly string[] | undefined): AcpAg
 export interface DemandTurnAdmission {
   readonly project: AcpProjectWorkspace;
   readonly sessionId: string;
+  /** The runner the registration declared for this birth; admission defaults when absent. */
+  readonly runner?: AcpAgentId;
   readonly notify: AgentConnection["client"]["notify"];
   readonly permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
   readonly replacement: boolean;
@@ -332,6 +335,24 @@ export function demandTurnRunnerFor(
 }
 
 /**
+ * The synthetic `session/new` an unattended turn admits its Worker with. PURE.
+ *
+ * Admission reads the runner from the SESSION request's meta — the prompt
+ * request's meta never reaches it — so the declared runner must be restated
+ * here or every unattended Worker silently falls back to admission's default
+ * (the first live codex drain was born redcode exactly this way).
+ */
+export function demandAdmissionSessionRequest(
+  input: Pick<DemandTurnAdmission, "project" | "runner">,
+): NewSessionRequest {
+  return {
+    cwd: input.project.workspacePath,
+    mcpServers: [],
+    ...(input.runner == null ? {} : { _meta: { redskills: { runner: input.runner } } }),
+  };
+}
+
+/**
  * Bind the daemon's unattended turn runner.
  *
  * One `active` map per runner, held for the daemon's life: a Worker admitted
@@ -360,7 +381,7 @@ export function createDemandTurnRunner(
       ...(deps.githubGateway == null ? {} : { githubGateway: deps.githubGateway }),
     },
     deps.sessionJournal,
-    { request: { cwd: input.project.workspacePath, mcpServers: [] }, project: input.project },
+    { request: demandAdmissionSessionRequest(input), project: input.project },
     input.sessionId,
     input.notify,
     input.permission,
@@ -422,6 +443,7 @@ export function createDemandTurnRunner(
         (replacement) => admit({
           project: request.project,
           sessionId,
+          ...(request.runner == null ? {} : { runner: request.runner }),
           notify,
           permission: async (permission) => refusePermission(permission),
           replacement,
