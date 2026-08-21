@@ -196,6 +196,7 @@ describe("`_redskills/land` — the daemon opens the PR and hands the merge on",
       params: landParams({
         idempotency_key: "worker-land:s:1",
         branch: "afk/4019-landing",
+        commit: host.commit,
         base: "main",
         title: "The daemon publishes and lands",
         body: "Refs #4019",
@@ -218,6 +219,7 @@ describe("`_redskills/land` — the daemon opens the PR and hands the merge on",
       params: landParams({
         idempotency_key: "worker-land:s:1",
         branch: "afk/4019-unheld-landing",
+        commit: host.commit,
         base: "main",
         title: "unheld",
         body: "Refs #4019",
@@ -225,6 +227,33 @@ describe("`_redskills/land` — the daemon opens the PR and hands the merge on",
       }),
     })).rejects.toThrow(/no longer holds|does not hold/i);
   }, 30_000);
+});
+
+describe("the land decoder (#4130)", () => {
+  const valid = {
+    idempotency_key: "worker-land:s:1",
+    branch: "afk/4130-decoder",
+    commit: "a".repeat(40).replace(/a/g, "1a23b45c").slice(0, 40),
+    base: "main",
+    title: "t",
+    body: "b",
+    owner_ticket: 4130,
+  };
+
+  it("refuses a landing without the validated commit", () => {
+    const { commit: _commit, ...withoutCommit } = valid;
+    expect(() => landParams(withoutCommit)).toThrow(/cannot name|exactly/i);
+  });
+
+  it("refuses a commit that is not one full object name", () => {
+    expect(() => landParams({ ...valid, commit: "main" })).toThrow(/object name/i);
+    expect(() => landParams({ ...valid, commit: "abc123" })).toThrow(/object name/i);
+  });
+
+  it("pins the exact-keys contract", () => {
+    expect(() => landParams({ ...valid, remote: "origin" })).toThrow();
+    expect(landParams(valid).commit).toBe(valid.commit);
+  });
 });
 
 describe("the publication domain", () => {

@@ -42,7 +42,7 @@ export function createRedskilledGithubCustodyUpstream(
       if (!pull.ok) throw new Error(`GitHub custody arm lookup failed with HTTP ${pull.status}`);
       const body = await pull.json() as Record<string, unknown>;
       if (body.merged === true || body.merged_at != null) {
-        return { forge_state: "merged", native_intent: false };
+        return { forge_state: "merged", native_intent: false, ...headShaOf(body) };
       }
       const nodeId = typeof body.node_id === "string" ? body.node_id : "";
       if (nodeId === "") throw new Error("GitHub custody cannot arm a pull request without a node identity");
@@ -71,10 +71,11 @@ function pullRequestView(value: unknown): RedskilledGithubCustodyForgeView {
     throw new Error("GitHub custody received an invalid pull request");
   }
   const pull = value as Record<string, unknown>;
+  const headSha = headShaOf(pull);
   if (pull.merged === true || pull.merged_at != null) {
-    return { forge_state: "merged", native_intent: false };
+    return { forge_state: "merged", native_intent: false, ...headSha };
   }
-  if (pull.state === "closed") return { forge_state: "closed", native_intent: false };
+  if (pull.state === "closed") return { forge_state: "closed", native_intent: false, ...headSha };
   if (pull.state !== "open") throw new Error("GitHub custody received an unknown pull request state");
   const nativeIntent = pull.auto_merge != null;
   const mergeableState = typeof pull.mergeable_state === "string" ? pull.mergeable_state.toLowerCase() : "unknown";
@@ -83,5 +84,11 @@ function pullRequestView(value: unknown): RedskilledGithubCustodyForgeView {
     : pull.mergeable === true && ["clean", "has_hooks", "unstable"].includes(mergeableState)
       ? "open-clean" as const
       : "open-pending" as const;
-  return { forge_state: forgeState, native_intent: nativeIntent };
+  return { forge_state: forgeState, native_intent: nativeIntent, ...headSha };
+}
+
+/** The PR's current head, for the armed-head comparison (#4130). */
+function headShaOf(pull: Record<string, unknown>): { head_sha?: string } {
+  const sha = (pull.head as Record<string, unknown> | undefined)?.sha;
+  return typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) ? { head_sha: sha } : {};
 }
