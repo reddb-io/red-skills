@@ -20,6 +20,12 @@ import {
 } from "@reddb-io/protocol-acp";
 import { _credentialFreeEnvWithHome } from "@reddb-io/shared/credential-free-env.js";
 import type { SpinPattern } from "../engine/spin-evaluator.js";
+import {
+  forgetChildAgentProcess,
+  installChildAgentReaper,
+  reapChildProcessTree,
+  registerChildAgentProcess,
+} from "./child-reaper.js";
 import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./child-spin.js";
 import { createWorkerTerminalHost, type WorkerTerminalHost } from "./terminal-host.js";
 import type { WorkerTerminalDenial } from "./terminal-policy.js";
@@ -55,6 +61,14 @@ export class WorkflowChildAgent {
   #active: ActiveChildAgent | undefined;
   #spinEpisode: ChildAcpSpinEpisode | undefined;
   #spinUpdates: Promise<void> = Promise.resolve();
+  /**
+   * Every reap this Agent started, so `close` can wait for all of them.
+   *
+   * A replacement reaps its predecessor from inside a turn, where there is
+   * nothing to await it — chaining the reaps here is what makes the Worker's
+   * own teardown able to promise that no child of its is left running.
+   */
+  #reaps: Promise<void> = Promise.resolve();
 
   constructor(options: ChildAgentSessionOptions) {
     this.#options = options;
@@ -130,9 +144,17 @@ export class WorkflowChildAgent {
     });
   }
 
-  close(): void {
+  /**
+   * Give up every process this Agent holds, and CONFIRM the child is gone.
+   *
+   * Awaited rather than fired: the Worker body calls this on its way out, and a
+   * teardown that only asked would return before the child had left — which is
+   * precisely how six `codex-acp` pairs outlived their Workers (#4241).
+   */
+  async close(): Promise<void> {
     this.#terminals.closeAll();
     if (this.#active != null) this.#cleanup(this.#active);
+    await this.#reaps;
   }
 
   async #admit(event: "child-admission" | "child-replacement"): Promise<ActiveChildAgent> {
@@ -140,11 +162,24 @@ export class WorkflowChildAgent {
     // The process that runs the model receives no credential (ADR 0144 §3).
     // The daemon already stripped them from the Worker's own environment; this
     // strips them again rather than trusting a hop it cannot see.
+    //
+    // `detached` buys a process GROUP, not independence: the endpoint command is
+    // usually `npx`, which spawns the real Agent binary as its own child, and a
+    // kill aimed at the pid we hold would leave that grandchild running and
+    // re-parented onto the user manager (#4241). Its own group makes the whole
+    // subtree one signal away, and `child-reaper.ts` owns sending it.
     const child = spawn(endpoint.command, endpoint.args, {
       cwd: this.#options.cwd,
       env: _credentialFreeEnvWithHome(process.env),
       stdio: ["pipe", "pipe", "ignore"],
+      detached: true,
     });
+    if (child.pid != null) {
+      installChildAgentReaper();
+      registerChildAgentProcess(child.pid);
+      const pid = child.pid;
+      child.once("exit", () => forgetChildAgentProcess(pid));
+    }
     if (child.stdin == null || child.stdout == null) throw new Error("child ACP Agent did not expose stdio");
 
     const app = client({ name: "RedSkills Workflow Worker" })
@@ -202,7 +237,7 @@ export class WorkflowChildAgent {
       return active;
     } catch (error) {
       connection.close();
-      child.kill();
+      this.#reap(child);
       throw error;
     }
   }
@@ -226,7 +261,18 @@ export class WorkflowChildAgent {
     active.cleaned = true;
     if (this.#active === active) this.#active = undefined;
     active.connection.close();
-    if (active.child.exitCode == null && active.child.signalCode == null) active.child.kill();
+    this.#reap(active.child);
+  }
+
+  /**
+   * Queue one child's group kill behind the reaps already running.
+   *
+   * Synchronous callers — a replacement mid-turn, an admission that threw — get
+   * the kill STARTED; `close` is where somebody finally waits for it.
+   */
+  #reap(child: ChildProcess): void {
+    const reap = () => reapChildProcessTree(child).then(() => undefined);
+    this.#reaps = this.#reaps.then(reap, reap);
   }
 
   /** Tell the parent what the policy refused, so the Worker log holds the lesson. */

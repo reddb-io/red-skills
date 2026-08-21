@@ -370,7 +370,10 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
   const socket = await connectWithDeadline(socketPath, 10_000);
   const connection = app.connect(socketStream(socket));
   await connection.closed;
-  for (const session of sessions.values()) session.child?.close();
+  // The transport is gone, and the child coding Agent is not: it is a process
+  // this body spawned, and this is the last moment anything in the process can
+  // wait for it to LEAVE. Awaited rather than fired (#4241).
+  await Promise.all([...sessions.values()].map((session) => session.child?.close()));
   return 0;
 }
 
