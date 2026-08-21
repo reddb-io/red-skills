@@ -104,7 +104,7 @@ describe("a child Agent asking the Worker for terminals", () => {
       expect(ordinary?.exitCode).toBe(0);
       expect(ordinary?.output).toBe("terminal-ok");
     } finally {
-      child.close();
+      await child.close();
     }
 
     // The refusal is not only the child's problem: the parent is told what the

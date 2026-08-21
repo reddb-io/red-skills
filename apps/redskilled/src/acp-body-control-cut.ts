@@ -72,6 +72,11 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     runs: "spawns, prompts, steers and reaps the one governed child coding Agent",
   },
   {
+    module: "child-reaper.ts",
+    defines: ["reapChildProcessTree", "installChildAgentReaper"],
+    runs: "owns the lifetime of every child Agent process the body spawned — signals the process GROUP on teardown and again at the process edge, so no coding Agent outlives its Worker (#4241)",
+  },
+  {
     module: "child-spin.ts",
     formerDaemonModule: "acp-child-spin.ts",
     defines: ["createChildAcpSpinEpisode"],
@@ -102,6 +107,11 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     module: "ticket-loop.ts",
     defines: ["runTicketLoop"],
     runs: "drives one Ticket from claim to land inside the turn: claim, implement, gate, re-seed in place, publish, land",
+  },
+  {
+    module: "gate-lock.ts",
+    defines: ["acquireHostGateLock"],
+    runs: "holds the host-wide slot that keeps two Workers from running Validation at the same time (#4161)",
   },
   {
     module: "local-gate.ts",
