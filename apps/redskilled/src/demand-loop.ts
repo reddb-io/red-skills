@@ -52,16 +52,25 @@
  * {@link RedskilledWorkerBirthOutcome} — and only a death that reached no
  * terminal outcome counts.
  *
+ * **A declared budget stops the taking before it stops the drain.** An operator
+ * who states `budget_ms` on the registration gets a harvest deadline: past the
+ * declared fraction of that budget the planner admits no NEW claim, while every
+ * Worker already alive keeps publishing and landing what it carries, because
+ * work finished and never landed counts as zero (`harvest-deadline.ts`, #4170).
+ * No declared budget, no deadline — the daemon invents none.
+ *
  * **Rule 3 survives.** A selector and an argv are carried and handed back; not
  * one branch here turns on what either of them says. The planner reads a depth,
- * a target, a count of live Workers and a streak of short-lived deaths — four
- * integers — and nothing else. The outcome class is a closed vocabulary of three
+ * a target, a count of live Workers, a streak of short-lived deaths and a
+ * budget the operator stated in milliseconds — five numbers — and nothing else. The outcome class is a closed vocabulary of three
  * words the Worker protocol already speaks, never a repository's reason: this
  * module learns THAT a Worker reached a terminal outcome, never what the work
  * was, and the daemon is owed no more than that.
  *
  * PURE.
  */
+
+import { decideHarvest, type RedskilledHarvestWatch } from "./harvest-deadline.js";
 
 /**
  * How long the loop waits after a refusal before asking again.
@@ -122,6 +131,13 @@ export interface RedskilledDemandProject {
    * host chose. Carried, never read.
    */
   readonly items?: readonly string[];
+  /**
+   * The operator's declared drain budget, dated (#4170); absent = none declared.
+   *
+   * Two numbers and an instant, exactly as opaque as the rest: the planner
+   * compares them against `nowMs` and never asks what the drain is for.
+   */
+  readonly harvest?: RedskilledHarvestWatch;
 }
 
 /** What the loop decided about one project this tick, and why. */
@@ -134,7 +150,9 @@ export type RedskilledDemandOutcome =
   /** This project's Workers keep dying in boot, so it is not asked again yet. */
   | "birth-halted"
   /** One birth is due or running after the breaker's cooldown. */
-  | "half-open-probe";
+  | "half-open-probe"
+  /** Past the harvest fraction of a declared budget: no NEW claim, landing continues. */
+  | "harvest-deadline";
 
 export interface RedskilledDemandIntent {
   readonly project_label: string;
@@ -225,6 +243,17 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
     const depth = counted ? input.queue[project.project_label] ?? null : null;
     const base = { project_label: project.project_label, queue_depth: depth, target: project.target, live };
 
+    // **Checked before the host's own backoff, and deliberately.** A backoff is
+    // this tick's weather and clears itself; a harvest deadline is the standing
+    // policy the operator declared, and it is what an operator asking "why is
+    // nothing being born" needs to read. It gates BIRTHS only — the Workers
+    // already alive keep publishing and landing what they carry, which is the
+    // whole point of stopping before the budget dies (#4170).
+    const harvest = decideHarvest(project.harvest, input.nowMs);
+    if (!harvest.admits) {
+      intents.push({ ...base, outcome: "harvest-deadline", wanted: 0, detail: harvest.detail });
+      continue;
+    }
     if (holding) {
       intents.push({
         ...base,

@@ -24,6 +24,11 @@ const CONTROL_ARGUMENTS = new Set([
   "runner",
   "scope",
   "registration",
+  // The drain budget the operator declared (#4170). Accepted here and carried
+  // no further: `enrich` already folded it into the registration, which is the
+  // only place the daemon reads it from — a second copy on the control request
+  // would be a second answer to "how long is this drain".
+  "budget_ms",
   // Read shaping, accepted and ignored: `status` declares them in its schema and
   // the MCP fills the defaults in, so refusing them made the tool unusable —
   // `status { scope: project }` came back refused for a field that changes

@@ -84,6 +84,7 @@ import {
   buildRegistrationStop,
   mayRecoverRegistration,
 } from "../registration-recovery.js";
+import { foldProjectHarvest, harvestPlanFields, type RedskilledHarvestTally } from "../harvest-deadline.js";
 import {
   buildProjectRegistration,
   renewProjectRegistration,
@@ -520,6 +521,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // right now", and a fresh daemon has no business inheriting a verdict about a
   // machine it has not tried yet.
   const birthHealth: Record<string, RedskilledBirthHealth> = {};
+  // Beside it, and in memory for the same reason: what this drain brought back (#4170).
+  const harvestTallies: Record<string, RedskilledHarvestTally> = {};
   let demandTicking = false;
   let sampleTimer: NodeJS.Timeout | undefined;
   let leaseTimer: NodeJS.Timeout | undefined;
@@ -708,6 +711,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       stops,
       orphanedRegistrations: [...orphanedRegistrations.values()],
       birthLatches: describeBirthLatches(birthHealth, Date.parse(now)),
+      harvest: harvestTallies,
       // The poll each registration was last covered by, so "why is nothing
       // happening" is answerable from one read instead of from a log.
       queue: lastQueue,
@@ -996,6 +1000,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             argv: registration.argv,
             workspace_path: registration.workspace_path,
             target: registration.target,
+            ...harvestPlanFields(registration),
             ...(queueItems.get(registration.project_label) == null
               ? {}
               : { items: queueItems.get(registration.project_label) }),
@@ -1724,10 +1729,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // lifetime and an outcome class — never a cause (rule 3): a Worker dead in
       // seconds is spent whatever the reason was UNLESS it reported that it was
       // finished, which is the one thing a spent birth never does.
+      const birthOutcome = facts.birthOutcome ?? "unreported";
+      foldProjectHarvest(harvestTallies, worker.project_label, birthOutcome);
       foldProjectBirthHealth({
         health: birthHealth, projectLabel: worker.project_label, nowMs: Date.parse(ts),
         lifetimeMs: Date.parse(ts) - Date.parse(worker.started_at),
-        outcome: facts.birthOutcome ?? "unreported",
+        outcome: birthOutcome,
         announce: (line) => process.stderr.write(line),
       });
     }

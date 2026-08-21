@@ -54,6 +54,17 @@ function projectSession() {
         observed_at: "2026-08-17T15:00:00.000Z",
         items: [],
       },
+      // No budget was declared for this drain, so the harvest deadline is inert.
+      harvest: {
+        state: "inert",
+        budget_ms: null,
+        harvest_fraction: null,
+        harvest_at: null,
+        deadline_at: null,
+        harvested: 0,
+        stranded: 0,
+        detail: "no drain budget was declared, so no harvest deadline stands and admission is unchanged",
+      },
       adapter_health: {
         status: "healthy",
         checked_at: "2026-08-17T14:59:59.000Z",

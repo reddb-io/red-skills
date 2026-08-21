@@ -37,6 +37,8 @@ export interface DrainRegistrationInput {
   readonly version: string;
   /** The label that defines "queued"; the executable lane's own by default. */
   readonly readyLabel?: string | undefined;
+  /** The operator's declared wall-clock budget for this drain; absent = none. */
+  readonly budgetMs?: number | undefined;
 }
 
 export interface DrainRegistration {
@@ -62,6 +64,15 @@ export interface DrainRegistration {
    * memory ceiling, a different package red each round.
    */
   readonly validation_commands?: readonly string[];
+  /**
+   * The operator's declared drain budget, in milliseconds (#4170).
+   *
+   * **Absent is the ordinary case and means no harvest deadline at all.** The
+   * daemon arms the deadline off this number and off nothing else, so a drain
+   * that states none runs exactly as every drain ran before it — the daemon
+   * never invents a budget an operator did not ask for.
+   */
+  readonly budget_ms?: number;
   readonly target: number;
 }
 
@@ -123,6 +134,7 @@ export function buildDrainRegistration(input: DrainRegistrationInput): DrainRegi
     ...(input.validationCommands == null || input.validationCommands.length === 0
       ? {}
       : { validation_commands: [...input.validationCommands] }),
+    ...(input.budgetMs == null ? {} : { budget_ms: input.budgetMs }),
     target: input.target,
   };
 }

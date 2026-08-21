@@ -15,6 +15,7 @@ import {
   type RedskillsAcpMethodDomain,
 } from "./acp-method-registry.js";
 import type { RedskilledDemandOutcome } from "./demand-loop.js";
+import { harvestReport, type RedskilledHarvestReport } from "./harvest-deadline.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import { REDSKILLED_QUEUE_STALENESS_MS } from "./queue-discovery.js";
@@ -66,6 +67,15 @@ export interface ProjectStatusContext {
       readonly base_commits_ahead: number | null;
     }[];
   };
+  /**
+   * The drain's harvest block: the deadline, and what it brought back (#4170).
+   *
+   * This context IS the drain summary an operator reads — the one surface that
+   * already carries the queue, the Workers and the health of a draining
+   * project — so the harvested-versus-stranded count belongs here rather than
+   * in a second document that would have to be kept in step with this one.
+   */
+  readonly harvest: RedskilledHarvestReport;
   readonly adapter_health: {
     readonly status: "healthy" | "degraded" | "unknown";
     readonly checked_at: string | null;
@@ -196,6 +206,14 @@ export function projectStatusSnapshot(
         base_commits_ahead: worker.base_commits_ahead ?? null,
       })),
     },
+    harvest: harvestReport({
+      ...(registration?.registered_at == null ? {} : { registeredAt: registration.registered_at }),
+      ...(registration == null ? {} : { declaration: registration }),
+      ...(registration?.harvest == null ? {} : { tally: registration.harvest }),
+      live: workers.length,
+      queueDepth: depth,
+      observedAt,
+    }),
     adapter_health: health == null
       ? {
           status: "unknown",

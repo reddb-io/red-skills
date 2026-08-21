@@ -27,6 +27,7 @@ import {
 } from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
 import type { RedskilledBirthLatch } from "./demand-loop.js";
+import type { RedskilledHarvestTally } from "./harvest-deadline.js";
 import type { RedskilledQueueDiscovery, RedskilledQueueOutcome } from "./queue-discovery.js";
 import type { RedskilledMajorHold, RedskilledReplacementHoldReason } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
@@ -240,6 +241,14 @@ export interface RedskilledRegistrationView extends RedskilledProjectRegistratio
    * is a different answer from a depth of zero and sends an operator somewhere else.
    */
   readonly last_poll?: RedskilledRegistrationPoll;
+  /**
+   * What this project's drain has brought back and lost (#4170).
+   *
+   * Beside the poll rather than inside it for the same reason the poll is beside
+   * the record: a depth is what remains, and this is what already happened.
+   * Absent when this daemon generation has seen no Worker of this project end.
+   */
+  readonly harvest?: RedskilledHarvestTally;
 }
 
 /**
@@ -418,6 +427,8 @@ export interface BuildHostStateInput {
   readonly orphanedRegistrations?: readonly RedskilledOrphanedRegistration[];
   /** The daemon's in-memory birth latches, already composed for read surfaces. */
   readonly birthLatches?: readonly RedskilledBirthLatch[];
+  /** Per-project harvest tallies, keyed by label; absent is a daemon that folded none. */
+  readonly harvest?: Readonly<Record<string, RedskilledHarvestTally>>;
   /**
    * The last queue poll, as the poller left it; absent when none has run.
    *
@@ -509,9 +520,11 @@ function buildRegistrationViews(input: BuildHostStateInput): readonly Redskilled
   return [...(input.registrations ?? [])]
     .map((registration): RedskilledRegistrationView => {
       const polled = polls.get(registration.project_label);
+      const harvest = input.harvest?.[registration.project_label];
       return {
         ...registration,
         ...(judged ? { renewal: registrationRenewalStatus(registration, nowMs) } : {}),
+        ...(harvest == null ? {} : { harvest }),
         ...(queue == null || polled == null
           ? {}
           : {

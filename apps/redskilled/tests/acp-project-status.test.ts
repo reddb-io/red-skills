@@ -55,6 +55,10 @@ describe("Project-scoped ACP status context", () => {
           age_ms: 60_000,
           freshness: "stale",
           detail: "the Project is holding its declared target",
+          // The daemon polls this Project because it holds its registration,
+          // and this poll counted without listing what it counted.
+          registered: true,
+          items: [],
         },
         workers: {
           total: 1,
@@ -68,6 +72,18 @@ describe("Project-scoped ACP status context", () => {
             warnings: [],
             base_commits_ahead: 3,
           }],
+        },
+        // No budget was declared for this drain, so the harvest deadline is
+        // inert: no instants, and only what the drain already did (#4170).
+        harvest: {
+          state: "inert",
+          budget_ms: null,
+          harvest_fraction: null,
+          harvest_at: null,
+          deadline_at: null,
+          harvested: 0,
+          stranded: 0,
+          detail: "no drain budget was declared, so no harvest deadline stands and admission is unchanged",
         },
         adapter_health: {
           status: "degraded",

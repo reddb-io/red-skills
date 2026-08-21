@@ -706,7 +706,7 @@ The operator's append-only per-drain register of numbered instructions, written 
 _Avoid_: preferences file, steering (**runner_steer** is a point-in-time nudge, not a standing register)
 
 **Harvest deadline**:
-At roughly 70% of an operator-declared drain budget, the daemon stops admitting new work and lands what already carries a **Countersign** — finished-but-unlanded work counts as zero. Armed only when the operator declares a budget; no budget, no harvest.
+At roughly 70% of an operator-declared drain budget, the daemon stops admitting new work and lands what already carries a **Countersign** — finished-but-unlanded work counts as zero. Armed only when the operator declares a budget; no budget, no harvest. The budget is stated as `budget_ms` on the drain registration (with an optional `harvest_fraction`, 0.7 by default), the refusal is the demand planner's `harvest-deadline` outcome, and the drain summary reports `harvested` against `stranded` — what the drain brought back, against the Workers it lost plus the work the deadline leaves behind.
 _Avoid_: soft deadline, timeout (the drain is not killed — admission stops, landing continues)
 
 **Decision trail**:
