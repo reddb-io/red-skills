@@ -17,12 +17,22 @@ import {
 } from "./ticket-loop.js";
 import type { WorkerPublisher } from "./publish-request.js";
 
+// The brief a Worker may take: the preflight (#4139) refuses one that states no
+// executable acceptance criteria, so every fixture that expects to reach the
+// claim has to carry them.
+const EXECUTABLE_BRIEF = `Implement the slice.
+
+## Acceptance criteria
+
+- [ ] Running \`pnpm -C packages/worker test\` passes.
+`;
+
 const TICKET: TicketLoopTicket = {
   number: 4020,
   title: "The ACP Worker runs the whole Ticket loop end-to-end",
   labels: ["ready-for-agent"],
   base: "main",
-  handoff: "Implement the slice.",
+  handoff: EXECUTABLE_BRIEF,
 };
 
 const PUBLICATION = { branch: "afk/4020-ticket-loop", commit: "a".repeat(40) };
@@ -117,6 +127,60 @@ describe("the Ticket loop's declared arc", () => {
     expect(land.body).toContain("Refs #4020");
     // #4130: the land names the exact commit its publish validated.
     expect(land.commit).toBe(result.publication.commit);
+  });
+});
+
+describe("the brief contract, enforced at the preflight", () => {
+  it("withdraws from a vague brief before any claim marker is created", async () => {
+    const request = vi.fn(async () => ({ version: 1 }));
+    const implement = vi.fn(async () => ({ stopReason: "end_turn" as const }));
+    const result = await runTicketLoop(
+      deps({
+        ticket: { ...TICKET, handoff: "Make the retry logic better." },
+        request,
+        implement,
+      }),
+    );
+
+    expect(result.outcome).toBe("refused");
+    if (result.outcome !== "refused") return;
+    expect(result.stage).toBe("claim");
+    expect(result.detail).toContain("brief contract refused");
+    expect(result.detail).toContain("missing acceptance-criteria section");
+    // The whole point of a PREflight: withdrawing costs nothing, while owning a
+    // Ticket nobody can finish costs the queue an entry until a sweep concedes.
+    expect(request).not.toHaveBeenCalled();
+    expect(implement).not.toHaveBeenCalled();
+    expect(stages(result.records)).toEqual(["claim"]);
+  });
+
+  it("quotes the un-checkable item so the refusal names what to fix", async () => {
+    const result = await runTicketLoop(
+      deps({
+        ticket: {
+          ...TICKET,
+          handoff: "Fix it.\n\n## Acceptance criteria\n\n- [ ] It should feel snappier.\n",
+        },
+        request: vi.fn(async () => ({ version: 1 })),
+      }),
+    );
+
+    expect(result.outcome).toBe("refused");
+    if (result.outcome !== "refused") return;
+    expect(result.detail).toContain("It should feel snappier.");
+  });
+
+  it("refuses the lane before the brief, so a scout Ticket says so first", async () => {
+    const result = await runTicketLoop(
+      deps({
+        ticket: { ...TICKET, labels: ["lane:scout"], handoff: "Make it better." },
+        request: vi.fn(async () => ({ version: 1 })),
+      }),
+    );
+
+    expect(result.outcome).toBe("refused");
+    if (result.outcome !== "refused") return;
+    expect(result.detail).toContain("run_mode=scout");
   });
 });
 

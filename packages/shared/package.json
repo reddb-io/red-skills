@@ -8,6 +8,7 @@
   "exports": {
     ".": "./index.ts",
     "./args.js": "./args.ts",
+    "./brief-contract.js": "./brief-contract.ts",
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./canonical-invocation.js": "./canonical-invocation.ts",
     "./channel.js": "./channel.ts",

@@ -23,6 +23,7 @@
  */
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
+import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
 import { renderClaimComment } from "../engine/tracker/claim.js";
 import {
   gateVerdict,
@@ -193,14 +194,28 @@ export async function runTicketLoop(
     return record;
   };
 
-  // ---- claim -------------------------------------------------------------
-  // The lane is checked BEFORE the claim rather than after it, because a claim
-  // this Worker may not honour is one another Worker cannot take either.
-  const laneRefusal = laneRunModeRefusal(deps.ticket.labels, deps.runMode);
-  if (laneRefusal != null) {
-    await note({ stage: "claim", ok: false, detail: laneRefusal });
-    return { outcome: "refused", stage: "claim", detail: laneRefusal, records };
+  // ---- preflight ---------------------------------------------------------
+  // Two questions are asked BEFORE the claim rather than after it, because a
+  // claim this Worker may not honour is one another Worker cannot take either.
+  //
+  //   1. The lane the labels carry against the mode this Worker holds (#3026).
+  //   2. The brief contract: can this Ticket be finished from its own words?
+  //
+  // The second is a BACKSTOP, not the first line of defence — triage refuses a
+  // vague brief at promotion and the handoff decoder refuses one at the wire —
+  // and it exists because a Worker that discovers the brief is un-actionable
+  // AFTER claiming it has already taken the Ticket out of every other Worker's
+  // reach. Withdrawing costs nothing; owning a Ticket nobody can finish costs
+  // the queue an entry until a sweep concedes it.
+  const preflightRefusal =
+    laneRunModeRefusal(deps.ticket.labels, deps.runMode) ??
+    briefContractRefusal(deps.ticket.handoff);
+  if (preflightRefusal != null) {
+    await note({ stage: "claim", ok: false, detail: preflightRefusal });
+    return { outcome: "refused", stage: "claim", detail: preflightRefusal, records };
   }
+
+  // ---- claim -------------------------------------------------------------
   try {
     await deps.request(REDSKILLS_ACP_METHODS.githubWrite, {
       idempotency_key: `${deps.sessionId}:claim:${deps.ticket.number}`,

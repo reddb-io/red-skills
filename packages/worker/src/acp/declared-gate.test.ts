@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { runWorkerLocalGate } from "./local-gate.js";
-import { ticketHandoffFromMeta } from "@reddb-io/protocol-acp";
 
 /**
  * The declared schedule is the sole local validation authority (#4166): a
@@ -49,16 +48,5 @@ describe("the Worker gate runs the declared commands", () => {
   });
 });
 
-describe("the ticket wire carries the declared commands", () => {
-  it("round-trips validation_commands and drops a malformed list", () => {
-    const base = {
-      number: 7, title: "t", labels: [], base: "main", handoff: "h", worker_id: "W1",
-    };
-    expect(ticketHandoffFromMeta({
-      redskills: { ticket: { ...base, validation_commands: ["pnpm typecheck"] } },
-    })?.validation_commands).toEqual(["pnpm typecheck"]);
-    expect(ticketHandoffFromMeta({
-      redskills: { ticket: { ...base, validation_commands: [7] } },
-    })?.validation_commands).toBeUndefined();
-  });
-});
+// The wire's own decoding, including the refinement dropped rather than refused,
+// is pinned in `ticket-handoff-contract.test.ts` beside the rest of the contract.
