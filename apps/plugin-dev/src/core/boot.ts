@@ -57,6 +57,7 @@ import {
   type ClaimedIssue,
 } from "./claim-staleness.js";
 import { planClaimRecovery } from "./claim-recovery.js";
+import { runDeathSweep, type DeathSweepPort, type DeathSweepResult } from "./death-sweep.js";
 import { renderConcedeOnBehalf } from "./claim.js";
 import {
   planDocsSweep,
@@ -422,6 +423,15 @@ export interface BootDeps {
   reconcileRunner?: ReconcileBootRunner;
   /** Landing lane for the Docs Sweep. Absent is valid only when the plan is clean. */
   docsSweepLander?: DocsSweepLander;
+  /**
+   * Everything the checkout death sweep reads and writes (ADR 0155 §2).
+   *
+   * Absent → the step is a no-op and a hard death waits for the staleness sweep
+   * below it, which is exactly the behaviour this port improves on rather than
+   * replaces. Present → each classified death releases its claim eagerly, in
+   * the same tick that observed it.
+   */
+  deathSweep?: DeathSweepPort;
 }
 function shortSha(sha: string | undefined): string {
   return sha ? sha.slice(0, 12) : "unknown";
@@ -864,6 +874,7 @@ export interface BootResult {
   unblockSweep?: UnblockSweepResult;
   mixedBlockedNormalize?: MixedBlockedNormalizeResult;
   specSubIssueReconcile?: SpecSubIssueReconcileBootResult;
+  deathSweep?: DeathSweepResult;
   staleClaimSweep?: StaleClaimSweepResult;
   reconcileSweep?: ReconcileSweepResult;
   straggler?: StragglerResult;
@@ -891,6 +902,10 @@ export interface BootResult {
  *   7a. mixed-blocked normalizer — shed stale blocked:* from queued/active issues.
  *   7b. Spec sub-issue reconcile — attach missing native sub-issue edges and
  *                                  strip stale needs-slicing on sliced Specs.
+ *   7b'. death sweep        — planDeathSweep; join each classified Worker death to
+ *                             the claim it left behind, release it eagerly and
+ *                             requeue or park under the existing caps (ADR 0155).
+ *                             No-op when `deathSweep` is absent.
  *   7c. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
  *                             a cross-host claim that stopped refreshing (#627).
  *                             No-op when `claimedIssues` is absent.
@@ -1017,6 +1032,12 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 7b. Spec sub-issue reconciler (#1739) ----
   const specSubIssueReconcile = await runSpecSubIssueReconcile(deps, options);
 
+  // ---- 7b'. checkout death sweep (ADR 0155, #4136) ----
+  // Sequenced BEFORE the staleness sweep on purpose: a death the daemon
+  // explained is released with its evidence and its remedy, and only what the
+  // evidence could not name is left for the clock below to concede blind.
+  const deathSweep = await runBootDeathSweep(deps);
+
   // ---- 7c. cross-host stale-claim sweep (#627) ----
   const staleClaimSweep = await runStaleClaimSweep(deps);
 
@@ -1038,6 +1059,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     unblockSweep,
     mixedBlockedNormalize,
     specSubIssueReconcile,
+    ...(deathSweep === undefined ? {} : { deathSweep }),
     staleClaimSweep,
     reconcileSweep,
     straggler,
@@ -1073,6 +1095,16 @@ async function runDocsSweep(deps: BootDeps, options: BootOptions): Promise<DocsS
  * releases an issue with no live claim. Sequenced AFTER the unblock sweep and
  * BEFORE the reconcile sweep so a freshly-released issue rejoins the executable
  * pool for the next drain. */
+/** Step 7b': one death-sweep tick, when the port is wired. */
+async function runBootDeathSweep(deps: BootDeps): Promise<DeathSweepResult | undefined> {
+  if (!deps.deathSweep) return undefined;
+  return await runDeathSweep(deps.deathSweep, {
+    env: deps.env ?? process.env,
+    clock: { ts: new Date(deps.nowS * 1000).toISOString(), epoch: deps.nowS },
+    log: deps.log,
+  });
+}
+
 async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult> {
   if (!deps.lookups.claimedIssues) return { released: [] };
   let claimed: ClaimedIssue[];
