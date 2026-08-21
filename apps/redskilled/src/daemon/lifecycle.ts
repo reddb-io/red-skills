@@ -637,8 +637,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
     let changed = false;
     for (const held of [...registrations.values()]) {
-      // A read is not a new observation: one registration window is the most an
-      // observed queue may speak for without another poll.
+      // One registration window is the most an observed queue may speak for.
       const pollFresh = Number.isFinite(pollAt) && nowMs - pollAt <= held.renew_within_ms;
       const poll = pollFresh ? polled.get(held.project_label) : undefined;
       const sustained = sustainProjectRegistration(held, {
@@ -1255,9 +1254,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     void resourceLeases.releaseHolder(workerId).catch(() => undefined);
   }
 
-  // #4181: a native Worker publishes no heartbeat op; its turn events ARE its
-  // pulse, stamped into the same maps the op feeds, so every read path works.
-  function recordWorkerPulse(pulse: { workerId: string; line?: string; issue?: string }): void {
+  // #4181: a native Worker's turn events ARE its pulse, stamped where the op stamps.
+  function recordWorkerPulse(
+    pulse: { workerId: string; line?: string; issue?: string; phase?: string; step?: string },
+  ): void {
     if (workers.get(pulse.workerId) == null) return;
     const publishedAt = clock();
     const line = pulse.line?.trim();
@@ -1267,15 +1267,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const display = coerceWorkerDisplay({
       ...(displays.get(pulse.workerId)?.display ?? {}),
       ...(pulse.issue == null ? {} : { issue: pulse.issue }),
+      ...(pulse.phase == null ? {} : { phase: pulse.phase }),
+      ...(pulse.step == null ? {} : { step: pulse.step }),
     });
     if (display != null) displays.set(pulse.workerId, { display, published_at: publishedAt });
   }
 
-  /**
-   * Record one heartbeat's line, once reach has permitted it. Reach is checked
-   * against the TARGET's project, exactly as a command is, so a session cannot
-   * publish a line into another project's statusline; a refusal stores nothing.
-   */
+  /** Record one heartbeat's line; reach-checked against the TARGET's project. */
   function publishWorkerHeartbeat(request: RedskilledWorkerHeartbeatRequest): RedskilledWorkerHeartbeatAck {
     const target = workers.get(request.worker_id);
     const reach = authorize("worker-heartbeat", request.session_project, target?.project_label ?? null);
@@ -1297,8 +1295,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     }
     const publishedAt = clock();
     logLines.set(request.worker_id, { line: request.last_log_line, published_at: publishedAt, source: "heartbeat" });
-    // Shape-checked and stored; unrecognised fields degrade field by field,
-    // because mixed bundle versions are a host daemon's ordinary state (rule 3).
+    // Unrecognised fields degrade field by field (mixed bundles are ordinary).
     const display = request.display === undefined ? null : coerceWorkerDisplay(request.display);
     if (display != null) {
       const previous = displays.get(request.worker_id)?.display;
@@ -1529,11 +1526,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     };
   }
 
-  /**
-   * Give one project's registration back. Reach is checked against the project
-   * being released, so a session cannot stop another project's work; whether a
-   * record stood is NOT checked — a release states the outcome to its caller.
-   */
+  /** Give one project's registration back; release states the outcome. */
   function deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered {
     const reach = authorize("project-deregister", sessionProject, projectLabel);
     if (!reach.permitted) throw new Error(reach.reason);
@@ -2407,7 +2400,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       hostState,
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
-      // One registration path (#4101); a stop hands the record back too (#4159).
       registerProject: (request) => registerProject(request),
       releaseProject: (projectLabel) => deregisterProject(projectLabel),
       workerPulse: (pulse) => recordWorkerPulse(pulse),
