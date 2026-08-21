@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { declaredChildAgentEndpoint } from "../src/acp-agent-catalog.js";
 import { childAgentWorkspaceEnv, codexAgentHome, ensureChildAgentHome } from "../src/acp-agent-home.js";
 import { nativeWorkerSpec, runnerFromSessionMeta } from "../src/acp-worker-admission.js";
-import { demandTurnForBirth, runnerFromLaunchArgv } from "../src/acp-demand-turn.js";
+import { demandAdmissionSessionRequest, demandTurnForBirth, runnerFromLaunchArgv } from "../src/acp-demand-turn.js";
 import type { AcpProjectWorkspace } from "../src/project-workspace.js";
 import type { MaterializedWorkerWorkspace } from "../src/worker-workspace.js";
 
@@ -55,6 +55,15 @@ describe("the registered runner reaches the born Worker", () => {
       { id: "4153", title: "a ticket", labels: [] },
     );
     expect(turn?.runner).toBe("codex");
+  });
+
+  it("restates the declared runner on the synthetic session request admission actually reads", () => {
+    const briefed = demandAdmissionSessionRequest({ project, runner: "codex" });
+    expect(runnerFromSessionMeta(briefed._meta)).toBe("codex");
+    expect(briefed.cwd).toBe(project.workspacePath);
+    const unbriefed = demandAdmissionSessionRequest({ project });
+    expect(unbriefed._meta).toBeUndefined();
+    expect(runnerFromSessionMeta(unbriefed._meta)).toBeNull();
   });
 
   it("accepts only catalog runner ids from session meta", () => {
