@@ -108,6 +108,13 @@ export const LANE_RETENTION_REGISTRY = {
     maxLines: 10_000,
     targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
   },
+  "verdicts": {
+    // ADR 0154's merge authorization: one row per judged head, so the lane is
+    // low-rate and worth keeping long. Bounded by BYTES because a merge can be
+    // blocked on this append, and a byte ceiling costs one stat.
+    maxBytes: 4 * MIB,
+    targetRatio: DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  },
 } as const satisfies Readonly<Record<string, RegisteredLaneRetentionPolicy>>;
 
 export type LaneRetentionPolicyName = keyof typeof LANE_RETENTION_REGISTRY;

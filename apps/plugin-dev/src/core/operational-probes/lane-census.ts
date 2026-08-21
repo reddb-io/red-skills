@@ -147,6 +147,11 @@ function staticRegistrations(projectRoot: string, hostRoot: string): LaneRegistr
       LANE_RETENTION_REGISTRY["castle-history"],
     ),
     project(
+      "verdicts",
+      join(castleStateDir(projectRoot), "verdicts.toonl"),
+      LANE_RETENTION_REGISTRY["verdicts"],
+    ),
+    project(
       "rsp-telemetry-spool",
       join(rspStateDir(projectRoot), "rsp-telemetry.spool.toonl"),
       LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],

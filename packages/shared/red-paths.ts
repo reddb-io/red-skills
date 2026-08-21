@@ -178,6 +178,7 @@ export function castleStateDir(root: string): string {
 export const CASTLE_STATE_MEMBERS: Readonly<Record<string, string>> = {
   "history.toonl": "the engine's durable event history",
   "validation.toonl": "the durable gate-verdict record",
+  "verdicts.toonl": "ADR 0154's append-only verdict ledger; it authorizes every merge",
   "phase-durations.toonl": "measured per-phase cost; every ETA is derived from it",
   "singleton-events.toonl": "the ordered resident event lane supervisors, waits and views all read",
   "heal-ledger.toon": "the per-issue 24h heal budget; it bounds repeated healing across time",
