@@ -1,0 +1,15 @@
+// Fixture test for the complexity-coverage ratchet — NOT run.
+//
+// The COVERED variant of `dispatch-router.ts.txt`: the same branchy function,
+// with a test in the owning package that names it. Under the guard's proxy that
+// flips `routeDispatch` from uncovered to covered, and the CRAP score falls from
+// `c + c²` to `c` — which is what "a covered variant passes" means.
+
+import { describe, expect, it } from "vitest";
+import { routeDispatch } from "../src/dispatch-router.js";
+
+describe("routeDispatch", () => {
+  it("routes a scout dispatch to the scout lane", () => {
+    expect(routeDispatch({ mode: "scout" }, 4)).toBe("scout");
+  });
+});

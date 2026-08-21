@@ -200,8 +200,14 @@ describe("toon JSON file I/O guard", () => {
     // the bundle — so a guard may import it and nothing else may. Declared as a
     // SET rather than one hardcoded filename: the second guard to need an AST
     // (`github-read-route-guard`, #3451) failed this check for existing, which is
-    // a rule that cannot grow refusing the growth it was written to allow.
-    const COMPILER_GUARDS = ["toon-json-guard.ts", "github-read-route-guard.ts"];
+    // a rule that cannot grow refusing the growth it was written to allow. The
+    // third is the complexity×coverage ceiling (#4132), which counts branch
+    // points and so cannot be written without the parser either.
+    const COMPILER_GUARDS = [
+      "toon-json-guard.ts",
+      "github-read-route-guard.ts",
+      "complexity-coverage-guard.ts",
+    ];
     const guardImport = new RegExp(
       `from ["'][^"']*(${COMPILER_GUARDS.map((g) => g.replace(".ts", "")).join("|")})(\\.js)?["']`,
     );

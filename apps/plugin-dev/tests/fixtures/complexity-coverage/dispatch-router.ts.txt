@@ -1,0 +1,68 @@
+// Fixture source for the complexity-coverage ratchet — NOT compiled.
+//
+// It carries `.ts.txt` rather than `.ts` on purpose: a real `.ts` here would be
+// swept by this very guard, by the file-size ratchet and by `tsc`, so a fixture
+// that must FAIL would fail the live tree it is only supposed to describe.
+//
+// `routeDispatch` is one exported function with twenty-one branch points — the
+// shape an agent lands when nothing counts them: every condition inline, no
+// test in the package naming it.
+
+export interface DispatchRequest {
+  lane?: string;
+  mode?: string;
+  retries?: number;
+  labels?: string[];
+  urgent?: boolean;
+  owner?: string | null;
+}
+
+export function routeDispatch(request: DispatchRequest, budget: number): string {
+  let lane = request.lane ?? "default";
+  if (request.mode === "scout") {
+    lane = "scout";
+  } else if (request.mode === "go") {
+    lane = "go";
+  } else if (request.mode === "afk" && budget > 0) {
+    lane = "afk";
+  }
+
+  const retries = request.retries ?? 0;
+  for (const label of request.labels ?? []) {
+    if (label === "blocked") return "parked";
+    if (label === "urgent" || label === "hot") {
+      lane = retries > 3 ? "escalated" : "priority";
+    }
+    switch (label) {
+      case "docs":
+        lane = "docs";
+        break;
+      case "release":
+        lane = "release";
+        break;
+      case "chore":
+        lane = budget > 10 ? "chore" : lane;
+        break;
+      default:
+        break;
+    }
+  }
+
+  while (retries > 0 && budget > 0 && lane === "default") {
+    lane = "retry";
+  }
+
+  try {
+    if (request.owner === null) {
+      lane = request.urgent ? "unowned-urgent" : "unowned";
+    }
+  } catch {
+    lane = "broken";
+  }
+
+  do {
+    if (lane === "retry" && budget < 2) lane = "starved";
+  } while (false);
+
+  return lane;
+}
