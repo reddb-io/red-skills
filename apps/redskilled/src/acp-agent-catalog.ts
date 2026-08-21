@@ -49,6 +49,17 @@ export interface AdapterAcpAgentDescriptor {
   readonly label: string;
   readonly kind: "adapter";
   readonly artifact: AcpAdapterArtifact;
+  /**
+   * Arguments the adapter is LAUNCHED with, after the bin.
+   *
+   * A Worker's child runs unattended: nobody answers a permission dialog, so
+   * an adapter whose defaults ask for approval aborts its turn on the first
+   * write. The launch declares the unattended posture instead — the same
+   * trust the native redcode child already runs with, because the product's
+   * isolation is the disposable Worker workspace and its cgroup, not the
+   * adapter's own prompt-for-approval loop.
+   */
+  readonly launchArgs?: readonly string[];
 }
 
 export type AcpAgentDescriptor = NativeAcpAgentDescriptor | AdapterAcpAgentDescriptor;
@@ -82,6 +93,7 @@ export const ACP_AGENT_CATALOG: readonly AcpAgentDescriptor[] = [
       entrypoint: "package/bin/codex-acp.js",
       bin: "codex-acp",
     },
+    launchArgs: ["-c", "approval_policy=never", "-c", "sandbox_mode=danger-full-access"],
   },
   {
     id: "pi",
@@ -333,7 +345,13 @@ export function declaredChildAgentEndpoint(id: AcpAgentId): AcpEndpoint {
     agent: id,
     transport: "stdio",
     command: "npx",
-    args: ["-y", "-p", `${descriptor.artifact.package}@${descriptor.artifact.version}`, descriptor.artifact.bin],
+    args: [
+      "-y",
+      "-p",
+      `${descriptor.artifact.package}@${descriptor.artifact.version}`,
+      descriptor.artifact.bin,
+      ...(descriptor.launchArgs ?? []),
+    ],
   };
 }
 

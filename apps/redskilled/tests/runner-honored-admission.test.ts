@@ -78,7 +78,13 @@ describe("the registered runner reaches the born Worker", () => {
     const endpoint = declaredChildAgentEndpoint("codex");
     expect(endpoint.agent).toBe("codex");
     expect(endpoint.command).toBe("npx");
-    expect(endpoint.args).toEqual(["-y", "-p", "@zed-industries/codex-acp@0.16.0", "codex-acp"]);
+    expect(endpoint.args).toEqual([
+      "-y", "-p", "@zed-industries/codex-acp@0.16.0", "codex-acp",
+      // Unattended posture: nobody answers a permission dialog, so an adapter
+      // left on its ask-for-approval defaults aborts its turn on the first
+      // write ("aborted by user", observed live on 4.1.15).
+      "-c", "approval_policy=never", "-c", "sandbox_mode=danger-full-access",
+    ]);
   });
 
   it("still admits the governed native default exactly as before", () => {
@@ -97,6 +103,10 @@ describe("the registered runner reaches the born Worker", () => {
       "--child-arg=-p",
       "--child-arg=@zed-industries/codex-acp@0.16.0",
       "--child-arg=codex-acp",
+      "--child-arg=-c",
+      "--child-arg=approval_policy=never",
+      "--child-arg=-c",
+      "--child-arg=sandbox_mode=danger-full-access",
     ]);
     expect(codexSpec.env?.OPENCODE_DB).toBeUndefined();
     expect(codexSpec.env?.CODEX_HOME).toBe(codexAgentHome());
