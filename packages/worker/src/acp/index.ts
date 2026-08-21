@@ -6,7 +6,10 @@
 // directions of drift.
 export { runAcpWorkerCommand } from "./command.js";
 export { runNativeAcpWorker } from "./native-worker.js";
-export { WorkflowChildAgent, type ChildAgentSessionOptions } from "./child-agent.js";
+export {
+  WorkflowChildAgent,
+  type ChildAgentSessionOptions,
+} from "./child-agent.js";
 export {
   createWorkerTerminalHost,
   DEFAULT_TERMINAL_OUTPUT_BYTE_LIMIT,
@@ -36,7 +39,9 @@ export {
 export {
   runTicketLoop,
   TICKET_LOOP_STAGES,
+  TICKET_LOOP_FAILURE_RETRY_CLASSES,
   reseedHandoff,
+  retryInstructionForFailureClass,
   type TicketGateRun,
   type TicketImplementOutcome,
   type TicketLoopDeps,
@@ -45,6 +50,18 @@ export {
   type TicketLoopStage,
   type TicketLoopTicket,
 } from "./ticket-loop.js";
+export {
+  classifyWorkerFailure,
+  decideWorkerFailureRetry,
+  WORKER_FAILURE_GLOBAL_RETRY_LIMIT,
+  WORKER_FAILURE_RETRY_CLASSES,
+  WORKER_FAILURE_RETRY_TABLE,
+  type WorkerFailureRetryClass,
+  type WorkerFailureRetryDecision,
+  type WorkerFailureRetryInput,
+  type WorkerFailureRetryRule,
+  type WorkerFailureRetryShape,
+} from "./retry-policy.js";
 export {
   runWorkerLocalGate,
   readWorkspace,
