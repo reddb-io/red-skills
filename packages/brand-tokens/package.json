@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/brand-tokens",
-  "version": "4.1.22",
+  "version": "4.1.23",
   "private": true,
   "type": "module",
   "description": "Vendored RedDB brand color tokens with ANSI and CSS derivation helpers (ADR 0137).",
