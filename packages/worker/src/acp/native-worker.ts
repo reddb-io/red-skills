@@ -33,6 +33,7 @@ import {
   type RedskillsTicketHandoff,
 } from "@reddb-io/protocol-acp";
 import { WorkflowChildAgent } from "./child-agent.js";
+import { acquireHostGateLock } from "./gate-lock.js";
 import { runWorkerLocalGate } from "./local-gate.js";
 import { createWorkerPublisher, worktreeHead, type WorkerPublisher } from "./publish-request.js";
 import { runTicketLoop, type TicketLoopRecord, type TicketLoopResult } from "./ticket-loop.js";
@@ -156,16 +157,32 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
         });
         return { stopReason: response.stopReason };
       },
-      gate: async () => await runWorkerLocalGate({
-        worktree: held.request.cwd,
-        base: ticket.base,
-        ...(ticket.backpressure_commands == null
-          ? {}
-          : { backpressureCommands: ticket.backpressure_commands }),
-        ...(ticket.validation_commands == null
-          ? {}
-          : { validationCommands: ticket.validation_commands }),
-      }),
+      gate: async () => {
+        // #4161: one Validation execution at a time per host — two concurrent
+        // gates read each other's contention as branch fault.
+        const slot = await acquireHostGateLock({
+          onWait: (holder, waitedMs) => void notifyTicketStage(parent, sessionId, {
+            stage: "gate",
+            ok: true,
+            detail: `waiting for the host gate slot (${Math.round(waitedMs / 1000)}s` +
+              `${holder == null ? "" : `, held by pid ${holder}`})`,
+          }),
+        });
+        try {
+          return await runWorkerLocalGate({
+            worktree: held.request.cwd,
+            base: ticket.base,
+            ...(ticket.backpressure_commands == null
+              ? {}
+              : { backpressureCommands: ticket.backpressure_commands }),
+            ...(ticket.validation_commands == null
+              ? {}
+              : { validationCommands: ticket.validation_commands }),
+          });
+        } finally {
+          await slot.release();
+        }
+      },
       publisher: held.publisher,
       narrate: (record) => notifyTicketStage(parent, sessionId, record),
     });

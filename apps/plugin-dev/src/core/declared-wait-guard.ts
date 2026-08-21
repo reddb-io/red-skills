@@ -556,6 +556,15 @@ export function blankCommentsAndStrings(source: string): string {
  */
 export const DECLARED_WAITS: readonly DeclaredWait[] = [
   {
+    path: "packages/worker/src/acp/gate-lock.ts",
+    fn: "acquireHostGateLock",
+    subject: "the host-wide gate slot — one declared Validation execution at a time per machine (#4161)",
+    deadline: "`deadlineMs`, default 15 minutes of waiting",
+    escalation:
+      "proceeds WITHOUT the lock and says so — a wedged lock must not park every Worker on the host; a dead holder is broken immediately",
+    heartbeat: { sink: "onWait" },
+  },
+  {
     path: "apps/plugin-dev/src/core/mcp-lane-canary.ts",
     fn: "awaitHost",
     subject: "the daemon's own answer for a project reaching the shape this step requires",
