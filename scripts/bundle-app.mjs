@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
@@ -87,11 +88,29 @@ const esbuildArgs = [
 
 if (args.minify) esbuildArgs.splice(2, 0, "--minify");
 
+// `--inputs-out` makes the BUNDLER declare what it consumed.
+//
+// The vendored release engine records the modules it was built from so a guard
+// can check it without rebuilding (#4282). Deriving that list by walking a
+// directory over-collects — a package's untouched siblings and its tests are not
+// in the bundle — and hand-keeping it rots. esbuild already knows the exact set,
+// so ask it: `--metafile` names every input, and the first-party ones (anything
+// outside node_modules) are the closure worth recording.
+const metafilePath = args.inputsOut
+  ? resolve(mkdtempSync(resolve(tmpdir(), "red-bundle-meta-")), "meta.json")
+  : undefined;
+if (metafilePath) esbuildArgs.push(`--metafile=${metafilePath}`);
+
 const result = spawnSync("esbuild", esbuildArgs, {
   stdio: "inherit",
   shell: process.platform === "win32",
 });
 if (result.status !== 0) process.exit(result.status ?? 1);
+
+if (metafilePath) {
+  writeInputsList(metafilePath, args.inputsOut);
+  rmSync(dirname(metafilePath), { recursive: true, force: true });
+}
 
 if (args.lazyAssetEntry) {
   const lazyAssetArgs = [
@@ -113,6 +132,23 @@ if (args.lazyAssetEntry) {
 
 process.exit(0);
 
+/**
+ * Write the bundle's first-party inputs as newline-delimited repo-relative paths.
+ *
+ * Plain text on purpose: the consumers are a TypeScript guard and a refresher
+ * under `apps/`, where the serialization doctrine keeps structured payloads off
+ * JSON — a one-column list needs no structure at all.
+ */
+function writeInputsList(metafile, outfile) {
+  const meta = JSON.parse(readFileSync(metafile, "utf8"));
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const inputs = Object.keys(meta.inputs ?? {})
+    .filter((input) => !input.split("/").includes("node_modules"))
+    .map((input) => relative(repoRoot, resolve(input)).split(sep).join("/"))
+    .sort();
+  writeFileSync(outfile, `${inputs.join("\n")}\n`, "utf8");
+}
+
 function parseArgs(argv) {
   const out = {
     minify: false,
@@ -123,6 +159,7 @@ function parseArgs(argv) {
     if (arg === "--entry") out.entry = argv[++i];
     else if (arg === "--outfile") out.outfile = argv[++i];
     else if (arg === "--asset") out.asset = argv[++i];
+    else if (arg === "--inputs-out") out.inputsOut = argv[++i];
     else if (arg === "--lazy-asset-entry") out.lazyAssetEntry = argv[++i];
     else if (arg === "--lazy-asset") out.lazyAsset = argv[++i];
     else if (arg === "--minify") out.minify = true;
