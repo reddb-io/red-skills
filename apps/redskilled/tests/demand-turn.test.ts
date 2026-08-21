@@ -209,7 +209,12 @@ describe("the birth briefs its Worker with a Ticket", () => {
   const birth = { workspace_path: "/tmp/w", index: 0, work_item: "4118" };
 
   it("states the handoff the Worker's Ticket loop is entered through", () => {
-    const turn = demandTurnForBirth(registration, birth, "W7", briefing);
+    const turn = demandTurnForBirth(
+      { ...registration, argv: ["redskilled", "acp-worker", "--child-agent", "codex"] },
+      birth,
+      "W7",
+      briefing,
+    );
 
     expect(turn?.ticket).toEqual({
       number: 4118,
@@ -219,6 +224,7 @@ describe("the birth briefs its Worker with a Ticket", () => {
       // The prompt IS the briefing: one sentence, with the daemon's fact in it.
       handoff: "Work issue #4118 to a merged PR",
       worker_id: "W7",
+      runner: "codex",
     });
   });
 

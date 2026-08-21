@@ -197,6 +197,7 @@ export function demandTurnForBirth(
           base: base!,
           handoff: withOrders,
           worker_id: workerId,
+          ...(runner == null ? {} : { runner }),
           ...(registration.validation_commands == null || registration.validation_commands.length === 0
             ? {}
             : { validation_commands: [...registration.validation_commands] }),
