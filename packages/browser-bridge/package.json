@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/browser-bridge",
-  "version": "4.1.19",
+  "version": "4.1.20",
   "private": true,
   "type": "module",
   "description": "CLI<->browser annotation bridge plus a layout-audit gate for HTML artifacts. Opens a generated artifact, injects a portable feedback SDK, long-polls for human annotations (element + character range), and blocks 'done' on a visually broken render. No cloud; state lives under .red/browser-bridge/.",
