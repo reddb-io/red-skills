@@ -111,6 +111,21 @@ export interface RedskilledProjectQueue {
    * handoff verbatim, never read. Same order and same cap as `items`.
    */
   readonly tickets?: readonly RedskilledQueueTicket[];
+  /**
+   * Whether this poll LISTED what it counted, or only counted it (#4292).
+   *
+   * **An absent list is not an empty queue, and a consumer must not have to
+   * guess which it is.** The count-only GraphQL route answers an integer and
+   * says nothing about items, which downstream read exactly like a project
+   * whose backlog drained — so the daemon planned births against a depth it
+   * held no Ticket for, and every one of them echoed its prompt and died. The
+   * route states its own reach here instead: `count-only` is a poll that can
+   * brief no birth, and only `listed` promises a Ticket per counted item.
+   *
+   * Absent on every outcome but `counted`: a poll that failed listed nothing
+   * and counted nothing, and has no reach to state.
+   */
+  readonly briefing?: "listed" | "count-only";
 }
 
 /** One counted item, in the three facts a Ticket handoff has to state. */
@@ -150,7 +165,12 @@ export function carryQueueItems(
     projects: next.projects.map((project) => {
       if (project.items != null) return project;
       const carried = held.get(project.project_label);
-      return carried == null ? project : { ...project, items: [...carried.items], tickets: [...carried.tickets] };
+      // The carried list is a real list, so the project it lands on can brief
+      // again: leaving `count-only` standing beside it would refuse a birth the
+      // daemon holds every fact for.
+      return carried == null
+        ? project
+        : { ...project, items: [...carried.items], tickets: [...carried.tickets], briefing: "listed" };
     }),
   };
 }
@@ -295,7 +315,10 @@ export function parseQueueDiscoveryResponse(
         project_label: project.project_label,
         outcome: "counted",
         depth,
-        detail: `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector`,
+        detail:
+          `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector, counted ` +
+          `without listing them, so this poll can brief no birth`,
+        briefing: "count-only",
       };
     }
     const aliasError = errors.find((candidate) => pathIncludes(candidate.path, alias));
@@ -479,6 +502,7 @@ async function fetchConditionalQueueDiscovery(
         detail: `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector`,
         items: queueItemIdentifiers(matched),
         tickets: queueTickets(matched),
+        briefing: "listed",
       });
     } catch (error) {
       const rateLimited = isGithubRateLimitError(error);

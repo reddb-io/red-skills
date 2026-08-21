@@ -16,6 +16,7 @@ import {
   emptyQueueDiscovery,
   fetchQueueDiscovery,
   isRedskilledQueueReport,
+  carryQueueItems,
   planQueueDiscoveryBatches,
   REDSKILLED_QUEUE_BATCH_SIZE,
   REDSKILLED_QUEUE_STALENESS_MS,
@@ -125,6 +126,70 @@ describe("the batch bound is covered, never truncated", () => {
   it("states a default bound one request can hold", () => {
     expect(Number.isInteger(REDSKILLED_QUEUE_BATCH_SIZE)).toBe(true);
     expect(REDSKILLED_QUEUE_BATCH_SIZE).toBeGreaterThan(0);
+  });
+});
+
+describe("a poll states its own reach, so nothing downstream infers it (#4292)", () => {
+  it("says the aliased count route counted without listing, and can brief no birth", async () => {
+    const discovery = await fetchQueueDiscovery({
+      projects: [selector(0)],
+      now: NOW,
+      transport: async () => answer([7]),
+    });
+
+    expect(discovery.projects[0]).toMatchObject({ outcome: "counted", depth: 7, briefing: "count-only" });
+    expect(discovery.projects[0]!.items).toBeUndefined();
+    expect(discovery.projects[0]!.tickets).toBeUndefined();
+    expect(discovery.projects[0]!.detail).toContain("can brief no birth");
+  });
+
+  it("says the REST list route listed what it counted, and hands over the Tickets", async () => {
+    const transport = (async () => answer([2])) as never as {
+      (query: string): Promise<unknown>;
+      conditionalList?: (input: unknown) => Promise<unknown>;
+    };
+    transport.conditionalList = async () => ({
+      data: [{ number: 518, title: "the tokens drift", labels: [{ name: "bug" }] }, { number: 7, title: "t", labels: [] }],
+      headers: {},
+      requestCount: 1,
+    });
+    const discovery = await fetchQueueDiscovery({
+      projects: [{ ...selector(0), poll: { owner: "acme", repo: "p0", labels: ["ready-for-agent"] } }],
+      now: NOW,
+      transport: transport as never,
+    });
+
+    expect(discovery.projects[0]).toMatchObject({ outcome: "counted", depth: 2, briefing: "listed" });
+    expect(discovery.projects[0]!.tickets).toEqual([
+      { id: "518", title: "the tokens drift", labels: ["bug"] },
+      { id: "7", title: "t", labels: [] },
+    ]);
+  });
+
+  it("carries a previous list onto a poll that could not list, and says it can brief again", () => {
+    const previous = {
+      version: 1 as const,
+      fetched_at: NOW,
+      request_count: 1,
+      project_count: 1,
+      batch_size: 1,
+      rate_limit: { remaining: null, reset_at: null, exhausted: false },
+      projects: [{
+        project_label: "acme/p0",
+        outcome: "counted" as const,
+        depth: 1,
+        detail: "d",
+        items: ["518"],
+        tickets: [{ id: "518", title: "the tokens drift", labels: [] }],
+        briefing: "listed" as const,
+      }],
+    };
+    const next = {
+      ...previous,
+      projects: [{ project_label: "acme/p0", outcome: "unreachable" as const, depth: null, detail: "d" }],
+    };
+
+    expect(carryQueueItems(next, previous).projects[0]).toMatchObject({ briefing: "listed", items: ["518"] });
   });
 });
 

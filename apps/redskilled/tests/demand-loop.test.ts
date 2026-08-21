@@ -469,6 +469,68 @@ describe("the daemon drives the demand loop itself", () => {
     expect(second.refusal).toBeNull();
   });
 
+  it("refuses an item-scoped birth it cannot brief, naming the missing fact and spawning nothing (#4292)", async () => {
+    // The live loop: 58 Workers in a quarter of an hour, each one born for an
+    // item it was never told about, echoing its prompt and dying while the item
+    // stayed queued. Here the registration states no trunk, so no handoff can
+    // be composed — the birth must not happen at all.
+    const launched: LaunchWorkerOptions[] = [];
+    const workspace = await scratch("redskilled-workspace-");
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch(launched),
+      queueDiscovery: { intervalMs: 0, transport: listingTransport([{ number: 518, title: "the tokens drift", labels: [] }]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject({
+      ...registration("reddb-io/design-system", 1, workspace),
+      queue_poll: { owner: "reddb-io", repo: "design-system", labels: ["ready-for-agent"] },
+      prompt: "Work issue #{{work_item}} to a merged PR",
+    });
+    await daemon.pollQueueDiscovery();
+    const demand = await daemon.driveDemand();
+
+    expect(launched).toEqual([]);
+    expect(demand.granted).toEqual([]);
+    expect(demand.refusal).toBe(
+      "the daemon cannot brief a Worker for item 518: this project's registration states no trunk branch, so a " +
+        "birth would echo its prompt and die with the item still queued",
+    );
+    // Rate-limited by the same backoff every other host refusal arms, so an
+    // unbriefable queue costs one journal line a window rather than a Worker a tick.
+    expect(demand.retry_after).not.toBeNull();
+  });
+
+  it("still births prompt-only for a registration that carries a prompt and no work item (#4292)", async () => {
+    // The deliberate shape stays legal: a count-only poll lists nothing, so the
+    // planner hands out no work item and the turn is the prompt the project wrote.
+    const launched: LaunchWorkerOptions[] = [];
+    const workspace = await scratch("redskilled-workspace-");
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch(launched),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([3]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject({
+      ...registration("reddb-io/design-system", 1, workspace),
+      prompt: "Take the next thing on the board",
+    });
+    await daemon.pollQueueDiscovery();
+    const demand = await daemon.driveDemand();
+
+    expect(demand.refusal).toBeNull();
+    expect(demand.projects[0]!.outcome).toBe("asking");
+  });
+
   it("holds the daemon alive while a registration stands, so the loop outlives the session", async () => {
     const daemon = await startRedskilledDaemon({
       paths: await sessionPaths(),
@@ -492,6 +554,16 @@ describe("the daemon drives the demand loop itself", () => {
     expect(held.hostState().registrations ?? []).toHaveLength(1);
   });
 });
+
+/** A transport whose REST lane LISTS what it counts, the way production's does. */
+function listingTransport(items: readonly Record<string, unknown>[]) {
+  const transport = (async () => answer([items.length])) as never as {
+    (query: string): Promise<unknown>;
+    conditionalList?: (input: unknown) => Promise<unknown>;
+  };
+  transport.conditionalList = async () => ({ data: [...items], headers: {}, requestCount: 1 });
+  return transport as never;
+}
 
 /** One aliased answer, in the shape the tracker gives it back. */
 function answer(depths: readonly number[]): unknown {
