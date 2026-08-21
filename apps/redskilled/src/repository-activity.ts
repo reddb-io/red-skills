@@ -170,6 +170,22 @@ export interface RedskilledActivityCounts {
   /** Issues and pull requests closed inside the window the fetch asked for. */
   readonly recently_closed: number;
   /**
+   * Lines the trunk GAINED since the operator's calendar day began; `null` when
+   * this poll could not answer.
+   *
+   * Beside `merged_today` because they answer the same question at two
+   * granularities — how much shipped today — and because they are counted in
+   * ONE poll: the statusline may not spend a git walk, a second request budget
+   * or its own clock on a figure the daemon already reaches GitHub for.
+   *
+   * **`null` is an absence and never a zero.** A day with no commits is `0`; a
+   * diff too large for one comparison, an unreachable trunk and a spent quota
+   * are three different failures and none of them is a quiet day.
+   */
+  readonly trunk_lines_added?: number | null;
+  /** Lines the trunk LOST over the same span, on the same terms. */
+  readonly trunk_lines_removed?: number | null;
+  /**
    * Open Issues carrying this project's ready label; `null` when none was named.
    *
    * **Counted off the representation the open-Issue count already paid for.**
@@ -363,6 +379,11 @@ export function parseRepositoryActivityResponse(
             open_issues: openIssues,
             merged_today: mergedToday,
             recently_closed: recentlyClosed,
+            // The aliased query asks for no comparison, so this migration path
+            // states the absence rather than a zero the conditional poll would
+            // have answered with a real number.
+            trunk_lines_added: null,
+            trunk_lines_removed: null,
             // The aliased query asks for no label breakdown, so this path
             // produces no queue counters — and says so with `null` rather than
             // handing a consumer two zeros it would render as a drained queue.
@@ -440,6 +461,17 @@ export interface RedskilledActivityTransport {
   conditionalCount?(
     input: RedskilledConditionalListRequest,
   ): Promise<{ readonly data: { readonly total_count: number }; readonly headers: GithubResponseHeaders; readonly requestCount: number }>;
+  /**
+   * One conditional REST read whose body is an OBJECT rather than a page.
+   *
+   * `conditionalList` unwraps a paginated array and `conditionalCount` unwraps a
+   * search total; a comparison is neither. Rather than teach either of them a
+   * third shape, this returns the record and lets the caller read the fields it
+   * declared it needed — the transport stays a transport.
+   */
+  conditionalObject?(
+    input: RedskilledConditionalListRequest,
+  ): Promise<{ readonly data: Record<string, unknown>; readonly headers: GithubResponseHeaders; readonly requestCount: number }>;
 }
 
 export interface FetchRepositoryActivityInput {
@@ -535,6 +567,15 @@ export function createGitHubActivityTransport(options: {
     });
   transport.conditionalCount = async (input) => {
     const answer = await client.conditionalRest<{ total_count: number }>({
+      cacheKey: input.cacheKey,
+      route: input.route,
+      parameters: input.parameters,
+      operation: input.operation,
+    });
+    return { data: answer.data, headers: answer.headers, requestCount: 1 };
+  };
+  transport.conditionalObject = async (input) => {
+    const answer = await client.conditionalRest<Record<string, unknown>>({
       cacheKey: input.cacheKey,
       route: input.route,
       parameters: input.parameters,

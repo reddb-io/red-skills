@@ -12,11 +12,14 @@
  * the payload's own `generated_at`, so the dashboard and the statusline beside it
  * can only disagree if a pure function is impure.
  *
- * **Nothing here learns the pipeline.** The progress bar is drawn from the two
- * integers a project published (`phase_index`, `phase_total`) and from nothing
- * else. A renderer that knew what `coding` or `validating` meant would be
- * carrying castle semantics, which ADR 0130 rule 3 keeps out of the host lane
- * entirely — and this module runs on both sides of it.
+ * **The pipeline stays a position, never a meaning.** The progress bar is drawn
+ * from two integers: the pair a project published (`phase_index`,
+ * `phase_total`), or — when it published none — the pair `./lifecycle-phase.js`
+ * resolves from the phase word. Neither this module nor that one knows what
+ * `coding` or `validating` DO; a declared table says only which of five cells a
+ * word sits in, which is presentation, not the castle semantics ADR 0130 rule 3
+ * keeps out of the host lane. An undeclared word resolves to nothing and draws
+ * no bar, so the renderer can never invent a place in a pipeline it cannot see.
  *
  * **Host-side session facts stay absent rather than faked.** The context window
  * and the Pro/Max 5h/7d usage windows arrive from a Claude Code stdin payload
@@ -31,6 +34,7 @@ import {
   type RedskilledDashboardCounts,
 } from "./counters.js";
 import { projectLines, throughputLines, trendMark } from "./dashboard-sections.js";
+import { resolveLifecyclePosition } from "./lifecycle-phase.js";
 import {
   clamp,
   flattenPublishedLine,
@@ -381,18 +385,35 @@ function declaredWaitCell(display: RedskilledRenderWorkerDisplay, generatedAt: s
 /**
  * The pipeline bar, drawn from two integers and no vocabulary. PURE.
  *
- * `index` completed cells, one cursor, and the rest ahead. A project that
- * published no position gets no bar at all — a bar with an invented cursor would
- * put a Worker somewhere in a pipeline this module cannot see.
+ * `index` completed cells, one cursor, and the rest ahead. A Worker whose
+ * position is neither published NOR resolvable from its phase gets no bar at all
+ * — a bar with an invented cursor would put a Worker somewhere in a pipeline
+ * this module cannot see.
+ *
+ * **The published pair wins; the phase word is the fallback.** A project that
+ * states its own `phase_index`/`phase_total` is describing a pipeline this
+ * module does not own, and a declared table would be a second opinion on it.
+ * A native Worker publishes no pair at all — its pulse carries a ticket stage
+ * and nothing else — which is why every live Worker's bar rendered empty until
+ * `./lifecycle-phase.js` gave the stage word a position.
  */
 export function progressBar(display: RedskilledRenderWorkerDisplay): string {
   const total = display.phase_total;
   const index = display.phase_index;
-  if (total == null || total <= 0 || index == null || index < 0) return "";
-  const done = Math.min(Math.floor(index), Math.floor(total));
-  if (done >= total) return BAR_DONE.repeat(Math.floor(total));
-  const cursor = display.failed ? BAR_FAILED : BAR_CURSOR;
-  return `${BAR_DONE.repeat(done)}${cursor}${BAR_AHEAD.repeat(Math.floor(total) - done - 1)}`;
+  if (total != null && total > 0 && index != null && index >= 0) {
+    return barGlyphs(Math.floor(index), Math.floor(total), display.failed);
+  }
+  const position = resolveLifecyclePosition(display.phase);
+  if (position == null) return "";
+  return barGlyphs(position.index, position.total, position.failed || display.failed);
+}
+
+/** `done` filled cells, one cursor, the rest ahead — a finished bar is all fill. PURE. */
+function barGlyphs(index: number, total: number, failed: boolean): string {
+  const done = Math.min(index, total);
+  if (done >= total) return BAR_DONE.repeat(total);
+  const cursor = failed ? BAR_FAILED : BAR_CURSOR;
+  return `${BAR_DONE.repeat(done)}${cursor}${BAR_AHEAD.repeat(total - done - 1)}`;
 }
 
 /**

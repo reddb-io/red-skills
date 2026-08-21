@@ -320,12 +320,44 @@ export interface RedskilledRenderHourlyHistory {
   readonly tickets_per_hour: RedskilledRenderHourlySeries;
 }
 
+/**
+ * One Worker ending, as the daemon witnessed or replayed it.
+ *
+ * Every field but `kind` and `ts` is nullable because a mark REPLAYED from the
+ * event lane after a daemon restart carries the project and the kind and nothing
+ * the Worker said about its own work. `./last-outcome.js` turns these facts into
+ * the word an idle line prints; nothing here is a word.
+ */
+export interface RedskilledRenderLastOutcome {
+  /** The lane's event kind — `worker-death` or `worker-budget-kill`. */
+  readonly kind: string;
+  /** When the daemon recorded the ending. */
+  readonly ts: string;
+  readonly project_label: string | null;
+  /** The work item as the Worker published it; never parsed by any renderer. */
+  readonly issue: string | null;
+  /** The last phase pulsed, `!`-suffixed when that stage refused. */
+  readonly phase: string | null;
+  /** What the Worker reported before ending, in the birth-outcome vocabulary. */
+  readonly birth_outcome: string | null;
+}
+
 /** One project's repository counts; `null` for every outcome but a count. */
 export interface RedskilledRenderActivityCounts {
   readonly open_pull_requests: number;
   readonly open_issues: number;
   readonly merged_today?: number;
   readonly recently_closed: number;
+  /**
+   * Lines the trunk gained today, from the SAME poll that counted the merges.
+   *
+   * Optional and nullable for two different facts: absent is a daemon that
+   * predates the figure, `null` is a poll that could not measure it, and neither
+   * is a zero — a quiet day is `0` and reads as one.
+   */
+  readonly trunk_lines_added?: number | null;
+  /** Lines the trunk lost today, on the same terms. */
+  readonly trunk_lines_removed?: number | null;
 }
 
 export interface RedskilledRenderActivityProject {
@@ -460,6 +492,12 @@ export interface RedskilledRenderPayload {
   readonly deaths?: RedskilledRenderDeaths;
   readonly engine?: RedskilledRenderEngine;
   readonly metrics?: RedskilledRenderMetrics;
+  /**
+   * The newest Worker ending this host recorded; `null` when it has recorded
+   * none, absent on a daemon that predates the block. What an idle line says
+   * instead of nothing.
+   */
+  readonly last_outcome?: RedskilledRenderLastOutcome | null;
   /**
    * Which count-scaling extras the composer deliberately left out.
    *

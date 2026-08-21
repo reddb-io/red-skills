@@ -37,7 +37,8 @@ import {
   type RedskilledDashboardCells,
   type RedskilledDashboardColumn,
 } from "./dashboard.js";
-import { remoteCounterTokens } from "./counters.js";
+import { REDSKILLED_LINE_COUNTER_NAMES, remoteCounterTokens, trunkLinesToken } from "./counters.js";
+import { idleCell } from "./last-outcome.js";
 import { clamp, flattenPublishedLine, formatBytes, formatDuration, pad, width } from "./format.js";
 import {
   BUDGET_BAND_MARK,
@@ -312,7 +313,12 @@ function renderHead(
     parts.push(memoryFigure(payload, options));
   } else if (match === "matched" || match === "unregistered") {
     parts.push(workerActivity(workers, workers.length));
-    if (workers.length === 0) parts.push("idle");
+    // An idle host says what it last DID. `idle` alone reads the same on a
+    // machine that landed a Ticket a minute ago and one that has been dead for
+    // an hour, and the daemon already recorded which of those this is.
+    if (workers.length === 0) {
+      parts.push(idleCell(payload.last_outcome, options.project, payload.generated_at));
+    }
   } else if (match === "name-only") {
     // The Workers still count — they are running — but the line says out loud
     // that the host holds no registration, and it never says `idle`: a project
@@ -330,7 +336,14 @@ function renderHead(
   // they render in `local` alone: a `global` head speaks for the host, and one
   // repository's queue depth on it would be attributed to every project on the
   // machine.
-  if (options.mode !== "global") parts.push(...remoteCounterTokens(payload, options.project));
+  if (options.mode !== "global") {
+    parts.push(...remoteCounterTokens(payload, options.project, REDSKILLED_LINE_COUNTER_NAMES));
+    // Beside `mrg=` because it is the same poll answering the same question at a
+    // finer grain: how much shipped today. The bedrock's `loc=` sits at the far
+    // end of the line and answers the other one — what is still in hand.
+    const landed = trunkLinesToken(payload, options.project);
+    if (landed != null) parts.push(landed);
+  }
   if (options.mode !== "global" && (match === "matched" || match === "unregistered" || match === "name-only")) {
     parts.push(memoryFigure(payload, options));
   }

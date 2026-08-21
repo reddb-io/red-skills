@@ -482,7 +482,10 @@ describe("the remote-counter block", () => {
       { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" },
     ).line);
 
-    expect(line).toContain("rdy=1 iss=24 pr=3 mrg=7");
+    // Three of the four: the LINE gave `iss` up to the day's landed volume, and
+    // the dashboard — which has the width — still prints it.
+    expect(line).toContain("rdy=1 pr=3 mrg=7");
+    expect(line).not.toContain("iss=");
     expect(line).not.toContain("cpr=");
   });
 

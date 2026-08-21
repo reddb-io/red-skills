@@ -14,6 +14,7 @@ import {
   remoteCounterTokens,
   stripAnsi,
 } from "../index.js";
+import { trunkLinesToken } from "../counters.js";
 import { counters, payload } from "./fixture.js";
 
 const LOCAL = { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" };
@@ -27,7 +28,7 @@ describe("remote counters ride the daemon payload", () => {
       renderRedskilledStatusline(payload({ remote_counters: counters(FIVE) }), LOCAL).line,
     );
 
-    expect(line).toBe("1w rdy=5 iss=24 pr=3 mrg=7 512M v3.3.11");
+    expect(line).toBe("1w rdy=5 pr=3 mrg=7 512M v3.3.11");
     expect(line).not.toContain("acme/widgets");
   });
 
@@ -45,9 +46,9 @@ describe("remote counters ride the daemon payload", () => {
       ).line,
     );
 
-    expect(fresh).toContain("rdy=5 iss=24 pr=3 mrg=7");
+    expect(fresh).toContain("rdy=5 pr=3 mrg=7");
     expect(fresh).not.toContain("(");
-    expect(stale).toContain("rdy=5(15m) iss=24(15m) pr=3(15m) mrg=7(15m)");
+    expect(stale).toContain("rdy=5(15m) pr=3(15m) mrg=7(15m)");
   });
 
   it("costs the line nothing for a counter this poll never produced", () => {
@@ -60,7 +61,7 @@ describe("remote counters ride the daemon payload", () => {
 
     // NOT `rdy=0`: a queue nobody counted and a queue that drained are different
     // facts, and only one of them is a number.
-    expect(line).toContain("iss=24 pr=3");
+    expect(line).toContain("pr=3");
     expect(line).not.toContain("rdy=");
     expect(line).not.toContain("hmn=");
   });
@@ -91,13 +92,16 @@ describe("remote counters ride the daemon payload", () => {
     const line = stripAnsi(renderRedskilledStatusline(document, LOCAL).line);
     const header = stripAnsi(renderRedskilledDashboard(document, TABLE).header.line);
 
-    // The table separates its parts and the line does not; the counters, their
-    // order and their ages are the same poll either way.
+    // The table separates its parts and the line does not; a counter both draw
+    // carries the same value and the same age either way. The LINE draws three
+    // of the four — `iss` costs width the day's landed volume needed more, and
+    // the table, which has the room, keeps it.
     expect(header).toContain("rdy=5(15m) · iss=24(15m) · pr=3(15m) · mrg=7(15m)");
     expect(header).not.toContain("!counts stale");
-    for (const token of ["rdy=5(15m)", "iss=24(15m)", "pr=3(15m)", "mrg=7(15m)"]) {
+    for (const token of ["rdy=5(15m)", "pr=3(15m)", "mrg=7(15m)"]) {
       expect(line).toContain(token);
     }
+    expect(line).not.toContain("iss=");
     expect(renderRedskilledDashboard(document, TABLE).header.counts).toMatchObject({
       open_pull_requests: 3,
       merged_today: 7,
@@ -130,11 +134,83 @@ describe("remote counters ride the daemon payload", () => {
     const line = stripAnsi(renderRedskilledStatusline(document, LOCAL).line);
     const header = stripAnsi(renderRedskilledDashboard(document, TABLE).header.line);
 
-    expect(line).toContain("iss=24 pr=3");
+    expect(line).toContain("pr=3");
     expect(line).not.toContain("cpr=");
     expect(line).not.toContain("rdy=");
     expect(header).toContain("iss=24 · pr=3");
     expect(header).not.toContain("cpr=");
     expect(header).toContain("!counts stale");
+  });
+});
+
+describe("the day's landed lines ride the same poll as the merge count", () => {
+  const activity = (
+    counts: Record<string, number | null> | null,
+    project = "acme/widgets",
+  ) => ({
+    fetched_at: "2026-08-03T00:02:00.000Z",
+    age_ms: 5_000,
+    stale: false,
+    reason: "fetched 5000ms ago",
+    projects: [{ project_label: project, repository: project, counts: counts as never }],
+  });
+
+  it("renders the landed volume beside the merge counter", () => {
+    const line = stripAnsi(
+      renderRedskilledStatusline(
+        payload({
+          remote_counters: counters(FIVE),
+          repository_activity: activity({
+            open_pull_requests: 3,
+            open_issues: 24,
+            recently_closed: 1,
+            merged_today: 7,
+            trunk_lines_added: 12_400,
+            trunk_lines_removed: 3_100,
+          }),
+        }),
+        LOCAL,
+      ).line,
+    );
+
+    expect(line).toContain("mrg=7 +12.4k -3.1k");
+  });
+
+  it("humanizes through the one humanizer, keeping a whole thousand whole", () => {
+    expect(
+      trunkLinesToken(
+        payload({ repository_activity: activity({ trunk_lines_added: 12_000, trunk_lines_removed: 940 }) }),
+        "acme/widgets",
+      ),
+    ).toBe("+12k -940");
+  });
+
+  it("states an absence rather than a calm zero when the poll could not measure", () => {
+    expect(
+      trunkLinesToken(
+        payload({ repository_activity: activity({ trunk_lines_added: null, trunk_lines_removed: null }) }),
+        "acme/widgets",
+      ),
+    ).toBeNull();
+  });
+
+  it("says nothing on a day the trunk did not move — the no-zero-noise rule", () => {
+    expect(
+      trunkLinesToken(
+        payload({ repository_activity: activity({ trunk_lines_added: 0, trunk_lines_removed: 0 }) }),
+        "acme/widgets",
+      ),
+    ).toBeNull();
+  });
+
+  it("says nothing for a daemon that predates the measurement, and for another project's", () => {
+    expect(trunkLinesToken(payload({ repository_activity: activity({ merged_today: 7 }) }), "acme/widgets"))
+      .toBeNull();
+    expect(
+      trunkLinesToken(
+        payload({ repository_activity: activity({ trunk_lines_added: 5, trunk_lines_removed: 1 }, "other/repo") }),
+        "acme/widgets",
+      ),
+    ).toBeNull();
   });
 });

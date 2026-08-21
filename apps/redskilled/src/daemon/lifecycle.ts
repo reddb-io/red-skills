@@ -169,6 +169,8 @@ import { coerceWorkerDisplay, type RedskilledWorkerDisplayRecord } from "../work
 import {
   deriveRedskilledLiveMetrics,
   pruneRedskilledMetricHistory,
+  replayedOutcomeMark,
+  witnessedOutcomeMark,
   type RedskilledWorkerMetricObservation,
   type RedskilledWorkerOutcomeMark,
 } from "../live-metrics.js";
@@ -748,6 +750,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
+      outcomes: outcomeMarks,
       // Two windows of the cadence IN FORCE: a threshold pinned to the attended
       // one would report an idle host's deliberate back-off as a stopped poller.
       activityStalenessMs: REDSKILLED_ACTIVITY_STALENESS_FACTOR * activityPoller.cadenceMs(),
@@ -1720,7 +1723,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         : {}),
     };
     if (kind === "worker-death" || kind === "worker-budget-kill") {
-      const mark: RedskilledWorkerOutcomeMark = { worker_id: worker.worker_id, ts, outcome: kind };
+      const mark = witnessedOutcomeMark(worker, ts, kind, displays.get(worker.worker_id)?.display, facts.birthOutcome);
       outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
       rememberObservedDeath(
         buildHostEvent(input),
@@ -2224,11 +2227,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // operator the machine finished nothing, when what happened is that the
   // process holding the count was replaced.
   outcomeMarks = pruneRedskilledMetricHistory(
-    laneEvents
-      .filter((event) => event.event === "worker-death" || event.event === "worker-budget-kill")
-      .map((event) => ({ worker_id: event.worker_id, ts: event.ts, outcome: event.event })),
-    (mark) => mark.ts,
-    { now: clock() },
+    laneEvents.filter((e) => e.event === "worker-death" || e.event === "worker-budget-kill").map(replayedOutcomeMark),
+    (mark) => mark.ts, { now: clock() },
   );
   observations = replayRedskilledMetricObservations(laneEvents, clock());
   for (const observation of observations) metricCheckpoints.set(observation.worker_id, observation);

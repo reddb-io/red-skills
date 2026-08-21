@@ -350,6 +350,10 @@ describe("one renderer, machine-wide", () => {
     // the shared renderer; neither draws an independent statusline.
     "apps/redskilled/src/statusline-probe.ts",
     "apps/redskilled/src/statusline-command.ts",
+    // The payload's own fail-closed shape check, split out of it so the payload
+    // module dropped back under the file-size threshold. It imports the payload
+    // TYPE to be the guard FOR it; it renders nothing.
+    "apps/redskilled/src/statusline-payload-guard.ts",
   ]);
 
   it("keeps every other surface — every agent host included — on the string", () => {

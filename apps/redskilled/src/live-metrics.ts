@@ -68,12 +68,81 @@ export interface RedskilledWorkerMetricObservation {
   readonly model: string | null;
 }
 
-/** One Worker's ending, as the host event lane recorded it. */
+/**
+ * One Worker's ending, as the host event lane recorded it.
+ *
+ * The rate derivation reads only `ts`; the four fields beside it are what an
+ * IDLE host has left to say. A machine with no live Worker renders `idle` and
+ * nothing else, so a drain that landed thirty seconds ago and one that died an
+ * hour ago look identical at a glance — and the facts that separate them were
+ * already in the daemon's hand at the moment it recorded the death.
+ *
+ * Every added field is OPTIONAL because the same marks are replayed from the
+ * event lane by a restarted daemon (`lifecycle.ts`), and a lane row carries the
+ * project and the kind but never the Worker's own account of its work. A mark
+ * recovered from history says less than one witnessed live, and says so.
+ */
 export interface RedskilledWorkerOutcomeMark {
   readonly worker_id: string;
   readonly ts: string;
   /** The lane's own event kind, carried unread. */
   readonly outcome: string;
+  /** Which project ended, so an idle line never reports another repository's. */
+  readonly project_label?: string;
+  /** The work item, exactly as the Worker published it; never parsed here. */
+  readonly issue?: string | null;
+  /** The last phase the Worker pulsed, `!`-suffixed when that stage refused. */
+  readonly phase?: string | null;
+  /** What the Worker REPORTED before ending, in the birth-outcome vocabulary. */
+  readonly birth_outcome?: string | null;
+}
+
+/**
+ * The mark for an ending this daemon WITNESSED, with what the Worker had said.
+ *
+ * The display record is the Worker's own published account — the daemon reads
+ * two fields off it and parses neither (ADR 0130 rule 3). Reading them HERE, at
+ * the moment of death, is the only chance there is: the display map is cleared
+ * the instant the Worker is forgotten.
+ */
+export function witnessedOutcomeMark(
+  worker: { readonly worker_id: string; readonly project_label: string },
+  ts: string,
+  kind: string,
+  display: { readonly issue: string | null; readonly phase: string | null } | undefined,
+  birthOutcome: string | undefined,
+): RedskilledWorkerOutcomeMark {
+  return {
+    worker_id: worker.worker_id,
+    ts,
+    outcome: kind,
+    project_label: worker.project_label,
+    issue: display?.issue ?? null,
+    phase: display?.phase ?? null,
+    birth_outcome: birthOutcome ?? null,
+  };
+}
+
+/**
+ * The mark for an ending REPLAYED off the lane by a successor daemon.
+ *
+ * It carries strictly less: the lane row holds the project and the kind, and the
+ * Worker's account of its own work was never written there. A successor that
+ * filled the gap with a plausible default would be inventing history, so the
+ * fields it cannot know stay `null` and every reader degrades on them.
+ */
+export function replayedOutcomeMark(
+  event: { readonly worker_id: string; readonly ts: string; readonly event: string; readonly project_label: string },
+): RedskilledWorkerOutcomeMark {
+  return {
+    worker_id: event.worker_id,
+    ts: event.ts,
+    outcome: event.event,
+    project_label: event.project_label,
+    issue: null,
+    phase: null,
+    birth_outcome: null,
+  };
 }
 
 /**
