@@ -41,7 +41,7 @@ import { resolveLandSerialization, type LandLock } from "./land-lock.js";
 import { landHeadPrecondition } from "./land-precondition.js";
 import { landingMergeTitle } from "./landing-merge-title.js";
 import { resolveRemoteBranchTip } from "./stale-head.js";
-import type { LandVerdictGate } from "@reddb-io/shared/land-verdict.js";
+import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { restagePiPackages } from "./pi-package-restage.js";
 import type {
@@ -198,13 +198,13 @@ export interface LandingDeps {
   landingPhase?(phase: LandingPhase, detail?: Record<string, unknown>): void | Promise<void>;
   /**
    * ADR 0154's land precondition, as the port `land-precondition.ts` builds
-   * (#4138): the ledger is asked whether a non-voided PASSING verdict judges
+   * (#4138): the ledger is asked whether a non-voided PASSING Countersign judges
    * the head this landing is about to merge, and a refusal stops the merge
    * before the pre_merge hook. Which callers supply one is declared in
    * `LAND_ENTRY_POINTS` and pinned by its ratchet, so an unarmed landing is a
    * stated fact rather than a silence.
    */
-  verdictGate?: LandVerdictGate;
+  countersignGate?: LandCountersignGate;
 }
 
 export type LandingPhase = "gate" | "push-pr" | "merge" | "cascade" | "wait" | "close";
@@ -346,7 +346,7 @@ export type LandingResult =
         // validated; landing the validated tip would silently drop the
         // advance. Refuse, naming both SHAs in `message`.
         | "stale-head"
-        // #4138: nothing in the verdicts ledger authorizes the head this
+        // #4138: nothing in the Countersign ledger authorizes the head this
         // landing would merge — no row, a voided one, a judgement of a
         // different tree, or a verifier that refused or could not conclude.
         // `message` carries the refusal and the repair it names.
@@ -453,7 +453,7 @@ export async function doLanding(
   // The head this merge would ship must be the head the gate validated (#4134)
   // AND the head some other identity judged (#4138) — one precondition, because
   // both fail for one reason: the merged tree is not the judged tree.
-  const refusal = await landHeadPrecondition(deps.mergeExec, input, deps.verdictGate);
+  const refusal = await landHeadPrecondition(deps.mergeExec, input, deps.countersignGate);
   if (refusal) return { ok: false, reason: refusal.reason, locked, message: refusal.message };
 
 

@@ -1,6 +1,6 @@
 /**
  * The verifier of ADR 0154: adversarial review defaults ON, fails CLOSED, and
- * writes what it concluded to the verdicts ledger (Ticket #4137, Spec #4129).
+ * writes what it concluded to the Countersign ledger (Tickets #4137 and #4172, Spec #4129).
  *
  * The risk the Spec names by hand is a deadlock — fail-closed plus a dead
  * reviewer runner is a drain where every issue parks — so the tests below prove
@@ -20,7 +20,7 @@ import type {
 } from "../src/core/adversarial-review.js";
 import {
   DEFAULT_REVIEW_MODE,
-  DEFAULT_REVIEW_PASS_VERDICT,
+  DEFAULT_REVIEW_PASS_COUNTERSIGN,
   REVIEW_MODES,
   UNPINNED_VERIFIER_IDENTITY,
   decideReviewStage,
@@ -34,14 +34,14 @@ import {
   reviewImplementerIdentity,
   type ReviewVerifier,
 } from "../src/core/review-verifier-identity.js";
-import { createVerdictLedger, type VerdictLedger } from "../src/core/verdict-ledger.js";
+import { createCountersignLedger, type CountersignLedger } from "../src/core/countersign-ledger.js";
 
 const IMPLEMENTER = { runner: "claude", model: "claude-opus-5", effort: "high" } as const;
 const KEY = { pr: 4137, head_sha: "c".repeat(40), patch_id: "d".repeat(40) };
 
 const CONTEXT: AdversarialReviewContext = {
   issueNumber: 4137,
-  issueTitle: "Adversarial review default-on, fail-closed, writes verdict rows",
+  issueTitle: "Adversarial review default-on, fail-closed, writes Countersign rows",
   issueBody: "## Acceptance criteria\n- [ ] the review stage fails closed",
   diff: "diff --git a/x.ts b/x.ts",
   base: "origin/main",
@@ -60,11 +60,11 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function ledger(): Promise<VerdictLedger> {
+async function ledger(): Promise<CountersignLedger> {
   const root = await mkdtemp(join(tmpdir(), "review-fail-closed-"));
   roots.push(root);
   let tick = 0;
-  return createVerdictLedger(root, {
+  return createCountersignLedger(root, {
     clock: () => new Date(Date.UTC(2026, 7, 21, 0, 0, tick++)).toISOString(),
   });
 }
@@ -138,7 +138,7 @@ describe("fail-closed review stage (#4137)", () => {
       { reviewer, ledger: lane, park: async (park) => void parks.push(park) },
     );
 
-    expect(result.decision.verdict).toBe("verifier-blocked");
+    expect(result.decision.countersign).toBe("verifier-blocked");
     expect(result.decision.stage).toEqual({ stage: "review", ok: false });
     expect(result.decision.park).toEqual({
       label: "ready-for-human",
@@ -154,7 +154,7 @@ describe("fail-closed review stage (#4137)", () => {
     expect(rows[0]).toMatchObject({
       pr: KEY.pr,
       head_sha: KEY.head_sha,
-      verdict: "verifier-blocked",
+      countersign: "verifier-blocked",
       reason: "reviewer threw: reviewer runner is down",
     });
   });
@@ -166,7 +166,7 @@ describe("fail-closed review stage (#4137)", () => {
       { reviewer: null, ledger: lane },
     );
     expect(result.attempt.status).toBe("unavailable");
-    expect(result.decision.verdict).toBe("verifier-blocked");
+    expect(result.decision.countersign).toBe("verifier-blocked");
     expect(result.decision.stage.skipped).toBeUndefined();
     expect(result.decision.park?.label).toBe("ready-for-human");
     expect(await lane.read()).toHaveLength(1);
@@ -180,12 +180,12 @@ describe("fail-closed review stage (#4137)", () => {
       { reviewer, ledger: lane },
     );
     expect(reviewer.calls).toBe(0);
-    expect(result.decision.verdict).toBe("verifier-blocked");
+    expect(result.decision.countersign).toBe("verifier-blocked");
     expect(result.decision.identity).toBe(UNPINNED_VERIFIER_IDENTITY);
     expect(result.decision.park?.reason).toContain("distinct from the implementer");
   });
 
-  it("writes a passing verdict under an identity that is NOT the implementer's", async () => {
+  it("writes a passing Countersign under an identity that is NOT the implementer's", async () => {
     const lane = await ledger();
     const pinned = verifier();
     const result = await runReviewStage(
@@ -199,17 +199,17 @@ describe("fail-closed review stage (#4137)", () => {
       { reviewer: countingReviewer(async () => CLEAN), ledger: lane },
     );
 
-    expect(result.decision.verdict).toBe(DEFAULT_REVIEW_PASS_VERDICT);
+    expect(result.decision.countersign).toBe(DEFAULT_REVIEW_PASS_COUNTERSIGN);
     expect(result.decision.stage).toEqual({ stage: "review", ok: true });
     expect(result.decision.park).toBeNull();
 
     const [row] = await lane.read();
     expect(row!.verifier_identity).toBe(pinned.identity);
     expect(row!.verifier_identity).not.toBe(reviewImplementerIdentity(IMPLEMENTER));
-    expect(row!.verdict).toBe("test-verified");
+    expect(row!.countersign).toBe("test-verified");
     expect(row!.voided).toBe(false);
     expect(row!.evidence).toBe("https://github.com/reddb-io/red-skills/actions/runs/1");
-    expect(await lane.standing(KEY)).toMatchObject({ verdict: "test-verified" });
+    expect(await lane.standing(KEY)).toMatchObject({ countersign: "test-verified" });
   });
 
   it("records a reviewer that RAN and refused as verifier-failed, and does not park it", async () => {
@@ -218,20 +218,20 @@ describe("fail-closed review stage (#4137)", () => {
       { key: KEY, context: CONTEXT, mode: "blocking", verifier: verifier() },
       { reviewer: countingReviewer(async () => REFUSED), ledger: lane },
     );
-    expect(result.decision.verdict).toBe("verifier-failed");
+    expect(result.decision.countersign).toBe("verifier-failed");
     expect(result.decision.stage).toEqual({ stage: "review", ok: false });
     // A blocking FINDING is work for the implementer, not a human decision.
     expect(result.decision.park).toBeNull();
   });
 
-  it("honours a caller's stronger pass verdict when the review sat on a live run", () => {
+  it("honours a caller's stronger pass class when the review sat on a live run", () => {
     expect(
       decideReviewStage({
         mode: "blocking",
         verifier: verifier(),
         attempt: { status: "reviewed", findings: CLEAN },
-        passVerdict: "live-verified",
-      }).verdict,
+        passCountersign: "live-verified",
+      }).countersign,
     ).toBe("live-verified");
   });
 
@@ -243,7 +243,7 @@ describe("fail-closed review stage (#4137)", () => {
         attempt: { status: "reviewed", findings: CLEAN },
         appraisalFloor: 0.95,
       }),
-    ).toMatchObject({ verdict: "verifier-failed", stage: { stage: "review", ok: false } });
+    ).toMatchObject({ countersign: "verifier-failed", stage: { stage: "review", ok: false } });
   });
 });
 
@@ -262,7 +262,7 @@ describe("advisory mode escape hatch (#4137)", () => {
       },
     );
 
-    expect(result.decision.verdict).toBe("verifier-blocked");
+    expect(result.decision.countersign).toBe("verifier-blocked");
     expect(result.decision.stage).toEqual({ stage: "review", ok: true, skipped: true });
     expect(result.decision.park).toBeNull();
     expect(parks).toEqual([]);
@@ -277,7 +277,7 @@ describe("advisory mode escape hatch (#4137)", () => {
         verifier: verifier(),
         attempt: { status: "reviewed", findings: REFUSED },
       }),
-    ).toMatchObject({ verdict: "verifier-failed", stage: { stage: "review", ok: true } });
+    ).toMatchObject({ countersign: "verifier-failed", stage: { stage: "review", ok: true } });
   });
 
   it("simulates a reviewer-runner-down drain and proves every issue parks exactly once", async () => {
@@ -306,6 +306,6 @@ describe("advisory mode escape hatch (#4137)", () => {
     expect(parks).toHaveLength(issues.length);
     const rows = await lane.read();
     expect(rows).toHaveLength(issues.length);
-    expect(rows.every((row) => row.verdict === "verifier-blocked")).toBe(true);
+    expect(rows.every((row) => row.countersign === "verifier-blocked")).toBe(true);
   });
 });

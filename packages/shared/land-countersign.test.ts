@@ -1,5 +1,5 @@
 /**
- * The land-verdict vocabulary (Ticket #4138, ADR 0154).
+ * The land-countersign vocabulary (Ticket #4138, ADR 0154).
  *
  * The reason this lives in the shared layer at all is that five entry points in
  * four layers must refuse the SAME way; so what is worth testing here is not
@@ -16,12 +16,12 @@ import {
   landRefusalMessage,
   refuseLand,
   type LandSubject,
-} from "./land-verdict.js";
+} from "./land-countersign.js";
 
 const HEAD: LandSubject = { kind: "head", headSha: "abcdef0123456789" };
 const PR: LandSubject = { kind: "pull-request", pr: 4138 };
 
-describe("land-verdict vocabulary", () => {
+describe("land-countersign vocabulary", () => {
   it("names a subject the way a refusal has to read", () => {
     expect(describeLandSubject(HEAD)).toBe("head abcdef012345");
     expect(describeLandSubject(PR)).toBe("pull request 4138");
@@ -44,11 +44,11 @@ describe("land-verdict vocabulary", () => {
   });
 
   it("builds a refusal on that one sentence, never on a second spelling", () => {
-    const decision = refuseLand("no-verdict", PR, "empty ledger");
+    const decision = refuseLand("no-countersign", PR, "empty ledger");
     expect(decision.allowed).toBe(false);
     if (decision.allowed) return;
-    expect(decision.reason).toBe("no-verdict");
-    expect(decision.message).toBe(landRefusalMessage("no-verdict", PR, "empty ledger"));
+    expect(decision.reason).toBe("no-countersign");
+    expect(decision.message).toBe(landRefusalMessage("no-countersign", PR, "empty ledger"));
   });
 
   it("builds an authorization that says how it matched and who signed", () => {
@@ -56,7 +56,7 @@ describe("land-verdict vocabulary", () => {
     expect(decision).toEqual({
       allowed: true,
       matchedBy: "patch-id",
-      verdict: "test-verified",
+      countersign: "test-verified",
       identity: "codex:gpt-5",
     });
   });

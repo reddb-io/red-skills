@@ -24,7 +24,7 @@
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
-import type { LandVerdictGate } from "@reddb-io/shared/land-verdict.js";
+import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
 import { renderClaimComment } from "../engine/tracker/claim.js";
 import {
   gateVerdict,
@@ -129,14 +129,14 @@ export interface TicketLoopDeps {
   /**
    * ADR 0154's land precondition, asked about the commit this loop published
    * (#4138). The Worker is the ONLY thing that issues an ACP land request, and
-   * the daemon on the other end may not read a project's verdicts ledger — a
+   * the daemon on the other end may not read a project's Countersign ledger — a
    * daemon that knew what a Ticket was judged worthy of would be holding the
    * per-issue policy ADR 0144 keeps out of it — so the ledger question is asked
    * here, against the exact commit the request is about to name. Absent → the
    * loop lands on its own gate result, which `LAND_ENTRY_POINTS` declares and
    * its ratchet pins.
    */
-  readonly landVerdictGate?: LandVerdictGate;
+  readonly landCountersignGate?: LandCountersignGate;
 }
 
 /** One stage's outcome, as the Worker log sees it. */
@@ -365,7 +365,7 @@ export async function runTicketLoop(
   // Nothing is landed that no other identity judged (#4138). The question is
   // asked about the published commit itself, so the answer cannot be about a
   // head this loop is not the one naming.
-  const judged = await deps.landVerdictGate?.check({
+  const judged = await deps.landCountersignGate?.check({
     kind: "head",
     headSha: published.publication.commit,
   });
