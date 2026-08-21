@@ -1,11 +1,14 @@
-// The native ticket-handoff decoder's refusals (Ticket #4139).
+// The native ticket-handoff decoder's refusals (Ticket #4139, #4296).
 //
-// The decoder's whole answer is "a handoff" or "nothing", so a refusal is only
-// ever observable as `undefined`. That makes it exactly the kind of behaviour a
-// test has to pin field by field: nothing in the type system distinguishes "no
-// Ticket on this turn" from "a Ticket this Worker must not take".
+// `ticketHandoffFromMeta` answers "a handoff" or "nothing", so its refusals are
+// only ever observable as `undefined`. That makes them exactly the kind of
+// behaviour a test has to pin field by field: nothing in the type system
+// distinguishes "no Ticket on this turn" from "a Ticket this Worker must not
+// take". Since #4296 the underlying decision DOES distinguish them, and the two
+// halves are pinned together here — a structural refusal is still an absence,
+// and a refused brief is a refusal carrying its reason.
 import { describe, expect, it } from "vitest";
-import { ticketHandoffFromMeta } from "@reddb-io/protocol-acp";
+import { decodeTicketHandoff, ticketHandoffFromMeta } from "@reddb-io/protocol-acp";
 
 const EXECUTABLE_BRIEF = `Implement the slice.
 
@@ -38,9 +41,16 @@ describe("ticketHandoffFromMeta", () => {
   it("refuses a brief whose criteria are present but not machine-checkable", () => {
     const vague = "Fix it.\n\n## Acceptance criteria\n\n- [ ] It should feel snappier.\n";
     expect(ticketHandoffFromMeta(meta({ ...BASE, handoff: vague }))).toBeUndefined();
+    // The reason survives the decision even though the handoff reader drops it.
+    const decision = decodeTicketHandoff(meta({ ...BASE, handoff: vague }));
+    expect(decision.kind).toBe("refused");
+    expect(decision.kind === "refused" && decision.reason).toContain("brief contract refused");
   });
 
-  it("refuses a missing required field the same way it refuses a vague brief", () => {
+  it("refuses a missing required field as an absence, not as a stated refusal", () => {
+    // Structural refusals stay ABSENT, deliberately: an ordinary prompt turn's
+    // unrelated `_meta` must never be read as a Ticket somebody got wrong.
+    expect(decodeTicketHandoff(meta({ ...BASE, number: 0 })).kind).toBe("absent");
     expect(ticketHandoffFromMeta(meta({ ...BASE, number: 0 }))).toBeUndefined();
     expect(ticketHandoffFromMeta(meta({ ...BASE, number: 1.5 }))).toBeUndefined();
     expect(ticketHandoffFromMeta(meta({ ...BASE, title: "" }))).toBeUndefined();

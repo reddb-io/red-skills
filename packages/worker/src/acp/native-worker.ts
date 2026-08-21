@@ -32,6 +32,7 @@ import {
   type AcpSessionRecoveryCheckpoint,
   type RedskillsTicketHandoff,
 } from "@reddb-io/protocol-acp";
+import { briefRefusalResponse, notifyBriefRefusal, ticketDecisionForTurn } from "./brief-refusal-turn.js";
 import { WorkflowChildAgent } from "./child-agent.js";
 import { acquireHostGateLock } from "./gate-lock.js";
 import { runWorkerLocalGate } from "./local-gate.js";
@@ -207,9 +208,17 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
         recoveries.delete(params.sessionId);
         await notifySessionRecovery(parent, params.sessionId, recovery);
       }
-      const ticket = ticketHandoffFromMeta(params._meta) ?? ticketHandoffFromMeta(held.request._meta);
-      if (ticket != null) {
-        return await runTicketTurn(params.sessionId, held, ticket, parent, controller.signal);
+      // Three answers, three paths — and the middle one is the whole of #4296.
+      // A brief the contract refuses used to arrive here as "no Ticket", which
+      // fell through to the echo below and left the item queued for the next
+      // birth. It is now a terminal verdict this turn states in words.
+      const decision = ticketDecisionForTurn(params._meta, held.request._meta);
+      if (decision.kind === "refused") {
+        await notifyBriefRefusal(parent, params.sessionId, decision.reason);
+        return briefRefusalResponse(decision.reason);
+      }
+      if (decision.kind === "handoff") {
+        return await runTicketTurn(params.sessionId, held, decision.ticket, parent, controller.signal);
       }
       const prompt = promptText(params);
       if (prompt.includes("delegate child")) {
