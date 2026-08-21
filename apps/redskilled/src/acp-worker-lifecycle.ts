@@ -174,7 +174,9 @@ export async function requestWorkflowTurn(
   active: Map<string, ActiveWorkflowWorker>,
   params: PromptRequest,
   admit: (replacement: boolean) => Promise<ActiveWorkflowWorker>,
+  options: { readonly replaceClosedTransport?: boolean } = {},
 ): Promise<{ readonly worker: ActiveWorkflowWorker; readonly response: PromptResponse }> {
+  const replaceClosedTransport = options.replaceClosedTransport ?? true;
   let worker = active.get(publicSessionId);
   if (worker == null) {
     worker = await admit(false);
@@ -200,7 +202,7 @@ export async function requestWorkflowTurn(
     redskilledMetrics().observeTurn("completed");
     return { worker, response };
   } catch (error) {
-    if (!workerTransportIsClosed(worker)) {
+    if (!replaceClosedTransport || !workerTransportIsClosed(worker)) {
       scheduleIdleCleanup(publicSessionId, worker, active);
       redskilledMetrics().observeTurn("refused");
       throw error;

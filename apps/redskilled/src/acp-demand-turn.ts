@@ -27,7 +27,7 @@ import type {
 
 import { randomBytes } from "node:crypto";
 
-import { parkGateBlockedTurn } from "./demand-park.js";
+import { parkGateBlockedTurn, parkWorkerFailureTurn } from "./demand-park.js";
 import { readProjectTicketBody } from "./acp-github.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { ACP_AGENT_IDS, type AcpAgentId } from "@reddb-io/protocol-acp";
@@ -43,6 +43,12 @@ import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
+import {
+  classifyWorkerFailure,
+  decideWorkerFailureRetry,
+  retryRunnerForShape,
+  type WorkerFailureRetryShape,
+} from "./worker-failure-retry.js";
 
 /** What one unattended turn needs to exist. The daemon's own facts, no client's. */
 export interface DemandTurnDeps {
@@ -85,6 +91,17 @@ export interface DemandTurnDeps {
     ticket: Readonly<Record<string, unknown>>,
     response: PromptResponse,
     workerId: string,
+  ) => Promise<string | null>;
+  /**
+   * What happens to the Ticket when Worker failure retries are exhausted.
+   *
+   * The runner supplies the failure class and evidence from the declared retry
+   * table; the callback owns the tracker write, if this turn has a Ticket.
+   */
+  readonly parkFailure?: (
+    project: AcpProjectWorkspace,
+    ticket: Readonly<Record<string, unknown>>,
+    failure: { readonly workerId?: string; readonly failureClass: string; readonly evidence: string },
   ) => Promise<string | null>;
   /**
    * Where a turn's session updates land as Worker liveness (#4181).
@@ -246,6 +263,12 @@ export interface DemandTurnAdmission {
   readonly notify: AgentConnection["client"]["notify"];
   readonly permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
   readonly replacement: boolean;
+  readonly retry?: {
+    readonly number: number;
+    readonly failureClass: string;
+    readonly shape: WorkerFailureRetryShape;
+    readonly evidence: string;
+  };
 }
 
 export interface DemandTurnRecord {
@@ -255,6 +278,14 @@ export interface DemandTurnRecord {
   readonly work_item?: string;
   readonly detail?: string;
 }
+
+export const WORKER_FAILURE_RETRY_CONSUMER_CLASSES = [
+  "cap-hit",
+  "oom",
+  "network-drop",
+  "tool-error",
+  "unknown",
+] as const;
 
 /**
  * One unattended turn's outcome as a line an operator reads. PURE.
@@ -346,6 +377,7 @@ export function demandTurnRunnerFor(
     ...(options.recordDemandTurn == null ? {} : { record: options.recordDemandTurn }),
     ...(options.workerPulse == null ? {} : { pulse: options.workerPulse }),
     park: parkGateBlockedTurn(options.githubGateway),
+    parkFailure: parkWorkerFailureTurn(options.githubGateway),
   });
 }
 
@@ -358,12 +390,16 @@ export function demandTurnRunnerFor(
  * (the first live codex drain was born redcode exactly this way).
  */
 export function demandAdmissionSessionRequest(
-  input: Pick<DemandTurnAdmission, "project" | "runner">,
+  input: Pick<DemandTurnAdmission, "project" | "runner" | "retry">,
 ): NewSessionRequest {
+  const redskills = {
+    ...(input.runner == null ? {} : { runner: input.runner }),
+    ...(input.retry == null ? {} : { retry: input.retry }),
+  };
   return {
     cwd: input.project.workspacePath,
     mcpServers: [],
-    ...(input.runner == null ? {} : { _meta: { redskills: { runner: input.runner } } }),
+    ...(Object.keys(redskills).length === 0 ? {} : { _meta: { redskills } }),
   };
 }
 
@@ -423,6 +459,10 @@ export function createDemandTurnRunner(
     // Nobody is listening, so a notification is a record — and a pulse (#4181):
     // the turn's own updates are the only liveness a native Worker ever emits.
     let born: ActiveWorkflowWorker | null = null;
+    let lastWorker: ActiveWorkflowWorker | undefined;
+    let retriesUsed = 0;
+    let retryShape: WorkerFailureRetryShape | undefined;
+    let retryMeta: DemandTurnAdmission["retry"] | undefined;
     const notify: AgentConnection["client"]["notify"] = async (_method: string, params?: unknown) => {
       if (born == null || deps.pulse == null) return;
       const line = sessionUpdateLine(params);
@@ -462,52 +502,95 @@ export function createDemandTurnRunner(
             : briefedTicket;
         }
       }
-      const { worker, response } = await requestWorkflowTurn(
-        sessionId,
-        active,
-        {
-          sessionId,
-          prompt: [{ type: "text", text: briefedPrompt }],
-          _meta: {
-            redskills: {
-              unattended: true,
-              ...(request.workItem == null ? {} : { workItem: request.workItem }),
-              ...(request.runner == null ? {} : { runner: request.runner }),
-              ...(briefedTicket == null ? {} : { ticket: briefedTicket }),
-            },
-          },
-        },
-        (replacement) => admit({
-          project: request.project,
-          sessionId,
-          ...(request.runner == null ? {} : { runner: request.runner }),
-          notify,
-          permission: async (permission) => refusePermission(permission),
-          replacement,
-        }).then((worker) => {
-          born = worker;
-          deps.pulse?.({ workerId: worker.workerId, ...(request.workItem == null ? {} : { issue: `#${request.workItem}` }) });
-          return worker;
-        }),
-      );
-      const outcome = describeTurnOutcome(response);
-      record("demand-turn-completed", worker, outcome);
-      if (deps.park != null && request.ticket != null) {
+      for (;;) {
         try {
-          const parked = await deps.park(request.project, request.ticket, response, worker.workerId);
-          if (parked != null) record("demand-park", worker, parked);
+          const retryRunner = retryRunnerForShape(request.runner, retryShape);
+          const { worker, response } = await requestWorkflowTurn(
+            sessionId,
+            active,
+            {
+              sessionId,
+              prompt: [{ type: "text", text: briefedPrompt }],
+              _meta: {
+                redskills: {
+                  unattended: true,
+                  ...(request.workItem == null ? {} : { workItem: request.workItem }),
+                  ...(retryRunner == null ? {} : { runner: retryRunner }),
+                  ...(retryMeta == null ? {} : { retry: retryMeta }),
+                  ...(briefedTicket == null ? {} : { ticket: briefedTicket }),
+                },
+              },
+            },
+            (replacement) => admit({
+              project: request.project,
+              sessionId,
+              ...(retryRunner == null ? {} : { runner: retryRunner }),
+              notify,
+              permission: async (permission) => refusePermission(permission),
+              replacement: replacement || retriesUsed > 0,
+              ...(retryMeta == null ? {} : { retry: retryMeta }),
+            }).then((worker) => {
+              born = worker;
+              lastWorker = worker;
+              deps.pulse?.({ workerId: worker.workerId, ...(request.workItem == null ? {} : { issue: `#${request.workItem}` }) });
+              return worker;
+            }),
+            { replaceClosedTransport: false },
+          );
+          const outcome = describeTurnOutcome(response);
+          record("demand-turn-completed", worker, outcome);
+          if (deps.park != null && request.ticket != null) {
+            try {
+              const parked = await deps.park(request.project, request.ticket, response, worker.workerId);
+              if (parked != null) record("demand-park", worker, parked);
+            } catch (error) {
+              record("demand-park-failed", worker, error instanceof Error ? error.message : String(error));
+            }
+          }
+          // The turn is the Worker's whole life: it was admitted for one work item
+          // and has now finished it, so it is reaped here rather than left on an
+          // idle timer nobody will come back to.
+          cleanupWorkflowWorker(sessionId, worker, active, outcome);
+          return { workerId: worker.workerId, outcome };
         } catch (error) {
-          record("demand-park-failed", worker, error instanceof Error ? error.message : String(error));
+          const held = active.get(sessionId);
+          if (held == null && lastWorker == null) throw error;
+          const failureClass = classifyWorkerFailure(error);
+          const decision = decideWorkerFailureRetry({ failureClass, retriesUsed });
+          if (decision.decision === "retry") {
+            if (held != null) cleanupWorkflowWorker(sessionId, held, active, `retry:${decision.failureClass}`);
+            retriesUsed = decision.retryNumber;
+            retryShape = decision.shape;
+            retryMeta = {
+              number: decision.retryNumber,
+              failureClass: decision.failureClass,
+              shape: decision.shape,
+              evidence: decision.evidence,
+            };
+            record("demand-turn-retry", held ?? lastWorker, `${decision.failureClass}: ${decision.shape.kind}`);
+            continue;
+          }
+          if (held != null) cleanupWorkflowWorker(sessionId, held, active, `park:${decision.failureClass}`);
+          if (deps.parkFailure != null && request.ticket != null) {
+            try {
+              const workerId = held?.workerId ?? lastWorker?.workerId;
+              const parked = await deps.parkFailure(request.project, request.ticket, {
+                ...(workerId == null ? {} : { workerId }),
+                failureClass: decision.failureClass,
+                evidence: decision.evidence,
+              });
+              if (parked != null) record("demand-retry-park", held ?? lastWorker, parked);
+            } catch (parkError) {
+              record("demand-retry-park-failed", held ?? lastWorker, parkError instanceof Error ? parkError.message : String(parkError));
+            }
+          }
+          record("demand-turn-refused", held ?? lastWorker, `${decision.failureClass}: ${decision.evidence}`);
+          throw error;
         }
       }
-      // The turn is the Worker's whole life: it was admitted for one work item
-      // and has now finished it, so it is reaped here rather than left on an
-      // idle timer nobody will come back to.
-      cleanupWorkflowWorker(sessionId, worker, active, outcome);
-      return { workerId: worker.workerId, outcome };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      record("demand-turn-refused", active.get(sessionId), detail);
+      if (retriesUsed === 0) record("demand-turn-refused", active.get(sessionId), detail);
       const held = active.get(sessionId);
       if (held != null) cleanupWorkflowWorker(sessionId, held, active, "demand-turn-refused");
       throw error;

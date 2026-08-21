@@ -26,7 +26,10 @@ const project = {
 } as never;
 
 function workerStub(response: unknown, workerId = "W1"): ActiveWorkflowWorker & { prompted: ReturnType<typeof vi.fn> } {
-  const prompted = vi.fn(async () => response);
+  const prompted = vi.fn(async () => {
+    if (response instanceof Error) throw response;
+    return response;
+  });
   return {
     workerId,
     downstreamSessionId: `down-${workerId}`,
@@ -176,6 +179,129 @@ describe("the daemon's unattended turn", () => {
       _meta: { redskills: { permissionResolution: "unattended-refused", reason: DEMAND_TURN_PERMISSION_REFUSAL } },
     });
     expect(DEMAND_TURN_PERMISSION_REFUSAL).toMatch(/hitl/i);
+  });
+});
+
+describe("the daemon's unattended turn retry policy", () => {
+  it("retries a cap-hit with smaller-scope metadata", async () => {
+    const admissions: DemandTurnAdmission[] = [];
+    const workers = [
+      workerStub(new Error("context cap hit"), "W1"),
+      workerStub({ stopReason: "end_turn" }, "W2"),
+    ];
+    const { run, records } = runner(async (input) => {
+      admissions.push(input);
+      return workers.shift()!;
+    });
+
+    const result = await run({ project, prompt: "go", workItem: "4175", runner: "codex" });
+
+    expect(result.workerId).toBe("W2");
+    expect(records).toContainEqual(expect.objectContaining({
+      event: "demand-turn-retry",
+      detail: "cap-hit: smaller-scope",
+    }));
+    expect(admissions[1]).toMatchObject({
+      replacement: true,
+      runner: "codex",
+      retry: {
+        number: 1,
+        failureClass: "cap-hit",
+        shape: { kind: "smaller-scope" },
+      },
+    });
+    expect(workers).toHaveLength(0);
+  });
+
+  it("retries a network-drop as-is", async () => {
+    const admissions: DemandTurnAdmission[] = [];
+    const first = workerStub(new Error("ECONNRESET socket hang up"), "W1");
+    (first.socket as { destroyed: boolean }).destroyed = true;
+    const workers = [
+      first,
+      workerStub({ stopReason: "end_turn" }, "W2"),
+    ];
+    const { run } = runner(async (input) => {
+      admissions.push(input);
+      return workers.shift()!;
+    });
+
+    await run({ project, prompt: "go", runner: "redcode" });
+
+    expect(admissions[1]).toMatchObject({
+      runner: "redcode",
+      retry: { failureClass: "network-drop", shape: { kind: "as-is" } },
+    });
+    expect(admissions).toHaveLength(2);
+  });
+
+  it("retries a tool-error on a different model path", async () => {
+    const admissions: DemandTurnAdmission[] = [];
+    const workers = [
+      workerStub(new Error("tool invocation failed"), "W1"),
+      workerStub({ stopReason: "end_turn" }, "W2"),
+    ];
+    const { run } = runner(async (input) => {
+      admissions.push(input);
+      return workers.shift()!;
+    });
+
+    await run({ project, prompt: "go", runner: "codex" });
+
+    expect(admissions[1]).toMatchObject({
+      runner: "redcode",
+      retry: { failureClass: "tool-error", shape: { kind: "different-model" } },
+    });
+  });
+
+  it("parks with evidence instead of taking a third retry", async () => {
+    const admissions: DemandTurnAdmission[] = [];
+    const parked: unknown[] = [];
+    const workers = [
+      workerStub(new Error("ECONNRESET socket hang up"), "W1"),
+      workerStub(new Error("ECONNRESET socket hang up"), "W2"),
+      workerStub(new Error("ECONNRESET socket hang up"), "W3"),
+      workerStub({ stopReason: "end_turn" }, "W4"),
+    ];
+    const records: DemandTurnRecord[] = [];
+    const run = createDemandTurnRunner({
+      paths: {} as never,
+      startWorker: (() => {
+        throw new Error("an injected admission owns the birth in this test");
+      }) as never,
+      hostState: () => ({ workers: [] }),
+      sessionJournal: { create: async () => {} } as never,
+      admit: async (input) => {
+        admissions.push(input);
+        return workers.shift()!;
+      },
+      record: (line) => records.push(line),
+      parkFailure: async (_project, _ticket, failure) => {
+        parked.push(failure);
+        return `parked for ${failure.failureClass}`;
+      },
+    });
+
+    await expect(run({
+      project,
+      prompt: "go",
+      workItem: "4175",
+      ticket: { number: 4175, labels: ["ready-for-agent"] },
+    })).rejects.toThrow(/ECONNRESET/);
+
+    expect(admissions).toHaveLength(3);
+    expect(workers.map((worker) => worker.workerId)).toEqual(["W4"]);
+    expect(parked).toEqual([
+      expect.objectContaining({
+        workerId: "W3",
+        failureClass: "network-drop",
+        evidence: expect.stringContaining("retry bound exhausted"),
+      }),
+    ]);
+    expect(records).toContainEqual(expect.objectContaining({
+      event: "demand-retry-park",
+      detail: "parked for network-drop",
+    }));
   });
 });
 

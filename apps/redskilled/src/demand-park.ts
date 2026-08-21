@@ -89,6 +89,42 @@ export function gateBlockedParkWrite(input: {
   };
 }
 
+export function workerFailureParkWrite(input: {
+  readonly workspacePath: string;
+  readonly ticket: { readonly number: number; readonly labels: readonly string[] };
+  readonly workerId?: string;
+  readonly failureClass: string;
+  readonly evidence: string;
+}): { readonly request: RedskilledGithubWriteRequest; readonly summary: string } | { readonly refusal: string } {
+  const vocabulary = readEngineLabelVocabulary(
+    loadEngineConfig(resolve(input.workspacePath, ".red"), { warn: () => undefined }),
+  );
+  const plan = planTransition(
+    input.ticket.labels,
+    { kind: "park", reason: `${vocabulary.blockedPrefix}infra` },
+    vocabulary,
+  );
+  if (isRefused(plan)) return { refusal: plan.reason };
+  const actor = input.workerId == null ? "unknown worker" : `worker \`${input.workerId}\``;
+  return {
+    summary: `parked #${input.ticket.number}: exhausted ${input.failureClass} retry policy`,
+    request: {
+      idempotency_key: `worker-failure-park:${input.ticket.number}:${input.failureClass}:${input.workerId ?? "unknown"}`,
+      write: {
+        kind: "issue-transition",
+        issue: input.ticket.number,
+        add: plan.add,
+        remove: plan.remove,
+        comment:
+          `🤖 AFK park by ${actor}: Worker failure retry policy exhausted for ` +
+          `\`${input.failureClass}\`.\n\n` +
+          `**Evidence:** ${input.evidence}\n\n` +
+          `Requeue with \`/retake ${input.ticket.number}\` once the blocker is repaired.`,
+      },
+    },
+  };
+}
+
 /**
  * The executor the demand-turn runner calls after a completed Ticket turn.
  *
@@ -122,6 +158,33 @@ export function parkGateBlockedTurn(
       ticket: { number, labels },
       workerId,
       verdict,
+    });
+    if ("refusal" in composed) return `park refused for #${number}: ${composed.refusal}`;
+    const write = bindAcpProjectGithubWrite(gateway, () => project);
+    await write({ params: composed.request });
+    return composed.summary;
+  };
+}
+
+export function parkWorkerFailureTurn(
+  gateway: RedskilledGithubGatewayRegistration | undefined,
+): (
+  project: AcpProjectWorkspace,
+  ticket: Readonly<Record<string, unknown>>,
+  failure: { readonly workerId?: string; readonly failureClass: string; readonly evidence: string },
+) => Promise<string | null> {
+  return async (project, ticket, failure) => {
+    const number = Number(ticket.number);
+    const labels = Array.isArray(ticket.labels)
+      ? ticket.labels.filter((label): label is string => typeof label === "string")
+      : [];
+    if (!Number.isInteger(number) || number <= 0) {
+      return `park refused: the turn's ticket names no issue number`;
+    }
+    const composed = workerFailureParkWrite({
+      workspacePath: project.workspacePath,
+      ticket: { number, labels },
+      ...failure,
     });
     if ("refusal" in composed) return `park refused for #${number}: ${composed.refusal}`;
     const write = bindAcpProjectGithubWrite(gateway, () => project);

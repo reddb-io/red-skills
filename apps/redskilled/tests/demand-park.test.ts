@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { gateBlockedParkWrite, gateBlockedVerdictOf } from "../src/demand-park.js";
+import { gateBlockedParkWrite, gateBlockedVerdictOf, workerFailureParkWrite } from "../src/demand-park.js";
 import { createDemandTurnRunner, type DemandTurnAdmission, type DemandTurnRecord } from "../src/acp-demand-turn.js";
 import type { ActiveWorkflowWorker } from "../src/acp-worker-lifecycle.js";
 import { validateWriteRequest } from "../src/github-outbox.js";
@@ -68,6 +68,30 @@ describe("the park write moves the Ticket out of the executable queue", () => {
       comment: expect.stringContaining("post_done"),
     });
     expect((composed.request.write as { comment?: string }).comment).toContain("assert red");
+  });
+
+  it("parks an exhausted Worker failure retry with evidence", () => {
+    const composed = workerFailureParkWrite({
+      workspacePath: workspace,
+      ticket: { number: 4175, labels: ["ready-for-agent"] },
+      workerId: "W3",
+      failureClass: "network-drop",
+      evidence: "transport dropped; retry bound exhausted (2/2)",
+    });
+
+    expect(composed).toMatchObject({
+      summary: "parked #4175: exhausted network-drop retry policy",
+      request: {
+        idempotency_key: "worker-failure-park:4175:network-drop:W3",
+        write: {
+          kind: "issue-transition",
+          issue: 4175,
+          add: expect.arrayContaining(["ready-for-human", "blocked:infra"]),
+          remove: ["ready-for-agent"],
+          comment: expect.stringContaining("transport dropped; retry bound exhausted"),
+        },
+      },
+    });
   });
 });
 
