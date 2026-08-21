@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { readRedskilledEvents } from "@reddb-io/redskilled/event-lane";
+import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/worker/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
@@ -14,7 +16,8 @@ import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } 
 import type { AttemptDir } from "../../core/reclaim.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../../core/triage-labels.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../../core/worker-paths.js";
-import { parseClaimRecords } from "../../core/claim.js";
+import { parseClaimRecords, renderConcedeOnBehalf } from "../../core/claim.js";
+import type { WorkerDeathEvidence } from "../../core/death-sweep.js";
 import { workerStatePath } from "../../core/state.js";
 import {
   collectFleetTruthProbeInput,
@@ -25,7 +28,7 @@ import {
   type ClaimHygieneIssueInput,
   type HostPrerequisiteProbeInput,
 } from "../../core/operational-probes.js";
-import { historyTrim } from "../../core/history.js";
+import { historyAppend, historyTrim, readHistoryRecords } from "../../core/history.js";
 import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
 import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
 import { readWorkerState } from "../../core/worker-state-reader.js";
@@ -504,7 +507,7 @@ export async function buildBootDeps(
     const previous = liveBranchCommitByIssue.get(issue);
     if (previous === undefined || ref.commitS! > previous) liveBranchCommitByIssue.set(issue, ref.commitS!);
   }
-  return {
+  const deps: BootDeps = {
     fs: {
       ensureDir: fsx.ensureDir,
       writeWorkerPid: fsx.writeWorkerPid,
@@ -650,6 +653,58 @@ export async function buildBootDeps(
     nowS,
     config: cfg,
     docsSweepLander: (plan) => landDocsSweep(ctx, plan),
+  };
+  attachDeathSweepPort(deps, ctx, paths.historyPath, nowS);
+  return deps;
+}
+
+/**
+ * Wire the checkout death sweep to the two lanes it joins (ADR 0155 §2).
+ *
+ * The daemon's event lane is read WHOLE and unfiltered by project: the claim
+ * join already restricts the tick to issues this checkout holds, so a worker id
+ * belonging to another project matches no claim here and costs one map lookup.
+ * The claimed-issue listing is the boot deps' own — one batched read serves both
+ * this sweep and the staleness sweep beneath it.
+ */
+function attachDeathSweepPort(
+  deps: BootDeps,
+  ctx: RepoContext,
+  historyPath: string,
+  nowS: number,
+): void {
+  const claimedIssues = deps.lookups.claimedIssues;
+  const concedeClaim = deps.concedeClaim;
+  const evictor = deps.claimEvictor;
+  if (!ctx.repo || !claimedIssues || !concedeClaim || !evictor) return;
+  deps.deathSweep = {
+    hostPrefix: hostFingerprintPrefix(),
+    deaths: async () =>
+      (await readRedskilledEvents(resolveRedskilledPaths().eventLanePath)) as readonly WorkerDeathEvidence[],
+    claimedIssues,
+    history: () => readHistoryRecords(historyPath),
+    concede: async (issue, owner, lastHeartbeatAt) => {
+      const heartbeatS = lastHeartbeatAt ? Math.floor(Date.parse(lastHeartbeatAt) / 1000) : Number.NaN;
+      await concedeClaim(
+        issue,
+        renderConcedeOnBehalf(
+          owner,
+          evictor,
+          lastHeartbeatAt,
+          Number.isFinite(heartbeatS) ? Math.max(0, nowS - heartbeatS) : undefined,
+        ),
+      );
+    },
+    appendHistory: async (step, clock) => {
+      await historyAppend(historyPath, clock, step.historyEvent, {
+        worker: step.claimOwner,
+        issue: step.issue,
+        reason: step.historyReason,
+      });
+    },
+    editLabels: (issue, remove, add) => deps.gh.editLabels(issue, [...remove], [...add]),
+    comment: (issue, body) => deps.gh.comment(issue, body),
+    viewLabels: (issue) => deps.gh.viewLabels(issue),
   };
 }
 
