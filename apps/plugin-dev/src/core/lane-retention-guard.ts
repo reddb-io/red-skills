@@ -92,6 +92,11 @@ export const LANE_WRITER_ENFORCEMENT: readonly LaneWriterEnforcement[] = [
     why: "a Worker's TOONL narration is line-bounded at the quiescent point, after its file logger has closed",
   },
   {
+    lane: "verdicts",
+    writers: ["apps/plugin-dev/src/core/verdict-ledger.ts"],
+    why: "the append-only merge authorization is byte-bounded as each verifier appends its row, so an audit trail cannot outgrow the durable state tier",
+  },
+  {
     lane: "worker-liveness",
     writers: [
       "packages/worker/src/LivenessLane.ts",
