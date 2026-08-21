@@ -26,6 +26,7 @@ import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
 import { briefWithStandingOrders } from "@reddb-io/shared/standing-orders.js";
 import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
+import { resolveVerifyRequirement } from "@reddb-io/shared/verify-labels.js";
 import { renderClaimComment } from "../engine/tracker/claim.js";
 import {
   gateVerdict,
@@ -377,10 +378,13 @@ export async function runTicketLoop(
   // Nothing is landed that no other identity judged (#4138). The question is
   // asked about the published commit itself, so the answer cannot be about a
   // head this loop is not the one naming.
-  const judged = await deps.landCountersignGate?.check({
-    kind: "head",
-    headSha: published.publication.commit,
-  });
+  // ...and to the bar the Ticket's own `verify:<value>` label declared (#4174).
+  // The labels are already here for the lane check; the land is the second
+  // question they answer, and a Ticket carrying none pays the fail-closed bar.
+  const judged = await deps.landCountersignGate?.check(
+    { kind: "head", headSha: published.publication.commit },
+    resolveVerifyRequirement(deps.ticket.labels),
+  );
   if (judged && !judged.allowed) {
     await note({ stage: "land", ok: false, detail: judged.message });
     return { outcome: "refused", stage: "land", detail: judged.message, records };

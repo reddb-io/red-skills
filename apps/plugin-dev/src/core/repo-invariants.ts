@@ -186,6 +186,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "ADR 0156 gave the second signature its own noun so ADR 0136's Verdict keeps one meaning (#4172, Spec #4164); the Wave-1 artifacts span apps/plugin-dev, packages/shared and packages/worker, and the declaration and its suite live in apps/plugin-dev",
   },
   {
+    name: "invariants:verify-label-family",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "the `verify:<value>` family declares the minimum Countersign class each Ticket's land requires and an unlabeled Ticket fails closed (ADR 0156 §2, #4174, Spec #4164); the declaration lives in packages/shared, the enforcement in apps/plugin-dev and packages/worker, and the suite in apps/plugin-dev",
+  },
+  {
     name: "invariants:acp-ci-posture",
     scope: "apps/plugin-dev",
     script: "test:invariants",

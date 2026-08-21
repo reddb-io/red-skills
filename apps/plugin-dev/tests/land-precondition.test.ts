@@ -283,6 +283,37 @@ describe("landHeadPrecondition — one precondition, two questions (#4134 + #413
     expect(seen).toEqual([HEAD_A]);
   });
 
+  it("carries the Ticket's declared bar to the gate, and the fail-closed default when it declares none (#4174)", async () => {
+    const asked: (string | null)[] = [];
+    const gate = {
+      check: async (_subject: LandSubject, requirement?: { label: string | null }) => {
+        asked.push(requirement?.label ?? null);
+        return { allowed: true, matchedBy: "head-sha", countersign: "test-verified", identity: VERIFIER } as const;
+      },
+    };
+    await landHeadPrecondition(exec, { ...input, labels: ["ready-for-agent", "verify:live"] }, gate);
+    await landHeadPrecondition(exec, { ...input, labels: ["ready-for-agent"] }, gate);
+    await landHeadPrecondition(exec, input, gate);
+    expect(asked).toEqual(["verify:live", null, null]);
+  });
+
+  it("refuses a land whose Countersign sits below the label's bar, end to end (#4174)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "verify-label-"));
+    try {
+      const ledger = createCountersignLedger(root);
+      await ledger.append({ ...KEY_A, countersign: "test-verified", verifier_identity: VERIFIER });
+      const gate = createLedgerLandCountersignGate({ ledger, resolveKey: async () => KEY_A });
+
+      const refused = await landHeadPrecondition(exec, { ...input, labels: ["verify:live"] }, gate);
+      expect(refused?.reason).toBe("unverified-head");
+      expect(refused?.message).toContain("countersigned below the bar its Ticket declared");
+
+      expect(await landHeadPrecondition(exec, { ...input, labels: ["verify:tests"] }, gate)).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses when the head itself cannot be resolved — no head, no match, no merge", async () => {
     const refusal = await landHeadPrecondition(
       async () => ({ code: 1, stdout: "", stderr: "" }),

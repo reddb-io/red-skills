@@ -36,6 +36,12 @@ import {
   type LandCountersignDecision,
   type LandCountersignGate,
 } from "@reddb-io/shared/land-countersign.js";
+import {
+  UNLABELED_VERIFY_REQUIREMENT,
+  resolveVerifyRequirement,
+  verifyRequirementShortfall,
+  type VerifyRequirement,
+} from "@reddb-io/shared/verify-labels.js";
 import type { Exec } from "./merge.js";
 import { resolveRemoteBranchTip, stablePatchId, staleHeadVerdict } from "./stale-head.js";
 import {
@@ -92,12 +98,27 @@ function subjectOf(key: CountersignKey): LandSubject {
  * The order is the rule read top to bottom: the exact key first, then the
  * clean-rebase equivalence, then the stale judgement that must be voided, then
  * the absence.
+ *
+ * `requirement` is HOW STRONG the judgement must be — the bar the Ticket's
+ * `verify:<value>` label declared (ADR 0156 §2). It is applied only to rows that
+ * already PASS: a class that authorizes nothing is refused under its own name
+ * first, because "the verifier refused" and "the verifier passed too weakly" are
+ * different repairs and collapsing them would send both to the wrong one. The
+ * default is the fail-closed unlabeled bar, never the discount, so a caller that
+ * forgot to resolve a requirement gets ADR 0154's full precondition.
  */
 export function decideLandCountersign(
   rows: readonly CountersignRow[],
   key: CountersignKey,
+  requirement: VerifyRequirement = UNLABELED_VERIFY_REQUIREMENT,
 ): LandCountersignJudgement {
   const subject = subjectOf(key);
+  const belowBar = (row: CountersignRow): LandCountersignJudgement | null => {
+    const shortfall = verifyRequirementShortfall(requirement, row.countersign);
+    return shortfall === null
+      ? null
+      : { decision: refuseLand("insufficient-countersign", subject, shortfall), supersede: null };
+  };
   const forPr = rows.filter((row) => row.pr === key.pr);
   const standing = standingCountersigns(forPr);
   const exact = standing.get(countersignKeyOf(key));
@@ -105,7 +126,12 @@ export function decideLandCountersign(
   if (exact?.standing) {
     const row = exact.standing;
     if (isPassingCountersign(row.countersign)) {
-      return { decision: allowLand("head-sha", row.countersign, row.verifier_identity), supersede: null };
+      return (
+        belowBar(row) ?? {
+          decision: allowLand("head-sha", row.countersign, row.verifier_identity),
+          supersede: null,
+        }
+      );
     }
     const reason = row.countersign === "verifier-failed" ? "verifier-failed" : "verifier-blocked";
     return { decision: refuseLand(reason, subject, row.reason ?? undefined), supersede: null };
@@ -123,10 +149,12 @@ export function decideLandCountersign(
     .filter((row): row is CountersignRow => row !== null && isPassingCountersign(row.countersign));
   const rebased = passing.find((row) => row.patch_id === key.patch_id);
   if (rebased) {
-    return {
-      decision: allowLand("patch-id", rebased.countersign, rebased.verifier_identity),
-      supersede: null,
-    };
+    return (
+      belowBar(rebased) ?? {
+        decision: allowLand("patch-id", rebased.countersign, rebased.verifier_identity),
+        supersede: null,
+      }
+    );
   }
   const stale = passing[passing.length - 1];
   if (stale) {
@@ -168,10 +196,14 @@ export interface LedgerLandCountersignGateDeps {
  */
 export function createLedgerLandCountersignGate(deps: LedgerLandCountersignGateDeps): LandCountersignGate {
   return {
-    async check(subject) {
+    async check(subject, requirement) {
       const key = await deps.resolveKey(subject);
       if (key === null) return refuseLand("unresolvable-head", subject);
-      const judged = decideLandCountersign(await deps.ledger.read(), key);
+      const judged = decideLandCountersign(
+        await deps.ledger.read(),
+        key,
+        requirement ?? UNLABELED_VERIFY_REQUIREMENT,
+      );
       if (judged.supersede) {
         await deps.ledger.void({
           pr: judged.supersede.pr,
@@ -267,6 +299,13 @@ export interface LandHeadPreconditionInput {
   readonly intentBaseRef?: string;
   /** The gate-validated worker tip, when the caller pinned one (#4134). */
   readonly validatedBranchTip?: string;
+  /**
+   * The Ticket's labels. The `verify:<value>` label among them declares how
+   * strong the Countersign must be (ADR 0156 §2, #4174); everything else here
+   * is ignored. Absent, or carrying no member of the family, is the fail-closed
+   * default — forgetting the label buys nothing.
+   */
+  readonly labels?: readonly string[];
 }
 
 /**
@@ -281,6 +320,11 @@ export interface LandHeadPreconditionInput {
  * skip: the enumeration in `land-entry-points.ts` names every caller and the
  * ratchet pins which of them supply one, so an unarmed entry point is a
  * declared fact rather than an accident nobody can see.
+ *
+ * HOW STRONG the answer must be comes from the Ticket's own labels (#4174): the
+ * `verify:<value>` family declares the minimum Countersign class this land
+ * requires, and `input.labels` is where a caller already carries them. A caller
+ * that passes none is judged at the fail-closed default.
  */
 export async function landHeadPrecondition(
   exec: Exec,
@@ -302,7 +346,7 @@ export async function landHeadPrecondition(
     ? { kind: "head", headSha: head }
     : { kind: "head", headSha: "0000000" };
   const decision = head
-    ? await gate.check(subject)
+    ? await gate.check(subject, resolveVerifyRequirement(input.labels))
     : refuseLand("unresolvable-head", subject, `${remote}/${branch} resolved to nothing`);
   return decision.allowed ? null : { reason: "unverified-head", message: decision.message };
 }

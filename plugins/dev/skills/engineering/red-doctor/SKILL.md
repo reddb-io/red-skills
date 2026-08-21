@@ -147,7 +147,7 @@ The loop:
 | ✅ accepted aux | outside the triage families but legitimate (language labels, repo-custom like `drill`, `release-blocker`) | none |
 | ✅ GitHub default | `bug`, `enhancement`, `documentation`, `duplicate`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix` | none |
 
-Canonical families live in the target repo's `.red/agents/triage-labels.md`: state (`needs-triage`, `needs-info`, `ready-for-agent`, `running`, `ready-for-human`, `wontfix`), dependency (`blocked:dependency`, `req:N`), typed blocked-reasons (`blocked:quota|runner-transient|merge-conflict|spec|validation|crashed|policy|stalled|infra`), type (`type:spec`, `type:bug`, `needs-slicing`), priority (`priority:high|low|urgent`), relationship (`spec:N`), operational (`runner-error`).
+Canonical families live in the target repo's `.red/agents/triage-labels.md`: state (`needs-triage`, `needs-info`, `ready-for-agent`, `running`, `ready-for-human`, `wontfix`), dependency (`blocked:dependency`, `req:N`), typed blocked-reasons (`blocked:quota|runner-transient|merge-conflict|spec|validation|crashed|policy|stalled|infra`), type (`type:spec`, `type:bug`, `needs-slicing`), priority (`priority:high|low|urgent`), relationship (`spec:N`), verification bar (`verify:live|tests|gate-only` — the minimum Countersign class a Ticket's land requires, ADR 0156 §2), operational (`runner-error`).
 
 ### Operational probe families
 
