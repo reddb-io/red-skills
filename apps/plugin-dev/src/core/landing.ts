@@ -38,6 +38,7 @@ import {
   type WaitForReviewInput,
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
+import { resolveRemoteBranchTip, staleHeadVerdict } from "./stale-head.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { restagePiPackages } from "./pi-package-restage.js";
 import type {
@@ -220,12 +221,7 @@ export interface LandingInput {
   remote: string;
   /** The worker branch sandcastle committed on (push + land source). */
   branch: string;
-  /**
-   * The already-validated worker tip SHA, when the caller resolved one before
-   * landing. Reconcile uses this to guarantee the commit being landed is the
-   * commit that passed validation, instead of re-reading a mutable local branch
-   * ref after the gate.
-   */
+  /** The gate-validated worker tip (reconcile; #4134 stale-head guard). */
   validatedBranchTip?: string;
   /** Resolved base branch (lock > pin > main). */
   base: string;
@@ -383,7 +379,13 @@ export type LandingResult =
         // Land-lock serialization (#2596): another worker held the land-lock past
         // the wait timeout. This is a BACKOFF signal, not an infra failure — the
         // caller routes it to self-requeue rather than parking the issue.
-        | "land-lock-timeout";
+        | "land-lock-timeout"
+        // #4134: the branch advanced after the gate validated its tip, and the
+        // advance is not a clean rebase of the validated work (stable patch-id
+        // differs). Landing the live head would merge commits nothing
+        // validated; landing the validated tip would silently drop the
+        // advance. Refuse, naming both SHAs in `message`.
+        | "stale-head";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -483,6 +485,15 @@ export async function doLanding(
     };
   }
   await deps.landingPhase?.("gate", { step: "push", status: "done" });
+  // #4134: one SHA passed the gate; a different one must not be what this merge ships (stale-head.ts).
+  if (input.validatedBranchTip) {
+    const { repoDir, remote, branch, base, intentBaseRef, validatedBranchTip } = input;
+    const verdict = await staleHeadVerdict(deps.mergeExec, {
+      repoDir, remote, branch, base, validatedBranchTip, ...(intentBaseRef == null ? {} : { intentBaseRef }),
+    });
+    if (verdict.stale) return { ok: false, reason: "stale-head", locked: input.locked, message: verdict.message };
+  }
+
 
   // 2. pre_merge hook.
   await deps.landingPhase?.("gate", { step: "pre_merge", status: "start" });
@@ -949,11 +960,9 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     }));
     if (!branchTip) return { ok: false, reason: "land-failed", locked: input.locked };
 
-    // Zero-commit guard: `git merge --no-ff` succeeds on a branch with no new
-    // commits (it creates a no-op merge commit), which would incorrectly close
-    // the issue as done without delivering any work. The PR path rejects this
-    // naturally — `gh pr create` fails on an empty branch — so mirror that guard
-    // here: route a zero-commit direct landing to land-failed.
+    // Zero-commit guard: `merge --no-ff` succeeds on an empty branch (a no-op
+    // merge commit) and would close the issue with no work delivered; the PR
+    // path refuses naturally, so mirror it here as land-failed.
     const baseComparisonRef = input.intentBaseRef ?? `origin/${input.base}`;
     const countRes = await deps.mergeExec([
       "git", "-C", landDir,
@@ -1170,14 +1179,3 @@ async function emitLandingWaitHeartbeat(
   });
 }
 
-async function resolveRemoteBranchTip(
-  exec: MergeExec,
-  input: { repo: string; remote: string; branch: string },
-): Promise<string | undefined> {
-  const r = await exec([
-    "git", "-C", input.repo,
-    "rev-parse", "--verify", "--quiet", `${input.remote}/${input.branch}`,
-  ]);
-  const tip = r.stdout.trim();
-  return r.code === 0 && tip !== "" ? tip : undefined;
-}
