@@ -38,8 +38,17 @@ export function workerTerminalOutcome(input: {
   readonly exitCode: number | null;
   readonly signal: string | null;
   readonly tail: string | null;
+  /**
+   * A one-shot sink Worker (#4266): a host-event hook or notification runs for
+   * seconds and exits — a clean exit IS its whole report, and demanding the
+   * `<promise>` sentinel of the queue protocol read every completion as a
+   * premature death, so three events inside a minute armed the breaker forever
+   * on any host with a hook declared.
+   */
+  readonly oneShot?: boolean;
 }): RedskilledWorkerBirthOutcome {
   if (input.exitCode !== 0 || input.signal != null) return "unreported";
+  if (input.oneShot === true) return "work-reported";
   const sentinel = input.tail?.match(/<promise>\s*(DONE|BLOCKED|NO MORE TASKS)\s*<\/promise>/i)?.[1];
   if (sentinel == null) return "unreported";
   return sentinel.toUpperCase() === "NO MORE TASKS" ? "no-eligible-work" : "work-reported";
