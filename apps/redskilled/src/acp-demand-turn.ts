@@ -88,7 +88,7 @@ export interface DemandTurnDeps {
    * row reads `hb=?` while the turn streams. The runner stamps the work item at
    * admission and each update's text line as it arrives.
    */
-  readonly pulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
+  readonly pulse?: (pulse: { workerId: string; line?: string; issue?: string; phase?: string; step?: string }) => void;
 }
 
 /**
@@ -365,7 +365,12 @@ export function createDemandTurnRunner(
     const notify: AgentConnection["client"]["notify"] = async (_method: string, params?: unknown) => {
       if (born == null || deps.pulse == null) return;
       const line = sessionUpdateLine(params);
-      deps.pulse({ workerId: born.workerId, ...(line == null ? {} : { line }) });
+      const stage = sessionUpdateStage(params);
+      deps.pulse({
+        workerId: born.workerId,
+        ...(line == null ? {} : { line }),
+        ...(stage == null ? {} : { phase: stage.phase, ...(stage.step == null ? {} : { step: stage.step }) }),
+      });
     };
 
     try {
@@ -424,6 +429,19 @@ export function createDemandTurnRunner(
       if (held != null) cleanupWorkflowWorker(sessionId, held, active, "demand-turn-refused");
       throw error;
     }
+  };
+}
+
+/** The Ticket stage a session update carries (#4181 v2): the statusline's phase cell. PURE. */
+function sessionUpdateStage(params: unknown): { phase: string; step?: string } | null {
+  const stage = (params as { _meta?: { redskills?: { ticketStage?: unknown } } } | undefined)
+    ?._meta?.redskills?.ticketStage;
+  if (stage == null || typeof stage !== "object") return null;
+  const record = stage as { stage?: unknown; ok?: unknown; round?: unknown };
+  if (typeof record.stage !== "string" || record.stage === "") return null;
+  return {
+    phase: record.ok === false ? `${record.stage}!` : record.stage,
+    ...(typeof record.round === "number" ? { step: `round ${record.round}` } : {}),
   };
 }
 
