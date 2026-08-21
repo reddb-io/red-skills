@@ -96,6 +96,8 @@ function buildDaemonLifecycleEvent(
     memory_swap_peak_bytes: null,
     pids_peak: null,
     journal_tail: null,
+    sender_class: null,
+    confidence: null,
     reason,
   };
 }

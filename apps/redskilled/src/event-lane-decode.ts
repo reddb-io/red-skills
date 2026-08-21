@@ -10,6 +10,10 @@
  * format bug still has a voice.
  */
 
+import {
+  isAttributionConfidence,
+  isDeathSenderClass,
+} from "@reddb-io/shared/death-attribution.js";
 import { parseRecords } from "@reddb-io/toon";
 import type { RedskilledEventKind, RedskilledHostEvent } from "./event-lane.js";
 
@@ -87,6 +91,12 @@ export function decodeHostEventRow(record: ToonlRecord): RedskilledHostEvent {
     memory_swap_peak_bytes: numberOrNull(record.memory_swap_peak_bytes),
     pids_peak: numberOrNull(record.pids_peak),
     journal_tail: text(record.journal_tail),
+    // A row written before ADR 0155 carries no classification, and an absent
+    // verdict must never decode as a confident one: the sweep that reads this
+    // lane treats `null` as "nobody classified it" and leaves such a death to
+    // the boot sweep, exactly as it behaved before the field existed.
+    sender_class: isDeathSenderClass(record.sender_class) ? record.sender_class : null,
+    confidence: isAttributionConfidence(record.confidence) ? record.confidence : null,
     // Legacy rows predate daemon stop reasons; absence remains honest.
     reason: text(record.reason),
   };
