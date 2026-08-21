@@ -356,7 +356,17 @@ export function workerCells(
     // all?". Keeping only one would either redraw a waiting Worker as a silent
     // one or print a diffstat for a Worker that has no agent.
     hb: declaredWaitCell(display, generatedAt) ?? `hb=${display.heartbeat ?? "?"}`,
-    loc: noAgent ? "" : formatSignedPair(display.added, display.removed),
+    // **`loc=` is a WORKTREE fact, and the Worktree outlives the agent.** The
+    // four cells below it count what an agent did this turn, so a phase with no
+    // agent has no figure to print. Lines on disk are not like that: the Worker
+    // measures them in its own checkout at every stage transition, and under
+    // ADR 0148 `gate` and `land` are stages that Worker runs — with the diff it
+    // just committed sitting right there. Gating this on `noAgent` blanked the
+    // cell for three of the loop's five stages, so a Worker deep in a large
+    // change read as one that had produced nothing at exactly the moment the
+    // operator was asking. An absence here still means unmeasured: nothing but
+    // the Worker standing in the Worktree ever publishes the pair.
+    loc: formatSignedPair(display.added, display.removed),
     tks: noAgent || display.tokens == null ? "" : `tks=${formatCount(display.tokens)}`,
     ctx: display.context == null ? "" : `ctx=${formatCount(display.context)}`,
     tls: noAgent || display.tools == null ? "" : `tls=${display.tools}`,

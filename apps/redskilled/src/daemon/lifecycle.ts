@@ -165,7 +165,7 @@ import {
   renderRedskilledDashboard,
   type RedskilledDashboard,
 } from "@reddb-io/redskilled-render";
-import { coerceWorkerDisplay, type RedskilledWorkerDisplayRecord } from "../worker-display.js";
+import { applyWorkerPulse, coerceWorkerDisplay, type RedskilledWorkerDisplayRecord, type RedskilledWorkerPulse } from "../worker-display.js";
 import {
   deriveRedskilledLiveMetrics,
   pruneRedskilledMetricHistory,
@@ -1264,21 +1264,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   // #4181: a native Worker's turn events ARE its pulse, stamped where the op stamps.
-  function recordWorkerPulse(
-    pulse: { workerId: string; line?: string; issue?: string; phase?: string; step?: string },
-  ): void {
+  function recordWorkerPulse(pulse: RedskilledWorkerPulse): void {
     if (workers.get(pulse.workerId) == null) return;
     const publishedAt = clock();
     const line = pulse.line?.trim();
     if (line != null && line !== "") {
       logLines.set(pulse.workerId, { line, published_at: publishedAt, source: "heartbeat" });
     }
-    const display = coerceWorkerDisplay({
-      ...(displays.get(pulse.workerId)?.display ?? {}),
-      ...(pulse.issue == null ? {} : { issue: pulse.issue }),
-      ...(pulse.phase == null ? {} : { phase: pulse.phase }),
-      ...(pulse.step == null ? {} : { step: pulse.step }),
-    });
+    const display = applyWorkerPulse(displays.get(pulse.workerId)?.display, pulse);
     if (display != null) displays.set(pulse.workerId, { display, published_at: publishedAt });
   }
 

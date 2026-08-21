@@ -75,7 +75,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   // number and leave the code worse. The entry states the debt with a ceiling;
   // paying it means decomposing the function, not moving its lines.
   // 2026-08-20: standing orders implementation added 8 lines
-  { path: "apps/redskilled/src/daemon/lifecycle.ts", lines: 2483 },
+  { path: "apps/redskilled/src/daemon/lifecycle.ts", lines: 2476 },
   { path: "apps/redskilled/src/cli.ts", lines: 1036 },
   { path: "apps/redskilled/src/client.ts", lines: 1003 },
   { path: "apps/rsp/src/resident-server.ts", lines: 931 },

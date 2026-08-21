@@ -304,9 +304,14 @@ describe("the statusline Worker table (#3151)", () => {
   ])("omits agent activity cells from a %s row", (_kind, workerDisplay) => {
     const doc = payload({ workers: [worker({ display: workerDisplay })] });
     const row = stripAnsi(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]!);
-    for (const key of ["loc=", "tks=", "tls=", "rsn=", "txt="]) expect(row).not.toContain(key);
+    for (const key of ["tks=", "tls=", "rsn=", "txt="]) expect(row).not.toContain(key);
     expect(row).toContain("ctx=108k");
     expect(row).toContain("hb=3s");
+    // `loc=` is NOT one of them: the four above count what an agent did this
+    // turn, and lines on disk are a Worktree fact the Worker measured for
+    // itself. Under ADR 0148 `gate` and `land` are stages the Worker runs, so
+    // blanking the pair there hides the diff at the moment it is largest.
+    expect(row).toContain("loc=+120 -8");
   });
 
   it("keeps loc on the row at the default width — annotations yield first", () => {

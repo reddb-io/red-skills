@@ -44,6 +44,7 @@ import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
+import type { RedskilledWorkerPulse } from "./worker-display.js";
 
 /** What one unattended turn needs to exist. The daemon's own facts, no client's. */
 export interface DemandTurnDeps {
@@ -94,7 +95,7 @@ export interface DemandTurnDeps {
    * row reads `hb=?` while the turn streams. The runner stamps the work item at
    * admission and each update's text line as it arrives.
    */
-  readonly pulse?: (pulse: { workerId: string; line?: string; issue?: string; phase?: string; step?: string }) => void;
+  readonly pulse?: (pulse: RedskilledWorkerPulse) => void;
 }
 
 /**
@@ -434,7 +435,11 @@ export function createDemandTurnRunner(
       deps.pulse({
         workerId: born.workerId,
         ...(line == null ? {} : { line }),
-        ...(stage == null ? {} : { phase: stage.phase, ...(stage.step == null ? {} : { step: stage.step }) }),
+        ...(stage == null ? {} : {
+          phase: stage.phase,
+          ...(stage.step == null ? {} : { step: stage.step }),
+          ...(stage.added == null || stage.removed == null ? {} : { added: stage.added, removed: stage.removed }),
+        }),
       });
     };
 
@@ -519,17 +524,43 @@ export function createDemandTurnRunner(
   };
 }
 
-/** The Ticket stage a session update carries (#4181 v2): the statusline's phase cell. PURE. */
-function sessionUpdateStage(params: unknown): { phase: string; step?: string } | null {
+/**
+ * The Ticket stage a session update carries (#4181 v2): the statusline's phase
+ * cell, and the signed line pair beside it. PURE.
+ *
+ * The diff arrives on the SAME `_meta.redskills.ticketStage` object the phase
+ * does, because the Worker measured it at the moment the stage resolved — one
+ * fact, one shape, one route. Each half degrades on its own: a bundle old
+ * enough to publish a stage without a diff still moves the phase cell, and a
+ * pair that is not a finite count is dropped rather than stored as a figure the
+ * renderer would print.
+ */
+function sessionUpdateStage(params: unknown): TicketStagePulse | null {
   const stage = (params as { _meta?: { redskills?: { ticketStage?: unknown } } } | undefined)
     ?._meta?.redskills?.ticketStage;
   if (stage == null || typeof stage !== "object") return null;
-  const record = stage as { stage?: unknown; ok?: unknown; round?: unknown };
+  const record = stage as { stage?: unknown; ok?: unknown; round?: unknown; added?: unknown; removed?: unknown };
   if (typeof record.stage !== "string" || record.stage === "") return null;
+  const added = countField(record.added);
+  const removed = countField(record.removed);
   return {
     phase: record.ok === false ? `${record.stage}!` : record.stage,
     ...(typeof record.round === "number" ? { step: `round ${record.round}` } : {}),
+    ...(added == null || removed == null ? {} : { added, removed }),
   };
+}
+
+/** What one stage notification adds to the Worker display. */
+interface TicketStagePulse {
+  readonly phase: string;
+  readonly step?: string;
+  readonly added?: number;
+  readonly removed?: number;
+}
+
+/** A non-negative finite count, or nothing. PURE. */
+function countField(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 /** The text a session update carries, when it carries any. PURE. */

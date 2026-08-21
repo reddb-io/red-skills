@@ -37,6 +37,7 @@ import { acquireHostGateLock } from "./gate-lock.js";
 import { runWorkerLocalGate } from "./local-gate.js";
 import { createWorkerPublisher, worktreeHead, type WorkerPublisher } from "./publish-request.js";
 import { runTicketLoop, type TicketLoopRecord, type TicketLoopResult } from "./ticket-loop.js";
+import { measureWorktreeDiff } from "./worktree-diff.js";
 
 /** One public session this Worker holds, and what it retains across its turns. */
 interface HeldSession {
@@ -186,6 +187,8 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
       },
       publisher: held.publisher,
       narrate: (record) => notifyTicketStage(parent, sessionId, record),
+      // The Worktree is here, so the measurement is here (#4286 follow-up).
+      measureDiff: () => measureWorktreeDiff({ worktree: held.request.cwd, base: ticket.base }),
     });
     return ticketResponse(result);
   }
@@ -408,6 +411,9 @@ function notifyTicketStage(
           ok: record.ok,
           ...(record.round == null ? {} : { round: record.round }),
           ...(record.detail == null ? {} : { detail: record.detail }),
+          // The signed pair rides the SAME `_meta` shape `phase` and `step`
+          // already travel in, so the daemon gains a cell rather than a channel.
+          ...(record.diff == null ? {} : { added: record.diff.added, removed: record.diff.removed }),
         },
       },
     },
