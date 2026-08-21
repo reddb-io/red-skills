@@ -24,14 +24,43 @@
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import { renderClaimComment } from "../engine/tracker/claim.js";
-import { gateVerdict, type GateStage, type GateStageOutcome } from "../engine/gate-stage-order.js";
+import {
+  gateVerdict,
+  type GateStage,
+  type GateStageOutcome,
+} from "../engine/gate-stage-order.js";
 import { laneRunModeRefusal } from "../engine/lane-run-mode.js";
-import type { WorkerPublication, WorkerPublisher, WorkerPublishOutcome } from "./publish-request.js";
+import type {
+  WorkerPublication,
+  WorkerPublisher,
+  WorkerPublishOutcome,
+} from "./publish-request.js";
+import {
+  classifyWorkerFailure,
+  decideWorkerFailureRetry,
+  WORKER_FAILURE_GLOBAL_RETRY_LIMIT,
+  WORKER_FAILURE_RETRY_TABLE,
+  type WorkerFailureRetryClass,
+} from "./retry-policy.js";
 
 /** The loop's stages, in the order one Ticket travels through them. */
-export const TICKET_LOOP_STAGES = ["claim", "implement", "gate", "publish", "land"] as const;
+export const TICKET_LOOP_STAGES = [
+  "claim",
+  "implement",
+  "gate",
+  "publish",
+  "land",
+] as const;
 
 export type TicketLoopStage = (typeof TICKET_LOOP_STAGES)[number];
+
+export const TICKET_LOOP_FAILURE_RETRY_CLASSES = [
+  "cap-hit",
+  "oom",
+  "network-drop",
+  "tool-error",
+  "unknown",
+] as const satisfies readonly WorkerFailureRetryClass[];
 
 /** The Ticket the daemon admitted this Worker for. */
 export interface TicketLoopTicket {
@@ -81,7 +110,12 @@ export interface TicketLoopDeps {
   /** Sends one request to the ACP parent; the parent owns every credential. */
   readonly request: (method: string, params: unknown) => Promise<unknown>;
   /** Runs one implementing round against the retained child Agent. */
-  readonly implement: (handoff: string, round: number) => Promise<TicketImplementOutcome>;
+  readonly implement: (
+    handoff: string,
+    round: number,
+  ) => Promise<TicketImplementOutcome>;
+  /** Test seam for failure classification; production classifies the thrown evidence. */
+  readonly classifyFailure?: (error: unknown) => WorkerFailureRetryClass;
   /** Runs the declared gate stages locally, in the Worktree. */
   readonly gate: (round: number) => Promise<TicketGateRun>;
   /** Asks the parent to publish what the Worktree now holds. */
@@ -146,7 +180,9 @@ export type TicketLoopResult =
  * not ask about — a dead child, a closed socket — still propagates, because
  * that is a Worker death and the daemon reaps those.
  */
-export async function runTicketLoop(deps: TicketLoopDeps): Promise<TicketLoopResult> {
+export async function runTicketLoop(
+  deps: TicketLoopDeps,
+): Promise<TicketLoopResult> {
   const records: TicketLoopRecord[] = [];
   const now = deps.now ?? (() => new Date());
   const budget = Math.max(0, Math.trunc(deps.reseedBudget ?? 0));
@@ -188,11 +224,47 @@ export async function runTicketLoop(deps: TicketLoopDeps): Promise<TicketLoopRes
   // ---- implement / gate / re-seed ---------------------------------------
   let handoff = deps.ticket.handoff;
   let rounds = 0;
+  let failureRetriesUsed = 0;
+  const failureRetriesByClass = new Map<WorkerFailureRetryClass, number>();
   let verdict = gateVerdict([]);
   let gateDetail: string | undefined;
   for (;;) {
     rounds += 1;
-    const implemented = await deps.implement(handoff, rounds);
+    let implemented: TicketImplementOutcome;
+    try {
+      implemented = await deps.implement(handoff, rounds);
+    } catch (error) {
+      const failureClass = ticketLoopRetryClass(
+        (deps.classifyFailure ?? classifyWorkerFailure)(error),
+      );
+      const classRetriesUsed = failureRetriesByClass.get(failureClass) ?? 0;
+      const evidence = messageOf(error);
+      const decision = decideWorkerFailureRetry({
+        failureClass,
+        retriesUsed: failureRetriesUsed,
+        classRetriesUsed,
+        evidence,
+      });
+      await note({
+        stage: "implement",
+        ok: false,
+        round: rounds,
+        detail: implementationFailureDetail(decision),
+      });
+      if (decision.action === "park") {
+        return {
+          outcome: "gate-blocked",
+          failedStage: "feedback",
+          rounds,
+          detail: implementationFailureDetail(decision),
+          records,
+        };
+      }
+      failureRetriesUsed = decision.retriesUsed;
+      failureRetriesByClass.set(failureClass, decision.classRetriesUsed);
+      handoff = retryHandoff(deps.ticket, decision, rounds);
+      continue;
+    }
     await note({
       stage: "implement",
       ok: implemented.stopReason !== "cancelled",
@@ -212,7 +284,9 @@ export async function runTicketLoop(deps: TicketLoopDeps): Promise<TicketLoopRes
       round: rounds,
       ...(verdict.ok
         ? {}
-        : { detail: `${verdict.failedStage} blocked${run.detail == null ? "" : `: ${run.detail}`}` }),
+        : {
+            detail: `${verdict.failedStage} blocked${run.detail == null ? "" : `: ${run.detail}`}`,
+          }),
     });
     if (verdict.ok) break;
     // Re-seed IN PLACE: same Worker, same Worktree, same branch. The budget
@@ -227,20 +301,38 @@ export async function runTicketLoop(deps: TicketLoopDeps): Promise<TicketLoopRes
         records,
       };
     }
-    handoff = reseedHandoff(deps.ticket, verdict.failedStage, run.detail, rounds);
+    handoff = reseedHandoff(
+      deps.ticket,
+      verdict.failedStage,
+      run.detail,
+      rounds,
+    );
   }
 
   // ---- publish -----------------------------------------------------------
   const published = await deps.publisher.publishTurn();
   if (published == null) {
-    await note({ stage: "publish", ok: false, detail: "the Worktree committed nothing to publish" });
+    await note({
+      stage: "publish",
+      ok: false,
+      detail: "the Worktree committed nothing to publish",
+    });
     return { outcome: "nothing-to-publish", rounds, records };
   }
   if (published.status === "refused") {
     await note({ stage: "publish", ok: false, detail: published.detail });
-    return { outcome: "refused", stage: "publish", detail: published.detail, records };
+    return {
+      outcome: "refused",
+      stage: "publish",
+      detail: published.detail,
+      records,
+    };
   }
-  await note({ stage: "publish", ok: true, detail: publicationDetail(published) });
+  await note({
+    stage: "publish",
+    ok: true,
+    detail: publicationDetail(published),
+  });
 
   // ---- land --------------------------------------------------------------
   // Landing ARMS custody; it does not await a merge. A Worker that waited for
@@ -258,8 +350,18 @@ export async function runTicketLoop(deps: TicketLoopDeps): Promise<TicketLoopRes
       owner_ticket: deps.ticket.number,
     });
     const pullRequest = pullRequestNumber(landed);
-    await note({ stage: "land", ok: true, detail: `pull request ${pullRequest}` });
-    return { outcome: "landed", publication: published.publication, pullRequest, rounds, records };
+    await note({
+      stage: "land",
+      ok: true,
+      detail: `pull request ${pullRequest}`,
+    });
+    return {
+      outcome: "landed",
+      publication: published.publication,
+      pullRequest,
+      rounds,
+      records,
+    };
   } catch (error) {
     const detail = messageOf(error);
     await note({ stage: "land", ok: false, detail });
@@ -298,13 +400,64 @@ function landingBody(ticket: TicketLoopTicket, rounds: number): string {
   ].join("\n");
 }
 
-function publicationDetail(published: Extract<WorkerPublishOutcome, { status: "requested" }>): string {
+function publicationDetail(
+  published: Extract<WorkerPublishOutcome, { status: "requested" }>,
+): string {
   return `${published.publication.branch}@${published.publication.commit.slice(0, 12)}`;
+}
+
+function retryHandoff(
+  ticket: TicketLoopTicket,
+  decision: Extract<
+    ReturnType<typeof decideWorkerFailureRetry>,
+    { action: "retry" }
+  >,
+  round: number,
+): string {
+  return [
+    `The implementer failed round ${round} of Ticket #${ticket.number} with ${decision.failureClass}.`,
+    retryInstructionForFailureClass(decision.failureClass),
+    decision.evidence,
+    "Retry inside this same Worktree and commit whatever changed.",
+  ].join("\n");
+}
+
+export function retryInstructionForFailureClass(
+  clazz: WorkerFailureRetryClass,
+): string {
+  return WORKER_FAILURE_RETRY_TABLE[clazz].instruction;
+}
+
+function ticketLoopRetryClass(
+  clazz: WorkerFailureRetryClass,
+): WorkerFailureRetryClass {
+  switch (clazz) {
+    case "cap-hit":
+    case "oom":
+    case "network-drop":
+    case "tool-error":
+    case "unknown":
+      return clazz;
+  }
+}
+
+function implementationFailureDetail(
+  decision: ReturnType<typeof decideWorkerFailureRetry>,
+): string {
+  if (decision.action === "retry") {
+    return `worker failure ${decision.failureClass}; retry ${decision.retriesUsed}/${WORKER_FAILURE_GLOBAL_RETRY_LIMIT} as ${decision.shape}: ${decision.evidence}`;
+  }
+  const bound =
+    decision.reason === "global-bound"
+      ? "global two-retry bound exhausted"
+      : `${decision.failureClass} retry bound exhausted`;
+  return `worker failure ${decision.failureClass}; ${bound}; parking with evidence: ${decision.evidence}`;
 }
 
 /** The pull request the daemon opened; anything else is a landing that lied. */
 function pullRequestNumber(answer: unknown): number {
-  const value = (answer as { pull_request?: unknown } | undefined)?.pull_request;
+  const value = (answer as { pull_request?: unknown } | undefined)
+    ?.pull_request;
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw new Error("the parent's landing answer named no pull request");
   }
