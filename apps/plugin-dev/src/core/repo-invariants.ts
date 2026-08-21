@@ -178,6 +178,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "the focused ACP suites must stay wired and the broad RSP/redskilled/engine pull-request gates must stay removed (#3878, #3897); the posture lives in .github/workflows and apps/redskilled, the suite lives in apps/plugin-dev",
   },
   {
+    name: "invariants:complexity-coverage",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "no NEW function may carry more complexity than its package's tests reach (#4132, Spec #4129); the judged tree spans apps/ and packages/, the ceiling and its baseline live in apps/plugin-dev",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/plugin-dev",
     script: "test:invariants",
