@@ -109,6 +109,11 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     runs: "drives one Ticket from claim to land inside the turn: claim, implement, gate, re-seed in place, publish, land",
   },
   {
+    module: "brief-refusal-turn.ts",
+    defines: ["briefRefusalResponse", "notifyBriefRefusal", "ticketDecisionForTurn"],
+    runs: "ends the turn on a brief the contract refuses, naming the sentence, instead of echoing it back as an ordinary prompt (#4296)",
+  },
+  {
     module: "retry-policy.ts",
     defines: ["WORKER_FAILURE_RETRY_CLASSES", "WORKER_FAILURE_RETRY_TABLE"],
     runs: "bounds every retry by its declared failure mode (#4175): the table decides how many times and with what remedy a failed round re-enters",
