@@ -12,6 +12,7 @@ import type {
   RedskilledActivityOperation,
   RedskilledActivityQueueLabels,
   RedskilledActivityRateLimit,
+  RedskilledActivityTransport,
   RedskilledProjectActivity,
   RedskilledRepositoryActivity,
 } from "./repository-activity.js";
@@ -27,6 +28,109 @@ const REDSKILLED_MERGED_TODAY_OPERATION: GithubAttributedOperation = {
   key: "redskilled merged-today poll",
   budget: "search",
 };
+const REDSKILLED_TRUNK_LINES_OPERATION: GithubAttributedOperation = {
+  key: "redskilled trunk-lines-today poll",
+  budget: "rest",
+};
+
+/**
+ * Most files one comparison reports before GitHub truncates it.
+ *
+ * A truncated comparison is not a small day: it is an UNKNOWN one, and summing a
+ * truncated list would report the first 300 files of a large landing as the
+ * whole of it. At the cap the answer becomes an absence.
+ */
+const REDSKILLED_COMPARE_FILE_CAP = 300;
+
+/** Lines the trunk gained and lost over a span; `null` for a span nobody could measure. */
+export interface RedskilledTrunkLines {
+  readonly added: number | null;
+  readonly removed: number | null;
+}
+
+/** What a poll answers with when it could not measure the trunk at all. */
+const TRUNK_LINES_UNANSWERED: RedskilledTrunkLines = { added: null, removed: null };
+
+/**
+ * The lines that LANDED on the trunk since `since`, in two conditional reads.
+ *
+ * **The day's commits carry both ends of the span.** The listing is newest-first,
+ * so its head is the trunk tip and the FIRST PARENT of its tail is where the
+ * trunk stood when the day began — one read yields the comparison's base and
+ * head, where naming each separately would have cost two.
+ *
+ * Every failure degrades to {@link TRUNK_LINES_UNANSWERED} rather than throwing:
+ * this figure rides along with the panorama refresh, and a trunk the token
+ * cannot compare must not cost the caller its open-issue and merge counts.
+ */
+export async function fetchTrunkLinesToday(
+  request: {
+    readonly owner: string;
+    readonly repo: string;
+    readonly since: string;
+    readonly list: NonNullable<RedskilledActivityTransport["conditionalList"]>;
+    readonly object: RedskilledActivityTransport["conditionalObject"];
+  },
+): Promise<{ readonly lines: RedskilledTrunkLines; readonly requestCount: number }> {
+  const { owner, repo, since } = request;
+  if (request.object == null) return { lines: TRUNK_LINES_UNANSWERED, requestCount: 0 };
+  const repository = `${owner}/${repo}`;
+  let requestCount = 0;
+  try {
+    const commitParams = { owner, repo, since };
+    const commits = await request.list({
+      cacheKey: `activity:${repository}:trunk-commits:${since}`,
+      route: "GET /repos/{owner}/{repo}/commits",
+      parameters: commitParams,
+      operation: REDSKILLED_TRUNK_LINES_OPERATION,
+    });
+    requestCount += commits.requestCount;
+    // A real, measured zero: the trunk has not moved today. Distinct from every
+    // absence below, and the one case that may legitimately render nothing.
+    if (commits.data.length === 0) return { lines: { added: 0, removed: 0 }, requestCount };
+    const head = stringValue(commits.data[0]?.sha);
+    const base = firstParentSha(commits.data[commits.data.length - 1]);
+    if (head === "" || base === "") return { lines: TRUNK_LINES_UNANSWERED, requestCount };
+    const compare = await request.object({
+      cacheKey: `activity:${repository}:trunk-lines:${base}...${head}`,
+      route: "GET /repos/{owner}/{repo}/compare/{basehead}",
+      parameters: { owner, repo, basehead: `${base}...${head}` },
+      operation: REDSKILLED_TRUNK_LINES_OPERATION,
+    });
+    requestCount += compare.requestCount;
+    return { lines: sumComparedFiles(compare.data.files), requestCount };
+  } catch {
+    // Deliberately silent: the caller's own catch reports a failed PANORAMA, and
+    // a trunk comparison that failed on its own has not cost anyone a count.
+    return { lines: TRUNK_LINES_UNANSWERED, requestCount };
+  }
+}
+
+/** Add up a comparison's per-file diffstat; a truncated list answers nothing. PURE. */
+function sumComparedFiles(files: unknown): RedskilledTrunkLines {
+  if (!Array.isArray(files) || files.length >= REDSKILLED_COMPARE_FILE_CAP) {
+    return TRUNK_LINES_UNANSWERED;
+  }
+  let added = 0;
+  let removed = 0;
+  for (const file of files) {
+    if (!isRecord(file)) return TRUNK_LINES_UNANSWERED;
+    const plus = file.additions;
+    const minus = file.deletions;
+    if (!Number.isSafeInteger(plus) || !Number.isSafeInteger(minus)) return TRUNK_LINES_UNANSWERED;
+    added += plus as number;
+    removed += minus as number;
+  }
+  return { added, removed };
+}
+
+/** The trunk-side parent of one commit — where the trunk stood before it. PURE. */
+function firstParentSha(commit: Record<string, unknown> | undefined): string {
+  const parents = commit?.parents;
+  if (!Array.isArray(parents) || parents.length === 0) return "";
+  const first = parents[0];
+  return isRecord(first) ? stringValue(first.sha) : "";
+}
 
 export async function fetchConditionalRepositoryActivity(
   input: FetchRepositoryActivityInput,
@@ -90,7 +194,15 @@ export async function fetchConditionalRepositoryActivity(
           parameters: mergedParams,
           operation: REDSKILLED_MERGED_TODAY_OPERATION,
         });
-        requestCount += prAnswer.requestCount + closedAnswer.requestCount + mergedAnswer.requestCount;
+        const trunk = await fetchTrunkLinesToday({
+          owner: project.owner,
+          repo: project.name,
+          since: operation.merged_since,
+          list,
+          object: input.transport.conditionalObject,
+        });
+        requestCount += prAnswer.requestCount + closedAnswer.requestCount + mergedAnswer.requestCount +
+          trunk.requestCount;
         for (const headers of [prAnswer.headers, closedAnswer.headers, mergedAnswer.headers]) {
           rateLimit = mergeActivityRateLimit(rateLimit, activityRateLimitFromHeaders(headers));
         }
@@ -105,6 +217,8 @@ export async function fetchConditionalRepositoryActivity(
           open_issues: openIssues.length,
           recently_closed: recentlyClosed,
           merged_today: mergedAnswer.data.total_count,
+          trunk_lines_added: trunk.lines.added,
+          trunk_lines_removed: trunk.lines.removed,
           ready_queue: queue.ready_queue,
           human_queue: queue.human_queue,
         };
@@ -119,6 +233,8 @@ export async function fetchConditionalRepositoryActivity(
           open_issues: panorama.open_issues,
           recently_closed: panorama.recently_closed,
           merged_today: panorama.merged_today,
+          trunk_lines_added: panorama.trunk_lines_added ?? null,
+          trunk_lines_removed: panorama.trunk_lines_removed ?? null,
           ...queue,
         },
         panorama_fetched_at: refreshPanorama ? input.now : held?.panorama_fetched_at ?? input.previous?.fetched_at ?? input.now,

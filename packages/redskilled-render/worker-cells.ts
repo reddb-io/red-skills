@@ -1,13 +1,24 @@
 import { formatDuration } from "./format.js";
+import { resolveLifecyclePosition } from "./lifecycle-phase.js";
 import type { RedskilledRenderWorker, RedskilledRenderWorkerDisplay } from "./payload.js";
 
-/** Macro position and momentary verb, with their axes visible in the grammar. */
+/**
+ * Macro position and momentary verb, with their axes visible in the grammar.
+ *
+ * The position comes from the published pair when there is one and from the
+ * phase word's declared cell otherwise — the SAME resolution the bar beside it
+ * uses, so the cell can never state `gate 3/5` beside a bar drawn at a different
+ * cursor. A phase no table declares keeps its bare word and gains no ordinal.
+ */
 export function phaseActivityCell(display: RedskilledRenderWorkerDisplay): string {
   const phase = display.phase;
   const total = display.phase_total;
   const index = display.phase_index;
-  const positioned = phase != null && total != null && total > 0 && index != null && index >= 0
-    ? `${phase} ${Math.min(Math.floor(index) + 1, Math.floor(total))}/${Math.floor(total)}`
+  const resolved = total != null && total > 0 && index != null && index >= 0
+    ? { index: Math.floor(index), total: Math.floor(total) }
+    : resolveLifecyclePosition(phase);
+  const positioned = phase != null && resolved != null
+    ? `${phase} ${Math.min(resolved.index + 1, resolved.total)}/${resolved.total}`
     : phase;
   return [positioned, display.step].filter((part): part is string => Boolean(part)).join(" · ");
 }

@@ -22,23 +22,21 @@
  */
 import {
   buildGithubBalanceReport,
-  isGithubBalanceReport,
   type GithubBalance,
   type GithubBalanceReport,
 } from "@reddb-io/github";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
 import type { RedskilledHostState, RedskilledRegistrationLapse, RedskilledRegistrationStop, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
-import { isRedskilledStatuslineMetrics, type RedskilledStatuslineMetrics } from "./live-metrics.js";
+import type { RedskilledStatuslineMetrics, RedskilledWorkerOutcomeMark } from "./live-metrics.js";
+import { buildLastOutcome, type RedskilledStatuslineLastOutcome } from "./statusline-last-outcome.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
 import {
   buildActivityReport,
-  isRedskilledActivityReport,
   type RedskilledActivityReport,
 } from "./activity-report.js";
 import {
   buildRemoteCounterReport,
-  isRedskilledRemoteCounterReport,
   type RedskilledRemoteCounterReport,
 } from "./remote-counters.js";
 import type { RedskilledRepositoryActivity } from "./repository-activity.js";
@@ -47,7 +45,6 @@ import { displayWithDerivedHeartbeat, type RedskilledWorkerDisplay, type Redskil
 import {
   buildDeaths,
   REDSKILLED_RECENT_DEATH_LIMIT,
-  isStatuslineDeaths,
   type RedskilledDeathObservation,
   type RedskilledStatuslineDeaths,
 } from "./statusline-deaths.js";
@@ -384,6 +381,11 @@ export interface RedskilledStatuslinePayload {
    */
   readonly engine?: RedskilledStatuslineEngine;
   /**
+   * The newest Worker ending this host recorded; `null` when it has recorded
+   * none, absent on a daemon that predates the block.
+   */
+  readonly last_outcome?: RedskilledStatuslineLastOutcome | null;
+  /**
    * The rates this daemon derived from the facts it alone holds.
    *
    * Here rather than computed per surface for the reason the activity counts and
@@ -477,6 +479,15 @@ export interface BuildStatuslinePayloadInput {
    * and this document stays a pure function of its inputs.
    */
   readonly metrics?: RedskilledStatuslineMetrics;
+  /**
+   * Every Worker ending this host still holds, newest last.
+   *
+   * The same list the rates are derived from, passed once and read twice: the
+   * count answers "how fast" and the newest entry answers "what just happened",
+   * and a second source for the second question would be a second authority on
+   * one history.
+   */
+  readonly outcomes?: readonly RedskilledWorkerOutcomeMark[];
 }
 
 /** The payload document. PURE — every aggregate is derived from the Worker set. */
@@ -584,6 +595,9 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
             healthyFleet: (input.hostState.registrations ?? []).length > 0 && (input.hostState.registrations ?? []).every((registration) => input.hostState.workers.filter((worker) => worker.project_label === registration.project_label).length >= Math.max(0, registration.target)),
           }),
         }),
+    // What an idle line says instead of nothing. `null` is a host that has ended
+    // no Worker; the field is absent only on a caller that passed no history.
+    ...(input.outcomes === undefined ? {} : { last_outcome: buildLastOutcome(input.outcomes) }),
     engine: buildEngine(input.hostState),
     // Echoed, never recomputed: the rates rest on a history only the daemon
     // holds, and a second derivation here would be a second authority on them.
@@ -775,90 +789,6 @@ function instant(value: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** True when `value` is a complete payload — a client's fail-closed check. */
-export function isRedskilledStatuslinePayload(value: unknown): value is RedskilledStatuslinePayload {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const payload = value as Record<string, unknown>;
-  const daemon = payload.daemon as Record<string, unknown> | undefined;
-  const staleness = payload.staleness as Record<string, unknown> | undefined;
-  const host = payload.host as Record<string, unknown> | undefined;
-  return payload.version === 1 &&
-    typeof payload.generated_at === "string" &&
-    daemon != null && typeof daemon === "object" &&
-    Number.isInteger(daemon.pid) &&
-    typeof daemon.daemon_version === "string" &&
-    typeof daemon.protocol_version === "number" &&
-    staleness != null && typeof staleness === "object" &&
-    typeof staleness.stale === "boolean" &&
-    typeof staleness.threshold_ms === "number" &&
-    Array.isArray(staleness.unmeasured_workers) &&
-    host != null && typeof host === "object" &&
-    Number.isInteger(host.worker_count) &&
-    Number.isInteger(host.project_count) &&
-    typeof host.observed_rss_bytes === "number" &&
-    Array.isArray(payload.projects) &&
-    Array.isArray(payload.workers) &&
-    // Absent is accepted for the same reason the activity report's is: a daemon
-    // older than this field answers completely without it, and a consumer that
-    // rejected the whole payload would lose the Worker set over a fact it only
-    // needed to tell an idle project from an unknown one.
-    (payload.known_projects === undefined ||
-      (Array.isArray(payload.known_projects) && payload.known_projects.every((label) => typeof label === "string"))) &&
-    (payload.registered_projects === undefined ||
-      (Array.isArray(payload.registered_projects) &&
-        payload.registered_projects.every((label) => typeof label === "string"))) &&
-    (payload.lapsed_projects === undefined ||
-      (Array.isArray(payload.lapsed_projects) && payload.lapsed_projects.every(isStatuslineLapse))) &&
-    (payload.stopped_projects === undefined ||
-      (Array.isArray(payload.stopped_projects) && payload.stopped_projects.every(isStatuslineStop))) &&
-    (payload.orphaned_projects === undefined ||
-      (Array.isArray(payload.orphaned_projects) &&
-        payload.orphaned_projects.every((label) => typeof label === "string"))) &&
-    // Absent is accepted, malformed is not: a daemon older than the activity
-    // poller answers a newer client's read, and rejecting its whole payload over
-    // a field this consumer did not ask for would lose the Worker set — the very
-    // version skew one host-scoped daemon exists to stop managing (ADR 0130).
-    (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity)) &&
-    // Absent is accepted for the same reason, and for one more: this block is
-    // newer than the report beside it, so a daemon one release behind serves
-    // every counter's value without their per-counter ages.
-    (payload.remote_counters === undefined || isRedskilledRemoteCounterReport(payload.remote_counters)) &&
-    // Absent is accepted for the same reason: a daemon older than the balance
-    // poller answers completely without it, and a consumer that rejected the
-    // whole payload would lose the Worker set over a badge.
-    (payload.github_balance === undefined || isGithubBalanceReport(payload.github_balance)) &&
-    // Absent is accepted for the reason the two project lists are: a daemon that
-    // predates the reaper, or the engine block, answers completely without them,
-    // and rejecting the whole payload would lose the Worker set over a field this
-    // consumer only needed for a badge (ADR 0130 rule 3).
-    (payload.deaths === undefined || isStatuslineDeaths(payload.deaths)) &&
-    (payload.engine === undefined || isStatuslineEngine(payload.engine)) &&
-    (payload.metrics === undefined || isRedskilledStatuslineMetrics(payload.metrics));
-}
-
-function isStatuslineLapse(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const lapse = value as Record<string, unknown>;
-  return typeof lapse.project_label === "string" &&
-    typeof lapse.at === "string" &&
-    (lapse.registered_at === undefined || typeof lapse.registered_at === "string") &&
-    (lapse.standing === undefined || typeof lapse.standing === "boolean") &&
-    (lapse.queue_depth === undefined || Number.isInteger(lapse.queue_depth)) &&
-    typeof lapse.reason === "string";
-}
-
-function isStatuslineStop(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const stopped = value as Record<string, unknown>;
-  return typeof stopped.project_label === "string" &&
-    typeof stopped.at === "string" &&
-    (stopped.standing === undefined || typeof stopped.standing === "boolean") &&
-    (stopped.queue_depth === undefined || Number.isInteger(stopped.queue_depth));
-}
-
-function isStatuslineEngine(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const engine = value as Record<string, unknown>;
-  return typeof engine.running_version === "string" &&
-    (engine.published_version === null || typeof engine.published_version === "string");
-}
+// The fail-closed shape check moved to its own module (see the note there);
+// re-exported so every consumer keeps the import it already had.
+export { isRedskilledStatuslinePayload } from "./statusline-payload-guard.js";

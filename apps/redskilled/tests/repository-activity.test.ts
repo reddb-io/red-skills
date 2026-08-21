@@ -179,11 +179,15 @@ describe("counts are stored and returned, never interpreted", () => {
     // A genuinely empty tracker IS a zero — this is the only outcome that carries one.
     // The queue counters stay null even here: the aliased query asked for no
     // label breakdown, so nothing counted them and nothing may read as drained.
+    // The trunk lines stay null for the same reason: this path runs no
+    // comparison, and an unasked measurement is an absence, not a quiet day.
     expect(activity.projects[1]!.counts).toEqual({
       open_pull_requests: 0,
       open_issues: 0,
       recently_closed: 0,
       merged_today: 0,
+      trunk_lines_added: null,
+      trunk_lines_removed: null,
       ready_queue: null,
       human_queue: null,
     });
@@ -470,6 +474,8 @@ describe("the daemon serves the counts it polled", () => {
       open_issues: 9,
       merged_today: 0,
       recently_closed: 2,
+      trunk_lines_added: null,
+      trunk_lines_removed: null,
       ready_queue: null,
       human_queue: null,
     });

@@ -83,13 +83,37 @@ export interface StatuslineBedrockInput {
   localDiff?: LocalDiffInput;
 }
 
+/** How much resolution {@link humanizeTokens} keeps at the thousands scale. */
+export interface HumanizeTokensOptions {
+  /**
+   * Render thousands as `12.4k` rather than `12k`.
+   *
+   * Off by default because the bedrock's context cell has always spelled `47k`
+   * and a digit added there would be a digit taken from something else. It is ON
+   * for the day's landed lines, where the difference between `12k` and `12.4k`
+   * is the difference between a rounded impression and a figure, and where the
+   * two-token pair is read as one measurement.
+   */
+  readonly fractionalThousands?: boolean;
+}
+
 /**
- * Humanizes a token count the way statusline.sh does: `X.XM` at/above 1e6,
+ * Humanizes a count the way statusline.sh does: `X.XM` at/above 1e6,
  * integer-division `Xk` at/above 1e3, raw integer below.
+ *
+ * **One humanizer for every figure on the line.** Named for tokens because that
+ * is what it was first asked, but the shape is the line's house style for a
+ * large number, and a second spelling of it beside the first is how `12k` and
+ * `12K` end up on one row. A caller wanting more resolution asks for it here
+ * rather than rounding for itself.
  */
-export function humanizeTokens(tokens: number): string {
+export function humanizeTokens(tokens: number, options: HumanizeTokensOptions = {}): string {
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-  if (tokens >= 1000) return `${Math.floor(tokens / 1000)}k`;
+  if (tokens >= 1000) {
+    if (options.fractionalThousands !== true) return `${Math.floor(tokens / 1000)}k`;
+    // A trailing `.0` is a digit that carries nothing; `12.0k` is `12k`.
+    return `${Number((tokens / 1000).toFixed(1))}k`;
+  }
   return String(tokens);
 }
 

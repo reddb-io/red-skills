@@ -68,6 +68,22 @@ describe("renderStatuslineBedrock assembles the zero-network half", () => {
   });
 });
 
+describe("humanizeTokens is the line's ONE spelling of a large number", () => {
+  it("keeps its default shape, so no existing cell changes width", () => {
+    expect(humanizeTokens(940)).toBe("940");
+    expect(humanizeTokens(12_400)).toBe("12k");
+    expect(humanizeTokens(2_400_000)).toBe("2.4M");
+  });
+
+  it("keeps the thousands digit for a caller that asks, and drops a bare .0", () => {
+    expect(humanizeTokens(12_400, { fractionalThousands: true })).toBe("12.4k");
+    expect(humanizeTokens(3_100, { fractionalThousands: true })).toBe("3.1k");
+    expect(humanizeTokens(12_000, { fractionalThousands: true })).toBe("12k");
+    expect(humanizeTokens(940, { fractionalThousands: true })).toBe("940");
+    expect(humanizeTokens(2_400_000, { fractionalThousands: true })).toBe("2.4M");
+  });
+});
+
 describe("composeStatuslineLines draws the bedrock/tail seam", () => {
   it("leads the header with the bedrock and passes the rest of the tail through", () => {
     expect(composeStatuslineLines("BEDROCK", ["head line", "worker row"])).toEqual([

@@ -20,6 +20,7 @@
  *
  * PURE.
  */
+import { humanizeTokens } from "@reddb-io/shared/statusline-bedrock.js";
 import { formatDuration } from "./format.js";
 import type {
   RedskilledRenderActivityProject,
@@ -41,11 +42,36 @@ export const REDSKILLED_COUNTER_LABELS: ReadonlyArray<{
 ];
 
 /**
+ * The counters the ONE-LINE density prints, out of the four a table can afford.
+ *
+ * `iss` — the repository's total open issues — is the one that left. The line
+ * was already at 119 columns of a ~120 budget, and two cells the operator asked
+ * for needed the width: what the host just finished, and how much landed today.
+ * Something had to go, and of the four this is the only number that neither
+ * drives an action nor measures output: `rdy` is the drain's fuel, `pr` is what
+ * awaits review, `mrg` is the day's result, and a slow-moving backlog total is
+ * read on a dashboard, not glanced at between keystrokes.
+ *
+ * It is DROPPED FROM ONE DENSITY, never from the payload: `dashboardCounts`
+ * still carries `open_issues`, the table still prints it, and the daemon still
+ * polls it. A number removed from a document is a number nobody can get back;
+ * a number removed from a line is a layout decision.
+ */
+export const REDSKILLED_LINE_COUNTER_NAMES: readonly RedskilledRenderCounterName[] = [
+  "ready_queue",
+  "open_pull_requests",
+  "merged_today",
+];
+
+/**
  * The counter tokens for one project, ready to be joined into a head. PURE.
  *
  * Ordered `rdy iss pr mrg`: the actionable queue first, then the compact
  * repository panorama. The older seven-day `cpr` and human-queue cells remain
  * available as structured dashboard counts but no longer spend tail width.
+ *
+ * `only` narrows the set for a density that cannot afford all four; the ORDER
+ * stays this module's, so no caller can reshuffle the row it prints.
  *
  * A daemon that predates the counter block still renders `pr`/`iss` from the
  * poll-dated counts (ADR 0130 rule 3); it simply cannot date them
@@ -54,15 +80,51 @@ export const REDSKILLED_COUNTER_LABELS: ReadonlyArray<{
 export function remoteCounterTokens(
   payload: RedskilledRenderPayload,
   project: string | null,
+  only?: readonly RedskilledRenderCounterName[],
 ): readonly string[] {
   const block = counterProject(payload, project);
   const activity = activityProject(payload, project);
   const tokens: string[] = [];
   for (const { name, key } of REDSKILLED_COUNTER_LABELS) {
+    if (only != null && !only.includes(name)) continue;
     const token = counterToken(key, block?.counters[name], fallbackValue(activity, name));
     if (token != null) tokens.push(token);
   }
   return tokens;
+}
+
+/**
+ * The day's LANDED lines, as the one token that sits beside `mrg=`. PURE.
+ *
+ * **`loc=` and this are two different questions.** The bedrock's `loc=` is the
+ * working tree against its base — what the operator is HOLDING — and this is
+ * what actually reached the trunk since the calendar day began. An operator
+ * asking "how much did we ship today" was reading the first and getting the
+ * second's answer only by coincidence.
+ *
+ * Drawn from the repository-activity poll that already counted `merged_today`,
+ * never from a git walk: this function is on the render path, and the render
+ * path opens nothing.
+ *
+ * `null` when the poll carried no measurement — the counters module's own rule,
+ * one layer along: `rdy=0` is a drained queue and an absent `rdy` is a queue
+ * nobody counted, and a `+0 -0` printed for an unreachable trunk would state the
+ * calmest possible day for the noisiest possible failure. A measured zero is
+ * absent too, but for the opposite reason: it is the no-zero-noise rule every
+ * other cell on this line already follows.
+ */
+export function trunkLinesToken(
+  payload: RedskilledRenderPayload,
+  project: string | null,
+): string | null {
+  const counts = activityProject(payload, project)?.counts;
+  const added = counts?.trunk_lines_added;
+  const removed = counts?.trunk_lines_removed;
+  if (added == null || removed == null) return null;
+  const parts: string[] = [];
+  if (added > 0) parts.push(`+${humanizeTokens(added, { fractionalThousands: true })}`);
+  if (removed > 0) parts.push(`-${humanizeTokens(removed, { fractionalThousands: true })}`);
+  return parts.length === 0 ? null : parts.join(" ");
 }
 
 /** The repo-global counts a header carries as structure, each `null` when unpolled. */

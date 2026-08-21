@@ -149,7 +149,6 @@ export const COMPLEXITY_COVERAGE_BASELINE: readonly ComplexityCoverageBaselineEn
   { path: "apps/redskilled/src/host-state.ts", name: "isRedskilledUpgradeState", crap: 702 },
   { path: "apps/redskilled/src/project-registration-queue.ts", name: "isQueuePollPlanShape", crap: 420 },
   { path: "apps/redskilled/src/protocol.ts", name: "isRedskilledReapResult", crap: 462 },
-  { path: "apps/redskilled/src/repository-activity-conditional.ts", name: "fetchConditionalRepositoryActivity", crap: 600 },
   { path: "apps/redskilled/src/resource-lease.ts", name: "isRedskilledResourceLease", crap: 306 },
   { path: "apps/redskilled/src/statusline-deaths.ts", name: "buildDeaths", crap: 272 },
   { path: "apps/redskilled/src/worker-placement.ts", name: "selectWorkerPlacementDriver", crap: 272 },
