@@ -68,14 +68,21 @@ export interface DrainRegistration {
 /**
  * What a Worker born for this project is told to do.
  *
- * One sentence, because the Worker is a coder Agent carrying the dev skills:
- * the verbs it needs are already its own, and a prompt that restated them would
- * be a second copy of `/afk` maintained here. `{{work_item}}` is the daemon's
- * fact, written in at birth (#4099).
+ * The inner agent's whole job is the CHANGE: the Worker body has already
+ * claimed the Ticket through the daemon before the agent speaks, and the same
+ * body runs the gate, publishes the commits and lands the PR after it stops.
+ * The old prompt restated the v3 whole-pipeline verbs ("claim it, open the PR,
+ * land it") — so a well-behaved agent tried the GitHub claim mutation itself,
+ * the unattended turn refused the permission by design, and the agent obeyed
+ * "if you cannot claim it, stop": every turn ended honest and empty. The
+ * prompt now tells the truth about the division of labour.
+ * `{{work_item}}` is the daemon's fact, written in at birth (#4099).
  */
 export const DRAIN_WORKER_PROMPT =
-  "Work issue #{{work_item}} in this repository to a merged pull request, following the /afk skill: " +
-  "claim it, implement it in this workspace, run the gate, open the PR, and land it. " +
+  "Implement issue #{{work_item}} in this workspace. The Ticket is already claimed for you, and " +
+  "the daemon runs the gate, publishes your commits and lands the pull request after you finish — " +
+  "so never touch GitHub yourself: no label moves, no claim or status comments, no PR. Your whole " +
+  "job is the change and its commits, right here. " +
   // #4162: an inner agent reading the repository's interactive-mode rules built
   // a NESTED worktree under .red/tmp/worktrees/manual inside its own worktree.
   // The Worker's workspace was already materialised by the daemon on the
@@ -84,7 +91,8 @@ export const DRAIN_WORKER_PROMPT =
   "You are already standing in your own dedicated worktree on the Ticket's base branch: work and " +
   "commit right here, and never create another worktree — the repository's worktree lanes govern " +
   "interactive sessions, not Workers. " +
-  "If you cannot claim it or the work is blocked, say so plainly and stop.";
+  "When the change is committed, say <promise>DONE</promise>. If the work is genuinely blocked, " +
+  "say what blocks it and <promise>BLOCKED</promise>.";
 
 /** Build the registration a drain carries. PURE. */
 export function buildDrainRegistration(input: DrainRegistrationInput): DrainRegistration {
