@@ -48,7 +48,10 @@ import type {
   RunFeedbackResult,
 } from "./feedback.js";
 import type { gateScopes } from "./validation-scope.js";
-import type { doLanding, LandingFailureReason, LandingPostMergeValidation } from "./landing.js";
+import type { doLanding, LandingPostMergeValidation } from "./landing.js";
+import { landingRefusalSummary, routeLandingFailure, type ReconcileParkReason } from "./reconcile-landing-refusal.js";
+import { recordAdoptionVerdict, type AdoptionVerdictDeps } from "./land-precondition.js";
+export { landingRefusalSummary, routeLandingFailure, type ReconcileParkReason };
 import { type CiAwaitInput, type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
 import type { deleteRemote, pushAttempt, GitExec } from "./remote-branch.js";
 import { type LandLock } from "./land-lock.js";
@@ -300,6 +303,13 @@ export interface ReconcileDeps {
   historyClock?: HistoryClock;
   /** Environment view for disposition and the Verdict-owned environment cap. */
   recoveryEnv?: RecoveryEnv;
+  /**
+   * ADR 0154's ledger and gate for this lane (#4138), carried as ONE dep so
+   * neither half arrives alone: the gate refuses a land nothing judged, and the
+   * ledger is where the adopting human's own row is written. Absent → this lane
+   * lands unarmed, which `LAND_ENTRY_POINTS` declares and its ratchet pins.
+   */
+  landVerdict?: AdoptionVerdictDeps;
 }
 
 /** Static per-reconcile inputs the caller resolves before `reconcile`. */
@@ -337,6 +347,16 @@ export interface ReconcileInput {
    * reconcile runs the scoped gate as its verdict, unchanged.
    */
   trustPriorValidation?: boolean;
+  /**
+   * The GitHub login of the human ADOPTING this branch by hand, when a human
+   * is. Present → the landing is signed `human:<login>` in the verdicts ledger
+   * before it merges (ADR 0154, user story 9), so the no-self-landing rule
+   * holds without the no-agent path becoming a silent exemption. Absent → an
+   * autonomous reconcile, which signs nothing: it did not adopt anything.
+   */
+  adoptedBy?: string;
+  /** The open pull request the adoption verdict is keyed by, when one exists. */
+  pullRequest?: number;
 }
 
 // ---------- result ----------
@@ -351,65 +371,6 @@ export type ReconcileSkipReason =
    * branch is left exactly as it was for the next sweep (#2864). */
   | "land-lock-timeout";
 
-/** The reasons a reconcile park records, one per landing refusal class (#2864). */
-export type ReconcileParkReason =
-  | "feedback-failed"
-  | "feedback-failed-infra"
-  | "merge-conflict"
-  | "ci-failed"
-  | "ci-pending"
-  | "hook-aborted"
-  | "trunk-diverged"
-  | "infra";
-
-/**
- * Route a LANDING refusal to the terminal that names it (#2864).
- *
- * The reconcile lane used to funnel every non-infra landing failure into
- * `parkMergeConflict`, so a PR that was merely BEHIND its base — zero conflicts,
- * zero failing checks, `mergeable=true`, one `gh pr update-branch` from
- * merging — was parked `blocked:merge-conflict` and a human was sent to resolve
- * a conflict that did not exist. `behind` and `dirty` are different states and
- * the forge reports them differently, so the park must be too:
- *
- *   - `pr-conflict`        → `merge-conflict`. The ONLY route to that label: the
- *                            rebase genuinely conflicted (and names its paths).
- *   - `ci-failed` /
- *     `pr-merge-failed`    → `ci-failed`. A merge the forge REJECTED on a
- *                            mergeable PR — a stale base, a red required check,
- *                            an unsatisfied protection rule. The landing already
- *                            re-read the PR and repaired the one cause it owns
- *                            (an out-of-date branch, #2807); what reaches here is
- *                            the refusal the PR itself explained.
- *   - `ci-pending`         → `ci-pending`. Checks still running on an intact PR.
- *   - `post-merge-gate`    → `feedback-failed`. The integrated tree failed the
- *                            gate; the rebase before it succeeded (#2339).
- *   - `pre_merge-abort`    → `hook-aborted`. A hook, not a conflict.
- *   - `trunk-diverged`     → `trunk-diverged`.
- *   - `land-lock-timeout`  → null. A backoff: nothing to park.
- *   - everything else      → `infra`, carrying the observed reason verbatim.
- */
-export function routeLandingFailure(reason: LandingFailureReason): ReconcileParkReason | null {
-  switch (reason) {
-    case "pr-conflict":
-      return "merge-conflict";
-    case "ci-failed":
-    case "pr-merge-failed":
-      return "ci-failed";
-    case "ci-pending":
-      return "ci-pending";
-    case "post-merge-gate":
-      return "feedback-failed";
-    case "pre_merge-abort":
-      return "hook-aborted";
-    case "trunk-diverged":
-      return "trunk-diverged";
-    case "land-lock-timeout":
-      return null;
-    default:
-      return "infra";
-  }
-}
 
 export type ReconcileResult =
   | { outcome: "landed"; mergeSha: string; locked: boolean; posted: boolean }
@@ -602,9 +563,17 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   const openPr = deps.worktreeLaunchesPr !== false;
   // Presence stage (#1306): the adopt-landing lane's row now shows `landing`.
   await deps.markStage?.("landing").catch(() => {});
+  // #4138: a human adopting this branch lands under their OWN name — a row, not
+  // an exemption, so the audit reads who adopted what.
+  await recordAdoptionVerdict(deps.landVerdict, {
+    exec: deps.mergeExec, repoDir: input.repoDir, baseRef, tip: validatedBranchTip,
+    ...(input.adoptedBy === undefined ? {} : { login: input.adoptedBy }),
+    ...(input.pullRequest === undefined ? {} : { pr: input.pullRequest }),
+  });
   const landing = await deps.landing.doLanding(
     {
       mergeExec: deps.mergeExec,
+      ...(deps.landVerdict === undefined ? {} : { verdictGate: deps.landVerdict.gate }),
       remoteGit: deps.remoteGit,
       fireHook: deps.fireHook ?? (async () => true),
       conflictResolver: deps.conflictResolver,
@@ -848,33 +817,6 @@ async function parkInfraLanding(
   return { outcome: "parked", reason: "infra", posted };
 }
 
-/**
- * The one line a landing refusal records, per park reason (#2864). It states
- * what was OBSERVED — never a probable cause — because the note is the whole
- * brief the next human reads. `observed` is the landing's own message when it
- * carried one (the conflicting paths, the forge's rejection cause); absent, the
- * line still says which refusal happened rather than falling back to a conflict.
- */
-export function landingRefusalSummary(reason: ReconcileParkReason, observed?: string): string {
-  const detail = observed && observed.trim() !== "" ? observed.trim() : undefined;
-  switch (reason) {
-    case "merge-conflict":
-      return detail ?? "the worker branch conflicts with its base and could not be rebased for the landing";
-    case "ci-failed":
-      return detail ?? "the forge rejected the merge on the open PR and the PR state did not explain it";
-    case "ci-pending":
-      return detail ?? "required status checks had not reported a verdict on the open PR";
-    case "feedback-failed":
-      return "the post-merge integration gate failed on the rebased tree; nothing was merged";
-    case "hook-aborted":
-      return detail ?? "a pre_merge hook aborted the landing before anything merged";
-    case "trunk-diverged":
-      return detail ?? "the local trunk has diverged from its remote, so the landing refused to merge";
-    case "feedback-failed-infra":
-    case "infra":
-      return detail ?? "the landing failed before anything merged";
-  }
-}
 
 /**
  * The land path refused the validated branch → park under the terminal that

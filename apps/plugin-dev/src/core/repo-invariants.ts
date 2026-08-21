@@ -74,6 +74,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "every binary in every workspace bin map must answer --version off the build stamp and route argv through the shared contract (#2878); the bin maps span apps/ and packaging/, the suite lives in apps/plugin-dev",
   },
   {
+    name: "invariants:land-entry-points",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "every way a change reaches the trunk states its verdict source (ADR 0154, #4138), and the entrances span apps/plugin-dev, apps/redskilled and packages/worker while the table lives in apps/plugin-dev",
+  },
+  {
     name: "invariants:declared-waits",
     scope: "apps/plugin-dev",
     script: "test:invariants",

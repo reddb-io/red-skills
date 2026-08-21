@@ -60,7 +60,7 @@ export async function staleHeadVerdict(exec: Exec, input: StaleHeadCheckInput): 
 }
 
 /** The stable patch-id of `base...tip`, or null when git cannot answer. */
-async function stablePatchId(exec: Exec, repo: string, baseRef: string, tip: string): Promise<string | null> {
+export async function stablePatchId(exec: Exec, repo: string, baseRef: string, tip: string): Promise<string | null> {
   const diff = await exec(["git", "-C", repo, "diff", `${baseRef}...${tip}`]);
   if (diff.code !== 0) return null;
   const id = await exec(["git", "-C", repo, "patch-id", "--stable"], { input: diff.stdout });
