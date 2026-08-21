@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDemandTurnRunner,
+  ticketBodyBrief,
   demandTurnForBirth,
   describeTurnOutcome,
   queueBriefing,
@@ -44,12 +45,14 @@ function runner(
   admit: (input: DemandTurnAdmission) => Promise<ActiveWorkflowWorker>,
   records: DemandTurnRecord[] = [],
   opened: Array<{ sessionId: string }> = [],
+  ticketBody?: (project: unknown, issue: number) => Promise<string | null>,
 ) {
   return {
     records,
     opened,
     run: createDemandTurnRunner({
       paths: {} as never,
+      ...(ticketBody == null ? {} : { ticketBody: ticketBody as never }),
       startWorker: (() => {
         throw new Error("an injected admission owns the birth in this test");
       }) as never,
@@ -173,6 +176,50 @@ describe("the daemon's unattended turn", () => {
       _meta: { redskills: { permissionResolution: "unattended-refused", reason: DEMAND_TURN_PERMISSION_REFUSAL } },
     });
     expect(DEMAND_TURN_PERMISSION_REFUSAL).toMatch(/hitl/i);
+  });
+});
+
+describe("the brief carries the Ticket's own words (#4243)", () => {
+  const ticket = {
+    number: 4171,
+    title: "The Attention audit",
+    labels: ["ready-for-agent"],
+    base: "main",
+    handoff: "Implement issue #4171",
+    worker_id: "W7",
+  };
+
+  it("appends the body the daemon read to the prompt and the handoff", async () => {
+    const worker = workerStub({ stopReason: "end_turn" });
+    const { run } = runner(async () => worker, [], [], async (_project, issue) =>
+      issue === 4171 ? "The audit runs at drain end." : null);
+
+    await run({ project, prompt: "Implement issue #4171", workItem: "4171", ticket });
+
+    const sent = worker.prompted.mock.calls[0]?.[1] as {
+      prompt: { text: string }[];
+      _meta: { redskills: { ticket: { handoff: string } } };
+    };
+    expect(sent.prompt[0]!.text).toContain("## Ticket #4171: The Attention audit");
+    expect(sent.prompt[0]!.text).toContain("The audit runs at drain end.");
+    expect(sent._meta.redskills.ticket.handoff).toContain("The audit runs at drain end.");
+  });
+
+  it("a body the gateway cannot serve degrades the brief, never the turn", async () => {
+    const worker = workerStub({ stopReason: "end_turn" });
+    const { run } = runner(async () => worker, [], [], async () => null);
+
+    const result = await run({ project, prompt: "Implement issue #4171", workItem: "4171", ticket });
+
+    expect(result.workerId).toBe("W1");
+    const sent = worker.prompted.mock.calls[0]?.[1] as { prompt: { text: string }[] };
+    expect(sent.prompt[0]!.text).toBe("Implement issue #4171");
+  });
+
+  it("states the cut when a Ticket body exceeds the brief's bound", () => {
+    const brief = ticketBodyBrief(9, "t", "x".repeat(7_000));
+    expect(brief).toContain("truncated at 6000 characters");
+    expect(brief.length).toBeLessThan(6_300);
   });
 });
 

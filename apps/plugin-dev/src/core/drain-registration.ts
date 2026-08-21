@@ -91,6 +91,10 @@ export const DRAIN_WORKER_PROMPT =
   "You are already standing in your own dedicated worktree on the Ticket's base branch: work and " +
   "commit right here, and never create another worktree — the repository's worktree lanes govern " +
   "interactive sessions, not Workers. " +
+  // The repo's scope gate refuses a PR that changes apps/ or packages/ without
+  // a changeset, and the first autonomous PR died exactly there (#4243).
+  "If your change touches apps/ or packages/, also write a .changeset/<slug>.md entry naming each " +
+  "touched package by its package.json name with a patch bump, and commit it with the change. " +
   "When the change is committed, say <promise>DONE</promise>. If the work is genuinely blocked, " +
   "say what blocks it and <promise>BLOCKED</promise>.";
 
