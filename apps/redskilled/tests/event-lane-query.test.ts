@@ -86,6 +86,8 @@ function workerEvent(kind: RecordWorkerEventInput["kind"]): RecordWorkerEventInp
       return { ...common, exitCode: 0 };
     case "worker-budget-kill":
       return { ...common, detail: "host memory high-water mark exceeded", signal: "SIGKILL" };
+    case "worker-postmortem":
+      return { ...common, failureMode: "host-vanished", detail: "synthetic postmortem: failure-mode=host-vanished" };
   }
 }
 

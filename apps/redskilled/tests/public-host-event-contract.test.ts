@@ -17,6 +17,7 @@ const PUBLIC_HOST_EVENT_FIELDS = [
   "detail",
   "event",
   "exit_code",
+  "failure_mode",
   "fork_sha",
   "heal_kind",
   "isolated",

@@ -1,8 +1,26 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { describe, expect, it } from "vitest";
 
 import { observedWorkerDeath } from "../src/daemon/tunables.js";
 import { classifyUnitDeath, resolveUnitDeath } from "../src/daemon/unit-death.js";
-import { buildHostEvent } from "../src/event-lane.js";
+import {
+  appendSyntheticPostmortem,
+  classifySilentDeath,
+  deathWasSilent,
+  planSyntheticPostmortem,
+  renderLastEvidence,
+  SILENT_DEATH_FAILURE_MODES,
+} from "../src/daemon/synthetic-postmortem.js";
+import {
+  buildHostEvent,
+  createRedskilledEventLane,
+  REDSKILLED_EVENT_LANE_FILE,
+  type RecordWorkerEventInput,
+} from "../src/event-lane.js";
 import { decodeHostEventRow } from "../src/event-lane-decode.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
 import type { RedskilledUnitExitFacts } from "../src/reattach.js";
@@ -184,5 +202,111 @@ describe("the surfaces read the carried verdict rather than deriving a second on
     const record = await deathRecord(receipt({ systemd_result: "success", exit_code: 0 }));
 
     expect(observedWorkerDeath(record)).toBeNull();
+  });
+});
+
+// #4176: a death that explains nothing leaves a synthetic postmortem beside it.
+// The rows the checkout can ACT on already carry their own account; what is left
+// is exactly the set the sweep defers, and that set's failure story would
+// otherwise live only in whoever happened to be watching.
+
+const silentWorker: RedskilledWorkerView = {
+  ...worker,
+  log_path: "/tmp/worker/worker.log.toonl",
+  memory_ceiling: "6G",
+  cpu: { cpu_seconds: 812.35, sampled_at: "2026-08-20T12:29:00.000Z" },
+  warnings: ["placement downgraded to unisolated"],
+};
+
+function death(facts: Partial<RecordWorkerEventInput> = {}): RecordWorkerEventInput {
+  return {
+    kind: "worker-death",
+    worker: silentWorker,
+    ts: "2026-08-20T12:30:00.000Z",
+    detail: "the host no longer confirms this Worker",
+    ...facts,
+  };
+}
+
+describe("a silent death leaves the account the Worker never wrote", () => {
+  it("names the failure mode and the last evidence on a Worker the host stopped confirming", () => {
+    const postmortem = planSyntheticPostmortem(death());
+
+    expect(postmortem).not.toBeNull();
+    expect(postmortem!.kind).toBe("worker-postmortem");
+    expect(postmortem!.failureMode).toBe("host-vanished");
+    expect(postmortem!.detail).toContain("failure-mode=host-vanished");
+    expect(postmortem!.detail).toContain("born=2026-08-20T12:00:00.000Z");
+    expect(postmortem!.detail).toContain("cpu=812.4s at 2026-08-20T12:29:00.000Z");
+    expect(postmortem!.detail).toContain("ceiling=6G");
+    expect(postmortem!.detail).toContain("placement downgraded to unisolated");
+    expect(postmortem!.detail).toContain("log=/tmp/worker/worker.log.toonl");
+  });
+
+  it("reads an unattributed SIGKILL as a kill nobody signed, and quotes the journal", () => {
+    const postmortem = planSyntheticPostmortem(death({
+      signal: "SIGKILL",
+      senderClass: "unknown",
+      confidence: "low",
+      journalTail: "Started red-worker-wD34TH.service.\nMain process exited, code=killed, status=9/KILL",
+    }));
+
+    expect(postmortem!.failureMode).toBe("unattributed-kill");
+    expect(postmortem!.detail).toContain("signal=SIGKILL");
+    expect(postmortem!.detail).toContain("journal: Main process exited, code=killed, status=9/KILL");
+    // Every fact the death record carried rides the postmortem too, so a reader
+    // never has to join the two rows back together.
+    expect(postmortem!.senderClass).toBe("unknown");
+  });
+
+  it("stays silent for a death that already explains itself", () => {
+    expect(planSyntheticPostmortem(death({ exitCode: 0 }))).toBeNull();
+    expect(
+      planSyntheticPostmortem(death({ signal: "SIGTERM", senderClass: "user-signal", confidence: "high" })),
+    ).toBeNull();
+    expect(planSyntheticPostmortem({ ...death(), kind: "worker-birth" })).toBeNull();
+  });
+
+  it("classifies the modes a host can name, and admits when it cannot", () => {
+    expect(classifySilentDeath({ systemdResult: "oom-kill" })).toBe("oom");
+    expect(classifySilentDeath({ senderClass: "oomd" })).toBe("oom");
+    expect(classifySilentDeath({ systemdResult: "timeout" })).toBe("cap-hit");
+    expect(classifySilentDeath({ systemdResult: "watchdog" })).toBe("cap-hit");
+    expect(classifySilentDeath({ signal: "SIGKILL" })).toBe("unattributed-kill");
+    expect(classifySilentDeath({})).toBe("host-vanished");
+    expect(classifySilentDeath({ systemdResult: "exit-code", exitCode: 3 })).toBe("unknown");
+    expect(deathWasSilent({ exitCode: 0 })).toBe(false);
+    expect(deathWasSilent({ senderClass: "oomd", confidence: "high" })).toBe(false);
+    expect(deathWasSilent({})).toBe(true);
+    for (const mode of SILENT_DEATH_FAILURE_MODES) expect(typeof mode).toBe("string");
+    expect(renderLastEvidence(worker, {})).toContain("log=unrecorded");
+    const appended: RecordWorkerEventInput[] = [];
+    appendSyntheticPostmortem((row) => appended.push(row), death());
+    appendSyntheticPostmortem((row) => appended.push(row), death({ exitCode: 0 }));
+    expect(appended.map((row) => row.kind)).toEqual(["worker-postmortem"]);
+  });
+
+  it("rides the daemon's own registered lane, structured field and all", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-postmortem-"));
+    const path = join(root, REDSKILLED_EVENT_LANE_FILE);
+    try {
+      const lane = createRedskilledEventLane(path);
+      await lane.recordWorker(death());
+      await lane.recordWorker(planSyntheticPostmortem(death())!);
+      const rows = await createRedskilledEventLane(path).read();
+
+      expect(rows.map((row) => row.kind)).toEqual(["worker-death", "worker-postmortem"]);
+      expect(rows[1]).toMatchObject({ worker_id: "wD34TH", failure_mode: "host-vanished" });
+      expect(rows[1]!.detail).toContain("failure-mode=host-vanished");
+      expect(LANE_RETENTION_REGISTRY["redskilled-events"].maxBytes).toBeGreaterThan(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the decoded field honest for a row written before the mode existed", () => {
+    const legacy = decodeHostEventRow({ ts: "2026-08-20T12:30:00.000Z", kind: "worker-death", worker_id: "wD34TH" });
+
+    expect(legacy.failure_mode).toBeNull();
   });
 });

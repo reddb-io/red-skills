@@ -93,7 +93,8 @@ export type RedskilledWorkerEventKind =
   | "worker-budget-verdict"
   | "worker-budget-grace"
   | "worker-death"
-  | "worker-budget-kill";
+  | "worker-budget-kill"
+  | "worker-postmortem";
 
 export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-birth",
@@ -106,6 +107,7 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-budget-grace",
   "worker-death",
   "worker-budget-kill",
+  "worker-postmortem",
 ] as const as readonly [
   "worker-birth",
   "worker-activity",
@@ -117,6 +119,7 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-budget-grace",
   "worker-death",
   "worker-budget-kill",
+  "worker-postmortem",
 ] & {
   includes(
     searchElement:
@@ -217,6 +220,14 @@ export interface RedskilledHostEvent {
   readonly base_commits_ahead: number | null;
   /** Mechanical cure applied on a heal record. */
   readonly heal_kind: string | null;
+  /**
+   * The named failure mode on a synthetic postmortem; absent on every other row.
+   *
+   * Carried STRUCTURALLY beside `detail` for the same reason `sender_class` is:
+   * a reader routes on this word, and one that recovered it by parsing the
+   * daemon's sentence would break the day the sentence was reworded.
+   */
+  readonly failure_mode?: string | null;
   /** Why, for a death or a kill: an exit status, a signal, a budget verdict. */
   readonly detail: string | null;
   /**
@@ -328,6 +339,17 @@ export interface RecordWorkerEventInput {
   readonly baseHeadSha?: string | null;
   readonly baseCommitsAhead?: number | null;
   readonly healKind?: string | null;
+  /** The named failure mode a synthetic postmortem carries (#4176). */
+  readonly failureMode?: string | null;
+  /**
+   * The daemon itself ended this Worker, so the death explains itself (#4176).
+   *
+   * Steers the synthetic postmortem and is never written to the row: it is a
+   * fact about WHO decided, which the deciding call site is the only one that
+   * holds, and a row that carried it would invite a reader to re-derive intent
+   * from a boolean instead of from the kind.
+   */
+  readonly deliberate?: boolean;
 }
 
 /** One positive-depth project the demand loop deliberately did not birth for. */
@@ -371,6 +393,7 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     base_head_sha: "baseHeadSha" in input ? input.baseHeadSha ?? null : null,
     base_commits_ahead: "baseCommitsAhead" in input ? input.baseCommitsAhead ?? null : null,
     heal_kind: "healKind" in input ? input.healKind ?? null : null,
+    failure_mode: "failureMode" in input ? input.failureMode ?? null : null,
     detail: input.detail ?? null,
     exit_code: input.exitCode ?? null,
     signal: input.signal ?? null,

@@ -330,8 +330,10 @@ describe("a launch client that dies is not a Worker that died", () => {
 
     expect(daemon.workerCount()).toBe(0);
     const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.map((event) => event.event)).toEqual(["worker-birth", "worker-death"]);
+    // The kill named no sender, so the death is silent and earns a postmortem (#4176).
+    expect(events.map((event) => event.event)).toEqual(["worker-birth", "worker-death", "worker-postmortem"]);
     expect(events[1]!.signal).toBe("SIGKILL");
+    expect(events[2]).toMatchObject({ failure_mode: "unattributed-kill" });
   });
 });
 
