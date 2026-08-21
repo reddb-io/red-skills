@@ -31,6 +31,17 @@
 // non-blocking behaviour and still writes every row, so an advisory drain is
 // auditable afterwards rather than unrecorded.
 //
+// ## Mutation evidence rides in the row, not in a stage of its own
+//
+// The publish's diff-scoped mutation check (#4140) runs HERE — once, in the
+// review stage, on the tree that is actually being published — and its outcome
+// is folded into this stage's verdict rather than added as a fourth gate stage.
+// ADR 0154's row carries one identity and one judgement; a second stage would
+// be a second authorization nobody signed. So a complete run below the
+// threshold makes this stage's verdict `verifier-failed`, and every other
+// outcome — budget exhausted, runner unwired, check disabled, clean run —
+// annotates the row and changes nothing. See `foldMutationIntoReview`.
+//
 // ## The model call is a seam, never a call from here
 //
 // `AdversarialReviewer` is a DECLARED seam in the sense #4171 established:
@@ -49,6 +60,11 @@ import type {
   AdversarialReviewFindings,
 } from "./adversarial-review.js";
 import { decideAdversarialReview } from "./adversarial-review.js";
+import {
+  mutationEvidence,
+  mutationRefusal,
+  type MutationOutcome,
+} from "./mutation-publish.js";
 import type { GateStageOutcome } from "./shared-gate.js";
 import type { ReviewVerifier } from "./review-verifier-identity.js";
 import type {
@@ -126,6 +142,14 @@ export interface ReviewStageDecisionInput {
   readonly attempt: ReviewAttempt;
   readonly appraisalFloor?: number;
   readonly passCountersign?: ReviewPassCountersign;
+  /**
+   * The publish's diff-scoped mutation outcome (#4140), or `null` when the
+   * check did not run. Folded in here rather than carried as a stage of its own
+   * because the mutation score is EVIDENCE inside the verifier's row — ADR 0154
+   * gives the row one identity and one judgement, and a second stage would be a
+   * second authorization nobody signed.
+   */
+  readonly mutation?: MutationOutcome | null;
 }
 
 const RAN_BUT_BLOCKED: GateStageOutcome = { stage: "review", ok: false };
@@ -150,6 +174,15 @@ const NOTHING_RAN: GateStageOutcome = { stage: "review", ok: true, skipped: true
  * hand a human the one case the loop can fix by itself.
  */
 export function decideReviewStage(input: ReviewStageDecisionInput): ReviewStageDecision {
+  return foldMutationIntoReview(
+    decideReviewerOutcome(input),
+    input.mutation ?? null,
+    input.mode === "blocking",
+  );
+}
+
+/** The reviewer half of the table, before the mutation evidence is folded in. */
+function decideReviewerOutcome(input: ReviewStageDecisionInput): ReviewStageDecision {
   const blocking = input.mode === "blocking";
   const verifier = input.verifier;
   if (verifier === null) {
@@ -183,6 +216,64 @@ export function decideReviewStage(input: ReviewStageDecisionInput): ReviewStageD
       : `reviewer passed the diff: ${findings.summary}`,
     retry: false,
   };
+}
+
+/**
+ * Fold the publish's mutation outcome into the reviewer's decision. PURE.
+ *
+ * Three rules, and the order between them is the whole contract:
+ *
+ *   1. **A verifier that could not conclude stays blocked.** `verifier-blocked`
+ *      is about the reviewer being unreachable, and a mutation run — however it
+ *      went — neither repairs the runner nor substitutes for the judgement. The
+ *      note is still appended, because the row is the audit trail.
+ *   2. **A complete run below the threshold refuses the publish**, under
+ *      `verifier-failed`: a verifier RAN and found the change unjudged by its
+ *      own tests. That reuses the closed verdict list rather than growing it —
+ *      a sixth verdict would be a sixth thing the land precondition must decide
+ *      about, for a finding that is already "the verifier said no".
+ *   3. **Everything else only annotates.** Budget exhaustion, an unwired
+ *      runner, a disabled check and a clean run all leave the reviewer's verdict
+ *      and stage exactly as they were. That is the "never a silent pass
+ *      presented as a full run" half of #4140: the publish proceeds AND the row
+ *      says what was not judged.
+ */
+export function foldMutationIntoReview(
+  decision: ReviewStageDecision,
+  mutation: MutationOutcome | null,
+  blocking: boolean,
+): ReviewStageDecision {
+  if (mutation === null) return decision;
+  const note = mutation.blocking ? mutationRefusal(mutation) : mutation.advisory;
+  const reason = note === null ? decision.reason : `${decision.reason} | ${note}`;
+  if (decision.verdict === "verifier-blocked") return { ...decision, reason };
+  if (!mutation.blocking) return { ...decision, reason };
+  return {
+    ...decision,
+    verdict: "verifier-failed",
+    stage: blocking ? RAN_BUT_BLOCKED : RAN_AND_PASSED,
+    park: null,
+    reason,
+  };
+}
+
+/**
+ * The row's `evidence` field: what the reviewer cited, plus the mutation line.
+ * PURE.
+ *
+ * The mutation line is written on EVERY path the check ran, including the one
+ * that blocked — the next reader's question is what the suite let through, and
+ * a score recorded only when it passed answers that question exactly never.
+ */
+export function composeReviewEvidence(
+  evidence: string | null | undefined,
+  mutation: MutationOutcome | null,
+): string | null {
+  const parts = [
+    evidence ?? null,
+    mutation === null ? null : mutationEvidence(mutation),
+  ].filter((part): part is string => part !== null && part.trim() !== "");
+  return parts.length === 0 ? null : parts.join("; ");
 }
 
 /** The fail-closed half of the table: a verifier that could not conclude. */
@@ -236,6 +327,8 @@ export interface ReviewStageRunInput {
   readonly passCountersign?: ReviewPassCountersign;
   /** What the review cited — a gate record, a CI run. Evidence, not authorization. */
   readonly evidence?: string | null;
+  /** The publish's diff-scoped mutation outcome (#4140), when the check ran. */
+  readonly mutation?: MutationOutcome | null;
 }
 
 export interface ReviewStageResult {
@@ -288,10 +381,12 @@ export async function runReviewStage(
   deps: ReviewStageDeps,
 ): Promise<ReviewStageResult> {
   const attempt = await attemptReview(deps.reviewer, input);
+  const mutation = input.mutation ?? null;
   const decision = decideReviewStage({
     mode: input.mode,
     verifier: input.verifier,
     attempt,
+    mutation,
     ...(input.appraisalFloor === undefined ? {} : { appraisalFloor: input.appraisalFloor }),
     ...(input.passCountersign === undefined ? {} : { passCountersign: input.passCountersign }),
   });
@@ -299,7 +394,7 @@ export async function runReviewStage(
     ...input.key,
     countersign: decision.countersign,
     verifier_identity: decision.identity,
-    evidence: input.evidence ?? null,
+    evidence: composeReviewEvidence(input.evidence, mutation),
     reason: decision.reason,
   });
   if (decision.park !== null) await deps.park?.(decision.park);
