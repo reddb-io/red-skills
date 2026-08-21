@@ -269,6 +269,26 @@ describe("the birth briefs its Worker with a Ticket", () => {
     });
   });
 
+  it("gives the Ticket its orders as their own field, and the prompt as a section", () => {
+    // #4141: spliced into `handoff` the orders were linted as if they were the
+    // brief's acceptance criteria, and dropped by the first re-seed. The prompt
+    // has no second field, so there they ride in front, in the same section
+    // shape the Worker's Ticket loop emits.
+    const orders = "1. Never hand-edit the generated manifests.";
+    const turn = demandTurnForBirth(registration, birth, "W7", briefing, orders);
+
+    expect(turn?.prompt).toBe(`<standing-orders>\n${orders}\n</standing-orders>\n\nWork issue #4118 to a merged PR`);
+    expect(turn?.ticket?.handoff).toBe("Work issue #4118 to a merged PR");
+    expect(turn?.ticket?.standing_orders).toBe(orders);
+  });
+
+  it("states no standing orders on a Ticket for a project whose register is empty", () => {
+    const turn = demandTurnForBirth(registration, birth, "W7", briefing);
+
+    expect(turn?.prompt).toBe("Work issue #4118 to a merged PR");
+    expect(turn?.ticket).not.toHaveProperty("standing_orders");
+  });
+
   it("states no handoff when a fact it requires is missing, rather than briefing a refusal", () => {
     // A Worker refuses an empty title or a Ticket with no trunk; a refusal the
     // daemon could have avoided is a Worker born to fail.

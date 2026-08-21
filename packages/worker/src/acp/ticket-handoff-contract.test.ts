@@ -65,3 +65,32 @@ describe("ticketHandoffFromMeta", () => {
     expect(ticketHandoffFromMeta(meta({ ...BASE, runner: 7 }))?.runner).toBeUndefined();
   });
 });
+
+// Ticket #4141: standing orders travel as their OWN field, so the Worker can
+// render them as the authoritative block the exit protocol names instead of
+// receiving them spliced into a brief it cannot tell them apart from.
+describe("ticketHandoffFromMeta standing orders", () => {
+  const ORDERS = "1. Never hand-edit the generated manifests.\n2. Land through the daemon.";
+
+  it("round-trips the operator's orders verbatim, beside the brief and not inside it", () => {
+    const decoded = ticketHandoffFromMeta(meta({ ...BASE, standing_orders: ORDERS }));
+
+    expect(decoded).toEqual({ ...BASE, standing_orders: ORDERS });
+    expect(decoded?.handoff).toBe(EXECUTABLE_BRIEF);
+  });
+
+  it("refuses a malformed value the way it refuses every other refinement — by dropping it", () => {
+    // The orders are DROPPED, never the Ticket: an operator's typo in their own
+    // directives should cost the directives, not strand the work with no
+    // channel to say why.
+    for (const bad of [7, ["an order"], {}, null, "", "   \n "]) {
+      const decoded = ticketHandoffFromMeta(meta({ ...BASE, standing_orders: bad }));
+      expect(decoded).toEqual(BASE);
+      expect(decoded?.standing_orders).toBeUndefined();
+    }
+  });
+
+  it("states no orders at all for the Ticket that carries none", () => {
+    expect(ticketHandoffFromMeta(meta(BASE))?.standing_orders).toBeUndefined();
+  });
+});

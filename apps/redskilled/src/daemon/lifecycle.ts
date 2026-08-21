@@ -29,7 +29,7 @@ import {
   type RedskilledWorkerEventKind,
   type RecordWorkerEventInput,
 } from "../event-lane.js";
-import { createStandingOrdersStore, deriveHomeDirFromEventLanePath, formatStandingOrdersBrief } from "../standing-orders.js";
+import { createStandingOrdersStore, deriveHomeDirFromEventLanePath, formatStandingOrdersBody } from "../standing-orders.js";
 import {
   DEFAULT_REDSKILLED_DEMAND_MS,
   beginBirthProbe,
@@ -1031,7 +1031,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             // Read standing orders for this project and prepend to prompt
             const ordersResult = await standingOrdersStore.show(birth.project_label);
             const standingOrdersText = ordersResult.orders.length > 0
-              ? formatStandingOrdersBrief(ordersResult.orders)
+              ? formatStandingOrdersBody(ordersResult.orders)
               : undefined;
             const turn = demandTurnForBirth(registered, birth, mintHostWorkerId(workers.keys()),
               queueBriefing(lastQueue?.projects ?? [], birth.project_label, birth.work_item), standingOrdersText)!;

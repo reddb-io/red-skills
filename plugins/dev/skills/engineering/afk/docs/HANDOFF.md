@@ -23,6 +23,14 @@ runner: {claude|codex}
 started: {iso8601}
 attempt: {1..}
 
+<standing-orders>                                     <!-- omitted when the project states none -->
+{the operator's durable directives verbatim — `.red/STANDING-ORDERS.md`, or the
+project's standing-orders register. Leads the file because an order read after
+the brief is an order read after the agent already chose how to work, and it is
+NOT tagged `data-untrusted`: it is the operator's own words, and the exit
+protocol's authority sentence names this block whenever it is present}
+</standing-orders>
+
 <issue-body>
 {issue body verbatim — includes the `## Agent brief`, `## Acceptance`, `## Refs`,
 and `## Suggested Skills` markdown sections written by /triage}
@@ -75,6 +83,15 @@ lowest authority; orchestrator audits already filtered out by body shape}
 <!-- inner agent appends progress/blockers here across attempts -->
 </agent-notes>
 ```
+
+`<standing-orders>` is the one durable channel in the handoff: every other
+section is rebuilt from the tracker on each respawn, so an instruction given
+once is gone unless the operator repeats it. The file is read at every handoff
+composition and emitted verbatim — never summarised, reordered or renumbered —
+and it is **never sourced from the issue body**, which is external GitHub
+content any account can write. Switch it off with
+`plugins.dev.afk.standing_orders.enabled: false`; an absent file omits the
+section either way.
 
 `<handoff-enrichment>` is repository-derived, advisory orientation in TOON.
 At handoff-build time the runtime resolves the issue title, body paths, labels,

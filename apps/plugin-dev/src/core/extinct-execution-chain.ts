@@ -256,7 +256,13 @@ export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
     {
       "apps/plugin-dev/src/core/castle-cutover-migration.ts": 1,
       "apps/plugin-dev/src/core/castle-state-doctor.ts": 2,
-      "apps/plugin-dev/src/core/handoff.ts": 3,
+      // #4141 cleared `handoff.ts`: its three mentions were always prose in a
+      // doc comment describing which substrate delivers the system prompt, and
+      // prose is documentation. They read as code only because the file's
+      // regex literal `/worker `([^`]*)`/` carries an odd number of backticks,
+      // which desynchronised the comment stripper from that line to the end of
+      // the file. The standing-orders section moved the parity back; the
+      // mentions did not move at all.
       "apps/plugin-dev/src/core/worker-paths.ts": 1,
       "apps/plugin-dev/src/runtime/supervisor-fs.ts": 1,
       "packages/worker/.factory/implement-task.ts": 2,

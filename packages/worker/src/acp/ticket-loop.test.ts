@@ -217,6 +217,64 @@ describe("the lane-to-mode contract, enforced at the claim", () => {
   });
 });
 
+// Ticket #4141: an instruction the operator gave once has to survive every
+// respawn, and a re-seed REPLACES the brief rather than appending to it — so
+// orders carried only in round one would hold for exactly as long as nothing
+// went wrong.
+describe("standing orders lead every round's text", () => {
+  const ORDERS = "1. Never hand-edit the generated manifests.\n2. Land through the daemon.";
+  const SECTION = `<standing-orders>\n${ORDERS}\n</standing-orders>`;
+
+  it("prepends the orders verbatim to the first brief, the retry and the re-seed", async () => {
+    const handoffs: string[] = [];
+    let round = 0;
+    const result = await runTicketLoop(
+      deps({
+        ticket: { ...TICKET, standingOrders: ORDERS },
+        reseedBudget: 2,
+        implement: async (handoff) => {
+          handoffs.push(handoff);
+          if (handoffs.length === 1) throw new Error("child agent hit its context cap");
+          return { stopReason: "end_turn" };
+        },
+        classifyFailure: () => "cap-hit",
+        gate: async (): Promise<TicketGateRun> => {
+          round += 1;
+          return round < 2
+            ? { stages: [{ stage: "feedback", ok: false }], detail: "pnpm typecheck exited 2" }
+            : { stages: [{ stage: "feedback", ok: true }] };
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("landed");
+    expect(handoffs).toHaveLength(3);
+    for (const handoff of handoffs) expect(handoff.startsWith(`${SECTION}\n\n`)).toBe(true);
+    // Round 1 is the brief; round 2 is the failure retry; round 3 is the gate's
+    // re-seed. All three carry the orders, and none of them carries them twice.
+    expect(handoffs[0]).toBe(`${SECTION}\n\n${TICKET.handoff}`);
+    expect(handoffs[1]).toContain("cap-hit");
+    expect(handoffs[2]).toContain("feedback stage blocked round 2");
+    for (const handoff of handoffs) {
+      expect(handoff.split("<standing-orders>")).toHaveLength(2);
+    }
+  });
+
+  it("leaves every round byte-for-byte unchanged when the Ticket carries no orders", async () => {
+    const handoffs: string[] = [];
+    await runTicketLoop(
+      deps({
+        implement: async (handoff) => {
+          handoffs.push(handoff);
+          return { stopReason: "end_turn" };
+        },
+      }),
+    );
+
+    expect(handoffs).toEqual([TICKET.handoff]);
+  });
+});
+
 describe("re-seeding in place, within the budget", () => {
   it("re-instructs the same implementer with what the gate refused", async () => {
     const handoffs: string[] = [];

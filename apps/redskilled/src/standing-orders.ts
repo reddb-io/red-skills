@@ -19,6 +19,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
+import { buildStandingOrdersSection } from "@reddb-io/shared/standing-orders.js";
 import { encodeToonlLines } from "@reddb-io/toon";
 
 /** The standing orders file name prefix */
@@ -115,12 +116,22 @@ export function createStandingOrdersStore(homeDir: string): StandingOrdersStore 
 }
 
 /**
- * Format standing orders as a string for injection into a Worker brief.
- * Returns empty string if no orders exist.
+ * The register's orders as one numbered block, or "" when there are none.
+ *
+ * The BODY alone, untagged: this is what travels as the Ticket handoff's
+ * `standing_orders` field, and the Worker wraps it in the one section shape
+ * the exit protocol names (#4141). A body that arrived pre-wrapped would be
+ * wrapped twice.
+ */
+export function formatStandingOrdersBody(orders: readonly StandingOrder[]): string {
+  return orders.map((o) => `${o.n}. ${o.text}`).join("\n");
+}
+
+/**
+ * The register as the `<standing-orders>` section, for the channels that carry
+ * only a prompt — the unattended turn's text and the resume paths, where there
+ * is no second field to put a directive in. Returns "" when there are no orders.
  */
 export function formatStandingOrdersBrief(orders: readonly StandingOrder[]): string {
-  if (orders.length === 0) return "";
-  const header = "## Standing Orders\n";
-  const items = orders.map((o) => `${o.n}. ${o.text}`).join("\n");
-  return `${header}${items}\n`;
+  return buildStandingOrdersSection(formatStandingOrdersBody(orders));
 }

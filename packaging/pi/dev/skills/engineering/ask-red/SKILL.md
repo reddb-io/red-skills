@@ -201,6 +201,14 @@ unknown markers for stateless host sidebars) ->
 MCP-session auto-registration and daemon recovery ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md` and
 `plugins/dev/skills/engineering/afk/MCP.md`;
+`/afk` standing orders (`plugins.dev.afk.standing_orders.enabled`, the durable
+`.red/STANDING-ORDERS.md`, and the `standing_orders_show` / `standing_orders_append`
+register), emitted verbatim as the handoff's `<standing-orders>` section and named
+by the exit protocol's authority sentence ->
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`,
+`plugins/dev/skills/engineering/afk/docs/HANDOFF.md`,
+`plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`, and
+`plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` local validation authority (experimental `plugins.dev.afk.validation.preflight`
 plus the `iteration`, `post_done`, and `landing` moments) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;

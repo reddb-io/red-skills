@@ -24,6 +24,7 @@
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
+import { briefWithStandingOrders } from "@reddb-io/shared/standing-orders.js";
 import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
 import { renderClaimComment } from "../engine/tracker/claim.js";
 import {
@@ -74,6 +75,16 @@ export interface TicketLoopTicket {
   readonly base: string;
   /** What the implementer is told to do, composed by whoever admitted the Worker. */
   readonly handoff: string;
+  /**
+   * The operator's standing orders, verbatim (Spec #4129, #4141).
+   *
+   * Prepended to EVERY round's text — the first brief, a failure retry, and a
+   * gate re-seed alike. A re-seed deliberately replaces the brief rather than
+   * appending to it (it states current outstanding state, not a transcript),
+   * so orders carried only in round one would be gone by round two: the
+   * standing order would hold for exactly as long as nothing went wrong.
+   */
+  readonly standingOrders?: string;
 }
 
 /** What one implementing round left behind. */
@@ -249,6 +260,7 @@ export async function runTicketLoop(
   await note({ stage: "claim", ok: true });
 
   // ---- implement / gate / re-seed ---------------------------------------
+  const briefed = (body: string) => briefWithStandingOrders(deps.ticket.standingOrders, body);
   let handoff = deps.ticket.handoff;
   let rounds = 0;
   let failureRetriesUsed = 0;
@@ -259,7 +271,7 @@ export async function runTicketLoop(
     rounds += 1;
     let implemented: TicketImplementOutcome;
     try {
-      implemented = await deps.implement(handoff, rounds);
+      implemented = await deps.implement(briefed(handoff), rounds);
     } catch (error) {
       const failureClass = ticketLoopRetryClass(
         (deps.classifyFailure ?? classifyWorkerFailure)(error),
