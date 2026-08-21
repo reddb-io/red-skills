@@ -1,5 +1,5 @@
 bundle: .github/red-skills/release.bundle.mjs
-bundleSha256: c47ad8d0511d6c555c6ad686ce4dbda1f26cc718a6105f655258bf37eeaced4b
+bundleSha256: e266dfc4f5395297a49314c9daf0237071025846ebda48f1f17b18406d93dcc6
 bundleBytes: 353957
 sourceTreeSha256: 169f535c71cf0e53ee798ea1d52e08f91e47adf5af089b16fd45c3f43e73a9fb
 refreshCommand: "pnpm -C apps/release vendor:refresh"
