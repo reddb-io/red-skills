@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/shared",
-  "version": "4.1.16",
+  "version": "4.1.17",
   "private": true,
   "type": "module",
   "description": "Code shared across RedSkills runtime apps (ADR 0034): CLI arg parsing over cli-args-parser, and the dynamic plugin-bundle fetch.",
