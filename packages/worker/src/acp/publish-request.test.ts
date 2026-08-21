@@ -165,3 +165,23 @@ describe("the publication owns its branch", () => {
   });
 });
 
+describe("a turn that commits nothing publishes nothing", () => {
+  it("skips the publish when HEAD still equals the baseline", async () => {
+    const requests: unknown[] = [];
+    const publisher = createWorkerPublisher({
+      cwd: "/tmp/wt",
+      idempotencyScope: "worker-turn:s1",
+      request: async (_method, params) => void requests.push(params),
+      readPublication: async () => ({ branch: "main", commit: "b".repeat(40) }),
+      baselineCommit: "b".repeat(40),
+      publishRef: "red/W1/9",
+      updateRef: async () => {},
+    });
+
+    // The branch equalled main and GitHub answered "No commits between" — a
+    // doomed land the Worker itself can refuse for free (#4157).
+    expect(await publisher.publishTurn()).toBeNull();
+    expect(requests).toEqual([]);
+  });
+});
+
