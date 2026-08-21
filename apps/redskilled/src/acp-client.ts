@@ -122,6 +122,20 @@ const PROJECT_CONTROL_METHOD = {
   status: REDSKILLS_ACP_METHODS.projectStatus,
 } as const;
 
+/**
+ * One live dialled connection: socket, handshake, public session. Everything
+ * here dies with the socket; the session object above it survives by dialling
+ * a replacement (#4154).
+ */
+interface LiveProjectAcpConnection {
+  readonly connection: ReturnType<ReturnType<typeof client>["connect"]>;
+  readonly socket: Socket;
+  readonly sessionId: string;
+  readonly pendingUpdates: SessionNotification["update"][];
+  readonly dead: () => boolean;
+  readonly close: () => void;
+}
+
 /** Connect a public adapter to redskilled through ACP and no private daemon wire. */
 export async function connectRedskillsProjectAcp(
   options: ConnectRedskillsProjectAcpOptions = {},
@@ -130,42 +144,67 @@ export async function connectRedskillsProjectAcp(
   const name = options.name ?? "RedSkills Project client";
   const version = options.version ?? "1";
   const paths = options.paths ?? resolveRedskilledPaths();
-  await ensureRedskilledDaemon(paths);
-  const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
-  const socket = await connectEndpoint(endpoint.acpSocketPath);
-  const pendingUpdates: SessionNotification["update"][] = [];
-  let publicSessionId = "";
 
-  let app = client({ name })
-    .onNotification(methods.client.session.update, async ({ params }) => {
-      if (params.sessionId !== publicSessionId) return;
-      pendingUpdates.push(params.update);
-      await options.onUpdate?.(params.update);
+  const dial = async (): Promise<LiveProjectAcpConnection> => {
+    await ensureRedskilledDaemon(paths);
+    const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
+    const socket = await connectEndpoint(endpoint.acpSocketPath);
+    const pendingUpdates: SessionNotification["update"][] = [];
+    let sessionId = "";
+    let dead = false;
+    socket.once("close", () => { dead = true; });
+    socket.once("error", () => { dead = true; });
+
+    let app = client({ name })
+      .onNotification(methods.client.session.update, async ({ params }) => {
+        if (params.sessionId !== sessionId) return;
+        pendingUpdates.push(params.update);
+        await options.onUpdate?.(params.update);
+      });
+    if (options.requestPermission != null) {
+      app = app.onRequest(methods.client.session.requestPermission, ({ params }) =>
+        options.requestPermission!(params));
+    }
+    const connection = app.connect(ndJsonStream(
+      Writable.toWeb(socket) as WritableStream<Uint8Array>,
+      Readable.toWeb(socket) as ReadableStream<Uint8Array>,
+    ));
+    await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name, version },
+      _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
     });
-  if (options.requestPermission != null) {
-    app = app.onRequest(methods.client.session.requestPermission, ({ params }) =>
-      options.requestPermission!(params));
-  }
-  const connection = app.connect(ndJsonStream(
-    Writable.toWeb(socket) as WritableStream<Uint8Array>,
-    Readable.toWeb(socket) as ReadableStream<Uint8Array>,
-  ));
-  await connection.agent.request(methods.agent.initialize, {
-    protocolVersion: 1,
-    clientCapabilities: {},
-    clientInfo: { name, version },
-    _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
-  });
-  publicSessionId = (await connection.agent.request(methods.agent.session.new, {
-    cwd,
-    mcpServers: [],
-  })).sessionId;
+    sessionId = (await connection.agent.request(methods.agent.session.new, {
+      cwd,
+      mcpServers: [],
+    })).sessionId;
+    return {
+      connection,
+      socket,
+      sessionId,
+      pendingUpdates,
+      dead: () => dead,
+      close() {
+        dead = true;
+        connection.close();
+        socket.destroy();
+      },
+    };
+  };
+
+  // The first dial fails exactly as it always did: a caller that connects to a
+  // machine with no daemon deserves the fail-closed answer immediately, not a
+  // session that will fail later.
+  const healing = await createSelfHealingDial(dial);
+  const ensureLive = healing.ensure;
 
   const control = (async (
     operation: RedskillsProjectControlOperation,
     request: RedskillsProjectControlRequest = {},
   ) => {
-    const outcome = await connection.agent.request<unknown>(PROJECT_CONTROL_METHOD[operation], {
+    const held = await ensureLive();
+    const outcome = await held.connection.agent.request<unknown>(PROJECT_CONTROL_METHOD[operation], {
       ...(request.target == null ? {} : { target: request.target }),
       ...(request.runner == null ? {} : { runner: request.runner }),
       ...(request.registration == null ? {} : { registration: request.registration }),
@@ -179,38 +218,43 @@ export async function connectRedskillsProjectAcp(
 
   return {
     control,
-    github(request) {
-      return connection.agent.request<RedskilledGithubRequestAnswer>(
+    async github(request) {
+      const held = await ensureLive();
+      return await held.connection.agent.request<RedskilledGithubRequestAnswer>(
         REDSKILLS_ACP_METHODS.githubRequest,
         { request },
       );
     },
-    brain(call) {
-      return connection.agent.request<RedskilledBrainAnswer>(
+    async brain(call) {
+      const held = await ensureLive();
+      return await held.connection.agent.request<RedskilledBrainAnswer>(
         REDSKILLS_ACP_METHODS.brainCall,
         { tool: call.tool, arguments: call.arguments },
       );
     },
-    memory(call) {
-      return connection.agent.request<RedskilledMemoryAnswer>(
+    async memory(call) {
+      const held = await ensureLive();
+      return await held.connection.agent.request<RedskilledMemoryAnswer>(
         REDSKILLS_ACP_METHODS.memoryCall,
         { tool: call.tool, arguments: call.arguments, ...(call.mode == null ? {} : { mode: call.mode }) },
       );
     },
     async prompt(text) {
-      const firstUpdate = pendingUpdates.length;
-      const response = await connection.agent.request(methods.agent.session.prompt, {
-        sessionId: publicSessionId,
+      const held = await ensureLive();
+      const firstUpdate = held.pendingUpdates.length;
+      const response = await held.connection.agent.request(methods.agent.session.prompt, {
+        sessionId: held.sessionId,
         prompt: [{ type: "text", text }],
       });
       return {
         stopReason: response.stopReason,
         ...projectControlFrom(response._meta),
-        updates: pendingUpdates.slice(firstUpdate),
+        updates: held.pendingUpdates.slice(firstUpdate),
       };
     },
-    cancel() {
-      return connection.agent.notify(methods.agent.session.cancel, { sessionId: publicSessionId });
+    async cancel() {
+      const held = await ensureLive();
+      return await held.connection.agent.notify(methods.agent.session.cancel, { sessionId: held.sessionId });
     },
     async permission(request) {
       if (options.requestPermission == null) {
@@ -222,8 +266,41 @@ export async function connectRedskillsProjectAcp(
       return await options.requestPermission(request);
     },
     close() {
-      connection.close();
-      socket.destroy();
+      healing.close();
+    },
+  };
+}
+
+/**
+ * The connection every call rides, re-dialled when the held one died (#4154).
+ *
+ * A daemon restart is a routine event on a machine that installs releases, so
+ * a dead connection is an instruction to dial again — single-flight, so
+ * concurrent tool calls share one replacement instead of leaking sockets. Only
+ * a genuinely unreachable daemon surfaces, with the provision repair the dial
+ * already carries. The FIRST dial happens here and fails to the caller
+ * directly: a machine with no daemon deserves the fail-closed answer at
+ * connect time, never a session that fails later.
+ */
+export async function createSelfHealingDial<Held extends { dead(): boolean; close(): void }>(
+  dial: () => Promise<Held>,
+): Promise<{ ensure(): Promise<Held>; close(): void }> {
+  let live = await dial();
+  let closed = false;
+  let redialling: Promise<Held> | null = null;
+  return {
+    async ensure() {
+      if (closed) throw new Error("this RedSkills Project ACP client is closed");
+      if (!live.dead()) return live;
+      redialling ??= dial().then(
+        (replacement) => { live = replacement; redialling = null; return replacement; },
+        (error) => { redialling = null; throw error; },
+      );
+      return await redialling;
+    },
+    close() {
+      closed = true;
+      live.close();
     },
   };
 }
