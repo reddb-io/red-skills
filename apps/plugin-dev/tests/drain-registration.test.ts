@@ -45,7 +45,14 @@ describe("what a drain hands the daemon", () => {
       .toEqual(["pnpm typecheck"]);
     expect(buildDrainRegistration(input).validation_commands).toBeUndefined();
     expect(DRAIN_WORKER_PROMPT).toContain("{{work_item}}");
-    expect(DRAIN_WORKER_PROMPT).toContain("/afk");
+    // The Worker body claims, gates, publishes and lands; a prompt restating
+    // those verbs sent well-behaved agents into GitHub mutations the
+    // unattended turn refuses by design, and every turn ended honest and
+    // empty. The prompt owns only the change and forbids the rest.
+    expect(DRAIN_WORKER_PROMPT).toContain("already claimed");
+    expect(DRAIN_WORKER_PROMPT).toContain("never touch GitHub");
+    expect(DRAIN_WORKER_PROMPT).toContain("<promise>DONE</promise>");
+    expect(DRAIN_WORKER_PROMPT).toContain("<promise>BLOCKED</promise>");
     // #4162: the Worker's workspace is already materialised on the Ticket's
     // base; an inner agent told nothing builds a nested worktree by following
     // the repository's interactive-mode rules.
