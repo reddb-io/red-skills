@@ -216,14 +216,8 @@ function crossing(
 export const EXECUTION_CHAIN_BASELINE: readonly ExtinctSourceBaselineEntry[] = [
   ...crossing(
     "dev-cli-binary",
-    "the binary is deleted; what still spells its name is the ratchet that REFUSES it in a doc, plus the container lane that has not moved its Worker body yet",
+    "the binary is deleted, and the last lane that CALLED it has moved (#4118); what still spells its name is the ratchet that REFUSES it in a doc",
     {
-      // The container drives `red-skills-dev run --issues N --runner R --once`
-      // end to end. ADR 0148 gives that body to `@reddb-io/worker` under the
-      // daemon, and ADR 0153 renames the app to `worker-container`; both are
-      // that lane's own slice, and until it lands the entrypoint names what it
-      // actually calls rather than a binary it does not.
-      "apps/worker-container/src/entrypoint.mjs": 1,
       // A refusal has to spell the noun it refuses: `EXECUTION_CHAIN_ENTRYPOINTS`
       // declares `red-skills-dev` NOT instructable, which is how a doc that puts
       // a subcommand after it fails. Deleting the literal would delete the

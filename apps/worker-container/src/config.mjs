@@ -1,9 +1,13 @@
 /**
- * Environment contract for the AFK container lane.
+ * Environment contract for the container lane.
  *
  * Every knob is an env var — the image carries no config file and no state, so
- * `docker run -e …` is the whole interface. The engine keeps its own precedence
- * rules; this module only decides what reaches it.
+ * `docker run -e …` is the whole interface. What the container decides is
+ * narrow by design: which repositories to drain, which label defines "queued",
+ * which coder Agent a Worker runs and how wide the drain goes. Everything else
+ * — which issue is next, when a Worker is born, what it is briefed with, when
+ * it lands — belongs to the daemon that ADR 0150 §4 makes the sole birth
+ * authority.
  */
 
 import { parseCadence } from "./runners.mjs";
@@ -13,6 +17,8 @@ const REPO_SLUG = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const DEFAULT_LABEL = "ready-for-agent";
 const DEFAULT_IDLE_SECONDS = 60;
 const DEFAULT_MAX_IDLE_SECONDS = 900;
+const DEFAULT_POLL_SECONDS = 15;
+const DEFAULT_TARGET = 1;
 
 function trimmed(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -56,11 +62,15 @@ export function resolveConfig(env) {
     repos: parseTargetRepos(env.RED_AFK_TARGET_REPOS),
     cadence: parseCadence(env.RED_AFK_RUNNER_CADENCE),
     label: trimmed(env.RED_AFK_QUEUE_LABEL) || DEFAULT_LABEL,
+    /** An optional `lane:<x>` narrowing, expressed in the query the daemon polls. */
+    lane: trimmed(env.RED_AFK_QUEUE_LANE),
     loop: isTrue(env.RED_AFK_LOOP),
     idleSeconds,
     maxIdleSeconds,
-    model: trimmed(env.RED_AFK_MODEL),
-    effort: trimmed(env.RED_AFK_EFFORT),
+    /** How often this container asks the daemon where its drain stands. */
+    pollSeconds: positiveInt(env.RED_AFK_POLL_SECONDS, DEFAULT_POLL_SECONDS),
+    /** The width asked for; the host still decides how many Workers it grants. */
+    target: positiveInt(env.RED_AFK_TARGET, DEFAULT_TARGET),
     workRoot: trimmed(env.RED_AFK_WORK_ROOT),
     gitUserName: trimmed(env.GIT_AUTHOR_NAME) || "afk-container[bot]",
     gitUserEmail: trimmed(env.GIT_AUTHOR_EMAIL) || "afk-container@users.noreply.github.com",
@@ -68,29 +78,15 @@ export function resolveConfig(env) {
 }
 
 /**
- * The environment the engine child inherits.
+ * The environment the daemon — and through it every Worker — inherits.
  *
- * `RED_AFK_SANDBOX=none` unconditionally: the container IS the sandbox, so a
- * target repo configured for docker/podman must not nest another one. An empty
- * model/effort override is deleted rather than passed as `""`, leaving the target
- * repo's `.red/config.yaml` in charge — the same contract as the Actions lane.
+ * The container carries no sandbox knob any more: the container IS the sandbox,
+ * and the daemon's placement already reports the isolation it could not get
+ * rather than nesting a second one. `RED_AFK_LANE=container` tags the run for
+ * observability and nothing reads it as a decision.
  */
 export function buildRunEnv(env, overrides = {}) {
-  const runEnv = { ...env, RED_AFK_SANDBOX: "none", RED_AFK_LANE: "container" };
-
+  const runEnv = { ...env, RED_AFK_LANE: "container" };
   if (overrides.token) runEnv.GH_TOKEN = overrides.token;
-
-  const model = trimmed(overrides.model);
-  const effort = trimmed(overrides.effort);
-  if (model) runEnv.RED_AFK_MODEL = model;
-  else delete runEnv.RED_AFK_MODEL;
-  if (effort) runEnv.RED_AFK_EFFORT = effort;
-  else delete runEnv.RED_AFK_EFFORT;
-
   return runEnv;
-}
-
-/** Exponential idle backoff for loop mode, capped at `ceiling`. */
-export function nextBackoffSeconds(current, ceiling) {
-  return Math.min(ceiling, current * 2);
 }

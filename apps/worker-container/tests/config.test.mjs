@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildRunEnv, nextBackoffSeconds, resolveConfig } from "../src/config.mjs";
+import { buildRunEnv, resolveConfig } from "../src/config.mjs";
 
 const base = { GH_TOKEN: "gh-token", RED_AFK_TARGET_REPOS: "owner/name", ANTHROPIC_API_KEY: "a" };
 
@@ -32,29 +32,32 @@ describe("resolveConfig", () => {
     expect(() => resolveConfig({ ...base, RED_AFK_TARGET_REPOS: "https://github.com/o/n" })).toThrow(/slug/);
   });
 
-  it("defaults the cadence, queue label and loop mode", () => {
+  it("defaults the cadence, queue label, width and loop mode", () => {
     const config = resolveConfig(base);
     expect(config.cadence).toEqual(["claude", "codex", "opencode"]);
     expect(config.label).toBe("ready-for-agent");
+    expect(config.lane).toBe("");
+    expect(config.target).toBe(1);
+    expect(config.pollSeconds).toBe(15);
     expect(config.loop).toBe(false);
   });
 
-  it("honours an explicit cadence and loop mode", () => {
+  it("honours an explicit cadence, lane, width and loop mode", () => {
     const config = resolveConfig({
       ...base,
       RED_AFK_RUNNER_CADENCE: "opencode,claude-minimax",
       RED_AFK_LOOP: "TRUE",
       RED_AFK_QUEUE_LABEL: "agent-ready",
+      RED_AFK_QUEUE_LANE: "go",
+      RED_AFK_TARGET: "4",
+      RED_AFK_POLL_SECONDS: "5",
     });
     expect(config.cadence).toEqual(["opencode", "claude-minimax"]);
     expect(config.loop).toBe(true);
     expect(config.label).toBe("agent-ready");
-  });
-
-  it("carries the model/effort overrides through unchanged", () => {
-    const config = resolveConfig({ ...base, RED_AFK_MODEL: "MiniMax-M3", RED_AFK_EFFORT: "low" });
-    expect(config.model).toBe("MiniMax-M3");
-    expect(config.effort).toBe("low");
+    expect(config.lane).toBe("go");
+    expect(config.target).toBe(4);
+    expect(config.pollSeconds).toBe(5);
   });
 
   it("clamps the idle backoff bounds to sane numbers", () => {
@@ -69,36 +72,14 @@ describe("resolveConfig", () => {
 });
 
 describe("buildRunEnv", () => {
-  it("forces the no-sandbox lane and tags the container lane", () => {
-    const env = buildRunEnv({ ...base, RED_AFK_SANDBOX: "docker" }, {});
-    expect(env.RED_AFK_SANDBOX).toBe("none");
-    expect(env.RED_AFK_LANE).toBe("container");
+  it("tags the container lane for observability", () => {
+    expect(buildRunEnv(base, {}).RED_AFK_LANE).toBe("container");
   });
 
-  it("passes RED_AFK_MODEL and RED_AFK_EFFORT through when set", () => {
-    const env = buildRunEnv(base, { model: "MiniMax-M3", effort: "low" });
-    expect(env.RED_AFK_MODEL).toBe("MiniMax-M3");
-    expect(env.RED_AFK_EFFORT).toBe("low");
-  });
-
-  it("omits an empty model/effort so the target repo config stays in charge", () => {
-    const env = buildRunEnv({ ...base, RED_AFK_MODEL: "inherited" }, { model: "", effort: undefined });
-    expect(env.RED_AFK_MODEL).toBeUndefined();
-    expect(env.RED_AFK_EFFORT).toBeUndefined();
-  });
-
-  it("keeps the credential env vars the runner CLIs read", () => {
-    const env = buildRunEnv({ ...base, MINIMAX_API_KEY: "m" }, {});
+  it("keeps the credential env vars the daemon and the coder Agents read", () => {
+    const env = buildRunEnv({ ...base, MINIMAX_API_KEY: "m" }, { token: "gh-token" });
     expect(env.ANTHROPIC_API_KEY).toBe("a");
     expect(env.MINIMAX_API_KEY).toBe("m");
     expect(env.GH_TOKEN).toBe("gh-token");
-  });
-});
-
-describe("nextBackoffSeconds", () => {
-  it("doubles up to the ceiling", () => {
-    expect(nextBackoffSeconds(60, 900)).toBe(120);
-    expect(nextBackoffSeconds(600, 900)).toBe(900);
-    expect(nextBackoffSeconds(900, 900)).toBe(900);
   });
 });
