@@ -2,7 +2,7 @@
 "@reddb-io/redskilled": patch
 "@reddb-io/protocol-acp": patch
 "@reddb-io/worker": patch
-"@reddb-io/red-skills-dev": patch
+"@reddb-io/dev": patch
 ---
 
 Every catalog Agent declares its unattended posture, and opencode gets its own DB
