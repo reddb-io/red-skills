@@ -34,6 +34,7 @@ import {
   type GateStageOutcome,
 } from "../engine/gate-stage-order.js";
 import { laneRunModeRefusal } from "../engine/lane-run-mode.js";
+import type { WorktreeDiffStat } from "./worktree-diff.js";
 import type {
   WorkerPublication,
   WorkerPublisher,
@@ -136,6 +137,16 @@ export interface TicketLoopDeps {
   readonly publisher: WorkerPublisher;
   /** Narrates each stage as it resolves, for the Worker log. */
   readonly narrate?: (record: TicketLoopRecord) => Promise<void> | void;
+  /**
+   * Measures the Worktree against the Ticket's base, for the record's `diff`.
+   *
+   * **Once per stage transition, never per render.** The loop is the only place
+   * that knows a stage resolved, which makes it the only place the read is
+   * bounded by the arc rather than by whoever is watching. A measurement that
+   * throws or answers `null` leaves the record without a diff and the cell
+   * absent; it never stops a stage.
+   */
+  readonly measureDiff?: () => Promise<WorktreeDiffStat | null>;
   /** Test seam over the wall clock, so a record's timestamp is not a guess. */
   readonly now?: () => Date;
   /**
@@ -157,6 +168,16 @@ export interface TicketLoopRecord {
   readonly ok: boolean;
   readonly round?: number;
   readonly detail?: string;
+  /**
+   * How much this Worktree holds over its base at the moment the stage
+   * resolved, when {@link TicketLoopDeps.measureDiff} could say.
+   *
+   * Part of the OUTCOME, not an annotation on it: "the gate passed" and "the
+   * gate passed on +1394 -7397" are different facts, and the second is the one
+   * that tells an operator the Worker is producing rather than merely alive.
+   * Absent when nothing measured — never a zero standing in for unknown.
+   */
+  readonly diff?: WorktreeDiffStat;
 }
 
 export type TicketLoopResult =
@@ -213,9 +234,13 @@ export async function runTicketLoop(
   const budget = Math.max(0, Math.trunc(deps.reseedBudget ?? 0));
 
   const note = async (record: TicketLoopRecord): Promise<TicketLoopRecord> => {
-    records.push(record);
-    await deps.narrate?.(record);
-    return record;
+    const diff = deps.measureDiff == null
+      ? null
+      : await deps.measureDiff().catch(() => null);
+    const noted = diff == null ? record : { ...record, diff };
+    records.push(noted);
+    await deps.narrate?.(noted);
+    return noted;
   };
 
   // ---- preflight ---------------------------------------------------------

@@ -546,3 +546,63 @@ describe("the Ticket loop lands nothing nobody judged (#4138)", () => {
     expect(result.outcome).toBe("landed");
   });
 });
+
+describe("the loop measures how much the Worktree holds, stage by stage", () => {
+  it("stamps each record with the diff and narrates the stamped record", async () => {
+    // Once per STAGE TRANSITION, never per render: the loop is the only place
+    // that knows a stage resolved, so the read is bounded by the arc rather
+    // than by whoever is watching. Five stages, five measurements.
+    const measured: number[] = [];
+    const narrated: TicketLoopRecord[] = [];
+    let round = 0;
+    const result = await runTicketLoop(
+      deps({
+        measureDiff: async () => {
+          round += 12;
+          measured.push(round);
+          return { added: round, removed: 1 };
+        },
+        narrate: (record) => void narrated.push(record),
+      }),
+    );
+
+    expect(result.outcome).toBe("landed");
+    expect(measured).toHaveLength(5);
+    expect(narrated.map((record) => record.diff)).toEqual([
+      { added: 12, removed: 1 },
+      { added: 24, removed: 1 },
+      { added: 36, removed: 1 },
+      { added: 48, removed: 1 },
+      { added: 60, removed: 1 },
+    ]);
+    // The narrated record and the retained record are the SAME record; a diff
+    // the Worker log holds and the wire does not is a diff nobody can read.
+    expect((result as { records: readonly TicketLoopRecord[] }).records.map((r) => r.diff))
+      .toEqual(narrated.map((record) => record.diff));
+  });
+
+  it("leaves the record bare when the measurement says nothing, and never stops a stage", async () => {
+    const narrated: TicketLoopRecord[] = [];
+    const result = await runTicketLoop(
+      deps({
+        // A shallow clone, a first commit, a git that never answered — and a
+        // measurement that throws outright. Neither costs the loop its arc.
+        measureDiff: async () => {
+          if (narrated.length % 2 === 0) throw new Error("git is not answering");
+          return null;
+        },
+        narrate: (record) => void narrated.push(record),
+      }),
+    );
+
+    expect(result.outcome).toBe("landed");
+    expect(stages(narrated)).toEqual(["claim", "implement", "gate", "publish", "land"]);
+    for (const record of narrated) expect(record.diff).toBeUndefined();
+  });
+
+  it("stays absent for a loop nobody gave a measurement to", async () => {
+    const narrated: TicketLoopRecord[] = [];
+    await runTicketLoop(deps({ narrate: (record) => void narrated.push(record) }));
+    expect(narrated.every((record) => record.diff === undefined)).toBe(true);
+  });
+});

@@ -99,14 +99,11 @@ export interface DaemonBoundaryAllowance {
  * guard exists to refuse: an entry belongs here only when the daemon is holding
  * a value the client chose, unread.
  */
-export const DAEMON_BOUNDARY_ALLOWANCES: readonly DaemonBoundaryAllowance[] = [
-  {
-    path: "apps/redskilled/src/daemon/lifecycle.ts",
-    family: "tracker-issue",
-    reason:
-      "the heartbeat pulse carries the Worker's own published line verbatim; the daemon stores the field and hands it back without reading it (ADR 0140), which is the opposite of knowing what an issue is",
-  },
-];
+// Empty, and paid for rather than waived: `lifecycle.ts` held the last entry
+// because its pulse fold spelled `pulse.issue` inline. The fold moved to
+// `worker-display.ts`, beside the display type it builds and the coercion it
+// calls, so the daemon's lifecycle no longer names a tracker concept at all.
+export const DAEMON_BOUNDARY_ALLOWANCES: readonly DaemonBoundaryAllowance[] = [];
 
 export interface DaemonBoundaryFile {
   /** Repo-relative path, `/`-separated. */

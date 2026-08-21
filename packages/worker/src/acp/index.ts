@@ -85,3 +85,9 @@ export {
   type WorkerBudgetGraceControl,
   type WorkerBudgetGraceEnvelope,
 } from "./budget-grace.js";
+export {
+  measureWorktreeDiff,
+  parseNumstat,
+  WORKTREE_DIFF_TIMEOUT_MS,
+  type WorktreeDiffStat,
+} from "./worktree-diff.js";

@@ -123,6 +123,11 @@ export const WORKER_BODY_MODULES: readonly WorkerBodyModule[] = [
     defines: ["runWorkerLocalGate"],
     runs: "runs the declared gate stages in the Worker's own Worktree, so the re-seed decision is made where the diff is",
   },
+  {
+    module: "worktree-diff.ts",
+    defines: ["measureWorktreeDiff", "parseNumstat"],
+    runs: "measures the Worker's own signed line pair once per stage transition, because the daemon holds no checkout to derive the statusline's `loc=` cell from",
+  },
 ];
 
 /**

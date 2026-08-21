@@ -111,6 +111,26 @@ export interface RedskilledWorkerDisplay {
   readonly text: number | null;
 }
 
+/**
+ * One pulse: the fields a live Worker's own narration moves on its display.
+ *
+ * A SUBSET of {@link RedskilledWorkerDisplay}, spelled once because both the
+ * turn that mints a pulse and the daemon that folds it in must agree on it —
+ * two inline shapes drifted apart the first time either gained a field.
+ * Everything here is optional and everything absent is left standing: a pulse
+ * says what changed, never what the display is.
+ */
+export interface RedskilledWorkerPulse {
+  readonly workerId: string;
+  readonly line?: string;
+  readonly issue?: string;
+  readonly phase?: string;
+  readonly step?: string;
+  /** The Worker's own signed line pair, measured in its Worktree at the stage. */
+  readonly added?: number;
+  readonly removed?: number;
+}
+
 /** The record the daemon keeps: the published fields, and when they landed. */
 export interface RedskilledWorkerDisplayRecord {
   readonly display: RedskilledWorkerDisplay;
@@ -215,6 +235,33 @@ export function coerceWorkerDisplay(value: unknown): RedskilledWorkerDisplay | n
   }
   display.failed = raw.failed === true;
   return display as unknown as RedskilledWorkerDisplay;
+}
+
+/**
+ * Fold one pulse into the display the daemon already holds. PURE.
+ *
+ * A pulse says WHAT CHANGED. Every field it leaves unstated keeps the value the
+ * last publish gave it, which is what lets a Worker narrate a stage without
+ * re-stating its runner, its model and its start time on every beat.
+ *
+ * The signed pair travels here rather than being derived: the daemon holds no
+ * checkout, so `loc=` can only be what the Worker measured in its own Worktree.
+ * A pulse with no pair leaves the last measurement standing — a Worker mid-stage
+ * has not become unmeasured — and a Worker nobody ever measured keeps a `null`
+ * that renders as an ABSENT cell, never as `loc=0`.
+ */
+export function applyWorkerPulse(
+  previous: RedskilledWorkerDisplay | undefined,
+  pulse: RedskilledWorkerPulse,
+): RedskilledWorkerDisplay | null {
+  return coerceWorkerDisplay({
+    ...(previous ?? {}),
+    ...(pulse.issue == null ? {} : { issue: pulse.issue }),
+    ...(pulse.phase == null ? {} : { phase: pulse.phase }),
+    ...(pulse.step == null ? {} : { step: pulse.step }),
+    ...(pulse.added == null ? {} : { added: pulse.added }),
+    ...(pulse.removed == null ? {} : { removed: pulse.removed }),
+  });
 }
 
 /**

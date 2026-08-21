@@ -62,7 +62,7 @@ interface StubDaemon {
   readonly claims: { issue: number; body: string }[];
   readonly published: RedskilledPublishRequest[];
   readonly landed: RedskilledLandRequest[];
-  readonly stages: { stage: string; ok: boolean; round?: number; detail?: string }[];
+  readonly stages: { stage: string; ok: boolean; round?: number; detail?: string; added?: number; removed?: number }[];
   readonly denials: string[];
 }
 
@@ -148,7 +148,10 @@ async function startWorker(worktree: string, pathPrefix: string): Promise<Runnin
     .onNotification(methods.client.session.update, ({ params }) => {
       const meta = (params._meta as {
         redskills?: {
-          ticketStage?: { stage: string; ok: boolean; round?: number; detail?: string };
+          ticketStage?: {
+          stage: string; ok: boolean; round?: number; detail?: string;
+          added?: number; removed?: number;
+        };
           terminalPolicy?: { reason?: string };
         };
       } | undefined)?.redskills;
@@ -278,6 +281,14 @@ describe("a real `redskilled acp-worker` running one Ticket", () => {
       expect(worker.daemon.stages.map((stage) => stage.stage))
         .toEqual(["claim", "implement", "gate", "publish", "land"]);
       expect(worker.daemon.stages.every((stage) => stage.ok)).toBe(true);
+
+      // and how much it had produced when each stage resolved. The claim is
+      // taken before anything is written, so its honest answer is a measured
+      // zero; every stage after the implementer's one-line file is `+1 -0`.
+      // This is `loc=` at its source: the Worker measuring its own Worktree.
+      expect(worker.daemon.stages.map((stage) => [stage.added, stage.removed])).toEqual([
+        [0, 0], [1, 0], [1, 0], [1, 0], [1, 0],
+      ]);
 
       // the dev bundle was never the body, and never reached for
       expect(worker.argv).toContain("acp-worker");
