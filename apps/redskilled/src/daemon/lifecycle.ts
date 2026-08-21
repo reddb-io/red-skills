@@ -219,6 +219,7 @@ import {
 import { replaceWithViableSuccessor } from "./takeover.js";
 import { createRemotePollDeadline } from "./remote-poll.js";
 import { createConfiguredRedskilledSelfPingMonitor } from "./self-ping.js";
+import { appendSyntheticPostmortem } from "./synthetic-postmortem.js";
 import { resolveUnitDeath } from "./unit-death.js";
 // Error moved to ./daemon/errors.ts — keep re-export for backward compat
 export { RedskilledAlreadyRunningError } from "../daemon/errors.js";
@@ -1574,7 +1575,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       forgetWorker(worker.worker_id);
       const pgid = worker.pgid ?? worker.pid;
       record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
-        `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
+        `process group ${pgid} stopped, so process group ${pgid} may still be alive`, { deliberate: true });
     });
     return true;
   }
@@ -1738,9 +1739,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         announce: (line) => process.stderr.write(line),
       });
     }
-    void eventLane
-      .recordWorker(input)
-      .catch(() => undefined);
+    void eventLane.recordWorker(input).catch(() => undefined);
+    appendSyntheticPostmortem((row) => void eventLane.recordWorker(row).catch(() => undefined), input);
     projectHooks.onEvent(kind, worker);
     hostEventSinks.onEvent(kind, worker);
   }
@@ -2461,7 +2461,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       const worker = workers.get(workerId);
       const removed = worker != null;
       if (worker != null) forgetWorker(workerId);
-      if (worker) record("worker-death", worker, "released by the daemon");
+      if (worker) record("worker-death", worker, "released by the daemon", { deliberate: true });
       return removed;
     },
     workerCount: () => workers.size,

@@ -143,9 +143,11 @@ describe("a daemon restart re-attaches to its live Workers", () => {
 
     expect(daemon.workerCount()).toBe(0);
     const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.map((event) => event.event)).toEqual(["worker-birth", "worker-death"]);
+    // Nothing witnessed the end, so the death carries a postmortem too (#4176).
+    expect(events.map((event) => event.event)).toEqual(["worker-birth", "worker-death", "worker-postmortem"]);
     expect(events[1]!.worker_id).toBe("w-gone");
     expect(events[1]!.detail).toMatch(/no daemon was watching/);
+    expect(events[2]).toMatchObject({ worker_id: "w-gone", failure_mode: "host-vanished" });
   });
 });
 
@@ -387,7 +389,10 @@ describe("a sweep retires a re-attached Worker the host stopped confirming", () 
     expect(retired.map((worker) => worker.worker_id)).toEqual(["w-fading"]);
     expect(daemon.workerCount()).toBe(0);
     const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.at(-1)!.event).toBe("worker-death");
+    expect(events.map((event) => event.event)).toContain("worker-death");
+    // A Worker the host stopped confirming died silently (#4176).
+    expect(events.at(-1)!.event).toBe("worker-postmortem");
+    expect(events.at(-1)!.detail).toContain("failure-mode=");
   });
 });
 

@@ -78,7 +78,10 @@ describe("a record whose Worker is gone is reaped on the liveness sweep", () => 
     // No restart was needed, and the slot is free.
     expect(daemon.workerCount()).toBe(0);
     const events = await readRedskilledEvents(paths.eventLanePath);
-    expect(events.at(-1)!.event).toBe("worker-death");
+    expect(events.map((event) => event.event)).toContain("worker-death");
+    // A reaped record is a death nobody witnessed, so it carries a postmortem (#4176).
+    expect(events.at(-1)!.event).toBe("worker-postmortem");
+    expect(events.at(-1)!.detail).toContain("failure-mode=");
   });
 
   it("frees the slot before the birth decision, not only when the machine idles", async () => {

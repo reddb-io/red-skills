@@ -82,6 +82,7 @@ export function decodeHostEventRow(record: ToonlRecord): RedskilledHostEvent {
     base_head_sha: text(record.base_head_sha),
     base_commits_ahead: numberOrNull(record.base_commits_ahead),
     heal_kind: text(record.heal_kind),
+    failure_mode: text(record.failure_mode),
     detail: text(record.detail),
     // Legacy rows read exit facts as absent, never as a clean zero exit.
     exit_code: numberOrNull(record.exit_code),

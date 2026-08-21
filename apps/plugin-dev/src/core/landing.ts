@@ -41,6 +41,7 @@ import { resolveLandSerialization, type LandLock } from "./land-lock.js";
 import { landHeadPrecondition } from "./land-precondition.js";
 import { landingMergeTitle } from "./landing-merge-title.js";
 import { resolveRemoteBranchTip } from "./stale-head.js";
+import { zombieLandingRefusal, type ZombieWatch } from "./zombie-reconciliation.js";
 import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { restagePiPackages } from "./pi-package-restage.js";
@@ -160,7 +161,6 @@ export interface LandingDeps {
    * aborts the landing and routes through the existing recovery instead of merging
    * an unvalidated or stale-main-broken result. Absent (the default) → skipped,
    * so existing callers that have not yet wired the dep are unchanged.
-   *
    * Called with the path of the already-integrated worktree:
    *   - direct path: the detached landing worktree after `integrateOrigin`
    *   - PR path: the isolated rebase worktree after `preMergeRebase`
@@ -235,6 +235,8 @@ export interface LandingInput {
   branch: string;
   /** The gate-validated worker tip (reconcile; #4134 stale-head guard). */
   validatedBranchTip?: string;
+  /** The world this Worker forked from, when the caller can state it (#4176). */
+  zombieWatch?: ZombieWatch;
   /** Resolved base branch (lock > pin > main). */
   base: string;
   /** Immutable base commit shared by the Landing integration and intent geometry. */
@@ -350,7 +352,11 @@ export type LandingResult =
         // landing would merge — no row, a voided one, a judgement of a
         // different tree, or a verifier that refused or could not conclude.
         // `message` carries the refusal and the repair it names.
-        | "unverified-head";
+        | "unverified-head"
+        // #4176: the claim was released or taken, the Ticket closed, or the base
+        // generation moved while this Worker worked. Landing would merge an
+        // account of a world that is gone; salvage is reconciled instead.
+        | "zombie";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -386,22 +392,18 @@ export type LandingPostMergeValidation =
  * pre_merge hook on the `openPr` flag — NOT the lock, which only resolved `base`
  * upstream — and neither destructively touches the primary checkout's working
  * tree (issue #572, the primary branch is sacred):
- *
  *   1. pushAttempt — make the worker branch's origin state certain so
  *      landMerge/landPr have a ref to merge.
  *   2. fireHook("pre_merge") — abort → { ok:false, reason:"pre_merge-abort" }.
  *   3. SERIALIZE the land (#1337) — native merge queue when `<base>` has one, else
  *      the global land-lock when wired, so no two workers integrate-and-push into
- *      the same base concurrently. Everything after this point is the critical
- *      section; the lock is always released, on success and on failure alike.
- *
+ *      the same base concurrently. Everything after is the critical section; the
+ *      lock is always released, on success and on failure alike.
  *   openPr=true → {@link landAdminPr}. The PR is admin-merged REMOTELY into
  *   `<base>`, so there is nothing to integrate locally first; the prior pre-merge
  *   `merge --ff-only origin/<base>` is dropped (it failed the whole landing on a
- *   diverged primary, #572). After a successful non-queued merge, landPr
- *   promotes the fleet-owned `red-trunk` mirror with `update-ref`, never the
- *   primary checkout.
- *
+ *   diverged primary, #572). After a successful non-queued merge, landPr promotes
+ *   the fleet-owned `red-trunk` mirror with `update-ref`, never the primary.
  *   openPr=false → {@link landDirectInWorktree}. The merge / push / rollback run
  *   inside an ISOLATED detached worktree (makeLandingWorktree) at `<base>`, so the
  *   `reset --hard` on a push reject only rewinds that throwaway worktree — the
@@ -428,16 +430,13 @@ export async function doLanding(
   });
   if (!pushed.ok) {
     // Carry the REAL failure into the terminal record (#2576): a generic
-    // land-failed with no diagnostic was being misread as a merge conflict.
-    //
-    // #2811: route the push refusal to `infra`, NOT `land-failed`. `land-failed`
-    // funnels into the merge-conflict terminal, so the record said
-    // `kind: merge-conflict` under a summary stating the cause was the push and
-    // not a merge conflict, and told the next human to resolve a conflict that
-    // does not exist. `infra` is the honest kind for a push that never landed a
-    // byte, and its next-action ("fix the failure, then requeue") applies.
-    // `pushed.status` keeps "the git call never ran" distinct from "the remote
-    // refused it" — both were previously narrated as *the push failed*.
+    // land-failed with no diagnostic was being misread as a merge conflict, and
+    // #2811 routes the push refusal to `infra` rather than `land-failed`, which
+    // funnels into the merge-conflict terminal and told the next human to resolve
+    // a conflict that does not exist. `infra` is the honest kind for a push that
+    // never landed a byte, and its next-action ("fix the failure, then requeue")
+    // applies. `pushed.status` keeps "the git call never ran" distinct from "the
+    // remote refused it" — both were once narrated as *the push failed*.
     const detail = pushed.warn ? `: ${pushed.warn}` : "";
     return {
       ok: false,
@@ -455,6 +454,9 @@ export async function doLanding(
   // both fail for one reason: the merged tree is not the judged tree.
   const refusal = await landHeadPrecondition(deps.mergeExec, input, deps.countersignGate);
   if (refusal) return { ok: false, reason: refusal.reason, locked, message: refusal.message };
+  // #4176: a Worker that returns after the world moved lands nothing.
+  const zombie = await zombieLandingRefusal(deps.mergeExec, input);
+  if (zombie != null) return { ok: false, reason: "zombie", locked: input.locked, message: zombie };
 
 
   // 2. pre_merge hook.
@@ -468,12 +470,10 @@ export async function doLanding(
   // fresh base, revalidate the integrated tree, merge, push — is the critical
   // section two near-simultaneous workers used to race in: A pushes, B's push is
   // rejected non-fast-forward, B re-integrates, and overlapping diffs conflict.
-  //
   //   native-merge-queue → the forge serializes; take no local lock.
   //   land-lock          → only one worker at a time enters, so each rebases onto
   //                        a tip no concurrent land can move underneath it.
   //   unserialized       → no lock wired (pre-#1337 default): land as before.
-  //
   // A wait timeout ABORTS the landing as `infra` — pushing unserialized after
   // failing to serialize would reintroduce exactly the race the lock exists for.
   const serialization = resolveLandSerialization({
