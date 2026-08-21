@@ -104,6 +104,7 @@ describe("operator-scoped daemon event sinks", () => {
         workspacePath: root,
         notifications: ["worker-birth"],
         platform: "linux",
+        commandAvailable: () => true,
       },
     });
     daemons.push(daemon);
@@ -126,5 +127,45 @@ describe("operator-scoped daemon event sinks", () => {
     expect(JSON.parse(launched[1]!.spec.input!)).toMatchObject({
       workers: [{ worker_id: "source" }],
     });
+  });
+
+  it("degrades once and permanently when the notification binary is absent (#4153)", async () => {
+    const root = await scratch("redskilled-machine-notification-absent-");
+    const workspace = await scratch("redskilled-machine-notification-absent-workspace-");
+    const launched: LaunchWorkerOptions[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths: resolveRedskilledPaths({
+        env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+        runtimeDir: root,
+      }),
+      launch: recordingLaunch(launched),
+      unitInventory: () => [],
+      sampleMs: 0,
+      hostEventSinks: {
+        workspacePath: root,
+        notifications: ["worker-birth"],
+        platform: "linux",
+        commandAvailable: () => false,
+      },
+    });
+    daemons.push(daemon);
+
+    daemon.startWorker({
+      worker_id: "source-a",
+      project_label: "acme/widgets",
+      workspace_path: workspace,
+      command: "work",
+    });
+    daemon.startWorker({
+      worker_id: "source-b",
+      project_label: "acme/widgets",
+      workspace_path: workspace,
+      command: "work",
+    });
+    await daemon.flushEvents();
+
+    // Two eligible events, ZERO sink Workers: an absent optional binary is a
+    // one-line degradation, never a crash-looping birth in the breaker.
+    expect(launched.map((launch) => launch.spec.project_label)).toEqual(["acme/widgets", "acme/widgets"]);
   });
 });

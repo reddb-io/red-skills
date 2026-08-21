@@ -1,4 +1,6 @@
 /** Operator-scoped programs fired from the daemon's public lifecycle vocabulary. */
+import { constants, accessSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import {
   REDSKILLED_PUBLIC_HOST_EVENT_KINDS,
@@ -18,6 +20,8 @@ export interface RedskilledHostEventSinks {
   readonly notifications?: readonly RedskilledPublicHostEventKind[];
   /** Test seam for native notification command selection. */
   readonly platform?: NodeJS.Platform;
+  /** Test seam over the PATH probe. Production checks the real filesystem. */
+  readonly commandAvailable?: (binary: string) => boolean;
 }
 
 export interface RedskilledHostEventSinkRuntime {
@@ -74,6 +78,13 @@ export function createRedskilledHostEventSinkRuntime(options: {
   readonly refuse: (detail: string) => void;
 }): RedskilledHostEventSinkRuntime {
   const sinkWorkers = new Set<string>();
+  // #4153: a headless host has no notification binary, and firing the sink
+  // anyway put an ENOENT death through the Worker birth pipeline every few
+  // minutes forever — crash-loop breaker, backoff, re-arm, again. An optional
+  // notification degrades: probed ONCE per boot, refused out loud ONCE, and
+  // never born again on this runtime.
+  let nativeNotificationsUnavailable = false;
+  const commandAvailable = options.declaration?.commandAvailable ?? executableOnPath;
 
   function fire(template: RedskilledLaunchTemplate, state: RedskilledHostState, kind: RedskilledPublicHostEventKind): void {
     const workerId = mintHostWorkerId(options.liveWorkerIds());
@@ -115,14 +126,47 @@ export function createRedskilledHostEventSinkRuntime(options: {
       if (hook == null && !notify) return;
       const state = options.hostState();
       if (hook != null) fire(hook, state, publicKind);
-      if (notify) {
+      if (notify && !nativeNotificationsUnavailable) {
         const template = nativeNotificationTemplate(publicKind, state, options.declaration?.platform);
         if (template == null) {
           options.refuse(`operator-scoped ${publicKind} notification has no native sink on platform ${process.platform}`);
+        } else if (!commandAvailable(template.argv[0]!)) {
+          nativeNotificationsUnavailable = true;
+          options.refuse(
+            `native notifications unavailable on this host: ${template.argv[0]} is not on PATH; ` +
+              "disabling the notification sink for this boot",
+          );
         } else {
           fire(template, state, publicKind);
         }
       }
     },
   };
+}
+
+/** Whether one binary resolves on the daemon's PATH; absolute paths are trusted as-is. */
+function executableOnPath(binary: string): boolean {
+  if (isAbsolute(binary) || binary.includes("/") || binary.includes("\\")) {
+    try {
+      accessSync(binary, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    if (directory === "") continue;
+    for (const extension of extensions) {
+      try {
+        accessSync(join(directory, `${binary}${extension}`), constants.X_OK);
+        return true;
+      } catch {
+        // Keep walking the PATH; a miss in one directory proves nothing.
+      }
+    }
+  }
+  return false;
 }
