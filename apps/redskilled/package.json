@@ -33,6 +33,7 @@
     "./reattach": "./src/reattach.ts",
     "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
+    "./stable-bundle": "./src/stable-bundle.ts",
     "./statusline-payload": "./src/statusline-payload.ts",
     "./supervision": "./src/supervision.ts",
     "./worker-display": "./src/worker-display.ts",

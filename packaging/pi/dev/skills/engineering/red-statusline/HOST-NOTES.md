@@ -8,9 +8,9 @@ and rationale outside the hot path.
 
 The statusline data surface has two distinct client paths with different render-path constraints:
 
-**1. Command-backed host (`statusLine` in `.claude/settings.json`)** — one host producer. The `dev bundle statusline` subcommand renders the local bedrock before appending the daemon-fed tail: stdin supplies model, effort, context, and subscription windows; local git supplies repository, branch, and diff; one bounded local socket read supplies remote counters and Worker rows (ADR 0141). The bedrock renders even when redskilled is absent, with `rsk=no-daemon` stating the missing tail.
+**1. Command-backed host (`statusLine` in `.claude/settings.json`)** — one host producer. The `redskilled` bundle's `statusline` subcommand renders the local bedrock before appending the daemon-fed tail: stdin supplies model, effort, context, and subscription windows; local git supplies repository, branch, and diff; one bounded local socket read supplies remote counters and Worker rows (ADR 0141). The bedrock renders even when redskilled is absent, with `rsk=no-daemon` stating the missing tail.
 
-**The tail is never amputated when data exists.** A read that is not `live` keeps every row the daemon sent and wears its situation as a LEADING badge — `age=4m · …` when lateness is the message, `rsk=<state> · …` otherwise. A bare `rsk=<state>` line is what remains only when there is genuinely nothing to draw. The state vocabulary is written for the operator, not for the mechanism: `no-daemon` (the socket did not answer), `connecting` (probe in flight), `joining` (handshake in flight), `no-producer` (daemon up, nothing draining this repository), `stale` (real data past its window), and `live`, which renders no badge at all. The shell invokes the dev bundle once — invoking the daemon CLI beneath it repeats the daemon document (#3559). Keep this path on the local socket rather than the MCP server (ADR 0132 decision 9); a `statusLine` entry is a shell command, and an MCP handshake per render tick would make server startup part of the prompt path.
+**The tail is never amputated when data exists.** A read that is not `live` keeps every row the daemon sent and wears its situation as a LEADING badge — `age=4m · …` when lateness is the message, `rsk=<state> · …` otherwise. A bare `rsk=<state>` line is what remains only when there is genuinely nothing to draw. The state vocabulary is written for the operator, not for the mechanism: `no-daemon` (the socket did not answer), `connecting` (probe in flight), `joining` (handshake in flight), `no-producer` (daemon up, nothing draining this repository), `stale` (real data past its window), and `live`, which renders no badge at all. The shell invokes the redskilled bundle once — invoking a second renderer beneath it repeats the daemon document (#3559). Keep this path on the local socket rather than the MCP server (ADR 0132 decision 9); a `statusLine` entry is a shell command, and an MCP handshake per render tick would make server startup part of the prompt path.
 
 **2. MCP `statusline_aggregate` tool** — an agent/UI surface. The `dev:afk` MCP server returns structured project data rather than a rendered host line. Host-only stdin facts such as model, context, and subscription windows stay in the command-backed bedrock; callers that need daemon host state use the daemon-backed structured surfaces.
 
@@ -65,17 +65,19 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); if [ -n \"$b\" ]; then \"$N\" \"$b\" statusline; else echo \"redskilled unreachable — Worker state unknown\"; fi; exit 0'",
+    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; d=$(ls -1 \"$HOME\"/.red/redskilled/bundles/redskilled-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); if [ -n \"$d\" ]; then \"$N\" \"$d\" statusline; else echo \"redskilled unreachable — Worker state unknown\"; fi; exit 0'",
     "refreshInterval": 60
   }
 }
 ```
 
-**Why one host producer:** the dev command owns the permanent bedrock/tail seam (ADR 0141). It renders facts already available on the machine, probes redskilled once with a hard deadline, and composes the returned header tail and Worker rows. The adapter therefore runs only `dev … statusline`. The retired `dev … statusline --no-workers ; redskilled … statusline` recipe now prints the daemon document twice and lets the daemon's running version replace the bundle identity operators need for skew diagnosis (#3559).
+**Why one host producer, and why it is the redskilled bundle:** the daemon bundle owns the permanent bedrock/tail seam (ADR 0141). It renders facts already available on the machine, reads its own daemon once with a hard deadline, and composes the returned header tail and Worker rows in one process. The adapter therefore runs that bundle's `statusline` subcommand and nothing else. The retired recipe — a dev bundle muted with `--no-workers`, the daemon's own `statusline` echoed under it — printed the daemon document twice (#3559), and the `dev … statusline` form that replaced it named a runtime **ADR 0147 deleted** — `dev-3.21.0.bundle.min.mjs` is the last dev bundle that will ever exist, so every machine still holding one kept rendering a 3.21.0-era line against v4 state lanes it cannot read, frozen at that version and silent about Workers.
 
 **Why it ends in `; exit 0`:** the rendered line is the point, and a host that cannot render one is not a failed command. Without the explicit success the command's last statement is a bare test whose status becomes the exit status of the whole `sh -c` — a status producer that rendered its header correctly and still reported failure (#3073). The exit status says what the `else` branch already says in words. **Keep this command byte-identical to the copy in the `/red-setup` interview** — `apps/plugin-dev/tests/statusline-command-doc.test.ts` fails when the two drift, or when either one can still exit non-zero.
 
-**Why the glob resolves anything at all:** the `SessionStart` warm path writes the runtime bundles under the cache directory, and the published command invokes the newest cached `dev-*` bundle. `apps/plugin-dev/tests/statusline-command-doc.test.ts` provisions a fake host through the real `ensureBundle` path and proves that the documented glob resolves what provisioning writes. The `redskilled` bundle is the ANCHOR the warm path fetches (ADR 0147 deleted the dev runtime bundle); it is intentionally absent from the host command because the dev bundle reaches that process through its socket.
+**Why the glob resolves anything at all — and why it is the daemon's home, not a cache:** every writer that points a systemd `ExecStart` at a bundle first stabilizes a copy into `~/.red/redskilled/bundles/` under the name `redskilled-<version>.bundle.min.mjs`, because an absolute path into an npx or mise cache is a dead unit wearing a longer name (#3554). That directory is therefore the one copy on the machine nothing prunes, which is exactly the property a render path needs. `apps/plugin-dev/tests/statusline-command-doc.test.ts` provisions a fake host through the daemon's own `stabilizeRedskilledEntry` and proves that the documented glob resolves what that writer mints — a literal would only prove someone typed the same string twice.
+
+**An old `dev-*` bundle on the machine is now inert.** The command no longer globs it, so nothing resolves it; it costs only disk. Reclaim it with one line: `rm -f ~/.cache/red-skills/bundles/dev-*.bundle.min.mjs`.
 
 **Why the `else` branch prints a sentence:** no resolved bundle means this machine has no statusline renderer on it, and a blank line is indistinguishable from a machine with no Workers — the operator reads an outage as calm. So the host states the absence in the daemon's own words:
 
@@ -85,7 +87,7 @@ redskilled unreachable — Worker state unknown
 
 That is the same sentence the daemon's own `statusline` command prints when the socket does not answer, so the operator reads one absence however deep the failure is. It is **not** the host rendering a Worker row: ADR 0130 rule 10 still holds, and there is no Worker here to render.
 
-**Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** the command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
+**Why this shape (resolved-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, never a fetch):** the command above resolves an already-present file by design (ADR 0084) — never alter it to fetch synchronously in the render path.
 
 Use a 60s refresh interval because the producer reads cached state: 5s ticks burn CPU and repeat calls without new information at that cadence, while 60s matches the real rate of change of fleet/PR state.
 
@@ -103,7 +105,7 @@ printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PW
 
 It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`) and, below it, one row per live Worker — each with its progress bar, `run=`/`org=`/`iss=`, `phase·activity`, elapsed and `hb=` — or nothing below the header on a machine running no Workers. It must also **exit 0** — check `echo $?` — including on a host where no bundle is cached yet, which prints the stated absence instead.
 
-**Report what this probe proves, and what it does not.** A successful render **proves the command, not the host wiring**: the host is a separate reader that picked up `.claude/settings.json` at its own session start. Left unqualified, a passing probe is worse than no probe — it is a true result that points away from the real cause, sending the operator to hunt `settings.local.json` precedence, the user-level settings, and `.gitignore` while the only stale thing is the process (#3075). So a blank line in the current session **after** this probe passes means restart, not misconfiguration. When only the Worker rows are missing, run the dev command once and inspect its `rsk=` lifecycle token; use the npm-prefixed daemon diagnostic separately only for comparison, never as a second configured producer. Under `NO_COLOR` the header keeps the same content without ANSI styling.
+**Report what this probe proves, and what it does not.** A successful render **proves the command, not the host wiring**: the host is a separate reader that picked up `.claude/settings.json` at its own session start. Left unqualified, a passing probe is worse than no probe — it is a true result that points away from the real cause, sending the operator to hunt `settings.local.json` precedence, the user-level settings, and `.gitignore` while the only stale thing is the process (#3075). So a blank line in the current session **after** this probe passes means restart, not misconfiguration. When only the Worker rows are missing, run the same command once and inspect its `rsk=` lifecycle token; use the npm-prefixed daemon diagnostic separately only for comparison, never as a second configured producer. Under `NO_COLOR` the header keeps the same content without ANSI styling.
 
 ## Claude Code Rationale
 
@@ -125,27 +127,21 @@ misses does it scan the common install roots (nvm, fnm, volta, asdf, nodenv,
 Homebrew, `/usr/local`, `/usr`), newest wins. So the line renders regardless of
 how Node was installed or how the host shell was launched.
 
-**Why the cached bundle, not `afk.mjs` directly.** Since ADR 0038, the installed
-`afk.mjs` is a tiny **launcher that fetches** the real runtime bundle from the
-GitHub release on first use (caching it at
-`~/.cache/red-skills/bundles/dev-<version>.bundle.min.mjs`). Pointing the
-statusLine straight at the launcher means **every plugin update** lands a new
-version whose bundle is not cached yet, so the launcher tries a **synchronous
-network download inside the statusline render** — which blows the render's tight
-timeout (blank statusline), or fails outright if that version's release asset is
-not published yet. The command instead runs the **highest-version
-already-fetched bundle** (`ls -1 …/.cache/red-skills/bundles/dev-*.bundle.min.mjs | sort -V | tail -1`
+**Why a resolved bundle, never a launcher.** A launcher that fetches on a cold
+cache puts a **synchronous network download inside the statusline render** —
+which blows the render's tight timeout (blank statusline), or fails outright when
+that version is not published yet. So the command resolves a file that is already
+on disk and runs it: the **highest-version stable copy** the daemon keeps
+(`ls -1 ~/.red/redskilled/bundles/redskilled-*.bundle.min.mjs | sort -V | tail -1`
 — `sort -V` picks the highest semver, NOT `ls -t` which picks newest-by-mtime and
-can resolve an OLD version when an older dir was touched/re-extracted more recently) —
-no network in the hot path, so an update never blanks the line; it keeps showing
-the last good bundle until a normal `afk` run (or a SessionStart pre-fetch)
-caches the new one. It falls back to the launcher only when the cache is empty
-(first-ever install), to bootstrap. The project root is **not** passed as an
-argument: the AFK `statusline` subcommand reads it from `workspace.project_dir`
-in the JSON Claude Code pipes on stdin, which the `sh -c` wrapper forwards
-intact.
+can resolve an OLD version when an older file was touched or re-written more
+recently). No network in the hot path, so an upgrade never blanks the line: it
+keeps showing the last stabilized bundle until the daemon files the new one. The
+project root is **not** passed as an argument: the `statusline` subcommand reads
+it from `workspace.project_dir` in the JSON Claude Code pipes on stdin, which the
+`sh -c` wrapper forwards intact.
 
-This respects ADR 0084: the documented command stays cached-bundle-first and
+This respects ADR 0084: the documented command resolves what is already there and
 never fetches synchronously in a render path.
 
 ## Codex Adapter Recipe

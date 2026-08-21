@@ -37,15 +37,10 @@ latest_cache_launcher() {
   done | sort -V | tail -1 | cut -f2-
 }
 
-latest_bundle() {
-  local bundle
-  for bundle in "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs; do
-    [ -f "$bundle" ] || continue
-    local version="${bundle##*/dev-}"
-    version="${version%.bundle.min.mjs}"
-    printf '%s\t%s\n' "$version" "$bundle"
-  done | sort -V | tail -1 | cut -f2-
-}
+# There is deliberately NO cached-bundle fallback here. ADR 0147 deleted the dev
+# runtime bundle, so `dev-3.21.0.bundle.min.mjs` is the last one that will ever
+# exist and resolving it runs a 3.21.0-era binary against v4 state. A machine
+# that still holds one gets the message below, not silently old code.
 
 launcher="$(env_launcher || true)"
 if [ -n "$launcher" ]; then
@@ -57,18 +52,15 @@ if [ -n "$launcher" ]; then
   exec node "$launcher" "$@"
 fi
 
-bundle="$(latest_bundle || true)"
-if [ -n "$bundle" ]; then
-  exec node "$bundle" "$@"
-fi
-
 cat >&2 <<'EOF'
 red-skills-dev: no RedSkills dev runtime found.
 
 Expected one of:
 - an installed dev plugin under ~/.codex/plugins/cache/red-skills/dev/*
 - an installed dev plugin under ~/.claude/plugins/cache/red-skills/dev/*
-- a warmed bundle under ~/.cache/red-skills/bundles/dev-*.bundle.min.mjs
+
+The dev runtime bundle was deleted by ADR 0147; any leftover
+~/.cache/red-skills/bundles/dev-*.bundle.min.mjs is inert and safe to remove.
 
 Fallback:
   npx -y -p @reddb-io/red-skills@<version> red-skills-dev "$@"

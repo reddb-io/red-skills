@@ -1,17 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
-  type BundleIO,
-  bundleFileName,
-  DEV_WARM_BUNDLE,
-  companionBundlePlugins,
-  ensureBundle,
-  packagedBundleRelPath,
-} from "@reddb-io/shared/bundle-fetch.js";
+  redskilledStableBundleDir,
+  redskilledStableBundleName,
+  stabilizeRedskilledEntry,
+} from "@reddb-io/redskilled/stable-bundle";
 import { REDSKILLED_RENDER_ABSENCE } from "@reddb-io/redskilled-render";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 import {
@@ -34,7 +31,7 @@ import {
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 
-/** The version a provisioned host would have warmed. Any pin works — it is keyed, not parsed. */
+/** The version a provisioned host would have filed. Any pin works — it is keyed, not parsed. */
 const PROVISIONED_VERSION = "9.9.9";
 
 const scratch: string[] = [];
@@ -49,12 +46,15 @@ function scratchHome(): string {
   return home;
 }
 
-/** A fake HOME holding a dev bundle that prints a line and NO daemon bundle. */
-function hostWithDevBundleOnly(line: string): string {
+/** A fake HOME holding one daemon bundle that prints a line. */
+function hostWithDaemonBundleOnly(line: string): string {
   const home = scratchHome();
-  const bundles = join(home, ".cache", "red-skills", "bundles");
+  const bundles = redskilledStableBundleDir(home);
   mkdirSync(bundles, { recursive: true });
-  writeFileSync(join(bundles, "dev-1.0.0.bundle.min.mjs"), `console.log(${JSON.stringify(line)});\n`);
+  writeFileSync(
+    join(bundles, redskilledStableBundleName("1.0.0")),
+    `console.log(${JSON.stringify(line)});\n`,
+  );
   return home;
 }
 
@@ -64,44 +64,29 @@ function hostWithNoRenderer(): string {
 }
 
 /**
- * A HOME provisioned the way a real one is: by running the SAME `ensureBundle`
- * the `SessionStart` warm hook runs, against a fake npm package. Only npm is
- * faked — the cache layout, the filenames and the companion set are the real
- * ones, which is the whole point: this is the render command's view of
- * provisioning, not a restatement of it.
+ * A HOME provisioned the way a real one is: by running the SAME
+ * `stabilizeRedskilledEntry` every unit writer runs before it points an
+ * `ExecStart` at a bundle. Only the resolved source is faked — the directory,
+ * the filename and the version attribution are the daemon's own, which is the
+ * whole point: this is the render command's view of provisioning, not a
+ * restatement of it.
  */
-async function provisionedHost(bundleSource: (plugin: string) => string): Promise<string> {
+function provisionedHost(line: string): string {
   const home = scratchHome();
-  const io: BundleIO = {
-    async materialize(_spec, stagingDir) {
-      const root = join(stagingDir, "node_modules", "@reddb-io", "red-skills");
-      for (const plugin of ["dev", ...companionBundlePlugins("dev")]) {
-        const file = join(root, packagedBundleRelPath(plugin));
-        mkdirSync(dirname(file), { recursive: true });
-        writeFileSync(file, bundleSource(plugin));
-      }
-      return root;
-    },
-    async readFile(path) {
-      return new Uint8Array(readFileSync(path));
-    },
-    async writeFile(path, bytes) {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, bytes);
-    },
-    async exists(path) {
-      return existsSync(path);
-    },
-    sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
-    async fetchText() {
-      throw new Error("the render path does no network work (ADR 0084)");
-    },
-  };
-  await ensureBundle(io, {
-    plugin: "dev",
-    version: PROVISIONED_VERSION,
-    cacheDir: join(home, ".cache", "red-skills", "bundles"),
-  });
+  // ADR 0130 Amendment 2: the home has two creators and stabilization is not
+  // one of them, so a test that wants the copy must place the home first.
+  mkdirSync(redskilledHomeDir(home), { recursive: true, mode: 0o700 });
+  const resolved = join(home, "npx-cache", "redskilled.bundle.min.mjs");
+  mkdirSync(join(home, "npx-cache"), { recursive: true });
+  writeFileSync(resolved, `console.log(${JSON.stringify(line)});\n`);
+
+  const stabilized = stabilizeRedskilledEntry(
+    { command: "node", args: [resolved], entry: resolved },
+    { version: PROVISIONED_VERSION, homeDir: home },
+  );
+  expect(stabilized.entry, "the daemon did not file a stable copy").toBe(
+    join(redskilledStableBundleDir(home), redskilledStableBundleName(PROVISIONED_VERSION)),
+  );
   return home;
 }
 
@@ -182,8 +167,8 @@ describe("documented statusLine command (#3073)", () => {
     expect(unterminatedStatuslineCommands(sites), describeStatuslineTermination(sites)).toEqual([]);
   });
 
-  it("prints the header and exits 0 on a host with no cached daemon bundle", () => {
-    const run = renderStatusline(hostWithDevBundleOnly("» fixture (main) Opus"));
+  it("prints the header and exits 0 on a host holding one daemon bundle", () => {
+    const run = renderStatusline(hostWithDaemonBundleOnly("» fixture (main) Opus"));
 
     expect(run.stdout).toContain("» fixture (main) Opus");
     expect(run.status, run.stderr).toBe(0);
@@ -198,12 +183,19 @@ describe("daemon bundle resolution (#3074)", () => {
     expect(describeStatuslineAbsence(silent)).toContain(STATUSLINE_COMMAND_ABSENCE);
   });
 
-  it("lifts the bundle-cache globs out in the order the command tries them", () => {
-    const body = 'b=$(ls -1 "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs); r=$(ls -1 "$HOME"/.cache/red-skills/bundles/redskilled*.bundle.min.mjs)';
+  it("lifts the bundle globs out in the order the command tries them", () => {
+    const body = 'd=$(ls -1 "$HOME"/.red/redskilled/bundles/redskilled-*.bundle.min.mjs); e=$(ls -1 "$HOME"/.red/redskilled/bundles/redskilled-canary.bundle.min.mjs)';
 
-    expect(statuslineBundleGlobs(body)).toEqual(["dev-*.bundle.min.mjs", "redskilled*.bundle.min.mjs"]);
+    expect(statuslineBundleGlobs(body)).toEqual([
+      "redskilled-*.bundle.min.mjs",
+      "redskilled-canary.bundle.min.mjs",
+    ]);
     expect(statuslineGlobResolves(body, "redskilled-9.9.9.bundle.min.mjs")).toBe(true);
     expect(statuslineGlobResolves(body, "memory-9.9.9.bundle.min.mjs")).toBe(false);
+  });
+
+  it("reads no glob out of the cache directory the deleted dev runtime lived in", () => {
+    expect(statuslineBundleGlobs('b=$(ls -1 "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs)')).toEqual([]);
   });
 
   it("says the absence in the daemon's own sentence, never a second spelling", () => {
@@ -218,24 +210,21 @@ describe("daemon bundle resolution (#3074)", () => {
 
   /**
    * The pairing #3074 was missing: the command globbed a directory nothing wrote
-   * a bundle to. Asserted against the filename the warm path mints rather than a
-   * literal, so renaming the cache key fails HERE.
-   *
-   * Only `dev` is asserted because it is the host's single producer. `redskilled`
-   * is still WARMED — it is the anchor of the dev warm path (ADR 0147, #4112),
-   * and the dev command reaches its daemon over the local socket — but the
-   * published shell must not invoke the daemon bundle a second time.
+   * a bundle to. Asserted against the DAEMON's own namers rather than a literal,
+   * so renaming the stable directory or the stable filename fails HERE.
    */
-  it("globs a name the dev warm path actually writes, for every bundle it invokes", () => {
+  it("globs the name and the directory daemon provisioning actually writes", () => {
     const [canonical] = readStatuslineCommands(REPO_ROOT);
     const body = shellBody(canonical!.body);
 
-    expect([DEV_WARM_BUNDLE, ...companionBundlePlugins(DEV_WARM_BUNDLE)]).toContain("redskilled");
-    const warmed = bundleFileName("dev", PROVISIONED_VERSION);
+    const minted = redskilledStableBundleName(PROVISIONED_VERSION);
     expect(
-      statuslineGlobResolves(body, warmed),
-      `no published glob resolves ${warmed} — globs: ${statuslineBundleGlobs(body).join(", ")}`,
+      statuslineGlobResolves(body, minted),
+      `no published glob resolves ${minted} — globs: ${statuslineBundleGlobs(body).join(", ")}`,
     ).toBe(true);
+    // `""` yields the segments below the operator home, which is exactly the
+    // part the shell spells after its own `"$HOME"`.
+    expect(body).toContain(`${redskilledStableBundleDir("")}/redskilled-`);
   });
 
   it("states the absence when no renderer resolves at all", () => {
@@ -247,25 +236,44 @@ describe("daemon bundle resolution (#3074)", () => {
 });
 
 /**
- * The host invokes one producer. The dev command draws the local bedrock and
- * appends the daemon-fed tail itself, so a second redskilled command duplicates
- * the host line and `--no-workers` is a fossil from the retired split (#3559).
+ * The host invokes one producer, and it is a LIVE one. The redskilled bundle
+ * draws the bedrock and the Worker tail in one process, so `--no-workers` is a
+ * fossil of the retired split (#3559) and any reach for the dev runtime is a
+ * fossil of a renderer ADR 0147 deleted.
  */
 describe("one statusline host producer (#3559)", () => {
   it("names every copy that carries the retired split flag", () => {
     const muted = findStatuslineCommands("a.md", `"command": "sh -c '\\"$N\\" \\"$b\\" statusline --no-workers; exit 0'"`);
 
     expect(statuslineCommandsDelegatingWorkers(muted).map((site) => site.path)).toEqual(["a.md"]);
-    expect(describeStatuslineDelegation(muted)).toContain("retired two-producer adapter");
+    expect(describeStatuslineDelegation(muted)).toContain("retired statusline producer");
   });
 
-  it("names every copy that runs a second renderer under the first", () => {
-    const doubled = findStatuslineCommands(
+  it("names every copy that reaches for the dev bundle ADR 0147 deleted", () => {
+    const fossil = findStatuslineCommands(
       "a.md",
-      `"command": "sh -c 'r=$(ls -1 \\"$HOME\\"/.cache/red-skills/bundles/redskilled-*.bundle.min.mjs); exit 0'"`,
+      `"command": "sh -c 'b=$(ls -1 \\"$HOME\\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs); exit 0'"`,
     );
 
-    expect(statuslineCommandsDelegatingWorkers(doubled).map((site) => site.path)).toEqual(["a.md"]);
+    expect(statuslineCommandsDelegatingWorkers(fossil).map((site) => site.path)).toEqual(["a.md"]);
+  });
+
+  it("names every copy that reaches for the launcher behind that bundle", () => {
+    const fossil = findStatuslineCommands(
+      "a.md",
+      `"command": "sh -c 'b=$(ls -1 \\"$HOME\\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs); exit 0'"`,
+    );
+
+    expect(statuslineCommandsDelegatingWorkers(fossil).map((site) => site.path)).toEqual(["a.md"]);
+  });
+
+  it("passes the daemon bundle the command actually runs", () => {
+    const live = findStatuslineCommands(
+      "a.md",
+      `"command": "sh -c 'd=$(ls -1 \\"$HOME\\"/.red/redskilled/bundles/redskilled-*.bundle.min.mjs); exit 0'"`,
+    );
+
+    expect(statuslineCommandsDelegatingWorkers(live)).toEqual([]);
   });
 
   it("passes a command that draws the Worker rows from one bundle", () => {
@@ -281,19 +289,24 @@ describe("one statusline host producer (#3559)", () => {
     expect(statuslineCommandsDelegatingWorkers(sites), describeStatuslineDelegation(sites)).toEqual([]);
   });
 
-  it("renders through one producer on a freshly provisioned host", async () => {
-    const home = await provisionedHost((plugin) =>
-      plugin === "dev"
-        ? 'console.log("» fixture (main) Opus");\n'
-        : `console.log(${JSON.stringify(`${plugin} rows`)});\n`,
-    );
+  it("renders through one producer on a freshly provisioned host", () => {
+    const run = renderStatusline(provisionedHost("» fixture (main) Opus"));
+
+    expect(run.stdout).toContain("» fixture (main) Opus");
+    expect(run.stdout).not.toContain(STATUSLINE_COMMAND_ABSENCE);
+    expect(run.status, run.stderr).toBe(0);
+  });
+
+  it("ignores a dev bundle still sitting on the machine", () => {
+    const home = provisionedHost("» fixture (main) Opus");
+    const stale = join(home, ".cache", "red-skills", "bundles");
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, "dev-3.21.0.bundle.min.mjs"), 'console.log("frozen at 3.21.0");\n');
 
     const run = renderStatusline(home);
 
+    expect(run.stdout, "the deleted dev runtime is resolvable again").not.toContain("frozen at 3.21.0");
     expect(run.stdout).toContain("» fixture (main) Opus");
-    expect(run.stdout, "the daemon half double-renders the statusline (#3559)").not.toContain("redskilled rows");
-    expect(run.stdout).not.toContain(STATUSLINE_COMMAND_ABSENCE);
-    expect(run.status, run.stderr).toBe(0);
   });
 
   it("tells the reader to keep the bedrock and daemon tail behind one command", () => {
@@ -301,7 +314,7 @@ describe("one statusline host producer (#3559)", () => {
     const message = describeStatuslineDelegation(muted);
 
     expect(message).toContain("renders the local bedrock");
-    expect(message).toContain("bounded socket probe");
+    expect(message).toContain("the Worker tail in one process");
     expect(message).toContain("a.md:1");
   });
 });
@@ -318,6 +331,7 @@ describe("statusline architecture documentation (#3559)", () => {
     );
 
     expect(hostNotes).toContain("renders the local bedrock before appending the daemon-fed tail");
+    expect(hostNotes).toContain("~/.red/redskilled/bundles/");
     expect(hostNotes).not.toContain("calls `collectStatuslineAfk`");
     expect(hostNotes).not.toContain("INTERIM, until #3151");
     expect(skill).toContain("one bounded local socket read");
