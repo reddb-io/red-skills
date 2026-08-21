@@ -28,25 +28,33 @@ complete tool surface, the host tool-name prefix rule, and the mutation-mode
 contract live in [`MCP.md`](./MCP.md) — read it before the first call and do not
 restate the tool list here.
 
-**1. Register.** `project_activation` (read) answers whether this project opted
-in and which runner and target a no-argument drain would register. Then `drain`
-(mutating) ensures the daemon is reachable and this project is registered at the
-requested runner and target. `drain` is ensure-style: repeated calls succeed and
-report the four-dimension difference, and a runner change is refused with the
-explicit stop-then-drain repair. `project_start`, `project_resize`, `project_reset`
-and `project_stop` remain the specialized lifecycle operations around it.
+**Four verbs answer today: `drain`, `status`, `project_status`, `project_stop`
+(#4113).** Every other tool refuses by name, because its engine went with
+ADR 0147 and no daemon method serves it yet. **A refusal is not an outage and no
+reload cures it** — it means the verb is unimplemented, so file against #4113
+rather than hunting the daemon, the socket, capacity or a version skew. Read
+[`MCP.md`](./MCP.md#which-tools-answer-today-4113) for which row is which.
+
+**1. Register.** `drain` (mutating) ensures the daemon is reachable and this
+project is registered at the requested runner and target. It composes the
+registration from `.red/config.yaml` itself, so a no-argument `drain` is the
+whole live entrance. `drain` is ensure-style: repeated calls succeed and report
+the four-dimension difference, and a runner change is refused with the explicit
+stop-then-drain repair. `project_activation`, `project_start`, `project_resize`
+and `project_reset` are the specialized lifecycle operations around it and all
+refuse today.
 
 **2. Arm the selector.** The selector scopes what the drain takes —
 `{spec, lane, label, issues, tags, user}`. It travels in the registration, so one
 producer applies several selectors as an ordered priority rather than several
-competing loops. `queue_status` previews the scoped view before anything is
-claimed.
+competing loops. `queue_status` is the intended scoped preview and refuses today
+(#4113), so arm the selector on `drain` itself.
 
 **3. Observe.** `status {scope: worker | project | host}` reads progress at the
-needed boundary. `events_since` is the incremental read for a monitor loop — pass
-the cursor it returns instead of re-polling a whole answer every tick. `logs`
-renders one lane per call. `deadend_audit` names every stuck pattern with the cure
-that clears it. **Never poll a mutating tool for status.**
+needed boundary — it is the one live observation verb. `events_since`, `logs` and
+`deadend_audit` all refuse today (#4113), so `status` and `project_status` carry
+the whole watch until slice 2 serves them. **Never poll a mutating tool for
+status.**
 
 **When the MCP is unreachable, ask whether the plugin was installed or updated in
 THIS session — if so, run `/reload-plugins` (or start a new session).** MCP servers
@@ -62,18 +70,16 @@ hand-roll the operation in shell.
 
 ## The calls, in order
 
-The whole lane is four tools; anything done by hand instead of these is a
+The whole live lane is three tools; anything done by hand instead of these is a
 defect to file, never a workaround to keep:
 
-1. `project_activation` — read: did this repo opt in, and what would a bare
-   drain register?
-2. `drain { target, runner?, selector? }` — mutate: registers this project with
+1. `drain { target, runner?, selector? }` — mutate: registers this project with
    the daemon (work query, poll plan, trunk, Worker prompt all composed by the
    tool) and arms the drain. Repeat calls are safe and report what was kept.
-3. `status { scope: project }` and `events_since { cursor }` — observe. Workers
-   are born, briefed, and driven by the daemon; nothing here polls a mutating
-   tool.
-4. `project_stop` — hand the registration back when done.
+2. `status { scope: project }` — observe. Workers are born, briefed, and driven
+   by the daemon; nothing here polls a mutating tool. `events_since` is the
+   intended incremental read and refuses today (#4113).
+3. `project_stop` — hand the registration back when done.
 
 **Never** `git worktree add`, never a hand-built Worker argv, never watching CI
 in a shell loop: the daemon owns birth, placement, and landing. If a step
@@ -83,8 +89,9 @@ cannot be done through these tools, that is a gap to file against the MCP.
 
 Each verb names the tool that serves it.
 
-- `/afk` — drain every open issue labelled `ready-for-agent`. `queue_status` for
-  the census, then `drain` to register and arm.
+- `/afk` — drain every open issue labelled `ready-for-agent`. `drain` registers
+  and arms; `queue_status`, the census that would precede it, refuses today
+  (#4113).
 - `/afk --spec 42` — drain only Tickets linked to Spec #42; the Spec itself is
   excluded. This is the `selector.spec` facet.
 - `/afk --issues 356,359,362` — drain an explicit issue list in that order
@@ -161,6 +168,11 @@ Read the focused reference before touching that concern:
   amended by ADR 0142, sole surface by ADR 0147). `/afk` is a client of it, so a
   capability missing from the tools is a gap to file against the MCP, never a
   reason to hand-roll the operation in shell.
+- **An unserved verb refuses by name, and the refusal is the truth** (#4113).
+  Only `drain`, `status`, `project_status` and `project_stop` reach the daemon;
+  the rest state that no `_redskills/*` method serves them. Report the refusal
+  and move on — do not retry it, do not restart the daemon for it, and do not
+  substitute a shell equivalent.
 - **The daemon is always on and nothing else births a Worker.** `/red-setup` (or
   `/redskilled`) installs it as an OS service with no idle exit. A client that
   finds no daemon fails closed with the repair hint; it never spawns one

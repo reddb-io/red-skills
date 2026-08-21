@@ -73,6 +73,7 @@ export const WORKING_MODE_DOC_CONTRACT: readonly SkillToolBinding[] = [
       "project_reset",
       "project_resize",
       "project_start",
+      "project_status",
       "project_stop",
       "queue_status",
       "runner_detect",
@@ -113,6 +114,8 @@ export const WORKING_MODE_DOC_CONTRACT: readonly SkillToolBinding[] = [
     server: "rs_dev",
     tools: [
       "project_reset",
+      "project_status",
+      "project_stop",
       "reconcile_engine",
       "runner_detect",
       "runner_list",
