@@ -184,10 +184,23 @@ describe("a host that did not answer", () => {
       now: () => "2026-07-29T01:00:05.000Z",
       // A daemon that cannot possibly start: the host is simply not there.
       client: { serverCommand: join(cwd, "no-such-daemon"), readyTimeoutMs: 200 },
+      // The bedrock is the whole point of the absence case: a host nobody
+      // answered still owes the operator the facts their own machine holds.
+      bedrock: {
+        readStdin: async () => null,
+        readLocalGit: async () => ({
+          basename: "widgets",
+          branch: "main",
+          localAdded: 0,
+          localRemoved: 0,
+        }),
+        version: "0.0.0-test",
+        env: { NO_COLOR: "1" },
+      },
     });
 
     expect(code).toBe(0);
-    expect(written).toEqual([`${REDSKILLED_RENDER_ABSENCE}\n`]);
+    expect(written).toEqual([`widgets (main) v0.0.0-test · ${REDSKILLED_RENDER_ABSENCE}\n`]);
     // The diagnosis is not lost — it goes where a statusline does not show it.
     expect(warned.join("")).toContain("redskilled statusline:");
   });

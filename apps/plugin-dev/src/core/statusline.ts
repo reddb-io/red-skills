@@ -24,7 +24,33 @@
 // out of scope — the test asserts the plain/structural content exactly as
 // statusline.test.sh does after stripping escapes.
 
-import { compareSemver } from "./bundle-version.js";
+import type { ClaudeInput, ProjectInput } from "@reddb-io/shared/statusline-bedrock.js";
+import {
+  humanizeTokens,
+  renderContextBlock,
+  renderModelBlock,
+  renderProjectBlock,
+  renderUsageBlock,
+} from "@reddb-io/shared/statusline-bedrock.js";
+
+/**
+ * The bedrock primitives, re-exported from their one home.
+ *
+ * `renderProjectBlock` and its siblings moved DOWN to `@reddb-io/shared` when
+ * the `redskilled` daemon took over drawing BOTH halves of the statusline: it
+ * may not import a runtime (dependency-direction guard #4135), and two spellings
+ * of one block is the drift the move ends. The types and functions are re-exported
+ * here because this app's consumers and tests already ask this module for them.
+ */
+export type { ClaudeInput, ProjectInput } from "@reddb-io/shared/statusline-bedrock.js";
+export {
+  humanizeTokens,
+  renderContextBlock,
+  renderModelBlock,
+  renderProjectBlock,
+  renderProjectVersionLabel,
+  renderUsageBlock,
+} from "@reddb-io/shared/statusline-bedrock.js";
 
 /**
  * `claude-opus-4-8` → `opus-4.8`, for the themed per-worker `run=` label.
@@ -35,46 +61,6 @@ import { compareSemver } from "./bundle-version.js";
  * formatting. Two spellings of one shortening is the drift the move ends.
  */
 export { shortModel } from "@reddb-io/redskilled-render/format.js";
-
-/** The block-1 project inputs: basename plus optional git ref. */
-export interface ProjectInput {
-  /** `basename "$cwd"` — always present. */
-  basename: string;
-  /** `git symbolic-ref --short HEAD` when on a branch; "" / undefined otherwise. */
-  branch?: string;
-  /** `git rev-parse --short HEAD` when detached (used only when branch is absent). */
-  detachedSha?: string;
-  /** Running `dev` plugin/bundle version (e.g. `1.233.0`), from build-info.
-   * Rendered as a dim `v<version>` tag on the themed header line so the user can
-   * see which RedSkills version is producing the statusline. Themed line only. */
-  version?: string;
-  /** Newest locally cached `dev` bundle version. The render path uses this
-   * cache-only fact to mark a stale session without doing network discovery. */
-  latestCachedVersion?: string;
-  /** Stable pointer version from the local bundle cache, when present. */
-  pointerVersion?: string;
-}
-
-/** The block-2/3 Claude Code payload inputs. */
-export interface ClaudeInput {
-  /** `.model.display_name`; "" / undefined outside Claude Code → no model block. */
-  model?: string;
-  /** `.effort.level`; appended as `model·effort` when both present. */
-  effort?: string;
-  /** `.context_window.total_input_tokens`; 0 / undefined → no context block. */
-  contextTokens?: number;
-  /** `.context_window.used_percentage`; rounded to an int and suffixed with `%`. */
-  contextPercent?: number;
-  /** `.rate_limits.five_hour.used_percentage` — the rolling 5-hour usage window
-   * Claude Code exposes for Pro/Max accounts AFTER the first API response of the
-   * session (absent for non-Pro/Max and on the very first render). Rendered as a
-   * `5h=<pct>%` token, only when present, so its absence is graceful. */
-  usage5h?: number;
-  /** `.rate_limits.seven_day.used_percentage` — the rolling weekly usage window,
-   * same Pro/Max-only availability as {@link usage5h}. Rendered as `7d=<pct>%`,
-   * only when present. */
-  usage7d?: number;
-}
 
 /** The block-4 aggregated worker counts, already summed across live workers. */
 export interface AfkInput {
@@ -232,18 +218,6 @@ export interface StatuslineInput {
 
 export type StatuslinePreset = "full" | "short";
 
-const BRANCH_MAX = 28;
-
-/**
- * Humanizes a token count the way statusline.sh does: `X.XM` at/above 1e6,
- * integer-division `Xk` at/above 1e3, raw integer below.
- */
-export function humanizeTokens(tokens: number): string {
-  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-  if (tokens >= 1000) return `${Math.floor(tokens / 1000)}k`;
-  return String(tokens);
-}
-
 /**
  * Compact SI-style humanizer for an arbitrary count (issue #1175 — the themed
  * per-worker `tks=` token). Distinct from {@link humanizeTokens} (which the
@@ -310,55 +284,6 @@ export function humanizeAlive(ms: number): string {
   return `${d}d${h % 24}h`;
 }
 
-function hasCachedUpdate(project: ProjectInput): boolean {
-  return compareSemver(project.latestCachedVersion, project.version) > 0;
-}
-
-export function renderProjectVersionLabel(project: ProjectInput, mode: "always" | "update-only"): string | null {
-  if (!project.version) return null;
-  const update = hasCachedUpdate(project);
-  if (!update && mode === "update-only") return null;
-  return `v${project.version}${update ? "*" : ""}`;
-}
-
-/**
- * Block 1: `basename` plus optional ` (branch)` / ` (detached sha)`. Branches
- * longer than 28 chars are truncated to 27 chars + `…`, matching the bash
- * `${branch:0:27}…`.
- */
-export function renderProjectBlock(project: ProjectInput): string {
-  const base = project.basename;
-  const version = renderProjectVersionLabel(project, "update-only");
-  const suffix = version ? ` ${version}` : "";
-  if (project.branch) {
-    let branch = project.branch;
-    if (branch.length > BRANCH_MAX) branch = `${branch.slice(0, 27)}…`;
-    return `${base} (${branch})${suffix}`;
-  }
-  if (project.detachedSha) return `${base} (detached ${project.detachedSha})${suffix}`;
-  return `${base}${suffix}`;
-}
-
-/** Block 2: `model` or `model·effort`; null when there is no model. */
-export function renderModelBlock(claude: ClaudeInput | undefined): string | null {
-  if (!claude || !claude.model) return null;
-  return claude.effort ? `${claude.model}·${claude.effort}` : claude.model;
-}
-
-/**
- * Block 3: humanized tokens plus optional ` Y%`. Null when tokens are absent or
- * zero, mirroring the bash `[[ -n "$ctx_tokens" && "$ctx_tokens" != "0" ]]`
- * guard. The percent is rounded to the nearest integer like `printf '%.0f'`.
- */
-export function renderContextBlock(claude: ClaudeInput | undefined): string | null {
-  if (!claude) return null;
-  const tokens = claude.contextTokens;
-  if (tokens === undefined || tokens === 0) return null;
-  const human = humanizeTokens(tokens);
-  if (claude.contextPercent === undefined) return human;
-  return `${human} ${Math.round(claude.contextPercent)}%`;
-}
-
 /**
  * One AFK token, split so the styling slice can paint the numeric VALUE
  * independently of its label. `label` is the leading two-letter mnemonic (`wk`,
@@ -413,20 +338,6 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
     tokens.push({ label: "#", value: String(issue), suffix });
   });
   return tokens;
-}
-
-/**
- * Usage block: the Pro/Max rate-limit windows `5h=<pct>% 7d=<pct>%`, each token
- * emitted only when its payload field is present (Claude Code exposes these only
- * for Pro/Max, only after the first API response). Null when neither is present,
- * so non-Pro/Max sessions render nothing here. Percents rounded like `%.0f`.
- */
-export function renderUsageBlock(claude: ClaudeInput | undefined): string | null {
-  if (!claude) return null;
-  const parts: string[] = [];
-  if (claude.usage5h !== undefined) parts.push(`5h=${Math.round(claude.usage5h)}%`);
-  if (claude.usage7d !== undefined) parts.push(`7d=${Math.round(claude.usage7d)}%`);
-  return parts.length ? parts.join(" ") : null;
 }
 
 /**
