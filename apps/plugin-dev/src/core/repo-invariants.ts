@@ -216,6 +216,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "the daemon may classify a death but may never learn what it cost (ADR 0155 §1, #4133): every death-evidence carrier under apps/redskilled/src must stay free of an issue number, a triage label and a tracker call, and the declaration and its suite live in apps/plugin-dev",
   },
   {
+    name: "invariants:mcp-tool-routing",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "every published `rs_dev` tool must state what answers it — a control call, a named `_redskills/*` method, or a declared absence (#4113); the tool registry and the ACP adapter live in apps/plugin-dev, the method registry in packages/protocol-acp, and the unserved list only ever shrinks",
+  },
+  {
     name: "invariants:codex-skill-sidecars",
     scope: "apps/plugin-dev",
     script: "test:invariants",

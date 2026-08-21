@@ -9,6 +9,10 @@ The name identifies the operator-facing system boundary; `@reddb-io/worker` rema
 the execution substrate and its `Castle*` contracts remain internal. This file
 is the client contract; the skills that reference it never restate the tool list.
 
+**Read [Which tools answer today](#which-tools-answer-today-4113) before the
+first call.** The contract below describes the whole surface; only four of its
+verbs reach a daemon call right now, and every other row says so.
+
 **The stdio server is a wire client, not the resident.** One versioned Castle
 resident per canonical project owns engine state, GitHub adapters, registration
 renewal, and background belts (ADR 0143); the Primary checkout and sibling
@@ -67,17 +71,41 @@ issue state: **announce a `mutating` call before you make it, and never issue
 one to "check" something a `read` tool already answers.** The server marks each
 mutating tool with a `MUTATING:` description prefix; the table below mirrors it.
 
+## Which tools answer today (#4113)
+
+**Four tools reach a real daemon call; the other 51 refuse by name.** The public
+capability verbs were the engine ADR 0147 deleted, and the daemon publishes no
+`_redskills/*` method for any of them — so the adapter had nothing to route them
+to and handed the call's own text (`/queue_status {}`) to a Worker. The Worker
+has no ticket handoff for that text: it narrated one line, ended the turn, and
+the caller read a **healthy-looking empty envelope** for a call that did
+nothing but birth and kill a Worker.
+
+| Verb | State |
+| --- | --- |
+| `drain`, `status`, `project_status`, `project_stop` | **live** — a real ACP control call against the daemon's Project control surface |
+| every other tool below | **refuses** — its row is marked `REFUSES (#4113)` |
+
+A refusal names the tool, states that no daemon method serves it, and names the
+four verbs that do. **It is not an outage, and no reload cures it** — do not
+diagnose it as a daemon, capacity, socket, runner or version-skew problem, which
+is the hunt the empty envelope sent two operators on. The routing is declared
+once in `apps/plugin-dev/src/core/mcp-tool-routing.ts` and pinned on every gate
+run against both the live tool registry and the live `_redskills/*` method list.
+Slice 2 of #4113 moves rows from `unserved` to `served` one verb at a time, and
+the `unserved` list only ever shrinks.
+
 ## Tool surface by domain
 
 ### Help — the situational front door
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `help` | read | Read the daemon, registration, last socket-local queue poll, Workers, and latest refusal; return where this project stands, one pasteable next call, and an intent map generated from this live tool table. It makes no GitHub request. |
+| `help` | read | **REFUSES (#4113).** Read the daemon, registration, last socket-local queue poll, Workers, and latest refusal; return where this project stands, one pasteable next call, and an intent map generated from this live tool table. It makes no GitHub request. |
 
-When the next redskilled call is unclear, call `help` and follow its structured
-`next` action. It is the sole runtime source of operating choreography; this
-document defines the protocol without copying its state-dependent routes.
+`help` is the intended runtime source of operating choreography — but it
+refuses today (#4113), so this document is the only route map until slice 2
+serves it. Do not read its refusal as the daemon being unreachable.
 
 ### Status — one scoped read intent
 
@@ -103,14 +131,14 @@ that block, startup preserves the explicit-only `drain`/`project_start` behavior
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `project_activation` | read | Report whether this project opted into RedSkills and the canonical runner and target that a no-argument `drain` would register. |
+| `project_activation` | read | **REFUSES (#4113).** Report whether this project opted into RedSkills and the canonical runner and target that a no-argument `drain` would register. |
 | `drain` | mutating | Ensure the daemon is reachable and this project is registered at the requested runner and target. Repeated calls succeed with a four-dimension difference report; a runner change is refused with the explicit stop-then-drain repair. An optional `budget_ms` arms the **Harvest deadline**: past 70% of the declared budget the daemon admits no new claim and spends the rest landing what is in flight, and `project_status` reports `harvest` with the harvested and stranded counts. Declare it only when you mean it — no `budget_ms`, no deadline. |
-| `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
-| `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
-| `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `status {scope: project}` at `birth_latch.repair`; the structured repair supplies the exact args. |
+| `project_start` | mutating | **REFUSES (#4113).** Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
+| `project_resize` | mutating | **REFUSES (#4113).** Change the target width, runner, or work policy; sends the live directive. |
+| `project_reset` | mutating | **REFUSES (#4113).** Clear the named `project-birth-breaker` latch. Call it from `status {scope: project}` at `birth_latch.repair`; the structured repair supplies the exact args. |
 | `project_stop` | mutating | Give this project's registration back and stop what it still holds; pass `force: true` to hard-stop only its attributed workers. |
-| `standing_orders_show` | read | Return this project's standing orders — the append-only, numbered instruction register injected verbatim into every Worker brief (ADR 0156). |
-| `standing_orders_append` | mutating | Append one standing order to this project's register; existing orders are never mutated or renumbered, and every subsequent Worker brief carries the new order verbatim. |
+| `standing_orders_show` | read | **REFUSES (#4113).** Return this project's standing orders — the append-only, numbered instruction register injected verbatim into every Worker brief (ADR 0156). |
+| `standing_orders_append` | mutating | **REFUSES (#4113).** Append one standing order to this project's register; existing orders are never mutated or renumbered, and every subsequent Worker brief carries the new order verbatim. |
 
 ### Host daemon diagnostics
 
@@ -119,6 +147,12 @@ the current project. Its one answer contains every project and Worker, the
 global dashboard, the provisioning audit, and optional supervisor-unit state.
 No host-scoped mutation is available here: provisioning and reclaim remain
 operator commands.
+
+**`drain` is the whole live lane.** `project_activation`, `project_start`,
+`project_resize` and `project_reset` all refuse today, so a no-argument `drain`
+— which composes the registration from `.red/config.yaml` itself — is how a
+project gets registered, and `project_status` and `project_stop` are how it is
+watched and handed back.
 
 `selector` scopes what the producer drains — `{spec, lane, label, issues, tags,
 user}`. Graceful stop leaves in-flight detached workers to finish; force never
@@ -162,10 +196,10 @@ holds both halves of that in place.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `worker_dispatch` | mutating | Run one tracked issue, or mint and run one disposable demand. |
-| `worker_stop` | mutating | Terminate one worker process tree. |
-| `worker_recycle` | mutating | Terminate one fleet worker so its supervisor refills the slot. |
-| `worker_request` | mutating | Dispatch a worker with a special request injected at spawn time. |
+| `worker_dispatch` | mutating | **REFUSES (#4113).** Run one tracked issue, or mint and run one disposable demand. |
+| `worker_stop` | mutating | **REFUSES (#4113).** Terminate one worker process tree. |
+| `worker_recycle` | mutating | **REFUSES (#4113).** Terminate one fleet worker so its supervisor refills the slot. |
+| `worker_request` | mutating | **REFUSES (#4113).** Dispatch a worker with a special request injected at spawn time. |
 
 `worker_dispatch` takes **exactly one** of `issue` or `demand`; `mode` is valid
 only for a `demand`. Go modes (`no-mistakes` / `direct-PR` / `local-only`) run
@@ -178,10 +212,10 @@ comment before closing the issue. Scout cannot be combined with `issue`.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `runner_list` | read | The canonical runner specification registry. |
-| `runner_detect` | read | The runner an override or this host resolves to. |
-| `runner_steer` | mutating | Inject a prompt into a **live** worker's next iteration. |
-| `steer_status` | read | Whether a worker's live steer is none, pending, or consumed. |
+| `runner_list` | read | **REFUSES (#4113).** The canonical runner specification registry. |
+| `runner_detect` | read | **REFUSES (#4113).** The runner an override or this host resolves to. |
+| `runner_steer` | mutating | **REFUSES (#4113).** Inject a prompt into a **live** worker's next iteration. |
+| `steer_status` | read | **REFUSES (#4113).** Whether a worker's live steer is none, pending, or consumed. |
 
 `runner_steer` is the steering surface for a run already in flight;
 `worker_request` is the spawn-time equivalent. Reach for steer before killing a
@@ -191,7 +225,7 @@ worker that is merely pointed the wrong way.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `gate_run` | mutating | Materialize the feedback worktree and run the package-scoped gate. |
+| `gate_run` | mutating | **REFUSES (#4113).** Materialize the feedback worktree and run the package-scoped gate. |
 
 **The gate command is canonical.** `gate_run` runs exactly what the repo
 declares; never widen it with stricter flags. When it fails, the baseline
@@ -204,16 +238,16 @@ cached, the next round retries it, and the round consumes no Re-seed budget.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `land_branch` | mutating | Land one validated worker branch through the full landing sequence. |
-| `cascade_status` | read | The dependents of an issue and which ones the close cascade promotes. |
+| `land_branch` | mutating | **REFUSES (#4113).** Land one validated worker branch through the full landing sequence. |
+| `cascade_status` | read | **REFUSES (#4113).** The dependents of an issue and which ones the close cascade promotes. |
 
 ### Claim — the three-layer lock
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `claim_status` | read | Parsed claim markers for one issue (`issue`) or a batch (`issues`), keyed per issue. |
-| `claim_release` | mutating | Concede every un-conceded claim so the issue — or each issue in a batch — is claimable again. |
-| `hitl_resolve` | mutating | One atomic human decision on a parked issue: `requeue`, `retake`, `park`, or `close`, with the rationale posted for the audit trail. |
+| `claim_status` | read | **REFUSES (#4113).** Parsed claim markers for one issue (`issue`) or a batch (`issues`), keyed per issue. |
+| `claim_release` | mutating | **REFUSES (#4113).** Concede every un-conceded claim so the issue — or each issue in a batch — is claimable again. |
+| `hitl_resolve` | mutating | **REFUSES (#4113).** One atomic human decision on a parked issue: `requeue`, `retake`, `park`, or `close`, with the rationale posted for the audit trail. |
 
 `claim_release` is the cure for a ghost claim — an issue that instantly reports
 `1/1 100%` with no attempt. Release it through the tool, never by flipping
@@ -223,9 +257,9 @@ labels by hand.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `merge_arm` | mutating | Hand one open PR to a live `merge-driver` process; refuses when that process is missing so custody cannot become orphaned. |
-| `merge_status` | read | Whether the `merge-driver` process is `ticking` or `missing`, plus durable per-PR records whose `actionability` distinguishes armed records as `driver-ticking` or `orphaned`, and whose proof object names GitHub's merge assessment, blocker class, and next action. |
-| `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
+| `merge_arm` | mutating | **REFUSES (#4113).** Hand one open PR to a live `merge-driver` process; refuses when that process is missing so custody cannot become orphaned. |
+| `merge_status` | read | **REFUSES (#4113).** Whether the `merge-driver` process is `ticking` or `missing`, plus durable per-PR records whose `actionability` distinguishes armed records as `driver-ticking` or `orphaned`, and whose proof object names GitHub's merge assessment, blocker class, and next action. |
+| `merge_release` | mutating | **REFUSES (#4113).** Stop driver ownership of one PR (record kept as `released`). |
 
 When the recovery driver (#2512) is running, its fixed cadence handles BEHIND →
 update-branch, green at head → merge with the merge-commit strategy (never an
@@ -245,17 +279,17 @@ blocker class plus next action.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `worktree_list` | read | Every checkout under the disposable `.red/tmp/worktrees/*` lanes. |
-| `worktree_remove` | mutating | Remove one checkout under those lanes. |
+| `worktree_list` | read | **REFUSES (#4113).** Every checkout under the disposable `.red/tmp/worktrees/*` lanes. |
+| `worktree_remove` | mutating | **REFUSES (#4113).** Remove one checkout under those lanes. |
 
 ### Hygiene — queue repair
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `requeue` | mutating | Apply the full parked-issue requeue transition and record guidance. |
-| `retake` | read | The issue/PR/branch/worktree report plus the recommended next action. |
-| `reap` | mutating | Classify and delete stale local and remote AFK branches. |
-| `unblock_sweep` | mutating | Promote dependency-blocked issues whose requirements all closed. |
+| `requeue` | mutating | **REFUSES (#4113).** Apply the full parked-issue requeue transition and record guidance. |
+| `retake` | read | **REFUSES (#4113).** The issue/PR/branch/worktree report plus the recommended next action. |
+| `reap` | mutating | **REFUSES (#4113).** Classify and delete stale local and remote AFK branches. |
+| `unblock_sweep` | mutating | **REFUSES (#4113).** Promote dependency-blocked issues whose requirements all closed. |
 
 `retake` only recommends; the action it names is a separate, explicit call.
 
@@ -263,18 +297,18 @@ blocker class plus next action.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `logs` | read | Raw `CastleLaneRecord` entries from one lane (`worker`/`supervisor`/`monitor`/`liveness`). |
-| `dashboard` | read | The operational dashboard over a `periodDays` window. |
-| `history` | read | Structured AFK history records, newest last. |
-| `statusline_aggregate` | read | Project-side statusline aggregate (project, repo counters, docs drift, drain, Worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
+| `logs` | read | **REFUSES (#4113).** Raw `CastleLaneRecord` entries from one lane (`worker`/`supervisor`/`monitor`/`liveness`). |
+| `dashboard` | read | **REFUSES (#4113).** The operational dashboard over a `periodDays` window. |
+| `history` | read | **REFUSES (#4113).** Structured AFK history records, newest last. |
+| `statusline_aggregate` | read | **REFUSES (#4113).** Project-side statusline aggregate (project, repo counters, docs drift, drain, Worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
 
 ### Queue — what is drainable now
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `queue_status` | read | Trust-partitioned `ready-for-agent` candidates (`eligible` and `held_for_summon`) plus `ready-for-human`. `degraded: true` names partial trust-read failures in `errors` while retaining successfully read candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
-| `events_since` | read | AFK history events and Worker lane records after an opaque cursor, plus the next cursor. |
-| `deadend_audit` | read | Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
+| `queue_status` | read | **REFUSES (#4113).** Trust-partitioned `ready-for-agent` candidates (`eligible` and `held_for_summon`) plus `ready-for-human`. `degraded: true` names partial trust-read failures in `errors` while retaining successfully read candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
+| `events_since` | read | **REFUSES (#4113).** AFK history events and Worker lane records after an opaque cursor, plus the next cursor. |
+| `deadend_audit` | read | **REFUSES (#4113).** Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
 
 `help` is the first call when operating a drain. Use `queue_status` when its
 answer calls for the tracker-backed queue census: zero eligible `ready-for-agent`
@@ -305,9 +339,9 @@ rebuild state, then call `events_since` with no cursor to get a fresh handle.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `wait_start` | mutating | Spawn a detached rsp wait and return its registry id. |
-| `wait_list` | read | Active-wait registry from `.red/tmp/waits`. |
-| `wait_status` | read | Registry entry for a running wait or sealed result envelope for a finished one. |
+| `wait_start` | mutating | **REFUSES (#4113).** Spawn a detached rsp wait and return its registry id. |
+| `wait_list` | read | **REFUSES (#4113).** Active-wait registry from `.red/tmp/waits`. |
+| `wait_status` | read | **REFUSES (#4113).** Registry entry for a running wait or sealed result envelope for a finished one. |
 
 `wait_start` accepts `pr`, `run`, `release`, and `cmd` targets; `timeout_ms` and
 `reason` are optional. The returned `id` is the stable handle for `wait_status`.
@@ -317,10 +351,10 @@ Finished waits are distinguished by a populated `result` field carrying the
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `daily_review` | read | Structured daily activity review report for the local window. |
-| `weekly_review` | read | Structured weekly activity review report for the local window. |
-| `triage` | mutating | Apply the decided triage transition to one issue, gated by the per-repo trust policy. |
-| `respond` | mutating | Parse a `/dev` comment summon, authorize the commenter, and route the advisory or mutation verb. |
+| `daily_review` | read | **REFUSES (#4113).** Structured daily activity review report for the local window. |
+| `weekly_review` | read | **REFUSES (#4113).** Structured weekly activity review report for the local window. |
+| `triage` | mutating | **REFUSES (#4113).** Apply the decided triage transition to one issue, gated by the per-repo trust policy. |
+| `respond` | mutating | **REFUSES (#4113).** Parse a `/dev` comment summon, authorize the commenter, and route the advisory or mutation verb. |
 
 `daily_review` and `weekly_review` are always rooted at the server's cwd — they
 auto-resolve the repo and the time window, so no parameters are required.
@@ -333,13 +367,13 @@ the comment is on a pull request.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `manager` | mutating | Take one operator intent into the Manager — intake, route an effort to a skill, attach an artifact, read effort status, or export/import the checkpoint — and return the effort record it acted on. |
-| `red_doctor` | read | Every doctor finding for this repository — operational probes, host toolchain, lane and process census, executable acceptance, HUMAN-ONLY type declarations, disposable-lane hygiene — each paired with the route that repairs it. Detection only; applying a repair stays with `/red-doctor`'s own fix lane. |
-| `audit_skills` | read | The ranked skill-audit scores for this repository's skill tree. Pass `mechanical_only` for a deterministic, agent-free score. |
-| `install_type_labels` | mutating | Create the Wayfinder ticket type labels AND declare the HUMAN-ONLY ones in `.red/config.yaml`, in one act — the two are one protection with two halves (#3013). |
-| `codex_statusline` | read | The active Codex configuration's status-line inspection: the file read, the current preference, and the problem keeping the RedSkills footer from rendering. |
-| `codex_monitor_agent` | read | The read-only brief a Codex monitor sub-agent is spawned with. It spawns nothing — the host's own spawn primitive does. |
-| `reconcile_engine` | mutating | Warm the published engine bundle into the stable cache path and re-point a standing registration at it in one operation. |
+| `manager` | mutating | **REFUSES (#4113).** Take one operator intent into the Manager — intake, route an effort to a skill, attach an artifact, read effort status, or export/import the checkpoint — and return the effort record it acted on. |
+| `red_doctor` | read | **REFUSES (#4113).** Every doctor finding for this repository — operational probes, host toolchain, lane and process census, executable acceptance, HUMAN-ONLY type declarations, disposable-lane hygiene — each paired with the route that repairs it. Detection only; applying a repair stays with `/red-doctor`'s own fix lane. |
+| `audit_skills` | read | **REFUSES (#4113).** The ranked skill-audit scores for this repository's skill tree. Pass `mechanical_only` for a deterministic, agent-free score. |
+| `install_type_labels` | mutating | **REFUSES (#4113).** Create the Wayfinder ticket type labels AND declare the HUMAN-ONLY ones in `.red/config.yaml`, in one act — the two are one protection with two halves (#3013). |
+| `codex_statusline` | read | **REFUSES (#4113).** The active Codex configuration's status-line inspection: the file read, the current preference, and the problem keeping the RedSkills footer from rendering. |
+| `codex_monitor_agent` | read | **REFUSES (#4113).** The read-only brief a Codex monitor sub-agent is spawned with. It spawns nothing — the host's own spawn primitive does. |
+| `reconcile_engine` | mutating | **REFUSES (#4113).** Warm the published engine bundle into the stable cache path and re-point a standing registration at it in one operation. |
 
 These are the verbs ADR 0147 rule 1 promoted out of the dying dev CLI: a command
 a shipped skill still named became a tool here, and a command no skill named died

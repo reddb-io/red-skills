@@ -3,13 +3,26 @@ import type {
   RedskillsProjectAcpSession,
   RedskillsProjectPromptResult,
 } from "@reddb-io/redskilled/acp-client";
+import {
+  mcpControlRoutes,
+  mcpToolRoute,
+  renderUnservedToolRefusal,
+  type McpToolControlOperation,
+} from "./core/mcp-tool-routing.js";
 
-const CONTROL_TOOL = new Map<string, "drain" | "stop" | "status">([
-  ["drain", "drain"],
+/**
+ * The control map, DERIVED from the declared routing table (#4113).
+ *
+ * A second hand-kept list is how the published `drain` and the daemon's own
+ * `project_drain` came to sit in one map with nothing stating which of them the
+ * MCP actually publishes. The table publishes; this map only translates.
+ */
+const CONTROL_TOOL = new Map<string, McpToolControlOperation>([
+  // Not a published `rs_dev` tool: the daemon's own spelling of the drain verb
+  // (`apps/redskilled/src/project-control.ts`), kept so a caller that speaks
+  // the daemon's name reaches the same control call rather than a refusal.
   ["project_drain", "drain"],
-  ["project_stop", "stop"],
-  ["project_status", "status"],
-  ["status", "status"],
+  ...mcpControlRoutes(),
 ]);
 
 /**
@@ -58,10 +71,15 @@ export async function invokeProjectMcp(
     if (operation === "status") return await session.control("status");
     return await session.control(operation, controlRequest(input));
   }
-  if (!isPublicCapability(tool)) {
-    throw new Error(`unsupported ACP Project capability ${JSON.stringify(tool)}`);
-  }
-  return await session.prompt(renderCapabilityPrompt(tool, input));
+  // **Refuse by name; never prompt a Worker with the call's own text.** Every
+  // remaining published tool is declared `unserved`: the verb lives in no
+  // process, so `session.prompt("/queue_status {}")` reached a Worker with no
+  // ticket handoff for it, which narrated one line and ended the turn. The
+  // caller read a healthy-looking empty envelope and went hunting capacity,
+  // sockets and version skew (#4113).
+  const declared = mcpToolRoute(tool);
+  if (declared?.kind === "unserved") throw new Error(renderUnservedToolRefusal(declared));
+  throw new Error(`unsupported ACP Project capability ${JSON.stringify(tool)}`);
 }
 
 /** Minimal deterministic CLI grammar over the same typed ACP projection. */
@@ -108,16 +126,4 @@ function controlRequest(input: Readonly<Record<string, unknown>>): {
       ? { registration: registration as Readonly<Record<string, unknown>> }
       : {}),
   };
-}
-
-function renderCapabilityPrompt(tool: string, input: Readonly<Record<string, unknown>>): string {
-  return `/${tool} ${JSON.stringify(input)}`;
-}
-
-function isPublicCapability(tool: string): boolean {
-  return /^[a-z][a-z0-9_]*$/.test(tool) &&
-    !tool.startsWith("private_") &&
-    !tool.includes("worker_birth") &&
-    !tool.includes("daemon_protocol") &&
-    !tool.includes("github_client");
 }

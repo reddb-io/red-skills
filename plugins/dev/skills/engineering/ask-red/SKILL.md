@@ -94,7 +94,8 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   workflow without typed RedSkills extensions. Use the ACP-projected response
   for project workflow truth and `/redskilled` for host process/budget truth.
   `/afk` and `/go` are clients of that canonical interface. The
-  tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
+  tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`, which names the
+  four verbs that answer today and marks every tool that refuses pending #4113. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
   A merge-queue ejection, or a clean fleet PR found outside the queue, belongs
@@ -174,10 +175,11 @@ ACP credential-budget observations (Project clients receive only their bound
 profile; explicit host administration receives all configured profiles and
 pools; warning and density policy stays daemon-owned) -> `/redskilled` and
 `apps/redskilled/src/acp-budget.ts`;
-`rs_dev` MCP (the canonical project interface; start with its situational
-`help` tool, while `status {scope: worker | project | host}` provides scoped
-read-only diagnostics, and a visible project `birth_latch` routes through its
-structured `project_reset` repair) ->
+`rs_dev` MCP (the canonical project interface; four verbs answer today —
+`drain`, `status`, `project_status`, `project_stop` — and every other tool,
+`help` and `project_reset` included, refuses by name pending #4113 because no
+`_redskills/*` daemon method serves it; a refusal is the verb being
+unimplemented, never a daemon, socket, capacity or version-skew fault) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 Worker GitHub publication (credential-free Workers request authenticated fetch,
 push, pull-request, and Issue operations through project-scoped ACP; redskilled
@@ -194,6 +196,12 @@ Project status carries daemon-projected drain intent, dated queue posture,
 Project Worker summaries, and request-lane adapter health, preserving stale and
 unknown markers for stateless host sidebars) ->
 `apps/redskilled/src/acp-client.ts`, `apps/plugin-dev/src/project-acp-adapter.ts`, and
+`plugins/dev/skills/engineering/afk/MCP.md`;
+`rs_dev` tool routing (every published tool declares a control call, a named
+`_redskills/*` method, or a declared absence; an unserved tool refuses by name
+rather than degrading to a Worker prompt that returns an empty envelope, and the
+unserved list only ever shrinks) ->
+`apps/plugin-dev/src/core/mcp-tool-routing.ts` and
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;

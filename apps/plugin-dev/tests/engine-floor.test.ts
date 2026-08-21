@@ -293,7 +293,13 @@ describe("worker_dispatch crosses only the public ACP Project surface", () => {
   it.each([
     [{ issue: 3031 }],
     [{ demand: "fix it" }],
-  ])("hands %o to the daemon-owned workflow without a local dispatch", async (input) => {
+  ])("refuses %o by name rather than narrate it at a Worker (#4113)", async (input) => {
+    // This assertion used to read the other way: the adapter handed
+    // `/worker_dispatch {"issue":3031}` to `session.prompt`, and the test
+    // called that "crossing the public surface". It crossed nothing — the
+    // Worker had no ticket handoff for the text, narrated one line and ended
+    // the turn, and the caller read an empty envelope as success. **A
+    // fallthrough is only a degradation when something exists to degrade to.**
     const prompt = vi.fn(async () => ({ stopReason: "end_turn", updates: [] }));
     const session = {
       prompt,
@@ -304,7 +310,7 @@ describe("worker_dispatch crosses only the public ACP Project surface", () => {
     } as unknown as RedskillsProjectAcpSession;
 
     await expect(invokeProjectMcp(session, "worker_dispatch", input))
-      .resolves.toMatchObject({ stopReason: "end_turn" });
-    expect(prompt).toHaveBeenCalledWith(`/worker_dispatch ${JSON.stringify(input)}`);
+      .rejects.toThrow(/rs_dev tool "worker_dispatch" is not served/);
+    expect(prompt).not.toHaveBeenCalled();
   });
 });
