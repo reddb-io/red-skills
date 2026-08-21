@@ -203,10 +203,17 @@ describe("toon JSON file I/O guard", () => {
     // a rule that cannot grow refusing the growth it was written to allow. The
     // third is the complexity×coverage ceiling (#4132), which counts branch
     // points and so cannot be written without the parser either.
+    // The fourth is the publish-time mutator (#4140), which walks the diff's
+    // changed lines to plan single-token mutants and so cannot be written
+    // without the parser either. It holds ONLY the walk: everything a bundled
+    // surface needs from the check — the mutant model, applying a mutant,
+    // describing one — lives in `mutation-plan.ts`, which imports nothing, so
+    // adding a compiler module here never forces its consumers in after it.
     const COMPILER_GUARDS = [
       "toon-json-guard.ts",
       "github-read-route-guard.ts",
       "complexity-coverage-guard.ts",
+      "mutation-operators.ts",
     ];
     const guardImport = new RegExp(
       `from ["'][^"']*(${COMPILER_GUARDS.map((g) => g.replace(".ts", "")).join("|")})(\\.js)?["']`,
