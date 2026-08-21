@@ -28,6 +28,7 @@ import type {
 import { randomBytes } from "node:crypto";
 
 import { parkGateBlockedTurn } from "./demand-park.js";
+import { readProjectTicketBody } from "./acp-github.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
 import { ACP_AGENT_IDS, type AcpAgentId } from "@reddb-io/protocol-acp";
 import { expandLaunchTemplate } from "./launch-template.js";
@@ -49,6 +50,8 @@ export interface DemandTurnDeps {
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
   readonly hostState: () => { readonly workers: readonly { readonly worker_id: string }[] };
   readonly sessionJournal: AcpSessionJournal;
+  /** Test seam over the Ticket-body read; production reads the gateway. */
+  readonly ticketBody?: (project: AcpProjectWorkspace, issue: number) => Promise<string | null>;
   readonly githubGateway?: RedskilledGithubGatewayRegistration;
   readonly evidenceRoot?: string;
   readonly evidenceTtlMs?: number;
@@ -222,6 +225,18 @@ export function runnerFromLaunchArgv(argv: readonly string[] | undefined): AcpAg
     : null;
 }
 
+/**
+ * The Ticket's own words, appended to the brief the inner agent works from.
+ *
+ * Bounded, because a brief is a prompt and a 60KB issue would drown it: the
+ * cut is stated out loud so the agent knows there is more it cannot see. PURE.
+ */
+export function ticketBodyBrief(issue: number, title: string, body: string): string {
+  const cap = 6_000;
+  const trimmed = body.length > cap ? `${body.slice(0, cap)}\n\n[… Ticket body truncated at ${cap} characters]` : body;
+  return `## Ticket #${issue}${title === "" ? "" : `: ${title}`}\n\n${trimmed}`;
+}
+
 /** What one admission needs, whoever performs it. */
 export interface DemandTurnAdmission {
   readonly project: AcpProjectWorkspace;
@@ -370,6 +385,8 @@ export function createDemandTurnRunner(
   // same idempotency scope — a publish that "succeeded" without pushing, and a
   // land that 422'd on a head no push had created.
   const runnerNonce = randomBytes(4).toString("hex");
+  const readTicketBody = deps.ticketBody
+    ?? ((project: AcpProjectWorkspace, issue: number) => readProjectTicketBody(deps.githubGateway, project, issue));
   const admit = deps.admit ?? ((input: DemandTurnAdmission) => admitNativeAcpWorker(
     {
       paths: deps.paths,
@@ -425,18 +442,38 @@ export function createDemandTurnRunner(
       // durable RedSkills ACP session", which is a birth nobody can explain
       // from the outside (observed on 4.0.2, issue #4118's first drain).
       await deps.sessionJournal.create(sessionId, request.project);
+      // #4243: the unattended posture forbids the inner agent GitHub access,
+      // so the daemon reads the Ticket's body and writes it into the brief —
+      // number+title alone made the agent implement blind.
+      let briefedPrompt = request.prompt;
+      let briefedTicket = request.ticket;
+      const ticketNumber = briefedTicket?.number;
+      if (briefedTicket != null && typeof ticketNumber === "number") {
+        const body = await readTicketBody(request.project, ticketNumber);
+        if (body != null) {
+          const brief = ticketBodyBrief(
+            ticketNumber,
+            typeof briefedTicket.title === "string" ? briefedTicket.title : "",
+            body,
+          );
+          briefedPrompt = `${briefedPrompt}\n\n${brief}`;
+          briefedTicket = typeof briefedTicket.handoff === "string"
+            ? { ...briefedTicket, handoff: `${briefedTicket.handoff}\n\n${brief}` }
+            : briefedTicket;
+        }
+      }
       const { worker, response } = await requestWorkflowTurn(
         sessionId,
         active,
         {
           sessionId,
-          prompt: [{ type: "text", text: request.prompt }],
+          prompt: [{ type: "text", text: briefedPrompt }],
           _meta: {
             redskills: {
               unattended: true,
               ...(request.workItem == null ? {} : { workItem: request.workItem }),
               ...(request.runner == null ? {} : { runner: request.runner }),
-              ...(request.ticket == null ? {} : { ticket: request.ticket }),
+              ...(briefedTicket == null ? {} : { ticket: briefedTicket }),
             },
           },
         },
