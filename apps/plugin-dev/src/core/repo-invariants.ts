@@ -184,6 +184,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "no NEW function may carry more complexity than its package's tests reach (#4132, Spec #4129); the judged tree spans apps/ and packages/, the ceiling and its baseline live in apps/plugin-dev",
   },
   {
+    name: "invariants:dependency-direction",
+    scope: "apps/plugin-dev",
+    script: "test:invariants",
+    why: "a dependency may only reach a strictly lower layer of the workspace stack (#4135, Spec #4129); the judged manifests and imports span apps/, packages/ and benchmarks/, and the layer table and its suite live in apps/plugin-dev",
+  },
+  {
     name: "invariants:daemon-death-evidence",
     scope: "apps/plugin-dev",
     script: "test:invariants",

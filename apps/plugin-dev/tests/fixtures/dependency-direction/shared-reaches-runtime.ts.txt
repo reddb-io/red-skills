@@ -1,0 +1,17 @@
+// A fixture, not a module: this is what a wrong-direction import looks like when
+// somebody writes one. It stands in for `packages/shared/src/telemetry-bridge.ts`
+// — a shared-layer file that reaches UP into a runtime because the type it
+// wanted happened to be declared there.
+//
+// The example below is inside a comment and must NOT count as an edge:
+//   import { runDrain } from "@reddb-io/dev";
+
+import { readFileSync } from "node:fs";
+import type { RepoInvariantSuite } from "@reddb-io/dev";
+import { renderDashboard } from "../../../apps/plugin-dev/src/core/boot.js";
+
+export function describeSuites(path: string): string {
+  const suites = readFileSync(path, "utf8");
+  const rendered: RepoInvariantSuite[] = [];
+  return renderDashboard(suites, rendered);
+}
