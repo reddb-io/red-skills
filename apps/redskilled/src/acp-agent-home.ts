@@ -13,16 +13,27 @@ import { join } from "node:path";
 import type { AcpAgentId } from "@reddb-io/protocol-acp";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 
+/**
+ * The Agents that keep their state in an `opencode.db` and must not share one.
+ *
+ * redcode is opencode's engine, so the failure is the same engine's: redcode#58
+ * observed concurrent instances on one DB dying mid-turn on "database is
+ * locked". opencode reached the same catalog with no isolation at all (#4278) —
+ * the very file the bug is about, and the reason this is ONE branch rather than
+ * the literal written twice.
+ */
+const OPENCODE_ENGINE_AGENTS = new Set<AcpAgentId>(["redcode", "opencode"]);
+
 /** The env one child Agent needs to stand apart from its siblings and the operator. PURE. */
 export function childAgentWorkspaceEnv(
   agent: AcpAgentId,
   workspacePath: string,
   homeDirPath: string = homedir(),
 ): Record<string, string> {
-  // redcode#58: concurrent redcode instances sharing one opencode.db die on
-  // "database is locked" mid-turn, so each Worker's child gets its own DB in
-  // the Worker's disposable workspace — it dies with the workspace.
-  if (agent === "redcode") return { OPENCODE_DB: join(workspacePath, "redcode.db") };
+  // Each Worker's child gets its own DB inside the Worker's disposable
+  // workspace, named for the Agent that owns it — so the file dies with the
+  // workspace and two Agents in one workspace never collide either.
+  if (OPENCODE_ENGINE_AGENTS.has(agent)) return { OPENCODE_DB: join(workspacePath, `${agent}.db`) };
   if (agent === "codex") return { CODEX_HOME: codexAgentHome(homeDirPath) };
   return {};
 }

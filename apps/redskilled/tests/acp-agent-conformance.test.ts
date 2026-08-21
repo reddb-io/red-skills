@@ -9,9 +9,12 @@ import { ACP_AGENT_IDS, type AcpAgentId, type AcpEndpoint } from "@reddb-io/prot
 import {
   ACP_AGENT_CATALOG,
   ACP_AGENT_REQUIRED_CAPABILITIES,
+  ACP_UNATTENDED_POSTURES,
   AcpAgentCatalog,
+  declaredChildAgentEndpoint,
   type AcpAgentDescriptor,
   type AcpAgentProbeResult,
+  type AcpUnattendedPosture,
 } from "../src/acp-agent-catalog.js";
 
 /**
@@ -30,14 +33,23 @@ interface AgentCase {
   readonly kind: "native" | "adapter";
   /** Native argv, executable first; adapters resolve their argv from the pin. */
   readonly command?: readonly [string, ...string[]];
+  /**
+   * The kind of unattended posture this Agent is expected to declare.
+   *
+   * Named here rather than read from the catalog: a matrix that reads the
+   * catalog agrees with it by construction, and the whole failure this row
+   * exists for is three Agents that were admissible and undeployable because
+   * nobody had written down what makes them able to work (#4278).
+   */
+  readonly posture: AcpUnattendedPosture["kind"];
 }
 
 const AGENT_MATRIX: readonly AgentCase[] = [
-  { id: "redcode", label: "Redcode", kind: "native", command: ["redcode", "acp"] },
-  { id: "claude-code", label: "Claude Code", kind: "adapter" },
-  { id: "codex", label: "Codex", kind: "adapter" },
-  { id: "pi", label: "Pi", kind: "adapter" },
-  { id: "opencode", label: "OpenCode", kind: "native", command: ["opencode", "acp"] },
+  { id: "redcode", label: "Redcode", kind: "native", command: ["redcode", "acp"], posture: "none-needed" },
+  { id: "claude-code", label: "Claude Code", kind: "adapter", posture: "session-mode" },
+  { id: "codex", label: "Codex", kind: "adapter", posture: "launch-args" },
+  { id: "pi", label: "Pi", kind: "adapter", posture: "none-needed" },
+  { id: "opencode", label: "OpenCode", kind: "native", command: ["opencode", "acp"], posture: "none-needed" },
 ] as const;
 
 const roots: string[] = [];
@@ -140,6 +152,56 @@ describe("the focused ACP Agent conformance matrix", () => {
       expect(descriptor).not.toHaveProperty("artifact");
     },
   );
+
+  it.each(AGENT_MATRIX)("declares how $label works with nobody at the keyboard", (agent) => {
+    const posture = descriptorFor(agent.id).unattendedPosture;
+    expect(posture.kind).toBe(agent.posture);
+    // The catalog and the declaration table are the same object, never two
+    // tables a reader has to reconcile.
+    expect(posture).toBe(ACP_UNATTENDED_POSTURES[agent.id]);
+
+    // A posture that establishes nothing is worse than none: it reads as a
+    // decision somebody made. Every arm has to SAY something.
+    if (posture.kind === "launch-args") {
+      expect(posture.args.length).toBeGreaterThan(0);
+      expect(posture.evidence.length).toBeGreaterThan(20);
+    } else if (posture.kind === "session-mode") {
+      expect(posture.modeId).not.toBe("");
+      expect(posture.evidence.length).toBeGreaterThan(20);
+    } else {
+      expect(posture.reason.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("declares a posture for every catalog Agent and only for catalog Agents", () => {
+    // Direction one: no Agent is admissible without a stated posture. This is
+    // the drift that shipped — claude-code, pi and opencode were each reachable
+    // and each unable to finish a turn.
+    for (const descriptor of ACP_AGENT_CATALOG) {
+      expect(ACP_UNATTENDED_POSTURES[descriptor.id]).toBe(descriptor.unattendedPosture);
+    }
+    // Direction two: a posture for an Agent nobody can reach is fiction that
+    // outlives the Agent it described.
+    expect(Object.keys(ACP_UNATTENDED_POSTURES).sort())
+      .toEqual(ACP_AGENT_CATALOG.map((descriptor) => descriptor.id).sort());
+  });
+
+  it.each(AGENT_MATRIX)("carries $label's posture on the endpoint a Worker is handed", (agent) => {
+    const endpoint = declaredChildAgentEndpoint(agent.id);
+    const posture = ACP_UNATTENDED_POSTURES[agent.id];
+
+    // A posture declared and not carried is a posture that never happened: the
+    // endpoint is the ONLY thing that crosses the body/control cut.
+    if (posture.kind === "launch-args") {
+      expect(endpoint.args.slice(-posture.args.length)).toEqual([...posture.args]);
+      expect(endpoint.unattendedSessionMode).toBeUndefined();
+    } else if (posture.kind === "session-mode") {
+      expect(endpoint.unattendedSessionMode).toBe(posture.modeId);
+    } else {
+      expect(endpoint.unattendedSessionMode).toBeUndefined();
+      if (agent.command) expect([endpoint.command, ...endpoint.args]).toEqual([...agent.command]);
+    }
+  });
 
   it("demands the same baseline capabilities of every Agent in the matrix", () => {
     expect([...ACP_AGENT_REQUIRED_CAPABILITIES]).toEqual([

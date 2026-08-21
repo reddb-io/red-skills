@@ -1,5 +1,9 @@
 # Runner: Codex
 
+> **Unattended posture.** What makes this Agent able to work with nobody at the
+> keyboard — and the evidence behind it — is
+> [`runner-unattended-posture.md`](./runner-unattended-posture.md).
+
 How `/afk` invokes Codex as the inner agent for one issue.
 
 ## Spawn Command

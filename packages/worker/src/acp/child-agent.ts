@@ -225,6 +225,19 @@ export class WorkflowChildAgent {
           : { additionalDirectories: [...this.#options.additionalDirectories] }),
         _meta: { redskills: { delegation: DELEGATION_SCOPE } },
       });
+      // **The unattended posture is established BEFORE the first prompt.**
+      // Nobody answers a permission dialog here, and `acp-permission.ts` turns
+      // an uncovered decision into `cancelled` — which every shipped Agent
+      // reads as an interrupt and aborts the whole turn on. claude-code-acp
+      // parses no argv, so a session mode is the only door it has (#4278); if
+      // the mode is refused the child cannot work, and failing here is a birth
+      // that explains itself rather than a turn that dies on its first write.
+      if (endpoint.unattendedSessionMode != null) {
+        await connection.agent.request(methods.agent.session.setMode, {
+          sessionId: session.sessionId,
+          modeId: endpoint.unattendedSessionMode,
+        });
+      }
       const active = {
         child,
         connection,

@@ -15,6 +15,7 @@ const ACP_WORKER_FLAGS = {
   "child-agent": { kind: "value", coerce: requireAcpAgentId },
   "child-command": { kind: "value", coerce: (raw: string) => raw },
   "child-arg": { kind: "value", type: "array", coerce: (raw: string) => raw },
+  "child-session-mode": { kind: "value", coerce: (raw: string) => raw },
 } as const;
 
 export async function runAcpWorkerCommand(args: readonly string[]): Promise<number> {
@@ -23,11 +24,14 @@ export async function runAcpWorkerCommand(args: readonly string[]): Promise<numb
   if (values["child-agent"] == null || values["child-command"] == null) {
     throw new Error("acp-worker requires a daemon-selected child ACP Agent endpoint");
   }
+  const sessionMode = values["child-session-mode"];
   return await runNativeAcpWorker(values.socket, {
     agent: values["child-agent"],
     transport: "stdio",
     command: values["child-command"],
     args: values["child-arg"] ?? [],
+    // The daemon's catalog chose it; this restates it and decides nothing.
+    ...(sessionMode == null || sessionMode === "" ? {} : { unattendedSessionMode: sessionMode }),
   });
 }
 

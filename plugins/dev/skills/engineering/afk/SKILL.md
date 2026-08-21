@@ -155,6 +155,9 @@ Read the focused reference before touching that concern:
 - Runner-specific behavior: [`runner-claude.md`](./runner-claude.md),
   [`runner-codex.md`](./runner-codex.md), [`runner-opencode.md`](./runner-opencode.md),
   and fallback [`runner-hermes.md`](./runner-hermes.md).
+- What makes each Agent able to work with nobody at the keyboard, and the
+  evidence behind each answer:
+  [`runner-unattended-posture.md`](./runner-unattended-posture.md).
 - Liveness, stall protection and lane-idle rules:
   [`docs/LIVENESS.md`](./docs/LIVENESS.md).
 - Config, env overrides, lifecycle hooks, sandbox/runner/model settings, the

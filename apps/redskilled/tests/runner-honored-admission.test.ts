@@ -110,11 +110,33 @@ describe("the registered runner reaches the born Worker", () => {
     ]);
     expect(codexSpec.env?.OPENCODE_DB).toBeUndefined();
     expect(codexSpec.env?.CODEX_HOME).toBe(codexAgentHome());
+    // codex takes its posture from argv, so no session mode rides along.
+    expect(codexArgs).not.toContain("--child-session-mode");
 
     const redcodeSpec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk");
     const redcodeArgs = redcodeSpec.args ?? [];
     expect(redcodeArgs[redcodeArgs.indexOf("--child-agent") + 1]).toBe("redcode");
     expect(redcodeSpec.env?.OPENCODE_DB).toBe(join(workspace.workspacePath, "redcode.db"));
+    expect(redcodeArgs).not.toContain("--child-session-mode");
+  });
+
+  it("hands claude-code the session mode that is its only unattended door", () => {
+    // claude-code-acp parses no argv, so its posture cannot ride the launch —
+    // it has to reach the Worker, which sets it right after `session/new`.
+    const spec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk", "claude-code");
+    const args = spec.args ?? [];
+    expect(args[args.indexOf("--child-agent") + 1]).toBe("claude-code");
+    expect(args[args.indexOf("--child-session-mode") + 1]).toBe("bypassPermissions");
+  });
+
+  it("gives opencode its own per-Worker DB, the file redcode#58 is about", () => {
+    // opencode reached the catalog sharing one `opencode.db` across every
+    // concurrent Worker — the exact "database is locked" death redcode already
+    // got isolation for (#4278). One branch, one literal, both Agents.
+    const spec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk", "opencode");
+    expect(spec.env?.OPENCODE_DB).toBe(join(workspace.workspacePath, "opencode.db"));
+    expect(spec.env?.OPENCODE_DB).not.toBe(childAgentWorkspaceEnv("redcode", workspace.workspacePath).OPENCODE_DB);
+    expect(spec.env?.CODEX_HOME).toBeUndefined();
   });
 });
 
@@ -154,6 +176,6 @@ describe("the daemon-owned codex home", () => {
     const home = await mkdtemp(join(tmpdir(), "redskilled-agent-home-"));
     roots.push(home);
     await ensureChildAgentHome("redcode", home);
-    expect(childAgentWorkspaceEnv("opencode", "/tmp/w", home)).toEqual({});
+    expect(childAgentWorkspaceEnv("pi", "/tmp/w", home)).toEqual({});
   });
 });
