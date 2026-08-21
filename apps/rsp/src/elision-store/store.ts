@@ -5,7 +5,8 @@ import { basename, dirname } from "node:path";
 import { connect, type RedDB } from "@reddb-io/sdk";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_EPHEMERAL_TTL_HOURS, DEFAULT_RSP_TTL_DAYS, RSP_ELISION_COLLECTION, type RspElisionRecord, type RspElisionStoreOptions, type RspExpiredHandle, type RspMintMeta, type RspRecoveryHandle, type RspStoreStats } from "./public.js";
 import type { IndexDocument, IndexEntry, RedDbKvCollectionSnapshot, ResidentRecallHit, StoreDocument, StoredRecord } from "./model.js";
-import { collectMemoryFiles, compressedBlob, contentHandle, contentHash, deriveGitBlobRecipe, deriveReexecutionRecipe, ensureReddbBinaryFromWarmCache, expiresAtFor, fileStorePath, indexKey, isExpiredHandle, isHandle, isIndexDocument, isStoredBlob, isStoredRecord, parseMemoryIngestPayload, parseMemoryRecallPayload, positiveNumber, readCompressedBlob, readGitBlobRecipe, readReexecutionRecipe, readStoreDocument, recoveryHandlesForIndex, recordKey, redDbIdentifier, residentRowToRecallHit, storageClassForCommand, storageClassForRecord, storageStatsForIndex, storedBytesFor, storedBytesForIndex, storedBytesForRecord, tombstoneKey, usesEmbeddedRedDb, writableStorePath, writeStoreDocument } from "./helpers.js";
+import { ensureReddbBinary } from "../reddb-binary.js";
+import { collectMemoryFiles, compressedBlob, contentHandle, contentHash, deriveGitBlobRecipe, deriveReexecutionRecipe, expiresAtFor, fileStorePath, indexKey, isExpiredHandle, isHandle, isIndexDocument, isStoredBlob, isStoredRecord, parseMemoryIngestPayload, parseMemoryRecallPayload, positiveNumber, readCompressedBlob, readGitBlobRecipe, readReexecutionRecipe, readStoreDocument, recoveryHandlesForIndex, recordKey, redDbIdentifier, residentRowToRecallHit, storageClassForCommand, storageClassForRecord, storageStatsForIndex, storedBytesFor, storedBytesForIndex, storedBytesForRecord, tombstoneKey, usesEmbeddedRedDb, writableStorePath, writeStoreDocument } from "./helpers.js";
 
 export class RspElisionStore {
   private document!: StoreDocument;
@@ -37,7 +38,7 @@ export class RspElisionStore {
       now: opts.now ?? (() => new Date()),
     });
     if (usesEmbeddedRedDb(path)) {
-      await ensureReddbBinaryFromWarmCache();
+      ensureReddbBinary();
       // The SDK creates the .rdb file but not its parent directory; the store now
       // lives in the state tier (.red/state), which may not exist yet.
       await mkdir(dirname(path), { recursive: true });
