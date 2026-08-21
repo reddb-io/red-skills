@@ -1,0 +1,39 @@
+bundle: .github/red-skills/release.bundle.mjs
+bundleSha256: e266dfc4f5395297a49314c9daf0237071025846ebda48f1f17b18406d93dcc6
+bundleBytes: 353957
+sourceTreeSha256: 169f535c71cf0e53ee798ea1d52e08f91e47adf5af089b16fd45c3f43e73a9fb
+refreshCommand: "pnpm -C apps/release vendor:refresh"
+toolchain:
+  esbuild: 0.24.2
+  node: v24.18.0
+sources[30]{path,sha256}:
+  apps/release/src/changeset-queue.ts,a6d036a332ba769f3469207cf1d3b4764a5e637b1f1ed13716be16afb22b6c98
+  apps/release/src/cli.ts,3d5aa562b504b60e4775e2daa910f19144f60e1dfb13ad773cd039af48bebf18
+  apps/release/src/github-release-adapter.ts,f2f1b6cc13c88d9868d63e80f26469d534b7a24ffb92948e140ef2b92fdf14e7
+  apps/release/src/release-artifacts.ts,e59f741882bad44a8aa3ad1a10dd635368ad30898279a9aa92cf458ed5fe97ad
+  apps/release/src/release-engine.ts,64edf709ba600aa2df4897b1cc602cfd6fec04c19787ba3baa7a93a4d8a9a6ff
+  apps/release/src/release-publication.ts,94afb963538cc2a0744a449f7316b8a08d4d1ee07749c019af448d0d8c178c2f
+  apps/release/src/release-wait.ts,ffe1d0886a3f64c4c2faca8de126c7f0995aac46d6564d0b74b824f03a12c77b
+  apps/release/src/status.ts,aba5ea25f73efd641c05af661d482807827aa35dda41958726ae3d008c5f7d11
+  apps/release/src/version-core.ts,0b0a981f527b408600c393e7fa0e61fc2bee10c497ba843d3dd800b508a80b2f
+  apps/release/src/version-surfaces.ts,18f7809c986b968a3190e8bb472c48fd7c489799e8333c7a5b913ae9b421c8b7
+  packages/build-info/index.mjs,e639c0d1f8a9389e7cb326e61bdae2d92cdb915000ccd2fedc8d3029903b61c6
+  packages/github/aliased-query.ts,53564752425651ab782780b9376ceaafe2b591d86ffc1a08127c177978d34ea3
+  packages/github/app-balance.ts,dc82fb58dc54cba2f7a84578adaccfbfa7d39feb9ac956f5bd6dd66ec612aba1
+  packages/github/app-coverage.ts,2368b9e281a822cba19fecaf5468523e7282c6d7d25ba5f43e00323970cd644b
+  packages/github/app-credential.ts,d7d1bbe6ae6611977e973ec3bd804b9d83f80d454dd05e262c9efba9a10ff434
+  packages/github/attribution.ts,140f55b307e91087c0f25b44235b699a532c2e3d061d63e97620af823822c423
+  packages/github/balance-history.ts,7a0969530c1fd910c521225629f8eb6a69ee08e1e76bdfc531ca8e1cac339fa3
+  packages/github/balance-store.ts,a77c1d85281ac9ba32653010c9c8c36aae01d2ea75a8f30d9f3591bfb930dc26
+  packages/github/balance.ts,d62421d5a2ade607a65148bad3d46a4267fd917d06e745dd5a3eedd3375f296d
+  packages/github/budget-gate.ts,87e81dd321369e9b4e2749c294d0b21a03ab1fa9bb16748265af5f120a1a8758
+  packages/github/cache.ts,e2eb37781b707327d8b9ddebde8fc2e115805fc04c40a66576c5b61c42bd1232
+  packages/github/conditional-client.ts,0857a702a948a99558be02b8416a774981c0d18cb7570bc15f1374b444b1f503
+  packages/github/deadline.ts,a043f5f2706b1ccfd14b184fd9596bb93cf9d2409a605bb51380784dfa41137a
+  packages/github/index.ts,533eeccb21f7e0bfc84c178a1d7afe513220c6f4c40b0925d49e7bbb0c289b57
+  packages/github/rest-plan.ts,a4fdd29d13c53d884443e2a6afc9aea79c80ab31e9e296c0dbed915eaead1806
+  packages/github/routing.ts,903644052b68c1fa14768f60013ba752b5e77f23a7820e7193e6cc1d704853cb
+  packages/github/surface.ts,fc2feabee5b0e648674e9b33a95370ecfdf54fa30f912521f1dd45a5ab42c924
+  packages/github/write-plan.ts,c9d371455ef0c8cf0ba7b45e8441fc3614858084affb1f127d5bc1b460607d02
+  packages/shared/args.ts,0d3aa76f0ef8ebea1f1350615b9e08a15483f11d8a431d490cad6d86d16c4f0b
+  packages/shared/lane-retention.ts,64a93eb5778469a3f7ccf53dec869e9048980d7c20fd9ada4ffbecd10a16e6a4

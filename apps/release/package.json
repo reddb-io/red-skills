@@ -16,6 +16,7 @@
     "build": "tsc -p tsconfig.build.json && pnpm bundle",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/release.bundle.min.mjs --asset release.bundle.min.mjs --minify",
     "test": "vitest run",
+    "vendor:refresh": "node --import tsx scripts/refresh-vendored-bundle.ts",
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
