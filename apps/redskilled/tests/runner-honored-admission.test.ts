@@ -90,6 +90,14 @@ describe("the registered runner reaches the born Worker", () => {
     const codexSpec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk", "codex");
     const codexArgs = codexSpec.args ?? [];
     expect(codexArgs[codexArgs.indexOf("--child-agent") + 1]).toBe("codex");
+    // Dash-leading adapter args must ride the inline form: the pair form reads
+    // `--child-arg -y` as a flag pair and the Worker dies at its own front door.
+    expect(codexArgs.filter((arg) => arg.startsWith("--child-arg"))).toEqual([
+      "--child-arg=-y",
+      "--child-arg=-p",
+      "--child-arg=@zed-industries/codex-acp@0.16.0",
+      "--child-arg=codex-acp",
+    ]);
     expect(codexSpec.env?.OPENCODE_DB).toBeUndefined();
     expect(codexSpec.env?.CODEX_HOME).toBe(codexAgentHome());
 

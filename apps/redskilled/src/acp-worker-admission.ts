@@ -319,7 +319,9 @@ export function nativeWorkerSpec(
       "--socket", endpoint,
       "--child-agent", childAgent.agent,
       "--child-command", childAgent.command,
-      ...childAgent.args.flatMap((arg) => ["--child-arg", arg]),
+      // Inline form, because an adapter's args start with dashes (`-y`, `-p`)
+      // and the pair form reads the next dash token as a flag, not a value.
+      ...childAgent.args.map((arg) => `--child-arg=${arg}`),
     ],
     log_path: join(runtimeDir, "acp-workers", `${randomBytes(6).toString("hex")}.toonl`),
   };
