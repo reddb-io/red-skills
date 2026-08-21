@@ -108,7 +108,6 @@ export interface ComplexityCoverageBaselineEntry {
  * add one — a new entry is the untested complexity this exists to refuse.
  */
 export const COMPLEXITY_COVERAGE_BASELINE: readonly ComplexityCoverageBaselineEntry[] = [
-  { path: "apps/plugin-dev/src/core/activity-review.ts", name: "renderActivityReviewReport", crap: 306 },
   { path: "apps/plugin-dev/src/core/claim-recovery.ts", name: "planClaimRecovery", crap: 462 },
   { path: "apps/plugin-dev/src/core/declared-wait-guard.ts", name: "blankCommentsAndStrings", crap: 272 },
   { path: "apps/plugin-dev/src/core/development-workflow.ts", name: "activatePrimaryBranchLockConfig", crap: 506 },
