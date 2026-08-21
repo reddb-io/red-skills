@@ -24,6 +24,8 @@ import {
 import { formatStandingOrdersBrief, type StandingOrdersStore } from "./standing-orders.js";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  ACP_AGENT_IDS,
+  type AcpAgentId,
   ACP_PROTOCOL_VERSION,
   ACP_V2_DRAFT_REVISION,
   REDSKILLS_WIRE_MAJOR,
@@ -60,6 +62,8 @@ export interface DemandBirthTurn {
   readonly workspacePath: string;
   readonly prompt: string;
   readonly workItem?: string;
+  /** The runner the registration's launch declared (its `--child-agent` token). */
+  readonly runner?: string;
   /** The Ticket handoff that puts the Worker in its Ticket loop (#4118). */
   readonly ticket?: Readonly<Record<string, unknown>>;
 }
@@ -211,6 +215,9 @@ export async function startRedskillsAcpControlPlane(
     project: await workspaceFor(await resolveAcpProjectIdentity(request.workspacePath)),
     prompt: request.prompt,
     ...(request.workItem == null ? {} : { workItem: request.workItem }),
+    ...(request.runner == null || !(ACP_AGENT_IDS as readonly string[]).includes(request.runner)
+      ? {}
+      : { runner: request.runner as AcpAgentId }),
     ...(request.ticket == null ? {} : { ticket: request.ticket }),
   });  let closed = false;
   return {

@@ -28,6 +28,7 @@ import { randomBytes } from "node:crypto";
 
 import { parkGateBlockedTurn } from "./demand-park.js";
 import { admitNativeAcpWorker } from "./acp-worker-admission.js";
+import { ACP_AGENT_IDS, type AcpAgentId } from "@reddb-io/protocol-acp";
 import { expandLaunchTemplate } from "./launch-template.js";
 import {
   cleanupWorkflowWorker,
@@ -149,6 +150,7 @@ export function demandTurnForBirth(
     readonly prompt?: string;
     readonly trunk?: { readonly branch: string };
     readonly validation_commands?: readonly string[];
+    readonly argv?: readonly string[];
   } | undefined,
   birth: { readonly workspace_path: string; readonly index: number; readonly work_item?: string },
   workerId: string,
@@ -158,9 +160,11 @@ export function demandTurnForBirth(
   readonly workspacePath: string;
   readonly prompt: string;
   readonly workItem?: string;
+  readonly runner?: AcpAgentId;
   readonly ticket?: Readonly<Record<string, unknown>>;
 } | null {
   if (registration?.prompt == null) return null;
+  const runner = runnerFromLaunchArgv(registration.argv);
   const expanded = expandLaunchTemplate({ argv: [registration.prompt] }, {
     worker_id: workerId,
     slot: birth.index,
@@ -182,6 +186,7 @@ export function demandTurnForBirth(
     workspacePath: birth.workspace_path,
     prompt: withOrders,
     ...(birth.work_item == null ? {} : { workItem: birth.work_item }),
+    ...(runner == null ? {} : { runner }),
     ...(briefed
       ? {
         ticket: {
@@ -198,6 +203,22 @@ export function demandTurnForBirth(
       }
       : {}),
   };
+}
+
+/**
+ * The runner a registration's launch argv declares; null when it declares none.
+ *
+ * The argv is the registration's stated launch (Amendment 5), and `--child-agent`
+ * is the one token in it that names a runner. Reading the pair here keeps the
+ * daemon shape-checking: an unknown name is no declaration, never an error.
+ */
+export function runnerFromLaunchArgv(argv: readonly string[] | undefined): AcpAgentId | null {
+  if (argv == null) return null;
+  const at = argv.indexOf("--child-agent");
+  const candidate = at >= 0 ? argv[at + 1] : undefined;
+  return candidate != null && (ACP_AGENT_IDS as readonly string[]).includes(candidate)
+    ? (candidate as AcpAgentId)
+    : null;
 }
 
 /** What one admission needs, whoever performs it. */
@@ -238,6 +259,8 @@ export interface DemandTurnRequest {
   readonly prompt: string;
   /** The queue identifier this turn is for, when the birth had one. */
   readonly workItem?: string;
+  /** The runner the registration's launch declared; admission's default when absent. */
+  readonly runner?: AcpAgentId;
   /**
    * The Ticket this Worker is briefed with (#4118's first drain).
    *
@@ -391,6 +414,7 @@ export function createDemandTurnRunner(
             redskills: {
               unattended: true,
               ...(request.workItem == null ? {} : { workItem: request.workItem }),
+              ...(request.runner == null ? {} : { runner: request.runner }),
               ...(request.ticket == null ? {} : { ticket: request.ticket }),
             },
           },
