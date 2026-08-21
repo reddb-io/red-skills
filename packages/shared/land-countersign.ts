@@ -1,8 +1,10 @@
 /**
- * land-verdict — the one question every land entry point asks before it merges.
+ * land-countersign — the one question every land entry point asks before it merges.
  *
  * ADR 0154's land precondition is a single sentence: **no land without a
- * non-voided passing verdict matching the head actually being merged.** The
+ * non-voided passing Countersign matching the head actually being merged.** ADR
+ * 0156 is what makes that sentence sayable: `Verdict` stays the gate's failure
+ * classifier of ADR 0136, and the second signature gets its own word. The
  * sentence is easy; the failure mode is that there is no single place that says
  * it. A merge happens in five places — the AFK lifecycle landing, the merge
  * driver, the land tool, the ACP land method, and reconcile/adopt-branch — and
@@ -12,9 +14,9 @@
  * So the VOCABULARY lives here, in the lowest layer everything can reach: the
  * refusal reasons, the subject a gate is asked about, the decision it answers
  * with, and the port through which an entry point asks. The ledger-backed
- * implementation cannot live here — the verdicts lane is runtime state and this
+ * implementation cannot live here — the Countersign lane is runtime state and this
  * package may reach nothing above it — so it stays in the runtime layer and
- * arrives as {@link LandVerdictGate}. That split is deliberate: the engine and
+ * arrives as {@link LandCountersignGate}. That split is deliberate: the engine and
  * the daemon get the question without inheriting the store.
  *
  * There is deliberately NO "unknown" or "skip" outcome. A gate that cannot
@@ -24,17 +26,17 @@
 
 /**
  * Why a landing was refused. The list is closed, and every entry names a
- * DIFFERENT repair — an operator reading `stale-verdict` re-reviews, one
+ * DIFFERENT repair — an operator reading `stale-countersign` re-reviews, one
  * reading `verifier-blocked` repairs the reviewer runner, and collapsing the
  * two into "unverified" would send both to the wrong place.
  */
 export type LandRefusalReason =
-  /** The ledger holds no row for this head at all — nobody judged it. */
-  | "no-verdict"
+  /** The ledger holds no row for this head at all — nobody countersigned it. */
+  | "no-countersign"
   /** A row stood and was superseded by a `voided` row; the key's last word was a void. */
-  | "voided-verdict"
+  | "voided-countersign"
   /** The only passing rows judge a DIFFERENT head whose change is not equivalent. */
-  | "stale-verdict"
+  | "stale-countersign"
   /** A verifier ran and refused the change. Work for the implementer, not a park. */
   | "verifier-failed"
   /** A verifier could not conclude — runner down, unwired, identity unpinnable. */
@@ -43,9 +45,9 @@ export type LandRefusalReason =
   | "unresolvable-head";
 
 export const LAND_REFUSAL_REASONS: readonly LandRefusalReason[] = [
-  "no-verdict",
-  "voided-verdict",
-  "stale-verdict",
+  "no-countersign",
+  "voided-countersign",
+  "stale-countersign",
   "verifier-failed",
   "verifier-blocked",
   "unresolvable-head",
@@ -62,20 +64,20 @@ export type LandSubject =
   | { readonly kind: "pull-request"; readonly pr: number };
 
 /**
- * How a standing verdict was matched to the head being merged.
+ * How a standing Countersign was matched to the head being merged.
  *
  * `patch-id` is the ONE forgiven divergence: a clean rebase moves the validated
  * change without editing it, so the stable patch id over the base is the same
  * and the judgement still applies. Anything else is a different tree.
  */
-export type LandVerdictMatch = "head-sha" | "patch-id";
+export type LandCountersignMatch = "head-sha" | "patch-id";
 
-export type LandVerdictDecision =
+export type LandCountersignDecision =
   | {
       readonly allowed: true;
-      readonly matchedBy: LandVerdictMatch;
-      /** The verdict name the standing row carried. */
-      readonly verdict: string;
+      readonly matchedBy: LandCountersignMatch;
+      /** The Countersign class the standing row carried. */
+      readonly countersign: string;
       /** `<runner>:<model>` or `human:<login>` — who signed it. */
       readonly identity: string;
     }
@@ -90,8 +92,8 @@ export type LandVerdictDecision =
  * The port an entry point holds. One method, one question, no escape hatch —
  * a caller that wants to land asks, and a gate that cannot answer refuses.
  */
-export interface LandVerdictGate {
-  check(subject: LandSubject): Promise<LandVerdictDecision>;
+export interface LandCountersignGate {
+  check(subject: LandSubject): Promise<LandCountersignDecision>;
 }
 
 /** Name a subject in one phrase, so every refusal says what it refused. PURE. */
@@ -115,18 +117,18 @@ export function landRefusalMessage(
   const where = describeLandSubject(subject);
   const tail = detail && detail.trim() !== "" ? ` (${detail.trim()})` : "";
   switch (reason) {
-    case "no-verdict":
-      return `the verdicts ledger holds no verdict for ${where}${tail} — ADR 0154 lets nothing merge that no identity other than the implementer judged; run the review stage against this head, then land`;
-    case "voided-verdict":
-      return `the verdict for ${where} was voided${tail} — a superseded judgement authorizes nothing; re-review at this head, then land`;
-    case "stale-verdict":
+    case "no-countersign":
+      return `the Countersign ledger holds no row for ${where}${tail} — ADR 0154 lets nothing merge that no identity other than the implementer judged; run the review stage against this head, then land`;
+    case "voided-countersign":
+      return `the Countersign for ${where} was voided${tail} — a superseded judgement authorizes nothing; re-review at this head, then land`;
+    case "stale-countersign":
       return `${where} is judged only at another head whose change is not equivalent${tail} — the stale row was voided; re-review at this head, then land`;
     case "verifier-failed":
       return `the verifier refused ${where}${tail} — a refusal is work for the implementer, not a merge; address the finding and publish a new head`;
     case "verifier-blocked":
       return `the verifier could not conclude on ${where}${tail} — repair the reviewer runner (or set \`dev.review.mode: advisory\` while you do), then re-review`;
     case "unresolvable-head":
-      return `the landing could not name the head it was about to merge for ${where}${tail} — a verdict cannot be matched to a head nobody resolved, so nothing merges`;
+      return `the landing could not name the head it was about to merge for ${where}${tail} — a Countersign cannot be matched to a head nobody resolved, so nothing merges`;
   }
 }
 
@@ -135,17 +137,17 @@ export function refuseLand(
   reason: LandRefusalReason,
   subject: LandSubject,
   detail?: string,
-): LandVerdictDecision {
+): LandCountersignDecision {
   return { allowed: false, reason, message: landRefusalMessage(reason, subject, detail) };
 }
 
 /** Build the authorization a standing passing row grants. PURE. */
 export function allowLand(
-  matchedBy: LandVerdictMatch,
-  verdict: string,
+  matchedBy: LandCountersignMatch,
+  countersign: string,
   identity: string,
-): LandVerdictDecision {
-  return { allowed: true, matchedBy, verdict, identity };
+): LandCountersignDecision {
+  return { allowed: true, matchedBy, countersign, identity };
 }
 
 /** True for a value the closed refusal list names. PURE. */

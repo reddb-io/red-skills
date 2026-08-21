@@ -13,9 +13,9 @@ import {
 import { HOST_RECONCILE_PORTS } from "../src/core/reconcile-ports.js";
 import { DEFAULT_TRIAGE_LABELS } from "../src/core/triage-labels.js";
 import { upsertCurrentBlocker } from "../src/core/blocker-state.js";
-import type { LandSubject, LandVerdictDecision } from "@reddb-io/shared/land-verdict.js";
-import { recordAdoptionVerdict } from "../src/core/land-precondition.js";
-import type { VerdictAppendInput, VerdictRow } from "../src/core/verdict-ledger.js";
+import type { LandSubject, LandCountersignDecision } from "@reddb-io/shared/land-countersign.js";
+import { recordAdoptionCountersign } from "../src/core/land-precondition.js";
+import type { CountersignAppendInput, CountersignRow } from "../src/core/countersign-ledger.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
@@ -807,28 +807,28 @@ describe("routeLandingFailure — one landing refusal, one terminal (#2864)", ()
 /**
  * Entry point `reconcile-adopt-branch` (Ticket #4138, ADR 0154 user story 9).
  *
- * Its verdict source is the fetched `origin/<branch>` tip this lane just
+ * Its Countersign source is the fetched `origin/<branch>` tip this lane just
  * validated, and the human adopting the branch signs it through
- * `recordAdoptionVerdict` BEFORE the landing. That ordering is the whole point:
+ * `recordAdoptionCountersign` BEFORE the landing. That ordering is the whole point:
  * a row written after the merge would be a receipt, and the invariant needs an
  * authorization. The no-agent path is therefore never a silent exemption from
- * "no agent lands on its own verdict" — it is a different signature.
+ * "no agent lands on its own Countersign" — it is a different signature.
  */
 describe("reconcile — the adopting human signs their own landing (#4138)", () => {
   function ledgerSpy(): {
-    appended: VerdictAppendInput[];
+    appended: CountersignAppendInput[];
     asked: LandSubject[];
-    landVerdict: NonNullable<ReconcileDeps["landVerdict"]>;
+    landCountersign: NonNullable<ReconcileDeps["landCountersign"]>;
   } {
-    const appended: VerdictAppendInput[] = [];
+    const appended: CountersignAppendInput[] = [];
     const asked: LandSubject[] = [];
-    const allowed: LandVerdictDecision = {
-      allowed: true, matchedBy: "head-sha", verdict: "live-verified", identity: "human:maintainer",
+    const allowed: LandCountersignDecision = {
+      allowed: true, matchedBy: "head-sha", countersign: "live-verified", identity: "human:maintainer",
     };
     return {
       appended,
       asked,
-      landVerdict: {
+      landCountersign: {
         gate: {
           check: async (subject) => {
             asked.push(subject);
@@ -837,10 +837,10 @@ describe("reconcile — the adopting human signs their own landing (#4138)", () 
         },
         ledger: {
           read: async () => [],
-          void: async () => ({}) as VerdictRow,
+          void: async () => ({}) as CountersignRow,
           append: async (input) => {
             appended.push(input);
-            return { ...input, at: "now", voided: false, evidence: null, reason: null } as VerdictRow;
+            return { ...input, at: "now", voided: false, evidence: null, reason: null } as CountersignRow;
           },
         },
       },
@@ -850,14 +850,14 @@ describe("reconcile — the adopting human signs their own landing (#4138)", () 
   it("records `human:<login>` `live-verified` for the validated tip, then lands", async () => {
     const { deps, input } = harness({ feedbackOk: true, ciAware: "merge" });
     const spy = ledgerSpy();
-    deps.landVerdict = spy.landVerdict;
+    deps.landCountersign = spy.landCountersign;
     const result = await reconcile(deps, { ...input, adoptedBy: "maintainer", pullRequest: 4138 });
 
     expect(result.outcome).toBe("landed");
     expect(spy.appended).toHaveLength(1);
     const row = spy.appended[0]!;
     expect(row.verifier_identity).toBe("human:maintainer");
-    expect(row.verdict).toBe("live-verified");
+    expect(row.countersign).toBe("live-verified");
     expect(row.pr).toBe(4138);
     expect(row.head_sha).toBe("feedfacecafebeef");
     expect(row.patch_id).not.toBe("");
@@ -869,7 +869,7 @@ describe("reconcile — the adopting human signs their own landing (#4138)", () 
   it("signs nothing on an autonomous reconcile — nobody adopted it", async () => {
     const { deps, input } = harness({ feedbackOk: true, ciAware: "merge" });
     const spy = ledgerSpy();
-    deps.landVerdict = spy.landVerdict;
+    deps.landCountersign = spy.landCountersign;
     const result = await reconcile(deps, input);
 
     expect(result.outcome).toBe("landed");
@@ -881,16 +881,16 @@ describe("reconcile — the adopting human signs their own landing (#4138)", () 
   it("refuses the landing when the gate finds nothing judging the tip", async () => {
     const { deps, input } = harness({ feedbackOk: true, ciAware: "merge" });
     const spy = ledgerSpy();
-    deps.landVerdict = {
-      ledger: spy.landVerdict.ledger,
-      gate: { check: async () => ({ allowed: false, reason: "no-verdict", message: "nobody judged it" }) },
+    deps.landCountersign = {
+      ledger: spy.landCountersign.ledger,
+      gate: { check: async () => ({ allowed: false, reason: "no-countersign", message: "nobody judged it" }) },
     };
     const result = await reconcile(deps, input);
 
     expect(result.outcome).toBe("parked");
   });
 
-  it("recordAdoptionVerdict is the one namer both this lane and the rule use", async () => {
-    expect(typeof recordAdoptionVerdict).toBe("function");
+  it("recordAdoptionCountersign is the one namer both this lane and the rule use", async () => {
+    expect(typeof recordAdoptionCountersign).toBe("function");
   });
 });

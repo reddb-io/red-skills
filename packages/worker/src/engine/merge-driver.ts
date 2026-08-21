@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
-import type { LandVerdictGate } from "@reddb-io/shared/land-verdict.js";
+import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
 import type { EnginePaths } from "./paths.js";
 
 /**
@@ -392,7 +392,7 @@ export async function runMergeDriverPass(
      * again. Absent → the driver merges on the forge's assessment alone, which
      * `LAND_ENTRY_POINTS` declares and its ratchet pins.
      */
-    verdictGate?: LandVerdictGate;
+    countersignGate?: LandCountersignGate;
   },
 ): Promise<MergeDriverPassEntry[]> {
   const maxAttempts = options.maxAttempts ?? MERGE_DRIVER_MAX_ATTEMPTS;
@@ -470,7 +470,7 @@ export async function runMergeDriverPass(
       (view.mergeStateStatus === "CLEAN" || view.mergeStateStatus === "UNSTABLE") &&
       view.checks === "green"
     ) {
-      const judged = await options.verdictGate?.check({ kind: "pull-request", pr: record.pr });
+      const judged = await options.countersignGate?.check({ kind: "pull-request", pr: record.pr });
       if (judged && !judged.allowed) {
         stamp({ status: "needs-human", attempts, lastState, proof, note: judged.message });
         entries.push({ pr: record.pr, action: "terminal-human", note: judged.message });

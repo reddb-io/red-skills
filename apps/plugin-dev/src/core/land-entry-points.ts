@@ -6,8 +6,8 @@
  * somebody remembered is not a precondition — it is a suggestion with four
  * exceptions, and the exceptions are exactly where an unjudged change gets in.
  * The naive alternative is just as bad in the other direction: a blanket "no
- * verdict, no land" bricks the legitimate no-agent paths, so the enumeration
- * has to say what each entry point's verdict SOURCE is, not merely that it has
+ * Countersign, no land" bricks the legitimate no-agent paths, so the
+ * enumeration has to say what each entry point's Countersign SOURCE is, not just that it has
  * one.
  *
  * So the deliverable is this table, and the ratchet beside it
@@ -26,8 +26,8 @@
  * ## Why an entry point may enforce differently
  *
  * The five paths sit in four layers, and only the runtime layer can read a
- * project's verdicts lane. That is not an oversight to route around: a daemon
- * that read per-project verdicts would hold the per-issue policy ADR 0144 keeps
+ * project's Countersign lane. That is not an oversight to route around: a daemon
+ * that read per-project Countersigns would hold the per-issue policy ADR 0144 keeps
  * out of it, and an engine that did would be a Worker body that knows what a
  * `.red/` is. {@link LandEntryPointEnforcement} names the three honest answers,
  * and each entry says which one it is and what pays for it.
@@ -42,7 +42,7 @@ import { stripComments } from "./extinct-source-guard.js";
  * declaring it as such is what keeps the table total.
  */
 export type LandEntryPointEnforcement =
-  /** Reads the verdicts ledger itself; only the runtime layer can. */
+  /** Reads the Countersign ledger itself; only the runtime layer can. */
   | "ledger"
   /** Holds the gate as an injected port because its layer may not reach the lane. */
   | "port"
@@ -71,7 +71,7 @@ export interface LandEntryPoint {
    * tree. This is the deliverable the Spec asks for; a table of ids without it
    * would name the doors and say nothing about the locks.
    */
-  readonly verdictSource: string;
+  readonly countersignSource: string;
   /**
    * The symbol the module must reference for its enforcement to be real.
    * Required for `ledger` and `port`; a `delegated` entry proves nothing of its
@@ -82,7 +82,7 @@ export interface LandEntryPoint {
   readonly delegatesTo?: string;
   /** What is MISSING, for an `unenforced` entry. Required there, absent elsewhere. */
   readonly gap?: string;
-  /** Repo-relative test that names this entry AND its verdict source. */
+  /** Repo-relative test that names this entry AND its Countersign source. */
   readonly test: string;
   /** Why this path exists at all — read by whoever wonders if it can go. */
   readonly why: string;
@@ -100,10 +100,10 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     module: "apps/plugin-dev/src/core/landing.ts",
     entry: "doLanding",
     enforcement: "ledger",
-    verdictSource:
+    countersignSource:
       "the head is `LandingInput.validatedBranchTip` when the caller pinned the tip its gate validated, else the freshly resolved `<remote>/<branch>` tip; `landHeadPrecondition` asks the injected gate about that exact object name and refuses `unverified-head` before the pre_merge hook fires.",
     proof: "landHeadPrecondition",
-    test: "apps/plugin-dev/tests/landing-verdict.test.ts",
+    test: "apps/plugin-dev/tests/landing-countersign.test.ts",
     why: "the flag-toggled landing every AFK path funnels through — PR admin-merge or direct merge, both from here.",
   },
   {
@@ -111,9 +111,9 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     module: "apps/plugin-dev/src/core/reconcile.ts",
     entry: "reconcile",
     enforcement: "ledger",
-    verdictSource:
-      "the head is the fetched `origin/<branch>` tip this lane just validated; a human adopting the branch signs `human:<login>` through `recordAdoptionVerdict` BEFORE the landing, so the no-agent path holds a row rather than an exemption, and the same gate then judges it.",
-    proof: "recordAdoptionVerdict",
+    countersignSource:
+      "the head is the fetched `origin/<branch>` tip this lane just validated; a human adopting the branch signs `human:<login>` through `recordAdoptionCountersign` BEFORE the landing, so the no-agent path holds a row rather than an exemption, and the same gate then judges it.",
+    proof: "recordAdoptionCountersign",
     test: "apps/plugin-dev/tests/reconcile.test.ts",
     why: "the no-agent reland: validate a parked branch and land it without re-running the agent (ADR 0055), and the lane `/retake --adopt-branch` enters.",
   },
@@ -123,7 +123,7 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     entry: "createLandingTools",
     enforcement: "delegated",
     delegatesTo: "afk-lifecycle-landing",
-    verdictSource:
+    countersignSource:
       "none of its own: `land_branch` carries `{issue, branch, base?, title?, openPr?}` and no SHA, and its host dependency reaches a merge only through `doLanding`, whose gate judges the head it resolves.",
     test: "apps/plugin-dev/tests/land-entry-points-guard.test.ts",
     why: "the operator-facing MCP verb for landing one validated worker branch.",
@@ -133,9 +133,9 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     module: "packages/worker/src/engine/merge-driver.ts",
     entry: "runMergeDriverPass",
     enforcement: "port",
-    verdictSource:
+    countersignSource:
       "the pull request number on the armed record; the gate resolves the live head itself, and is asked immediately before `io.merge` rather than at arming, because the head may move between the two.",
-    proof: "verdictGate",
+    proof: "countersignGate",
     test: "packages/worker/src/engine/merge-driver.test.ts",
     why: "the castle-owned loop that lands armed PRs without the forge's native auto-merge (Spec #2511).",
   },
@@ -144,9 +144,9 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     module: "packages/worker/src/acp/ticket-loop.ts",
     entry: "runTicketLoop",
     enforcement: "port",
-    verdictSource:
+    countersignSource:
       "the commit its own publish stage produced (`published.publication.commit`, #4130) — the exact object name the land request is about to carry, asked before the request is sent.",
-    proof: "landVerdictGate",
+    proof: "landCountersignGate",
     test: "packages/worker/src/acp/ticket-loop.test.ts",
     why: "the only thing in the tree that issues an ACP land request.",
   },
@@ -155,7 +155,7 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     module: "apps/redskilled/src/acp-github.ts",
     entry: "bindAcpProjectGithubCustodyHandoff",
     enforcement: "unenforced",
-    verdictSource:
+    countersignSource:
       "none. `githubCustodyHandoffParams` accepts EXACTLY `{pull_request, owner_ticket, branch, base}` and refuses any other key, so the armed head #4130 threads through the in-process door cannot travel through this one — two doors to the same custodian with different contracts.",
     gap: "the public custody-handoff method carries no head and consults no ledger; closing it means the handoff wire carrying `armed_head` here too, which is a protocol change this ticket does not make.",
     test: "apps/plugin-dev/tests/land-entry-points-guard.test.ts",
@@ -167,8 +167,8 @@ export const LAND_ENTRY_POINTS: readonly LandEntryPoint[] = [
     entry: "bindAcpWorkerLand",
     enforcement: "delegated",
     delegatesTo: "worker-land-request",
-    verdictSource:
-      "the `commit` field the request carries, validated as one full object name and pinned as the custody record's `armed_head` (#4130) so a head that moves after arming is reported rather than merged; the ledger question belongs to the caller, because a daemon that read per-project verdicts would hold the per-issue policy ADR 0144 keeps out of it.",
+    countersignSource:
+      "the `commit` field the request carries, validated as one full object name and pinned as the custody record's `armed_head` (#4130) so a head that moves after arming is reported rather than merged; the ledger question belongs to the caller, because a daemon that read per-project Countersigns would hold the per-issue policy ADR 0144 keeps out of it.",
     test: "apps/redskilled/tests/github-custody-armed-head.test.ts",
     why: "the daemon method that opens the pull request and hands its merge to custody.",
   },
@@ -215,7 +215,7 @@ export const LAND_PRIMITIVE_EXEMPTIONS: readonly LandPrimitiveExemption[] = [
   },
   {
     path: "packages/worker/src/engine/landing.ts",
-    why: "declares `runCastleLanding`, whose `land()` port is abstract and has no implementation anywhere in the tree — it merges nothing itself. The exemption is what makes the port visible: any file that ever binds it names `runCastleLanding` and is refused here until it declares its verdict source.",
+    why: "declares `runCastleLanding`, whose `land()` port is abstract and has no implementation anywhere in the tree — it merges nothing itself. The exemption is what makes the port visible: any file that ever binds it names `runCastleLanding` and is refused here until it declares its Countersign source.",
   },
 ];
 
@@ -318,7 +318,7 @@ export function auditLandEntryPoints(
     findings.push({
       kind: "undeclared-entry-point",
       path: file.path,
-      reason: `${file.path} reaches the land primitive ${token} and LAND_ENTRY_POINTS does not declare it. Every way a change reaches the trunk states its verdict source (Spec #4129) — declare it in apps/plugin-dev/src/core/land-entry-points.ts, or exempt the file there with the reason it merges nothing.`,
+      reason: `${file.path} reaches the land primitive ${token} and LAND_ENTRY_POINTS does not declare it. Every way a change reaches the trunk states its Countersign source (Spec #4129, ADR 0156) — declare it in apps/plugin-dev/src/core/land-entry-points.ts, or exempt the file there with the reason it merges nothing.`,
     });
   }
 

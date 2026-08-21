@@ -1,6 +1,6 @@
 // review-fail-closed — the review stage that defaults ON, fails CLOSED, and
-// writes what it concluded to the verdicts ledger (ADR 0154, Spec #4129,
-// Ticket #4137).
+// writes what it concluded to the Countersign ledger (ADR 0154/0156, Spec
+// #4129, Tickets #4137 and #4172).
 //
 // The adversarial review has existed since ADR 0110 as an ADVISORY pass: off by
 // default, and when on, its findings were posted and the landing continued
@@ -39,11 +39,10 @@
 // wiring hands it `makeExtractAdversarialReview`'s extractor on the identity
 // `resolveReviewVerifier` pinned.
 //
-// The Dev glossary calls the row this stage writes a **Countersign** (ADR 0156
-// renames ADR 0154's noun, so that `Verdict` keeps meaning the gate's failure
-// classifier of ADR 0136). The lane and its module still ship under the older
-// spelling; this module speaks the surface it consumes, and the rename is one
-// edit in `verdict-ledger.ts` when it comes.
+// The row this stage writes is a **Countersign** — the second signature, from an
+// identity that did not implement the change — so that `Verdict` keeps meaning
+// the gate's failure classifier of ADR 0136. The lane, the module and every
+// identifier say so since #4172; nothing here spells the older noun.
 
 import type {
   AdversarialReviewContext,
@@ -53,11 +52,11 @@ import { decideAdversarialReview } from "./adversarial-review.js";
 import type { GateStageOutcome } from "./shared-gate.js";
 import type { ReviewVerifier } from "./review-verifier-identity.js";
 import type {
-  VerdictAppendInput,
-  VerdictKey,
-  VerdictName,
-  VerdictRow,
-} from "./verdict-ledger.js";
+  CountersignAppendInput,
+  CountersignKey,
+  CountersignClass,
+  CountersignRow,
+} from "./countersign-ledger.js";
 
 /** What the stage's outcome is allowed to DO about a landing. */
 export type ReviewMode = "blocking" | "advisory";
@@ -77,15 +76,15 @@ export function resolveReviewMode(get: (key: string) => string): ReviewMode {
 }
 
 /**
- * The verdicts a PASSING review may write. Narrower than {@link VerdictName} on
- * purpose: the pass verdict names how strong the evidence under the review was
+ * The classes a PASSING review may countersign with. Narrower than {@link
+ * CountersignClass} on purpose: the pass class names how strong the evidence was
  * (a live run, a green suite, types only), and the blocked/failed names are this
  * module's to choose, never the caller's.
  */
-export type ReviewPassVerdict = "live-verified" | "test-verified" | "type-check-only";
+export type ReviewPassCountersign = "live-verified" | "test-verified" | "type-check-only";
 
 /** A review sitting on top of a green feedback stage is test-verified. */
-export const DEFAULT_REVIEW_PASS_VERDICT: ReviewPassVerdict = "test-verified";
+export const DEFAULT_REVIEW_PASS_COUNTERSIGN: ReviewPassCountersign = "test-verified";
 
 /** The identity written when none could be pinned — never an empty field. */
 export const UNPINNED_VERIFIER_IDENTITY = "unpinned";
@@ -103,7 +102,7 @@ export interface ReviewStagePark {
 }
 
 export interface ReviewStageDecision {
-  readonly verdict: VerdictName;
+  readonly countersign: CountersignClass;
   /** The identity the row is signed with. */
   readonly identity: string;
   /** This stage's contribution to the gate fold. */
@@ -126,7 +125,7 @@ export interface ReviewStageDecisionInput {
   readonly verifier: ReviewVerifier | null;
   readonly attempt: ReviewAttempt;
   readonly appraisalFloor?: number;
-  readonly passVerdict?: ReviewPassVerdict;
+  readonly passCountersign?: ReviewPassCountersign;
 }
 
 const RAN_BUT_BLOCKED: GateStageOutcome = { stage: "review", ok: false };
@@ -134,7 +133,7 @@ const RAN_AND_PASSED: GateStageOutcome = { stage: "review", ok: true };
 const NOTHING_RAN: GateStageOutcome = { stage: "review", ok: true, skipped: true };
 
 /**
- * Turn one reviewer attempt into a verdict, a gate stage outcome and — when the
+ * Turn one reviewer attempt into a Countersign, a gate stage outcome and — when the
  * mode is blocking and the verifier could not conclude — a park. PURE.
  *
  * The table, in full:
@@ -144,7 +143,7 @@ const NOTHING_RAN: GateStageOutcome = { stage: "review", ok: true, skipped: true
  * | no verifier identity | `verifier-blocked`, stage BLOCKS, park | `verifier-blocked`, stage skipped |
  * | reviewer threw / unwired | `verifier-blocked`, stage BLOCKS, park | `verifier-blocked`, stage skipped |
  * | reviewer refused the diff | `verifier-failed`, stage BLOCKS, no park | `verifier-failed`, stage passes |
- * | reviewer passed the diff | the pass verdict, stage passes | same |
+ * | reviewer passed the diff | the pass class, stage passes | same |
  *
  * A reviewer that RAN and refused does not park: a blocking finding is work for
  * the implementer, which the Re-seed budget already routes, and parking it would
@@ -173,9 +172,9 @@ export function decideReviewStage(input: ReviewStageDecisionInput): ReviewStageD
 
   const findings = input.attempt.findings;
   const refused = decideAdversarialReview(findings, input.appraisalFloor) === "blocking";
-  const passVerdict = input.passVerdict ?? DEFAULT_REVIEW_PASS_VERDICT;
+  const passCountersign = input.passCountersign ?? DEFAULT_REVIEW_PASS_COUNTERSIGN;
   return {
-    verdict: refused ? "verifier-failed" : passVerdict,
+    countersign: refused ? "verifier-failed" : passCountersign,
     identity: verifier.identity,
     stage: refused && blocking ? RAN_BUT_BLOCKED : RAN_AND_PASSED,
     park: null,
@@ -193,7 +192,7 @@ function blockedDecision(
   blocking: boolean,
 ): ReviewStageDecision {
   return {
-    verdict: "verifier-blocked",
+    countersign: "verifier-blocked",
     identity,
     stage: blocking ? RAN_BUT_BLOCKED : NOTHING_RAN,
     park: blocking ? { label: "ready-for-human", reason } : null,
@@ -215,26 +214,26 @@ export interface AdversarialReviewer {
 }
 
 /** The slice of the ledger this stage needs: one append, nothing else. */
-export interface VerdictLedgerSink {
-  append(input: VerdictAppendInput): Promise<VerdictRow>;
+export interface CountersignLedgerSink {
+  append(input: CountersignAppendInput): Promise<CountersignRow>;
 }
 
 export interface ReviewStageDeps {
   /** `null` is an UNWIRED reviewer — a fail-closed block, not a skip. */
   readonly reviewer: AdversarialReviewer | null;
-  readonly ledger: VerdictLedgerSink;
+  readonly ledger: CountersignLedgerSink;
   /** Applies the park. Absent when the caller only wants the decision. */
   readonly park?: (park: ReviewStagePark) => Promise<void>;
 }
 
 export interface ReviewStageRunInput {
-  /** `(pr, head_sha, patch_id)` — the exact head this verdict judges. */
-  readonly key: VerdictKey;
+  /** `(pr, head_sha, patch_id)` — the exact head this Countersign judges. */
+  readonly key: CountersignKey;
   readonly context: AdversarialReviewContext;
   readonly mode: ReviewMode;
   readonly verifier: ReviewVerifier | null;
   readonly appraisalFloor?: number;
-  readonly passVerdict?: ReviewPassVerdict;
+  readonly passCountersign?: ReviewPassCountersign;
   /** What the review cited — a gate record, a CI run. Evidence, not authorization. */
   readonly evidence?: string | null;
 }
@@ -242,7 +241,7 @@ export interface ReviewStageRunInput {
 export interface ReviewStageResult {
   readonly decision: ReviewStageDecision;
   /** The row exactly as it was appended. */
-  readonly row: VerdictRow;
+  readonly row: CountersignRow;
   readonly attempt: ReviewAttempt;
 }
 
@@ -277,7 +276,7 @@ async function attemptReview(
 }
 
 /**
- * Run the review stage: one reviewer attempt, one verdict row, and the park when
+ * Run the review stage: one reviewer attempt, one Countersign row, and the park when
  * the fail-closed rule demands one.
  *
  * **Exactly one row is appended on every path**, including the paths where the
@@ -294,11 +293,11 @@ export async function runReviewStage(
     verifier: input.verifier,
     attempt,
     ...(input.appraisalFloor === undefined ? {} : { appraisalFloor: input.appraisalFloor }),
-    ...(input.passVerdict === undefined ? {} : { passVerdict: input.passVerdict }),
+    ...(input.passCountersign === undefined ? {} : { passCountersign: input.passCountersign }),
   });
   const row = await deps.ledger.append({
     ...input.key,
-    verdict: decision.verdict,
+    countersign: decision.countersign,
     verifier_identity: decision.identity,
     evidence: input.evidence ?? null,
     reason: decision.reason,

@@ -268,13 +268,13 @@ describe("merge driver file store", () => {
 });
 
 /**
- * Entry point `merge-driver` (Ticket #4138, ADR 0154). Its verdict source is
+ * Entry point `merge-driver` (Tickets #4138 and #4172, ADR 0154/0156). Its Countersign source is
  * the pull request number on the armed record: the driver never chose the head
  * and cannot see it, so the gate resolves the live head itself and is asked
  * IMMEDIATELY before `io.merge` rather than at arming — a head that moves in
  * between is exactly the gap the ticket closes.
  */
-describe("merge driver requires a fresh verdict (#4138)", () => {
+describe("merge driver requires a fresh Countersign (#4138)", () => {
   const CLEAN_GREEN: MergeDriverPrView = { state: "OPEN", mergeStateStatus: "CLEAN", checks: "green" };
 
   it("refuses to merge a green PR nothing judged, and parks it terminally", async () => {
@@ -285,10 +285,10 @@ describe("merge driver requires a fresh verdict (#4138)", () => {
 
     const entries = await runMergeDriverPass(gh, store, {
       nowEpoch: NOW,
-      verdictGate: {
+      countersignGate: {
         check: async (subject) => {
           asked.push(subject);
-          return { allowed: false, reason: "no-verdict", message: "nobody judged pull request 77" };
+          return { allowed: false, reason: "no-countersign", message: "nobody judged pull request 77" };
         },
       },
     });
@@ -302,16 +302,16 @@ describe("merge driver requires a fresh verdict (#4138)", () => {
     expect(asked).toEqual([{ kind: "pull-request", pr: 77 }]);
   });
 
-  it("merges when a standing verdict judges the PR", async () => {
+  it("merges when a standing Countersign judges the PR", async () => {
     const store = memoryStore();
     await armPr(store, 78, NOW);
     const gh = io({ 78: [CLEAN_GREEN] });
 
     const entries = await runMergeDriverPass(gh, store, {
       nowEpoch: NOW,
-      verdictGate: {
+      countersignGate: {
         check: async () => ({
-          allowed: true, matchedBy: "head-sha", verdict: "test-verified", identity: "codex:gpt-5",
+          allowed: true, matchedBy: "head-sha", countersign: "test-verified", identity: "codex:gpt-5",
         }),
       },
     });
@@ -328,10 +328,10 @@ describe("merge driver requires a fresh verdict (#4138)", () => {
 
     await runMergeDriverPass(gh, store, {
       nowEpoch: NOW,
-      verdictGate: {
+      countersignGate: {
         check: async () => {
           calls += 1;
-          return { allowed: false, reason: "no-verdict", message: "unjudged" };
+          return { allowed: false, reason: "no-countersign", message: "unjudged" };
         },
       },
     });

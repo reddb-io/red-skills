@@ -11,7 +11,7 @@
  * `handoffMergeCustody` lands, rather than the next time somebody remembers to
  * look.
  *
- * Every declared entry also names the TEST that states its verdict source, so
+ * Every declared entry also names the TEST that states its Countersign source, so
  * "which head is this judged on?" has an answer per door rather than a rule
  * somewhere and five doors nobody re-read.
  */
@@ -73,11 +73,11 @@ describe("land entry points are enumerated, not discovered (#4138)", () => {
     expect(findings.map((finding) => finding.reason)).toEqual([]);
   });
 
-  it("declares each entry once, with a verdict source a reader can act on", () => {
+  it("declares each entry once, with a Countersign source a reader can act on", () => {
     const ids = LAND_ENTRY_POINTS.map((entry) => entry.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const entry of LAND_ENTRY_POINTS) {
-      expect(entry.verdictSource.trim().length).toBeGreaterThan(60);
+      expect(entry.countersignSource.trim().length).toBeGreaterThan(60);
       expect(entry.why.trim().length).toBeGreaterThan(20);
     }
   });
@@ -110,7 +110,7 @@ describe("land entry points are enumerated, not discovered (#4138)", () => {
     expect(findings.map((finding) => finding.kind)).toEqual(["unstated-gap"]);
   });
 
-  it("every entry names a test that exists and states its verdict source", () => {
+  it("every entry names a test that exists and states its Countersign source", () => {
     for (const entry of LAND_ENTRY_POINTS) {
       const text = readFileSync(join(REPO_ROOT, entry.test), "utf8");
       expect(text.includes(entry.entry) || text.includes(entry.id)).toBe(true);

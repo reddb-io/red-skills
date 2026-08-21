@@ -1,7 +1,7 @@
-// review-verifier-identity — who is allowed to write the verdict that lets a
-// branch land (ADR 0154, Spec #4129, Ticket #4137).
+// review-verifier-identity — who is allowed to countersign the row that lets a
+// branch land (ADR 0154/0156, Spec #4129, Tickets #4137 and #4172).
 //
-// ADR 0154's rule is one sentence: **no agent lands on its own verdict.** The
+// ADR 0154's rule is one sentence: **no agent lands on its own Countersign.** The
 // review stage already resolves a reviewer through `resolveAdversarialReviewer`,
 // and that resolver is deliberately permissive — with nothing configured it
 // returns the IMPLEMENTER's own runner and model, because as an advisory pass
@@ -9,7 +9,7 @@
 //
 // It is not better than not reviewing at all once the outcome becomes an
 // authorization. A `test-verified` row signed `claude:claude-opus-5` for a diff
-// that `claude:claude-opus-5` wrote is a self-verdict wearing a ledger's
+// that `claude:claude-opus-5` wrote is a self-signature wearing a ledger's
 // clothes: every land precondition downstream reads it as a second opinion, and
 // there was none. So the identity is resolved HERE, with the distinctness as the
 // rule rather than as a hope, and a resolution that cannot find a different
@@ -28,7 +28,7 @@ import {
 } from "./adversarial-review.js";
 import type { AfkModelTier } from "./config.js";
 import type { AgentEffort, AgentRunner } from "./execution.js";
-import { agentVerifierIdentity } from "./verdict-ledger.js";
+import { agentVerifierIdentity } from "./countersign-ledger.js";
 
 /** The identity that produced the diff — the one a verifier must NOT be. */
 export interface ReviewImplementerIdentity {
@@ -42,7 +42,7 @@ export interface ReviewVerifier {
   readonly runner: AgentRunner;
   readonly model: string;
   readonly effort?: AgentEffort;
-  /** `<runner>:<model>`, exactly as the verdict row's `verifier_identity`. */
+  /** `<runner>:<model>`, exactly as the Countersign row's `verifier_identity`. */
   readonly identity: string;
   /** Substitution notices from the reviewer resolver, for the caller to log. */
   readonly notices: readonly string[];
@@ -52,7 +52,7 @@ export interface ReviewVerifier {
  * Order in which alternative runners are tried once the configured reviewer
  * turns out to be the implementer itself. Order decides only WHICH different
  * identity is chosen; distinctness is enforced below, so this list can never
- * smuggle a self-verdict in.
+ * smuggle a self-signature in.
  */
 export const REVIEW_VERIFIER_RUNNER_PREFERENCE: readonly AgentRunner[] = [
   "codex",
@@ -97,7 +97,7 @@ function verifierFor(input: ReviewVerifierInput, runner?: AgentRunner): ReviewVe
 }
 
 /**
- * The identity that may sign this diff's verdict, or `null` when none differs
+ * The identity that may countersign this diff, or `null` when none differs
  * from the implementer's.
  *
  * The configured reviewer is honoured whenever it is already a different

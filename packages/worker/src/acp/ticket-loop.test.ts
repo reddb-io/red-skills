@@ -430,11 +430,11 @@ describe("the outcomes that reach no remote", () => {
 });
 
 /**
- * Entry point `worker-land-request` (Ticket #4138, ADR 0154). Its verdict
+ * Entry point `worker-land-request` (Tickets #4138 and #4172, ADR 0154/0156). Its Countersign
  * source is the commit its own publish stage produced — the exact object name
  * the land request is about to carry (#4130) — asked before the request is
  * sent. The ledger question lives here rather than on the daemon because a
- * daemon that read per-project verdicts would hold the per-issue policy
+ * daemon that read per-project Countersigns would hold the per-issue policy
  * ADR 0144 keeps out of it.
  */
 describe("the Ticket loop lands nothing nobody judged (#4138)", () => {
@@ -446,10 +446,10 @@ describe("the Ticket loop lands nothing nobody judged (#4138)", () => {
           methods.push(method);
           return { version: 1, pull_request: 4321 };
         },
-        landVerdictGate: {
+        landCountersignGate: {
           check: async () => ({
             allowed: false,
-            reason: "stale-verdict",
+            reason: "stale-countersign",
             message: "the published head is judged only at another head",
           }),
         },
@@ -468,11 +468,11 @@ describe("the Ticket loop lands nothing nobody judged (#4138)", () => {
     const asked: unknown[] = [];
     const result = await runTicketLoop(
       deps({
-        landVerdictGate: {
+        landCountersignGate: {
           check: async (subject) => {
             asked.push(subject);
             return {
-              allowed: true, matchedBy: "head-sha", verdict: "test-verified", identity: "codex:gpt-5",
+              allowed: true, matchedBy: "head-sha", countersign: "test-verified", identity: "codex:gpt-5",
             };
           },
         },

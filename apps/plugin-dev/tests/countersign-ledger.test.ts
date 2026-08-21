@@ -1,7 +1,7 @@
 /**
- * The verdict ledger is an append-only history, not a store of the current
+ * The Countersign ledger is an append-only history, not a store of the current
  * answer (ADR 0154). These tests pin the two halves that make it an audit
- * trail: a void SUPERSEDES the standing verdict, and it does so without
+ * trail: a void SUPERSEDES the standing Countersign, and it does so without
  * removing or editing a single earlier row.
  */
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -12,16 +12,16 @@ import { LANE_RETENTION_REGISTRY } from "@reddb-io/shared/lane-retention.js";
 import { CASTLE_STATE_MEMBERS } from "@reddb-io/shared/red-paths.js";
 import {
   agentVerifierIdentity,
-  createVerdictLedger,
+  createCountersignLedger,
   humanVerifierIdentity,
-  standingVerdicts,
-  VERDICT_LANE_ID,
-  VERDICT_NAMES,
-  VerdictLedgerError,
-  verdictKeyOf,
-  verdictLedgerPath,
-  type VerdictLedger,
-} from "../src/core/verdict-ledger.js";
+  standingCountersigns,
+  COUNTERSIGN_LANE_ID,
+  COUNTERSIGN_CLASSES,
+  CountersignLedgerError,
+  countersignKeyOf,
+  countersignLedgerPath,
+  type CountersignLedger,
+} from "../src/core/countersign-ledger.js";
 import { laneCensusLaneIds } from "../src/core/operational-probes/lane-census.js";
 
 const HEAD_A = "a".repeat(40);
@@ -31,11 +31,11 @@ const REVIEWER = agentVerifierIdentity("codex", "gpt-5");
 
 const roots: string[] = [];
 
-async function ledger(): Promise<VerdictLedger> {
-  const root = await mkdtemp(join(tmpdir(), "verdict-ledger-"));
+async function ledger(): Promise<CountersignLedger> {
+  const root = await mkdtemp(join(tmpdir(), "countersign-ledger-"));
   roots.push(root);
   let tick = 0;
-  return createVerdictLedger(root, {
+  return createCountersignLedger(root, {
     clock: () => new Date(Date.UTC(2026, 7, 21, 0, 0, tick++)).toISOString(),
   });
 }
@@ -44,14 +44,14 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe("verdict ledger round trip", () => {
+describe("countersign ledger round trip", () => {
   it("appends, reads back, and stands the row it wrote", async () => {
     const lane = await ledger();
     const written = await lane.append({
       pr: 4131,
       head_sha: HEAD_A,
       patch_id: PATCH,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
       evidence: "ci-run:1234",
     });
@@ -59,7 +59,7 @@ describe("verdict ledger round trip", () => {
     expect(written).toMatchObject({
       pr: 4131,
       head_sha: HEAD_A,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
       voided: false,
       evidence: "ci-run:1234",
@@ -70,19 +70,19 @@ describe("verdict ledger round trip", () => {
       .resolves.toEqual(written);
   });
 
-  it("reads a lane that was never written as no verdicts", async () => {
+  it("reads a lane that was never written as no Countersigns", async () => {
     await expect((await ledger()).read()).resolves.toEqual([]);
   });
 
   it("supersedes by appending a voided row, never by mutating history", async () => {
     const lane = await ledger();
     const key = { pr: 4131, head_sha: HEAD_A, patch_id: PATCH };
-    const passed = await lane.append({ ...key, verdict: "test-verified", verifier_identity: REVIEWER });
+    const passed = await lane.append({ ...key, countersign: "test-verified", verifier_identity: REVIEWER });
     const beforeVoid = await readFile(lane.path, "utf8");
 
     const voided = await lane.void({
       ...key,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
       reason: "head moved after validation",
     });
@@ -96,7 +96,7 @@ describe("verdict ledger round trip", () => {
     expect(rows).toEqual([passed, voided]);
     await expect(lane.standing(key)).resolves.toBeNull();
 
-    const standing = standingVerdicts(rows).get(verdictKeyOf(key));
+    const standing = standingCountersigns(rows).get(countersignKeyOf(key));
     expect(standing?.standing).toBeNull();
     expect(standing?.voidedBy?.reason).toBe("head moved after validation");
     expect(standing?.history).toEqual([passed, voided]);
@@ -106,15 +106,15 @@ describe("verdict ledger round trip", () => {
     const lane = await ledger();
     const stale = { pr: 4131, head_sha: HEAD_A, patch_id: PATCH };
     const fresh = { pr: 4131, head_sha: HEAD_B, patch_id: PATCH };
-    await lane.append({ ...stale, verdict: "test-verified", verifier_identity: REVIEWER });
+    await lane.append({ ...stale, countersign: "test-verified", verifier_identity: REVIEWER });
     const reviewed = await lane.append({
       ...fresh,
-      verdict: "live-verified",
+      countersign: "live-verified",
       verifier_identity: humanVerifierIdentity("filipeforattini"),
     });
     await lane.void({
       ...stale,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
       reason: "superseded by the re-review at the fresh head",
     });
@@ -128,21 +128,21 @@ describe("verdict ledger round trip", () => {
   it("re-verification after a void stands again without erasing the void", async () => {
     const lane = await ledger();
     const key = { pr: 4131, head_sha: HEAD_A, patch_id: PATCH };
-    await lane.append({ ...key, verdict: "verifier-failed", verifier_identity: REVIEWER });
+    await lane.append({ ...key, countersign: "verifier-failed", verifier_identity: REVIEWER });
     await lane.void({
       ...key,
-      verdict: "verifier-failed",
+      countersign: "verifier-failed",
       verifier_identity: REVIEWER,
       reason: "re-reviewed after the fix",
     });
     const reVerified = await lane.append({
       ...key,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
     });
 
     const rows = await lane.read();
-    expect(rows.map((row) => row.verdict)).toEqual([
+    expect(rows.map((row) => row.countersign)).toEqual([
       "verifier-failed",
       "verifier-failed",
       "test-verified",
@@ -152,16 +152,16 @@ describe("verdict ledger round trip", () => {
   });
 });
 
-describe("verdict ledger refusals", () => {
-  it("refuses a verdict outside the closed enum", async () => {
+describe("countersign ledger refusals", () => {
+  it("refuses a countersign class outside the closed enum", async () => {
     const lane = await ledger();
     await expect(lane.append({
       pr: 1,
       head_sha: HEAD_A,
       patch_id: PATCH,
-      verdict: "looks-fine" as never,
+      countersign: "looks-fine" as never,
       verifier_identity: REVIEWER,
-    })).rejects.toThrow(VerdictLedgerError);
+    })).rejects.toThrow(CountersignLedgerError);
   });
 
   it("refuses a head that is not a git object id", async () => {
@@ -170,7 +170,7 @@ describe("verdict ledger refusals", () => {
       pr: 1,
       head_sha: "HEAD",
       patch_id: PATCH,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
     })).rejects.toThrow(/head_sha/);
   });
@@ -181,7 +181,7 @@ describe("verdict ledger refusals", () => {
       pr: 1,
       head_sha: HEAD_A,
       patch_id: PATCH,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: "  ",
     })).rejects.toThrow(/verifier_identity/);
   });
@@ -192,7 +192,7 @@ describe("verdict ledger refusals", () => {
       pr: 1,
       head_sha: HEAD_A,
       patch_id: PATCH,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
       reason: "",
     })).rejects.toThrow(/reason/);
@@ -200,50 +200,50 @@ describe("verdict ledger refusals", () => {
 
   it("names both halves of an agent identity", () => {
     expect(agentVerifierIdentity("claude", "opus")).toBe("claude:opus");
-    expect(() => agentVerifierIdentity("claude", " ")).toThrow(VerdictLedgerError);
-    expect(() => humanVerifierIdentity("")).toThrow(VerdictLedgerError);
+    expect(() => agentVerifierIdentity("claude", " ")).toThrow(CountersignLedgerError);
+    expect(() => humanVerifierIdentity("")).toThrow(CountersignLedgerError);
   });
 });
 
-describe("verdict lane registration", () => {
+describe("countersign lane registration", () => {
   it("writes TOONL into the durable castle state tier", async () => {
     const lane = await ledger();
-    expect(lane.path.endsWith(join(".red", "state", "castle", "verdicts.toonl"))).toBe(true);
-    expect(verdictLedgerPath("/project")).toBe(
-      join("/project", ".red", "state", "castle", "verdicts.toonl"),
+    expect(lane.path.endsWith(join(".red", "state", "castle", "countersigns.toonl"))).toBe(true);
+    expect(countersignLedgerPath("/project")).toBe(
+      join("/project", ".red", "state", "castle", "countersigns.toonl"),
     );
 
     await lane.append({
       pr: 4131,
       head_sha: HEAD_A,
       patch_id: PATCH,
-      verdict: "test-verified",
+      countersign: "test-verified",
       verifier_identity: REVIEWER,
     });
     const text = await readFile(lane.path, "utf8");
     expect(text.split("\n")[0]).toMatch(
-      /^\[\d*\]\{at,pr,head_sha,patch_id,verdict,verifier_identity,voided,evidence,reason\}:$/,
+      /^\[\d*\]\{at,pr,head_sha,patch_id,countersign,verifier_identity,voided,evidence,reason\}:$/,
     );
     expect(text.trimStart().startsWith("{")).toBe(false);
   });
 
   it("is registered, censused, and bounded by its registry entry", () => {
-    expect(Object.keys(LANE_RETENTION_REGISTRY)).toContain(VERDICT_LANE_ID);
-    expect(LANE_RETENTION_REGISTRY[VERDICT_LANE_ID].maxBytes).toBeGreaterThan(0);
-    expect(laneCensusLaneIds()).toContain(VERDICT_LANE_ID);
-    expect(Object.keys(CASTLE_STATE_MEMBERS)).toContain("verdicts.toonl");
+    expect(Object.keys(LANE_RETENTION_REGISTRY)).toContain(COUNTERSIGN_LANE_ID);
+    expect(LANE_RETENTION_REGISTRY[COUNTERSIGN_LANE_ID].maxBytes).toBeGreaterThan(0);
+    expect(laneCensusLaneIds()).toContain(COUNTERSIGN_LANE_ID);
+    expect(Object.keys(CASTLE_STATE_MEMBERS)).toContain("countersigns.toonl");
   });
 
   it("trims to the registered ceiling instead of growing past it", async () => {
-    const root = await mkdtemp(join(tmpdir(), "verdict-ledger-ceiling-"));
+    const root = await mkdtemp(join(tmpdir(), "countersign-ledger-ceiling-"));
     roots.push(root);
-    const lane = createVerdictLedger(root, { maxBytes: 900 });
+    const lane = createCountersignLedger(root, { maxBytes: 900 });
     for (let index = 0; index < 40; index += 1) {
       await lane.append({
         pr: 4131,
         head_sha: HEAD_A,
         patch_id: PATCH,
-        verdict: "test-verified",
+        countersign: "test-verified",
         verifier_identity: REVIEWER,
         reason: `pass ${index}`,
       });
@@ -255,8 +255,8 @@ describe("verdict lane registration", () => {
     expect(rows.at(-1)?.reason).toBe("pass 39");
   });
 
-  it("closes the verdict vocabulary at exactly the five ADR 0154 outcomes", () => {
-    expect([...VERDICT_NAMES]).toEqual([
+  it("closes the Countersign vocabulary at exactly the five ADR 0154/0156 classes", () => {
+    expect([...COUNTERSIGN_CLASSES]).toEqual([
       "live-verified",
       "test-verified",
       "type-check-only",

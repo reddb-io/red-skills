@@ -50,7 +50,7 @@ import type {
 import type { gateScopes } from "./validation-scope.js";
 import type { doLanding, LandingPostMergeValidation } from "./landing.js";
 import { landingRefusalSummary, routeLandingFailure, type ReconcileParkReason } from "./reconcile-landing-refusal.js";
-import { recordAdoptionVerdict, type AdoptionVerdictDeps } from "./land-precondition.js";
+import { recordAdoptionCountersign, type AdoptionCountersignDeps } from "./land-precondition.js";
 export { landingRefusalSummary, routeLandingFailure, type ReconcileParkReason };
 import { type CiAwaitInput, type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
 import type { deleteRemote, pushAttempt, GitExec } from "./remote-branch.js";
@@ -309,7 +309,7 @@ export interface ReconcileDeps {
    * ledger is where the adopting human's own row is written. Absent → this lane
    * lands unarmed, which `LAND_ENTRY_POINTS` declares and its ratchet pins.
    */
-  landVerdict?: AdoptionVerdictDeps;
+  landCountersign?: AdoptionCountersignDeps;
 }
 
 /** Static per-reconcile inputs the caller resolves before `reconcile`. */
@@ -565,7 +565,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   await deps.markStage?.("landing").catch(() => {});
   // #4138: a human adopting this branch lands under their OWN name — a row, not
   // an exemption, so the audit reads who adopted what.
-  await recordAdoptionVerdict(deps.landVerdict, {
+  await recordAdoptionCountersign(deps.landCountersign, {
     exec: deps.mergeExec, repoDir: input.repoDir, baseRef, tip: validatedBranchTip,
     ...(input.adoptedBy === undefined ? {} : { login: input.adoptedBy }),
     ...(input.pullRequest === undefined ? {} : { pr: input.pullRequest }),
@@ -573,7 +573,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   const landing = await deps.landing.doLanding(
     {
       mergeExec: deps.mergeExec,
-      ...(deps.landVerdict === undefined ? {} : { verdictGate: deps.landVerdict.gate }),
+      ...(deps.landCountersign === undefined ? {} : { countersignGate: deps.landCountersign.gate }),
       remoteGit: deps.remoteGit,
       fireHook: deps.fireHook ?? (async () => true),
       conflictResolver: deps.conflictResolver,
