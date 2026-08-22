@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BRIEF_CONTRACT_REFUSAL_PREFIX,
   briefContractRefusal,
+  briefContractStructuralRefusal,
   lintExecutableAcceptanceCriteria,
 } from "./brief-contract.js";
 
@@ -61,6 +62,28 @@ describe("briefContractRefusal", () => {
   it("spells one refusal for every door, so an operator greps one string", () => {
     expect(briefContractRefusal("no criteria here")).toBe(
       `${BRIEF_CONTRACT_REFUSAL_PREFIX}: missing acceptance-criteria section`,
+    );
+  });
+});
+
+describe("briefContractStructuralRefusal", () => {
+  it("is null for an executable brief", () => {
+    expect(briefContractStructuralRefusal(EXECUTABLE_BRIEF)).toBeNull();
+  });
+
+  it("is null for a vague brief — the execution doors do not judge wording", () => {
+    expect(briefContractStructuralRefusal(VAGUE_BRIEF)).toBeNull();
+  });
+
+  it("refuses a brief with no acceptance-criteria section", () => {
+    expect(briefContractStructuralRefusal("## What to build\n\nSomething.")).toBe(
+      `${BRIEF_CONTRACT_REFUSAL_PREFIX}: missing acceptance-criteria section`,
+    );
+  });
+
+  it("refuses a section that lists nothing", () => {
+    expect(briefContractStructuralRefusal("## Acceptance criteria\n\nProse, no checklist.")).toBe(
+      `${BRIEF_CONTRACT_REFUSAL_PREFIX}: acceptance-criteria section has no checklist items`,
     );
   });
 });

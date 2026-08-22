@@ -154,20 +154,24 @@ describe("the brief contract, enforced at the preflight", () => {
     expect(stages(result.records)).toEqual(["claim"]);
   });
 
-  it("quotes the un-checkable item so the refusal names what to fix", async () => {
+  it("lets a vague-but-structured brief through — the preflight is structural", async () => {
+    // Vague wording is triage promotion's problem; a preflight that judges it
+    // withdraws from the whole backlog (41 of 42 live briefs, #4296).
+    const request = vi.fn(async () => ({ version: 1 }));
     const result = await runTicketLoop(
       deps({
         ticket: {
           ...TICKET,
           handoff: "Fix it.\n\n## Acceptance criteria\n\n- [ ] It should feel snappier.\n",
         },
-        request: vi.fn(async () => ({ version: 1 })),
+        request,
       }),
     );
 
-    expect(result.outcome).toBe("refused");
-    if (result.outcome !== "refused") return;
-    expect(result.detail).toContain("It should feel snappier.");
+    // The loop still ends refused further along (the stub answers name no PR),
+    // but the preflight let it through: the claim write was issued.
+    expect(request).toHaveBeenCalled();
+    if (result.outcome === "refused") expect(result.detail).not.toContain("brief contract refused");
   });
 
   it("refuses the lane before the brief, so a scout Ticket says so first", async () => {

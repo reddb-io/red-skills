@@ -38,11 +38,18 @@ describe("ticketHandoffFromMeta", () => {
       .toBeUndefined();
   });
 
-  it("refuses a brief whose criteria are present but not machine-checkable", () => {
+  it("accepts a brief whose criteria are present but vague — the wire door is structural", () => {
+    // The machine-checkable judgement belongs to triage promotion; at the wire
+    // it refused 41 of 42 live briefs and turned drains into birth-and-refuse
+    // loops. The decoder now asks only that criteria EXIST.
     const vague = "Fix it.\n\n## Acceptance criteria\n\n- [ ] It should feel snappier.\n";
-    expect(ticketHandoffFromMeta(meta({ ...BASE, handoff: vague }))).toBeUndefined();
-    // The reason survives the decision even though the handoff reader drops it.
-    const decision = decodeTicketHandoff(meta({ ...BASE, handoff: vague }));
+    expect(ticketHandoffFromMeta(meta({ ...BASE, handoff: vague }))).toBeDefined();
+  });
+
+  it("still refuses a brief whose criteria section lists nothing", () => {
+    const empty = "Fix it.\n\n## Acceptance criteria\n\nProse, no checklist.\n";
+    expect(ticketHandoffFromMeta(meta({ ...BASE, handoff: empty }))).toBeUndefined();
+    const decision = decodeTicketHandoff(meta({ ...BASE, handoff: empty }));
     expect(decision.kind).toBe("refused");
     expect(decision.kind === "refused" && decision.reason).toContain("brief contract refused");
   });
