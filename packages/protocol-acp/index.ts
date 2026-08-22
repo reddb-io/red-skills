@@ -6,6 +6,7 @@
 // local Unix-socket / Named Pipe transport, and the `_redskills/*` methods.
 export * from "./brain.js";
 export * from "./compat.js";
+export * from "./dual-dialect-stream.js";
 export * from "./endpoint.js";
 export * from "./github-request.js";
 export * from "./github-write.js";
