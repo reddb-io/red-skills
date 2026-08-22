@@ -56,7 +56,7 @@
 // kept as the yes/no reading of that decision, so every caller that only wants
 // a handoff is unchanged.
 
-import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
+import { briefContractStructuralRefusal } from "@reddb-io/shared/brief-contract.js";
 
 /** One Ticket, as the daemon hands it to the Worker body for a turn. */
 export interface RedskillsTicketHandoff {
@@ -152,7 +152,7 @@ export function decodeTicketHandoff(meta: unknown): TicketHandoffDecision {
   if (candidate == null || typeof candidate !== "object") return { kind: "absent" };
   const ticket = candidate as Record<string, unknown>;
   if (!statesRequiredTicketFields(ticket)) return { kind: "absent" };
-  const refusal = briefContractRefusal(ticket.handoff);
+  const refusal = briefContractStructuralRefusal(ticket.handoff);
   if (refusal != null) return { kind: "refused", reason: refusal };
   return {
     kind: "handoff",

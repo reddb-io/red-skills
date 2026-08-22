@@ -36,9 +36,7 @@ import { runNativeAcpWorker } from "./native-worker.js";
 /** The shape the operator's own Ticket had: prose acceptance criteria. */
 const PROSE_BRIEF = `Decide the token scale.
 
-## Acceptance criteria
-
-- [ ] The decision is recorded on this ticket with its reasoning.
+Record the decision with its reasoning. No acceptance criteria stated.
 `;
 
 const EXECUTABLE_BRIEF = `Implement the slice.
@@ -204,7 +202,7 @@ describe("the Worker body, driven across a real ACP connection", () => {
       expect(ticket?.outcome).toBe("refused");
       expect(ticket?.stage).toBe("brief");
       expect(String(ticket?.detail)).toContain(
-        "brief contract refused: acceptance criteria item is not machine-checkable",
+        "brief contract refused: missing acceptance-criteria section",
       );
       // The sentence is in the transcript too, so a Worker log holds it after
       // the process is gone.

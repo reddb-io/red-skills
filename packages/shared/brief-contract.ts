@@ -10,11 +10,14 @@
 // the same lint with a refusal channel, wired into three doors that can each
 // say no before the next one is reached:
 //
-//   1. **Triage promotion** refuses to add `ready-for-agent` (host-side).
-//   2. **The native handoff decoder** refuses a Ticket whose brief is vague,
-//      so the Worker body never enters its Ticket loop with one.
-//   3. **The Worker preflight** withdraws before the claim marker exists, so a
-//      malformed Ticket is never owned by the Worker that noticed.
+//   1. **Triage promotion** refuses to add `ready-for-agent` (host-side), with
+//      the FULL machine-checkable judgement — the author is there to fix it.
+//   2. **The native handoff decoder** refuses a Ticket whose brief carries no
+//      acceptance criteria at all (structural only), so the Worker body never
+//      enters its Ticket loop briefless.
+//   3. **The Worker preflight** withdraws on the same structural check before
+//      the claim marker exists, so a briefless Ticket is never owned by the
+//      Worker that noticed.
 //
 // ## Why the lint lives HERE and not where it was born
 //
@@ -110,6 +113,25 @@ export const BRIEF_CONTRACT_REFUSAL_PREFIX = "brief contract refused";
 export function briefContractRefusal(brief: string): string | null {
   const lint = lintExecutableAcceptanceCriteria(brief);
   return lint.ok ? null : `${BRIEF_CONTRACT_REFUSAL_PREFIX}: ${lint.reason}`;
+}
+
+/**
+ * The STRUCTURAL refusal one brief earns at an execution door, or `null`. PURE.
+ *
+ * The execution doors — the handoff decoder and the Worker preflight — check
+ * only that an acceptance-criteria section exists and lists at least one item.
+ * The machine-checkable judgement stays at triage promotion, where the author
+ * is present to fix the sentence; enforced at the wire it judged 41 of 42 live
+ * briefs too vague and turned every drain into a birth-and-refuse loop
+ * (#4296's grinder wearing the contract's own uniform). A door that refuses
+ * the whole backlog is a door somebody turns off — this one refuses only what
+ * no Validation could ever read: a brief with no criteria at all.
+ */
+export function briefContractStructuralRefusal(brief: string): string | null {
+  const lint = lintExecutableAcceptanceCriteria(brief);
+  if (lint.ok) return null;
+  if (lint.items.length > 0) return null;
+  return `${BRIEF_CONTRACT_REFUSAL_PREFIX}: ${lint.reason}`;
 }
 
 function acceptanceCriteriaSection(body: string): string | undefined {

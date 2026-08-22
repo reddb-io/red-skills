@@ -23,7 +23,7 @@
  */
 import type { PromptResponse } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
-import { briefContractRefusal } from "@reddb-io/shared/brief-contract.js";
+import { briefContractStructuralRefusal } from "@reddb-io/shared/brief-contract.js";
 import { briefWithStandingOrders } from "@reddb-io/shared/standing-orders.js";
 import type { LandCountersignGate } from "@reddb-io/shared/land-countersign.js";
 import { resolveVerifyRequirement } from "@reddb-io/shared/verify-labels.js";
@@ -248,17 +248,19 @@ export async function runTicketLoop(
   // claim this Worker may not honour is one another Worker cannot take either.
   //
   //   1. The lane the labels carry against the mode this Worker holds (#3026).
-  //   2. The brief contract: can this Ticket be finished from its own words?
+  //   2. The brief contract, structurally: does this Ticket carry acceptance
+  //      criteria at all? The machine-checkable judgement stays at triage.
   //
   // The second is a BACKSTOP, not the first line of defence — triage refuses a
-  // vague brief at promotion and the handoff decoder refuses one at the wire —
+  // vague brief at promotion and the handoff decoder refuses a briefless one
+  // at the wire —
   // and it exists because a Worker that discovers the brief is un-actionable
   // AFTER claiming it has already taken the Ticket out of every other Worker's
   // reach. Withdrawing costs nothing; owning a Ticket nobody can finish costs
   // the queue an entry until a sweep concedes it.
   const preflightRefusal =
     laneRunModeRefusal(deps.ticket.labels, deps.runMode) ??
-    briefContractRefusal(deps.ticket.handoff);
+    briefContractStructuralRefusal(deps.ticket.handoff);
   if (preflightRefusal != null) {
     await note({ stage: "claim", ok: false, detail: preflightRefusal });
     return { outcome: "refused", stage: "claim", detail: preflightRefusal, records };
