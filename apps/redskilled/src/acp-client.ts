@@ -5,15 +5,14 @@
  * This object owns only one live ACP connection and its public session id.
  */
 import { connect, type Socket } from "node:net";
-import { Readable, Writable } from "node:stream";
 import {
   client,
   methods,
-  ndJsonStream,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
+import { socketStream } from "@reddb-io/protocol-acp";
 import { ensureRedskilledDaemon } from "./client.js";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 import {
@@ -165,10 +164,7 @@ export async function connectRedskillsProjectAcp(
       app = app.onRequest(methods.client.session.requestPermission, ({ params }) =>
         options.requestPermission!(params));
     }
-    const connection = app.connect(ndJsonStream(
-      Writable.toWeb(socket) as WritableStream<Uint8Array>,
-      Readable.toWeb(socket) as ReadableStream<Uint8Array>,
-    ));
+    const connection = app.connect(socketStream(socket));
     await connection.agent.request(methods.agent.initialize, {
       protocolVersion: 1,
       clientCapabilities: {},

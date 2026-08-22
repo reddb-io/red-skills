@@ -11,10 +11,14 @@
 import { rm } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
-import { ndJsonStream, type Stream } from "@agentclientprotocol/sdk";
+import { type Stream } from "@agentclientprotocol/sdk";
+import { dualDialectStream } from "./dual-dialect-stream.js";
 
 export function socketStream(socket: Socket): Stream {
-  return ndJsonStream(
+  // Dual-dialect, readers first: this codec ACCEPTS JSON-RPC and TOON-RPC on
+  // every ACP socket and still WRITES JSON until a peer proves TOON — so the
+  // swap is observable to nobody until a TOON-writing peer ships.
+  return dualDialectStream(
     Writable.toWeb(socket) as WritableStream<Uint8Array>,
     Readable.toWeb(socket) as ReadableStream<Uint8Array>,
   );
