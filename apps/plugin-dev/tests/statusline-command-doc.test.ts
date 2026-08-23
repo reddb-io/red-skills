@@ -109,7 +109,12 @@ function shellBody(escaped: string): string {
 function renderStatusline(home: string) {
   const [canonical] = readStatuslineCommands(REPO_ROOT);
   expect(canonical).toBeDefined();
+  // An isolated cwd: the command writes the project's `.red/state/statusline/`
+  // lane (the native front's cache), and a test must never write the REPO's.
+  const cwd = mkdtempSync(join(tmpdir(), "red-skills-statusline-cwd-"));
+  scratch.push(cwd);
   return spawnSync("sh", ["-c", shellBody(canonical!.body)], {
+    cwd,
     env: { ...process.env, HOME: home, NO_COLOR: "1" },
     input: `{"workspace":{"project_dir":"${REPO_ROOT}"},"model":{"display_name":"Opus"}}`,
     encoding: "utf8",
@@ -181,6 +186,22 @@ describe("documented statusLine command (#3073)", () => {
     const run = renderStatusline(hostWithDaemonBundleOnly("» fixture (main) Opus"));
 
     expect(run.stdout).toContain("» fixture (main) Opus");
+    expect(run.status, run.stderr).toBe(0);
+  });
+
+  it("prefers the native front, and refreshes the lane in the background (ADR 0157)", () => {
+    const home = hostWithLeanAndDaemonBundles("lean renderer spoke", "daemon bundle spoke");
+    const binDir = join(redskilledHomeDir(home), "bin");
+    mkdirSync(binDir, { recursive: true });
+    const front = join(binDir, "statusline-fast");
+    writeFileSync(front, "#!/bin/sh\necho native front spoke\n", { mode: 0o755 });
+
+    const run = renderStatusline(home);
+
+    expect(run.stdout).toContain("native front spoke");
+    // The renderer still runs — in the BACKGROUND, into the project lane —
+    // so the foreground never carries its output.
+    expect(run.stdout).not.toContain("lean renderer spoke");
     expect(run.status, run.stderr).toBe(0);
   });
 
