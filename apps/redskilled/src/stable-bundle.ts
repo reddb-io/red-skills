@@ -47,6 +47,21 @@ export function redskilledStableBundleName(version: string): string {
   return `redskilled-${version}.bundle.min.mjs`;
 }
 
+/**
+ * The statusline renderer's stable name for one version.
+ *
+ * Deliberately NOT under the `redskilled-` prefix: the published statusline
+ * command resolves the daemon half with `redskilled-*.bundle.min.mjs | sort -V
+ * | tail -1`, and a `redskilled-statusline-…` file would win that sort and put
+ * the lean renderer where the daemon bundle was expected.
+ */
+export function redskilledStatuslineBundleName(version: string): string {
+  return `statusline-${version}.bundle.min.mjs`;
+}
+
+/** The unversioned asset the package ships beside the daemon bundle. */
+export const STATUSLINE_BUNDLE_ASSET = "statusline.bundle.min.mjs";
+
 const VERSIONED_BASENAME = /^redskilled-(.+)\.bundle\.min\.mjs$/;
 
 export interface StabilizableRedskilledEntry {
@@ -109,6 +124,19 @@ export function stabilizeRedskilledEntry<T extends StabilizableRedskilledEntry>(
       const temporary = `${target}.${process.pid}.tmp`;
       writeFileSync(temporary, readFileSync(source), { mode: 0o755 });
       renameSync(temporary, target);
+    }
+    // The statusline renderer ships BESIDE the daemon bundle in the package
+    // dist, and the published statusline command resolves it from this same
+    // stable directory — so it is stabilized in the same breath, under its own
+    // versioned name. Best-effort like everything here: a package without the
+    // sibling (an older release) stabilizes the daemon alone and loses only
+    // the lean renderer, never the entry.
+    const sibling = join(resolve(source), "..", STATUSLINE_BUNDLE_ASSET);
+    const siblingTarget = join(stableDir, redskilledStatuslineBundleName(version));
+    if (exists(sibling) && !exists(siblingTarget)) {
+      const temporary = `${siblingTarget}.${process.pid}.tmp`;
+      writeFileSync(temporary, readFileSync(sibling), { mode: 0o755 });
+      renameSync(temporary, siblingTarget);
     }
   } catch {
     return entry;

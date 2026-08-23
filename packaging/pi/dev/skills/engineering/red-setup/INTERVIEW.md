@@ -213,7 +213,7 @@ Decide whether to wire it up for this project:
   {
     "statusLine": {
       "type": "command",
-      "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; d=$(ls -1 \"$HOME\"/.red/redskilled/bundles/redskilled-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); if [ -n \"$d\" ]; then \"$N\" \"$d\" statusline; else echo \"redskilled unreachable — Worker state unknown\"; fi; exit 0'",
+      "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; s=$(ls -1 \"$HOME\"/.red/redskilled/bundles/statusline-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); d=$(ls -1 \"$HOME\"/.red/redskilled/bundles/redskilled-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); if [ -n \"$s\" ]; then \"$N\" \"$s\" statusline; elif [ -n \"$d\" ]; then \"$N\" \"$d\" statusline; else echo \"redskilled unreachable — Worker state unknown\"; fi; exit 0'",
       "refreshInterval": 60
     }
   }

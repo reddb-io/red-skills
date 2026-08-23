@@ -7,6 +7,7 @@ import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
   redskilledStableBundleDir,
   redskilledStableBundleName,
+  redskilledStatuslineBundleName,
   stabilizeRedskilledEntry,
 } from "@reddb-io/redskilled/stable-bundle";
 import { REDSKILLED_RENDER_ABSENCE } from "@reddb-io/redskilled-render";
@@ -47,6 +48,15 @@ function scratchHome(): string {
 }
 
 /** A fake HOME holding one daemon bundle that prints a line. */
+function hostWithLeanAndDaemonBundles(leanLine: string, daemonLine: string): string {
+  const home = hostWithDaemonBundleOnly(daemonLine);
+  writeFileSync(
+    join(redskilledStableBundleDir(home), redskilledStatuslineBundleName("1.0.0")),
+    `console.log(${JSON.stringify(leanLine)});\n`,
+  );
+  return home;
+}
+
 function hostWithDaemonBundleOnly(line: string): string {
   const home = scratchHome();
   const bundles = redskilledStableBundleDir(home);
@@ -173,6 +183,16 @@ describe("documented statusLine command (#3073)", () => {
     expect(run.stdout).toContain("» fixture (main) Opus");
     expect(run.status, run.stderr).toBe(0);
   });
+
+  it("prefers the lean renderer over the daemon bundle when both are stabilized", () => {
+    const run = renderStatusline(
+      hostWithLeanAndDaemonBundles("lean renderer spoke", "daemon bundle spoke"),
+    );
+
+    expect(run.stdout).toContain("lean renderer spoke");
+    expect(run.stdout).not.toContain("daemon bundle spoke");
+    expect(run.status, run.stderr).toBe(0);
+  });
 });
 
 describe("daemon bundle resolution (#3074)", () => {
@@ -222,6 +242,22 @@ describe("daemon bundle resolution (#3074)", () => {
       statuslineGlobResolves(body, minted),
       `no published glob resolves ${minted} — globs: ${statuslineBundleGlobs(body).join(", ")}`,
     ).toBe(true);
+    // The lean renderer the daemon stabilizes beside its own bundle resolves
+    // too, and it is tried FIRST: a per-render invocation must not pay the
+    // daemon bundle's import-time initialization when the lean copy exists.
+    const leanMinted = redskilledStatuslineBundleName(PROVISIONED_VERSION);
+    expect(
+      statuslineGlobResolves(body, leanMinted),
+      `no published glob resolves ${leanMinted} — globs: ${statuslineBundleGlobs(body).join(", ")}`,
+    ).toBe(true);
+    const globs = statuslineBundleGlobs(body);
+    expect(globs.indexOf("statusline-*.bundle.min.mjs")).toBeLessThan(
+      globs.indexOf("redskilled-*.bundle.min.mjs"),
+    );
+    // And the daemon's own glob never swallows the lean renderer: the sort -V
+    // tail of `redskilled-*` must keep resolving the DAEMON bundle.
+    const daemonHalf = 'd=$(ls -1 "$HOME"/.red/redskilled/bundles/redskilled-*.bundle.min.mjs)';
+    expect(statuslineGlobResolves(daemonHalf, leanMinted)).toBe(false);
     // `""` yields the segments below the operator home, which is exactly the
     // part the shell spells after its own `"$HOME"`.
     expect(body).toContain(`${redskilledStableBundleDir("")}/redskilled-`);
