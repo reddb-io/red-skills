@@ -23,9 +23,9 @@ async function workspace(): Promise<string> {
   roots.push(root);
   await writeFile(join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n  - packages/*\n");
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "root", scripts: { test: "true" } }));
-  await mkdir(join(root, "apps", "dev"), { recursive: true });
+  await mkdir(join(root, "apps", "plugin-dev"), { recursive: true });
   await writeFile(
-    join(root, "apps", "dev", "package.json"),
+    join(root, "apps", "plugin-dev", "package.json"),
     JSON.stringify({ name: "@fixture/dev", scripts: { typecheck: "true" }, dependencies: { "@fixture/lib": "workspace:*" } }),
   );
   await mkdir(join(root, "packages", "lib"), { recursive: true });
@@ -75,7 +75,7 @@ describe("running the declared stages", () => {
     expect(gateVerdict(result.stages).ok).toBe(true);
     // The cone is the touched package plus nothing else it feeds.
     expect(commands.map((argv) => argv.slice(1).join(" ")))
-      .toEqual([`-C ${join(root, "apps", "dev")} typecheck`]);
+      .toEqual([`-C ${join(root, "apps", "plugin-dev")} typecheck`]);
     expect(result.stages.find((stage) => stage.stage === "backpressure")?.skipped).toBe(true);
     expect(result.stages.find((stage) => stage.stage === "review")?.skipped).toBe(true);
   });
@@ -92,7 +92,9 @@ describe("running the declared stages", () => {
     const verdict = gateVerdict(result.stages);
     expect(verdict.ok).toBe(false);
     expect(verdict.failedStage).toBe("feedback");
-    expect(result.detail).toContain("typecheck");
+    expect(result.checks.find((check) => check.status === "failed")?.record.command)
+      .toBe(`pnpm -C ${join(root, "apps", "plugin-dev")} typecheck`);
+    expect(result.detail).toContain(`pnpm -C ${join(root, "apps", "plugin-dev")} typecheck`);
     expect(result.detail).toContain("TS2532");
   });
 
@@ -130,7 +132,7 @@ describe("running the declared stages", () => {
 
   it("reads the real diff when the caller names no seam", async () => {
     const root = await workspace();
-    await writeFile(join(root, "apps", "dev", "added.ts"), "export const added = 1;\n");
+    await writeFile(join(root, "apps", "plugin-dev", "added.ts"), "export const added = 1;\n");
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
     git("checkout", "-b", "afk/4020");
     git("add", "--", "apps/plugin-dev/added.ts");
@@ -146,6 +148,6 @@ describe("running the declared stages", () => {
       },
     });
     expect(commands.map((argv) => argv.slice(1).join(" ")))
-      .toEqual([`-C ${join(root, "apps", "dev")} typecheck`]);
+      .toEqual([`-C ${join(root, "apps", "plugin-dev")} typecheck`]);
   }, 20_000);
 });
