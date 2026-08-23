@@ -437,6 +437,7 @@ expected_workstation=(
   dist/rsp.bundle.min.mjs
   dist/rsp-core.bundle.min.mjs
   dist/redskilled.bundle.min.mjs
+  dist/statusline.bundle.min.mjs
   dist/herdr-plugin-red-skills.bundle.min.mjs
   dist/vscode-extension-red-skills-9.9.9.vsix
   dist/zellij-dashboard.tgz

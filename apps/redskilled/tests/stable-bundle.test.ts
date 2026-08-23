@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   redskilledStableBundleDir,
   redskilledStableBundleName,
+  redskilledStatuslineBundleName,
+  STATUSLINE_BUNDLE_ASSET,
   stabilizeRedskilledEntry,
 } from "../src/stable-bundle.js";
 import { requireRedskilledReplacementEntry } from "../src/self-replace.js";
@@ -53,6 +55,42 @@ describe("stabilizing an entry into the daemon home", () => {
     // Idempotent: a second pass finds the copy and copies nothing.
     const again = stabilizeRedskilledEntry(entry, { homeDir });
     expect(again.entry).toBe(target);
+  });
+
+  it("stabilizes the statusline sibling beside the daemon bundle, under its own name", async () => {
+    const { homeDir, sourceDir } = await scratch();
+    const source = join(sourceDir, "redskilled-4.0.0.bundle.min.mjs");
+    await writeFile(source, "the daemon bytes");
+    await writeFile(join(sourceDir, STATUSLINE_BUNDLE_ASSET), "the lean renderer bytes");
+
+    stabilizeRedskilledEntry({ command: "/usr/bin/node", args: [source], entry: source }, { homeDir });
+
+    const sibling = join(
+      redskilledStableBundleDir(homeDir),
+      redskilledStatuslineBundleName("4.0.0"),
+    );
+    expect(readFileSync(sibling, "utf8")).toBe("the lean renderer bytes");
+    // The sibling's name stays OUT of the daemon glob: `redskilled-*` sorted by
+    // version must never resolve the lean renderer as the daemon bundle.
+    expect(redskilledStatuslineBundleName("4.0.0").startsWith("redskilled-")).toBe(false);
+  });
+
+  it("stabilizes the daemon alone when the package carries no statusline sibling", async () => {
+    const { homeDir, sourceDir } = await scratch();
+    const source = join(sourceDir, "redskilled-4.0.0.bundle.min.mjs");
+    await writeFile(source, "the daemon bytes");
+
+    const stable = stabilizeRedskilledEntry(
+      { command: "/usr/bin/node", args: [source], entry: source },
+      { homeDir },
+    );
+
+    expect(stable.entry).toBe(
+      join(redskilledStableBundleDir(homeDir), redskilledStableBundleName("4.0.0")),
+    );
+    expect(
+      existsSync(join(redskilledStableBundleDir(homeDir), redskilledStatuslineBundleName("4.0.0"))),
+    ).toBe(false);
   });
 
   it("returns an already-stable entry unchanged", async () => {

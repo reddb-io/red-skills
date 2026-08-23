@@ -41,7 +41,7 @@
     "./worker-workspace": "./src/worker-workspace.ts",
     "./statusline-command": "./src/statusline-command.ts"
   },
-  "description": "redskilled — the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
+  "description": "redskilled \u2014 the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
   "license": "Apache-2.0",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -55,11 +55,13 @@
     "test:acp-harvest-deadline": "vitest run tests/acp-harvest-deadline.test.ts",
     "test:placement-contract": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/placement-contract.test.ts",
     "test:github-gateway": "NODE_OPTIONS=--max-old-space-size=4096 vitest run tests/github-gateway.test.ts",
-    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify --reddb-from-package",
+    "bundle": "pnpm run bundle:daemon && pnpm run bundle:statusline",
     "build": "pnpm run typecheck && pnpm run bundle",
     "build:native": "node-gyp rebuild --directory=native",
     "serve": "tsx src/cli.ts serve",
-    "diagnose:resources": "tsx scripts/resource-incident-harness.ts"
+    "diagnose:resources": "tsx scripts/resource-incident-harness.ts",
+    "bundle:daemon": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:statusline": "node ../../scripts/bundle-app.mjs --entry src/statusline-main.ts --outfile ../../dist/statusline.bundle.min.mjs --asset statusline.bundle.min.mjs --minify --reddb-from-package"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",
