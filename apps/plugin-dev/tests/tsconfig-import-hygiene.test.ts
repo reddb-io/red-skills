@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -26,7 +27,7 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
 };
 
 type TsConfig = {
-  extends?: string;
+  extends?: string | string[];
   compilerOptions?: {
     noUnusedLocals?: boolean;
   };
@@ -50,11 +51,26 @@ async function readTsConfig(path: string): Promise<TsConfig> {
   return JSON.parse(await readFile(path, "utf8")) as TsConfig;
 }
 
-async function resolvesToSharedBase(path: string): Promise<boolean> {
-  if (path === BASE_CONFIG) return true;
+async function resolvesToSharedBase(
+  path: string,
+  visited = new Set<string>(),
+): Promise<boolean> {
+  const normalized = resolve(path);
+  if (normalized === BASE_CONFIG) return true;
+  if (visited.has(normalized)) return false;
+  visited.add(normalized);
+
   const config = await readTsConfig(path);
   if (!config.extends) return false;
-  return resolvesToSharedBase(resolve(dirname(path), config.extends));
+  const parents = Array.isArray(config.extends) ? config.extends : [config.extends];
+
+  for (const parent of parents) {
+    const parentPath = parent.startsWith(".")
+      ? resolve(dirname(path), parent)
+      : createRequire(path).resolve(parent);
+    if (await resolvesToSharedBase(parentPath, visited)) return true;
+  }
+  return false;
 }
 
 async function listTypeScriptSources(directory: string): Promise<string[]> {
