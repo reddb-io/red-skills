@@ -137,6 +137,7 @@ release:
     - { path: apps/host-opencode/package.json, format: npm }
     - { path: apps/mcp-browser/package.json, format: npm }
     - { path: apps/redskilled/package.json, format: npm }
+    - { path: apps/redskilled-mobile/package.json, format: npm }
     - { path: apps/release/package.json, format: npm }
     - { path: apps/rsp/package.json, format: npm }
     - { path: apps/vscode-extension-redskilled/package.json, format: npm }
