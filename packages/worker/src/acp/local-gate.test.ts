@@ -28,6 +28,8 @@ async function workspace(): Promise<string> {
     join(root, "apps", "plugin-dev", "package.json"),
     JSON.stringify({ name: "@fixture/dev", scripts: { typecheck: "true" }, dependencies: { "@fixture/lib": "workspace:*" } }),
   );
+  await mkdir(join(root, "apps", "plugin-dev", "src"), { recursive: true });
+  await writeFile(join(root, "apps", "plugin-dev", "src", "index.ts"), "export const fixture = true;\n");
   await mkdir(join(root, "packages", "lib"), { recursive: true });
   await writeFile(join(root, "packages", "lib", "package.json"), JSON.stringify({ name: "@fixture/lib" }));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
