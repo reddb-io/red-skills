@@ -64,9 +64,12 @@ export async function installStatuslineNativeFront(
     await mkdir(binDir, { recursive: true, mode: 0o700 });
     const source = join(binDir, "statusline-fast.source.mts");
     await writeFile(source, STATUSLINE_NATIVE_SOURCE, { mode: 0o644 });
+    // ADR 0091's canonical form: `-p <pkg>@<version> <binary>`. The bare
+    // `npx -y scriptc@<v> build` spelling resolved `scriptc@0.0.35` as a
+    // COMMAND on the first live host and failed with "not found".
     const compiled = await run(
       "npx",
-      ["-y", `scriptc@${SCRIPTC_PINNED_VERSION}`, "build", source, "-o", target],
+      ["-y", "-p", `scriptc@${SCRIPTC_PINNED_VERSION}`, "scriptc", "build", source, "-o", target],
       { timeoutMs: COMPILE_TIMEOUT_MS },
     );
     await rm(source, { force: true });
