@@ -14,6 +14,10 @@ _Avoid_: backlog manager, backlog backend, issue host, local-markdown tracker
 A single tracked unit of work inside the **Issue tracker**: bug, task, **Spec**, or implementation slice. GitHub materialises a Ticket as an Issue.
 _Avoid_: issue, except when naming the GitHub object itself (upstream v1.1.0 rename, adopted; historical ADRs/envelopes keep "issue")
 
+**Ticket dispatch**:
+The issue-first mobile operation that selects a Host, submits one GitHub Issue URL, and admits one **Worker** against exactly that GitHub-backed **Ticket**. redskilled derives the repository and Ticket number from the URL, creates or reuses the canonical **Project workspace**, and then validates and atomically claims the open, non-Spec, unblocked, unclaimed Ticket before birth. The Ticket number, Worker, comments, PR, and closure remain one traceable chain; Project selection and provisioning are daemon consequences rather than separate mobile steps.
+_Avoid_: prompt dispatch, anonymous demand, hidden disposable Issue, Worker without a Ticket, dispatch as a claim bypass, Host → Project → Issue setup funnel
+
 **Spec**:
 The specification document for a body of work — problem, solution, user stories, human and implementation decisions — published to the **Issue tracker** as a parent **Ticket** and sliced into child Tickets.
 _Avoid_: PRD, except when reading historical ADRs, labels, or envelopes (upstream v1.1.0 rename, adopted)
@@ -162,6 +166,10 @@ _Avoid_: checkout, Git common directory, worktree, project clone, `owner/repo` a
 The one canonical repository workspace that **redskilled** owns and maintains for a **Project** under daemon-managed storage. It supplies the mirror, base commits, and isolated **Worktrees** in which disposable **Workers** execute. Editor checkouts and other local clones are clients that identify and control the Project; they are never execution authorities or alternate workspace pools.
 _Avoid_: Primary checkout, editor checkout, registered clone, workspace pool, client-owned worktree root
 
+**Remote Project provisioning**:
+The daemon-side consequence of **Ticket dispatch** when the Issue URL names a repository not yet present on the selected Host. The app provides no separate Project-provisioning flow, repository browser, profile selector, workspace path, or GitHub credential; V1 always uses the daemon-owned `personal` **GitHub credential profile**. redskilled resolves stable repository identity, clones into daemon-managed storage when absent, and idempotently registers the canonical **Project workspace** before claiming the Ticket. Other named profiles remain valid daemon capabilities but are outside the V1 mobile surface.
+_Avoid_: mobile clone, explicit add-Project screen, repository catalog, mobile OAuth, mobile profile selection, client-selected workspace path, duplicate Project clone
+
 **GitHub credential profile**:
 A daemon-owned GitHub authentication identity and its rate-budget domain. Each **Project** binds to one named profile; **redskilled** alone resolves and uses its secret for cache refreshes and durable writes. MCPs, ACP clients, and **Workers** refer only to the Project and never forward a GitHub token per call. A host may keep several profiles for distinct organizations, installations, or access scopes without fragmenting one Project across credentials.
 _Avoid_: client token, Worker credential, per-request authentication, project secret copy
@@ -178,12 +186,24 @@ _Avoid_: Project workspace, Worker root, execution checkout, daemon mirror
 The capability scope granted to one authenticated **redskilled** connection. A project-scoped MCP or editor client may mutate only the **Project** resolved from its **Client checkout**; an explicitly administrative client may observe and operate host-wide state. Socket access alone never silently upgrades a project client into host administration.
 _Avoid_: Docker-socket authority, ambient host admin, client-declared project trust, all-or-nothing local access
 
+**Mobile operator**:
+The single V1 **Client authority** granted by **Host pairing**: Host-wide access to declared RedSkills product operations — list Projects, Tickets, and Workers; create Tickets; provision Projects; dispatch, observe, and stop Workers — without shell execution, arbitrary filesystem access, daemon-local GitHub credential access, raw ACP forwarding, or machine-policy mutation. The capability bundle is enforced at the Host-side **Remote link**, independently of what the mobile UI displays.
+_Avoid_: root access, remote shell, VPN user, socket access, credential delegation, implicit ACP admin
+
 **Remote link**:
 The host companion that authenticates paired remote clients and projects their capability-scoped operations onto local **redskilled** ACP without exposing either daemon socket or owning Project control state.
 _Avoid_: remote daemon, VPN node, socket proxy, mobile backend inside redskilled
 
+**Link relay**:
+The operator-hosted, publicly reachable `redskilled-link relay` deployment that rendezvouses mobile clients and **Remote links**, serves the central WireGuard hub, and carries the WSS fallback. RedSkills ships the complete open-source relay but operates no mandatory public relay; first remote use therefore requires the operator to provide a reachable deployment or choose an existing deployment they trust.
+_Avoid_: RedSkills cloud, official mandatory relay, hosted control plane, Tailscale coordination server
+
+**Host pairing**:
+The one-Host-at-a-time exchange by which `/redskilled` emits a single-use invitation and a mobile device scans its QR code or enters its short code to establish an end-to-end device identity and explicit **Client authority** on that Host. Each Host keeps its own paired-device and revocation state; sharing a **Link relay** never grants access to another Host, and the relay cannot mint or widen a pairing.
+_Avoid_: relay login, fleet-wide shared password, relay-granted Host access, reusable enrollment token
+
 **Remote transport**:
-The interchangeable path a paired mobile client uses to reach a **Remote link**: the preferred embedded WireGuard hub tunnel or the automatic WSS relay fallback, both carrying the same authenticated application protocol.
+The interchangeable path a paired mobile client uses to reach a **Remote link** through its configured **Link relay**: the preferred embedded WireGuard hub tunnel or the automatic WSS relay fallback, both carrying the same authenticated application protocol.
 _Avoid_: VPN mode (WSS is not a VPN), separate control API, manual failover
 
 **Project authority split**:
@@ -370,12 +390,24 @@ _Avoid_: tmp research reports
 The host-scoped, stateful RedSkills control-plane daemon. Exactly one instance per machine owns disposable **Worker** admission, birth, death, limits, placement, observation, and reaping across projects; holds one **Project control state** per registered project on that host; and guarantees that eligible Issues continue to be consumed. MCP servers, CLIs, editors, and other surfaces are clients rather than alternate owners. It is also the sole GitHub gateway for managed workflows on the host: requests are coalesced and budgeted centrally, reads are served from an age-stamped cache, writes are serialized or durably scheduled, and no local client or Worker independently spends the shared API rate limit. Another host may manage the same GitHub repository through its own daemon; the daemons do not form a cluster, and GitHub claims plus durable workflow state remain their coordination boundary. Workers run as transient init-system units rather than as daemon children, so redskilled can restart and re-attach without taking their work with it; when redskilled is unreachable no Worker is born.
 _Avoid_: thin supervisor, fleet supervisor, Castle resident, Demand producer, alternate GitHub client, fleet (extinct — ADR 0130)
 
+**Host setup**:
+The operator-driven installation and configuration of **redskilled** on one machine: daemon home, OS service, host ceilings, GitHub credential profiles, lifecycle, and remote-link participation. `/redskilled` is its sole interactive owner. A repository workflow may check that Host setup is healthy, but if it is not, it stops and directs the operator to `/redskilled`; it never provisions or repairs the host implicitly.
+_Avoid_: execution-daemon section in `/red-setup`, repository provisioning of the daemon, setup-owned daemon home, automatic host repair
+
+**Machine role**:
+The installation shape selected at the start of `/redskilled`: **Host** installs `redskilled` plus its Host-side **Remote link**; **Relay** installs only the publicly reachable **Link relay**; **Host + Relay** installs both isolated runtimes on one machine. The role controls which components are provisioned, not which process owns their state, and may be changed later by rerunning the idempotent setup.
+_Avoid_: deployment mode, one mandatory all-in-one install, relay process inside redskilled, daemon on a relay-only machine
+
+**Repository setup**:
+The activation and configuration of RedSkills for one repository, owned by `/red-setup`: the repository's `.red/`, plugin activation, tracker and workflow policy, validation, release, guards, and agent-facing instructions. It may depend on a healthy **Host setup**, but that dependency is a preflight boundary rather than authority to change the machine.
+_Avoid_: machine setup, daemon provisioning, host policy, GitHub credential-profile setup
+
 **Budget grace**:
 The bounded checkpoint window between the **redskilled** daemon's budget verdict and the kill: the daemon signals, the Worker gets a fixed deadline to commit, push, and write its Envelope, and then dies regardless. Never a live pause — a Worker holding a slot and a claim while awaiting a human decision is the zombie the daemon exists to prevent. "Extend the budget?" is an extractable HITL decision on the parked Ticket, answered through the ordinary requeue door, never by resuscitating the process.
 _Avoid_: budget pause, throttling (a live held state; the grace ends in death by construction), kill delay (the point is the checkpoint, not the delay)
 
 **Host-scoped daemon home**:
-`~/.red/redskilled/` — where the **redskilled** daemon keeps what belongs to the operator rather than to a checkout, including the durable event lane, the registration-intent snapshot, and the `host` **Worker workspace** preset. **It has exactly one owner**: `provisionRedskilledHome` in `apps/redskilled/src/provision.ts` creates it and nothing else may (ADR 0130 Amendment 2). The daemon owns it rather than **red-setup** because start is auto-spawn — a home only an interactive installer could create would leave a fresh machine failing closed forever, with the daemon depending on the tool that depends on the daemon. ADR 0067's sole-creator authority is therefore repository-scoped: it governs a checkout's `.red/`, never the operator's `~/.red/`. **Provisioning is idempotent**: the home is created owner-only (`0700`), an existing one keeps everything in it, and a second run can only narrow a permission bit that drifted wider — a repair, not a rewrite. `/red-setup` provisions by *calling* the owner (`redskilled provision`), and `/red-doctor` reports the four checks (`home`, `daemon-entry`, `reach`, `supervisor-unit`) read-only, probing the socket without ever spawning the daemon it reports on.
+`~/.red/redskilled/` — where the **redskilled** daemon keeps what belongs to the operator rather than to a checkout, including the durable event lane, the registration-intent snapshot, and the `host` **Worker workspace** preset. **It has exactly one owner**: `provisionRedskilledHome` in `apps/redskilled/src/provision.ts` creates it and nothing else may (ADR 0130 Amendment 2). The daemon owns it rather than **red-setup** because start is auto-spawn — a home only an interactive installer could create would leave a fresh machine failing closed forever, with the daemon depending on the tool that depends on the daemon. ADR 0067's sole-creator authority is therefore repository-scoped: it governs a checkout's `.red/`, never the operator's `~/.red/`. **Provisioning is idempotent**: the home is created owner-only (`0700`), an existing one keeps everything in it, and a second run can only narrow a permission bit that drifted wider — a repair, not a rewrite. `/redskilled` calls that owner as part of **Host setup**; `/red-setup` only preflights reachability and stops with a `/redskilled` handoff when the host is not ready. `/red-doctor` reports the four checks (`home`, `daemon-entry`, `reach`, `supervisor-unit`) read-only and routes their remediation to `/redskilled`, probing the socket without ever spawning the daemon it reports on.
 _Avoid_: the repo's `.red/` (a different directory under a different authority), setup-owned home, daemon state dir (the session's runtime dir under `XDG_RUNTIME_DIR` holds only socket-local coordination: socket, spawn lock and lease — that is not this)
 
 **Host hook**:
