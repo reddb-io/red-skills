@@ -7,6 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "plugins": ["./plugins/with-release-signing"],
     "ios": {
       "supportsTablet": true
     },
