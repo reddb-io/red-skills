@@ -178,6 +178,14 @@ _Avoid_: Project workspace, Worker root, execution checkout, daemon mirror
 The capability scope granted to one authenticated **redskilled** connection. A project-scoped MCP or editor client may mutate only the **Project** resolved from its **Client checkout**; an explicitly administrative client may observe and operate host-wide state. Socket access alone never silently upgrades a project client into host administration.
 _Avoid_: Docker-socket authority, ambient host admin, client-declared project trust, all-or-nothing local access
 
+**Remote link**:
+The host companion that authenticates paired remote clients and projects their capability-scoped operations onto local **redskilled** ACP without exposing either daemon socket or owning Project control state.
+_Avoid_: remote daemon, VPN node, socket proxy, mobile backend inside redskilled
+
+**Remote transport**:
+The interchangeable path a paired mobile client uses to reach a **Remote link**: the preferred embedded WireGuard hub tunnel or the automatic WSS relay fallback, both carrying the same authenticated application protocol.
+_Avoid_: VPN mode (WSS is not a VPN), separate control API, manual failover
+
 **Project authority split**:
 The deliberate boundary between durable workflow truth and operational control truth. GitHub's **Issue tracker** owns Tickets, labels, dependencies, discussions, and human decisions; **redskilled** owns the registered drain intent, GitHub cache and cursors, pending-write outbox, local claims, Worker lifecycle, budgets, and placement. On disagreement, redskilled reconciles its operational state toward fresh GitHub truth without discarding still-pending writes or pretending stale cache is current.
 _Avoid_: redskilled issue tracker, GitHub runtime state, dual workflow truth, cache as truth
