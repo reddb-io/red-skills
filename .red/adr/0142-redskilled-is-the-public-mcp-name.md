@@ -77,3 +77,18 @@ host service; it is no longer the name of a server a session mounts.
 
 - Host-prefixed tools are `mcp__plugin_dev_rs_dev__<tool>`.
 - Prompts are `rs_dev:<intent>`.
+
+## Amendment — 2026-08-23 (`rs_dev` starts from the installed package set)
+
+The delivery precedence above is superseded for a workstation provisioned by
+`red-dev`. The verified package set already carries
+`dist/redskilled-mcp.bundle.min.mjs`, and `red-dev` moves
+`~/.red/skills/current` only after the complete set verifies and expands. The
+MCP launcher therefore executes that resident bundle first. It does not put an
+npm registry resolution on every Codex or Claude handshake.
+
+An identifiable source checkout remains the development fallback. The pinned
+`npx -y -p @reddb-io/red-skills@<version>` command remains the final fallback
+for a standalone plugin installation that has no `red-dev` package set. Hosts
+still share one artifact and one launcher; the amendment changes only which
+already-published copy is preferred.

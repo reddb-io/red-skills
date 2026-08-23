@@ -31,22 +31,33 @@ if [ -n "$plugin_json" ]; then
   ver="$(node -e "process.stdout.write(require(process.argv[1]).version)" "$plugin_json" 2>/dev/null || true)"
 fi
 
-if [ -n "$ver" ]; then
-  npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp "$@"
-  status=$?
-  if [ "$status" -eq 0 ]; then
-    exit 0
+# red-dev moves this pointer only after it verifies and expands the complete
+# package set. Once present, that resident bundle is the fastest and strongest
+# identity available: no registry resolution belongs on every MCP handshake.
+current_dist="$HOME/.red/skills/current/dist"
+current_bundle="$current_dist/redskilled-mcp.bundle.min.mjs"
+if [ -f "$current_bundle" ]; then
+  # `current` is an atomic symlink. Execute the physical path because the
+  # bundle's direct-entry guard compares argv[1] with its resolved import URL.
+  physical_dist="$(cd "$current_dist" 2>/dev/null && pwd -P)"
+  if [ -n "$physical_dist" ]; then
+    exec node "$physical_dist/redskilled-mcp.bundle.min.mjs" "$@"
   fi
-  printf 'redskilled: npm package launcher failed for %s (exit %s); trying local dist fallback\n' "$ver" "$status" >&2
 fi
 
-# Source-checkout fallback only. Installed Codex and Claude plugins both take
-# the version-pinned npx path above; neither host owns a binary download lane.
+# Source-checkout fallback for development before a workstation set is installed.
 repo="$PWD"
 if [ -f "$repo/pnpm-workspace.yaml" ] && \
    [ -f "$repo/apps/plugin-dev/package.json" ] && \
    [ -f "$repo/dist/redskilled-mcp.bundle.min.mjs" ]; then
   exec node "$repo/dist/redskilled-mcp.bundle.min.mjs" "$@"
+fi
+
+# A standalone plugin installation has no red-dev package set. Preserve the
+# published, version-pinned npm path for that host, but keep it off the resident
+# workstation path above.
+if [ -n "$ver" ]; then
+  exec npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp "$@"
 fi
 
 printf 'redskilled: could not locate the redskilled-mcp bundle\n' >&2

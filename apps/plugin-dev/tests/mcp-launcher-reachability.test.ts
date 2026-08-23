@@ -10,7 +10,9 @@
 // in every repo but this one. The difference was invisible because each server's
 // chain reads plausibly on its own. Two of the three left with ADR 0147 §4; the
 // contract outlives them, because the next server declared here inherits it.
-import { readdir, readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -60,6 +62,40 @@ async function declarations(): Promise<Declaration[]> {
 }
 
 describe("every MCP server resolves from a directory that is not this repo (#3186-adjacent)", () => {
+  it("starts rs_dev from red-dev's verified current package set before consulting npm", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rs-dev-current-set-"));
+    const bin = join(home, "bin");
+    const set = join(home, ".red/skills/sets/4.1.35-test");
+    const bundle = join(set, "dist/redskilled-mcp.bundle.min.mjs");
+    await mkdir(join(set, "dist"), { recursive: true });
+    await symlink(set, join(home, ".red/skills/current"));
+    await mkdir(bin, { recursive: true });
+    await writeFile(
+      bundle,
+      'import { fileURLToPath } from "node:url";\n' +
+        'import { resolve } from "node:path";\n' +
+        'if (resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) ' +
+        'process.stdout.write("current-package-set\\n");\n',
+    );
+    await writeFile(join(bin, "npx"), '#!/usr/bin/env bash\nprintf "npm-fallback\\n"\n');
+    await chmod(join(bin, "npx"), 0o755);
+
+    const launched = spawnSync("bash", [join(ROOT, "plugins/dev/hooks/redskilled-mcp.sh")], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CODEX_PLUGIN_ROOT: join(ROOT, "plugins/dev"),
+        HOME: home,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+    });
+    await rm(home, { force: true, recursive: true });
+
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(launched.stdout).toBe("current-package-set\n");
+  });
+
   it("gives each file-resolving launcher a $HOME-anchored candidate", async () => {
     const all = await declarations();
     expect(all.length, "found no MCP declarations — a walker that reaches nothing is green by accident")

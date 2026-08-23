@@ -191,17 +191,21 @@ describe("shipped hooks run under bash, wrappers stay POSIX", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("launches the redskilled MCP through the same version-pinned npx lane on every host", () => {
+  it("launches the redskilled MCP from the verified package set before the npm fallback", () => {
     const launcher = readFileSync(
       join(ROOT, "plugins/dev/hooks/redskilled-mcp.sh"),
       "utf8",
     );
 
+    const currentSet = '$HOME/.red/skills/current/dist';
+    const npmFallback = 'npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp';
+    expect(launcher).toContain(currentSet);
     expect(launcher).toContain(
-      'npx -y -p "@reddb-io/red-skills@$ver" red-skills-redskilled-mcp',
+      npmFallback,
     );
+    expect(launcher.indexOf(currentSet)).toBeLessThan(launcher.indexOf(npmFallback));
     expect(launcher).not.toMatch(/\b(?:curl|wget)\b|api\.github\.com|gh\s+release/);
-    expect(launcher).toContain("Source-checkout fallback only");
+    expect(launcher).toContain("Source-checkout fallback");
   });
 
   it("never hands a shipped hook to `sh` at an invocation site", () => {
