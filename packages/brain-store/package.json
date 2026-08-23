@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/brain-store",
-  "version": "4.1.32",
+  "version": "4.1.33",
   "private": true,
   "type": "module",
   "description": "The brain store engine (ADR 0152): the RedDB-backed artifact graph, its host-scoped root resolution, and the outbound channel bridge. Shared by the `brain` CLI and by redskilled, which holds the one handle per host.",
