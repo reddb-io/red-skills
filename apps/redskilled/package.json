@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled",
-  "version": "4.1.31",
+  "version": "4.1.32",
   "private": true,
   "type": "module",
   "exports": {
@@ -41,7 +41,7 @@
     "./worker-workspace": "./src/worker-workspace.ts",
     "./statusline-command": "./src/statusline-command.ts"
   },
-  "description": "redskilled \u2014 the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
+  "description": "redskilled — the host-scoped RedSkills control plane: one singleton per machine owns Project control state and Worker lifecycle.",
   "license": "Apache-2.0",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
