@@ -56,6 +56,7 @@ import {
   type RedskilledReclaimOptions,
 } from "./reclaim.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
+import { installStatuslineNativeFront } from "./statusline-native.js";
 import { RESOURCE_INCIDENTS_USAGE, runResourceIncidents } from "./resource-incidents-command.js";
 export { runResourceIncidents } from "./resource-incidents-command.js";
 import { runDashboard } from "./dashboard-command.js";
@@ -779,7 +780,13 @@ export async function runUnit(
   }
   if (action === "install") {
     const installed = await installRedskilledUnit(planRedskilledUnit(paths, { version: readBuildInfo("redskilled").version }), io.unitIO ?? {});
-    write(`${JSON.stringify(installed, null, 2)}\n`);
+    // ADR 0157: the native statusline front is compiled on the host, best
+    // effort — a host without clang installs the unit exactly as before, and
+    // the outcome says why the binary is absent rather than leaving a mystery.
+    const nativeFront = installed.installed
+      ? await installStatuslineNativeFront()
+      : { outcome: "skipped", detail: "unit install did not complete" };
+    write(`${JSON.stringify({ ...installed, statusline_native_front: nativeFront }, null, 2)}\n`);
     return installed.installed ? 0 : 1;
   }
   if (action === "uninstall") {
