@@ -16,7 +16,7 @@
   ],
   "pi": {
     "skills": [
-      "./skills/core/"
+      "./skills/core/*/SKILL.md"
     ]
   },
   "publishConfig": {

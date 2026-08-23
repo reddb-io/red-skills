@@ -196,7 +196,10 @@ description: Test init skill.
     // package must be publishable. Verifying via negation: there is no
     // truthy `private` key.
     expect(devPkg.private).not.toBe(true);
-    expect(devPkg.pi.skills).toEqual(["./skills/engineering/", "./skills/knowledge/"]);
+    expect(devPkg.pi.skills).toEqual([
+      "./skills/engineering/*/SKILL.md",
+      "./skills/knowledge/*/SKILL.md",
+    ]);
 
     // Skills copied + in-progress/ excluded
     const afk = await readFile(
@@ -220,7 +223,7 @@ description: Test init skill.
     const memoryPkg = JSON.parse(
       await readFile(join(root, "packaging/pi/memory/package.json"), "utf8"),
     );
-    expect(memoryPkg.pi.skills).toEqual(["./skills/core/"]);
+    expect(memoryPkg.pi.skills).toEqual(["./skills/core/*/SKILL.md"]);
     expect(await readFile(join(root, "packaging/pi/memory/dist/memory.bundle.min.mjs"), "utf8"))
       .toBe("// memory runtime\n");
     expect(await readFile(join(root, "packaging/pi/memory/dist/memory-tokenizer.asset.cjs"), "utf8"))

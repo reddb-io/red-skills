@@ -144,8 +144,8 @@ validate_plugin() {
     || fail "$plugin: Claude marketplace must expose ./$dir"
 
   # Pi package manifest: must exist, declare the pi-package keyword, carry the
-  # same version as the Claude/Codex manifests, and enumerate only buckets
-  # that exist on disk under ./skills/.
+  # same version as the Claude/Codex manifests, and enumerate only concrete
+  # SKILL.md globs that resolve on disk under ./skills/.
   local pi_pkg="$dir/package.json"
   [ -f "$pi_pkg" ] \
     || fail "$plugin: Pi package.json missing: $pi_pkg"
@@ -159,12 +159,12 @@ validate_plugin() {
     || fail "$plugin: $pi_pkg version must match Claude/Codex manifests"
   jq -e '.pi.skills | type == "array" and length > 0' "$pi_pkg" >/dev/null \
     || fail "$plugin: $pi_pkg pi.skills must be a non-empty array"
-  local bucket
-  while IFS= read -r bucket; do
-    [[ "$bucket" == ./skills/* ]] \
-      || fail "$plugin: Pi skill bucket must start with ./skills/: $bucket"
-    [[ -d "$dir/${bucket#./}" ]] \
-      || fail "$plugin: Pi skill bucket not found on disk: $bucket"
+  local skill_glob
+  while IFS= read -r skill_glob; do
+    [[ "$skill_glob" == ./skills/*/SKILL.md ]] \
+      || fail "$plugin: Pi skill entry must be a SKILL.md glob: $skill_glob"
+    compgen -G "$dir/${skill_glob#./}" >/dev/null \
+      || fail "$plugin: Pi skill glob matched no files on disk: $skill_glob"
   done < <(jq -r '.pi.skills[]' "$pi_pkg")
 
   # Staged npm package (ADR 0110): packaging/pi/<name>/package.json must mirror

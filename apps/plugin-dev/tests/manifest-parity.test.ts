@@ -84,7 +84,7 @@ describe("dev plugin manifest + frontmatter hygiene", () => {
       .map((s) => s.replace(/^\.\/skills\//, "").replace(/\/$/, ""))
       .sort();
     const piBuckets = pi.pi.skills
-      .map((s) => s.replace(/^\.\/skills\//, "").replace(/\/$/, ""))
+      .map((s) => s.replace(/^\.\/skills\//, "").replace(/\/\*\/SKILL\.md$/, ""))
       .sort();
     expect(piBuckets).toEqual(codexBuckets);
     expect(piBuckets).not.toContain("in-progress");
