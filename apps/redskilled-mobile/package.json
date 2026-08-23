@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled-mobile",
-  "version": "4.1.35",
+  "version": "4.1.36",
   "main": "index.ts",
   "dependencies": {
     "expo": "~57.0.15",
