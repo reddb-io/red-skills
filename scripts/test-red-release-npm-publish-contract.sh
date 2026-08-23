@@ -426,6 +426,11 @@ git -C "$resolver_fixture/repo" tag v3.11.0
 
 cat > "$resolver_fixture/bin/gh" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GH_CALL_LOG"
+if [ "${1:-}" = "api" ] && [[ " $* " == *" --paginate "* ]]; then
+  printf '%s\n' v2.88.0 v3.1.2 v3.10.1 v3.11.0
+  exit 0
+fi
 if [ "${1:-}" = "release" ] && [ "${2:-}" = "view" ]; then
   case "${3:-}" in
     v2.88.0 | v3.1.2 | v3.10.1 | v3.11.0) exit 0 ;;
@@ -445,6 +450,7 @@ awk '
 if (
   cd "$resolver_fixture/repo"
   PATH="$resolver_fixture/bin:$PATH" \
+    GH_CALL_LOG="$resolver_fixture/gh-calls" \
     EVENT_NAME=workflow_dispatch \
     REF_NAME= \
     INPUT_TAG=v3.11.0 \
@@ -452,10 +458,13 @@ if (
     bash "$resolver_fixture/resolve-release-tag.sh"
 ) > "$resolver_fixture/stdout" 2>&1 &&
    grep -q '^publish=true$' "$resolver_fixture/github-output" &&
-   grep -q '^tag=v3.11.0$' "$resolver_fixture/github-output"; then
-  pass "a moving major ref may carry a descendant hotfix without reopening its release line"
+   grep -q '^tag=v3.11.0$' "$resolver_fixture/github-output" &&
+   [ "$(grep -c '^api ' "$resolver_fixture/gh-calls" || true)" -eq 1 ] &&
+   grep -q -- '--paginate' "$resolver_fixture/gh-calls" &&
+   ! grep -q '^release view ' "$resolver_fixture/gh-calls"; then
+  pass "the FIFO resolver snapshots releases once and handles a descendant major-ref hotfix locally"
 else
-  fail "a descendant hotfix on a moving major ref must not block the next release"
+  fail "the FIFO resolver must use one paginated release snapshot, never one request per tag"
 fi
 
 # One Release, one owner. The release engine creates it and re-reads the body it

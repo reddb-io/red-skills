@@ -86,6 +86,24 @@ jobs:
             printf 'v%s\n' "${version%%.*}"
           }
 
+          # Snapshot the Release collection once. The FIFO walk below may span
+          # hundreds of historical tags; asking GitHub once per tag made a
+          # no-op resolver spend minutes on serial REST round trips. `gh api`
+          # follows pagination in one invocation and the remaining membership
+          # checks are local.
+          published_release_tags="$(
+            gh api --paginate 'repos/{owner}/{repo}/releases?per_page=100' --jq '.[].tag_name'
+          )"
+          declare -A published_releases=()
+          while IFS= read -r published_tag; do
+            [ -n "$published_tag" ] && published_releases["$published_tag"]=1
+          done <<< "$published_release_tags"
+
+          release_exists() {
+            local candidate="$1"
+            [ "${published_releases[$candidate]+known}" = known ]
+          }
+
           # A GitHub Release is not the whole completion marker: the workflow
           # creates it before moving vX, and a failure in that final push must
           # remain retryable. A major ref at this release OR a newer release in
@@ -104,7 +122,7 @@ jobs:
 
           release_complete() {
             local candidate="$1"
-            gh release view "$candidate" >/dev/null 2>&1 && major_reaches "$candidate"
+            release_exists "$candidate" && major_reaches "$candidate"
           }
 
           major_is_ahead() {
