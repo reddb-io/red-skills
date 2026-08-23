@@ -15,7 +15,7 @@
   ],
   "pi": {
     "skills": [
-      "./skills/maintainer/"
+      "./skills/maintainer/*/SKILL.md"
     ]
   },
   "publishConfig": {

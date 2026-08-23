@@ -4,7 +4,9 @@
 //
 // Pi packages are installed via `pi install <local-path>` and need a
 // package.json with a `pi-package` keyword plus a `pi.skills` array pointing at
-// the same skill buckets the Claude/Codex manifests expose. This script keeps
+// the same skill buckets the Claude/Codex manifests expose. Pi 0.84.2 treats
+// every root Markdown file under a declared directory as a skill, so entries
+// must name only the actual `SKILL.md` files. This script keeps
 // the per-plugin package.json files under `plugins/<name>/package.json` in
 // sync with the source-of-truth Claude manifests; run `pnpm pi:manifests` to
 // regenerate, `pnpm pi:manifests:check` to fail on drift.
@@ -15,7 +17,7 @@
 // Skills exposed here are the same bucket paths the Codex manifest lists, so
 // a `pi install ./plugins/dev` install gives the agent every published dev
 // skill (engineering/knowledge/productivity/misc) without the in-progress
-// drafts.
+// drafts or bucket README files being interpreted as skills.
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,9 +62,10 @@ function deriveSkillRoots(skills) {
 
   // The Pi package manifest sits at plugins/<name>/package.json, so paths are
   // rooted there and must include the shared `./skills/` prefix the Claude and
-  // Codex manifests also use. Pi auto-discovers SKILL.md files recursively
-  // beneath each listed directory.
-  return orderedRoots.map((root) => `./skills/${root}/`);
+  // Codex manifests also use. Keep the glob one directory above SKILL.md:
+  // Pi 0.84.2 scans root Markdown files in a declared directory and reports a
+  // bucket README as a malformed skill.
+  return orderedRoots.map((root) => `./skills/${root}/*/SKILL.md`);
 }
 
 export function buildPiPackage(claudePlugin) {

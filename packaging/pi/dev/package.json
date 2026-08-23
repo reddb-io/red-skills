@@ -15,10 +15,10 @@
   ],
   "pi": {
     "skills": [
-      "./skills/engineering/",
-      "./skills/knowledge/",
-      "./skills/productivity/",
-      "./skills/misc/"
+      "./skills/engineering/*/SKILL.md",
+      "./skills/knowledge/*/SKILL.md",
+      "./skills/productivity/*/SKILL.md",
+      "./skills/misc/*/SKILL.md"
     ]
   },
   "publishConfig": {

@@ -76,7 +76,7 @@ describe("Pi manifest generator", () => {
       license: "Apache-2.0",
       keywords: ["pi-package", "reddb-io", "red-skills"],
       pi: {
-        skills: ["./skills/engineering/", "./skills/knowledge/"],
+        skills: ["./skills/engineering/*/SKILL.md", "./skills/knowledge/*/SKILL.md"],
       },
     });
 
@@ -90,7 +90,32 @@ describe("Pi manifest generator", () => {
     const internalPackage = JSON.parse(
       await readFile(join(root, "plugins/internal/package.json"), "utf8"),
     );
-    expect(internalPackage.pi.skills).toEqual(["./skills/core/"]);
+    expect(internalPackage.pi.skills).toEqual(["./skills/core/*/SKILL.md"]);
+  });
+
+  it("declares only SKILL.md files so Pi does not validate bucket README files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-skills-pi-manifests-skill-files-"));
+
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await mkdir(join(root, "plugins/brain/.claude-plugin"), { recursive: true });
+    await writeJson(join(root, ".claude-plugin/marketplace.json"), {
+      name: "red-skills",
+      plugins: [{ name: "brain", source: "./plugins/brain", description: "Brain." }],
+    });
+    await writeJson(join(root, "plugins/brain/.claude-plugin/plugin.json"), {
+      name: "brain",
+      version: "9.9.9",
+      description: "Brain.",
+      skills: ["./skills/core/capture", "./skills/core/search"],
+    });
+
+    await execFileAsync("node", [generator, "--root", root]);
+
+    const brainPackage = JSON.parse(
+      await readFile(join(root, "plugins/brain/package.json"), "utf8"),
+    );
+    expect(brainPackage.pi.skills).toEqual(["./skills/core/*/SKILL.md"]);
+    expect(brainPackage.pi.skills.every((entry: string) => entry.endsWith("/SKILL.md"))).toBe(true);
   });
 
   it("fails --check when a committed Pi manifest drifts from the generator", async () => {
