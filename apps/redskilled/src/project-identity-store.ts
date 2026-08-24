@@ -27,6 +27,8 @@ export interface ProjectIdentityRecord {
 export interface ProjectIdentityStore {
   read(slug: string): Promise<ProjectIdentityRecord | undefined>;
   remember(entry: { slug: string; githubId: string; fullName: string }): Promise<void>;
+  /** Every remembered identity — the migration's worklist at boot. */
+  all(): Promise<readonly ProjectIdentityRecord[]>;
 }
 
 /** The snapshot lives beside the other durable host-state files. */
@@ -60,6 +62,9 @@ export function createProjectIdentityStore(
     async read(slug) {
       const normalized = normalizeSlug(slug);
       return (await load()).find((record) => record.slug === normalized);
+    },
+    async all() {
+      return await load();
     },
     async remember(entry) {
       const write = tail.then(async () => {

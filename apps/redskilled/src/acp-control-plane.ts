@@ -70,6 +70,7 @@ import {
   type ResolveAcpProjectIdentityOptions,
 } from "./project-workspace.js";
 import { createProjectIdentityStore, projectIdentityStorePath } from "./project-identity-store.js";
+import { memoryRootBesideWorkspaces, migrateProjectIdentity } from "./project-identity-migration.js";
 import {
   bindTargetedDispatch,
   createAcpSessionJournal as createAcpDispatchJournal,
@@ -131,8 +132,45 @@ export async function startRedskillsAcpControlPlane(
   // a miss, and a demotion to `remote:<slug>` is recorded instead of silent —
   // identity deciding differently per bind is how one repository became two
   // projects with split control state.
+  const identityStore = createProjectIdentityStore(projectIdentityStorePath(paths.registrationIntentPath));
+  const projectControls = await projectControlStore.read();
+  const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
+  // Every resolved alias also REPAIRS history: the `remote:` twin's control
+  // row, workspace clone, memory root and journal sessions are merged onto the
+  // canonical `github:` identity — once at boot for everything already known,
+  // and again the moment a new alias is learned. Idempotent, so a clean pass
+  // costs a few stats and reports nothing.
+  const migrationDeps = {
+    registrationIntentPath: paths.registrationIntentPath,
+    projectWorkspaceRoot: paths.projectWorkspaceRoot,
+    memoryRoot: memoryRootBesideWorkspaces(paths.projectWorkspaceRoot),
+    projectControls,
+    persistProjectControls,
+  };
+  const migrateAlias = (alias: { slug: string; githubId: string; fullName: string }): void => {
+    void migrateProjectIdentity(alias, migrationDeps)
+      .then((report) => {
+        for (const action of report.actions) {
+          process.stderr.write(`project identity migration: ${action}\n`);
+        }
+      })
+      .catch(() => undefined);
+  };
+  void identityStore.all()
+    .then((records) => {
+      for (const record of records) {
+        migrateAlias({ slug: record.slug, githubId: record.github_id, fullName: record.full_name });
+      }
+    })
+    .catch(() => undefined);
   const identityOptions: ResolveAcpProjectIdentityOptions = {
-    identityCache: createProjectIdentityStore(projectIdentityStorePath(paths.registrationIntentPath)),
+    identityCache: {
+      read: (slug) => identityStore.read(slug),
+      remember: async (entry) => {
+        await identityStore.remember(entry);
+        migrateAlias(entry);
+      },
+    },
     resolveToken: async () =>
       (await options.githubGateway?.credentialForProfile?.("personal"))?.secret ?? null,
     onIdentityDemotion: (slug, reason) => options.recordAcpFailure?.({
@@ -141,8 +179,6 @@ export async function startRedskillsAcpControlPlane(
       surface: "connection",
     }),
   };
-  const projectControls = await projectControlStore.read();
-  const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
   const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
   const runTurn = demandTurnRunnerFor(options, sessionJournal);
   const connectionOptions = {
