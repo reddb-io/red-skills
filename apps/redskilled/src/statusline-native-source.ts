@@ -19,14 +19,30 @@ export const STATUSLINE_NATIVE_SOURCE = `// statusline-fast — native statuslin
 // daemon tail stays at most one render old. The cache is PER PROJECT (the
 // prompt host runs this with cwd = the repo), so one project's render never
 // appears inside another project's session.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 
 const cachePath = ".red/state/statusline/last-render.txt";
+// ADR 0157 promises "at most one render old". A render happens per prompt, so
+// a cache this stale means the background renderer stopped rewriting it — and
+// the one thing worse than an old line is an old line wearing a live face.
+const staleAfterMs = 900000;
 
 if (existsSync(cachePath)) {
   const cached = readFileSync(cachePath, "utf8");
   if (cached.trim() !== "") {
-    process.stdout.write(cached.endsWith("\\n") ? cached : cached + "\\n");
+    let suffix = "";
+    let ageMs = 0;
+    try {
+      ageMs = Date.now() - statSync(cachePath).mtimeMs;
+    } catch {
+      ageMs = 0;
+    }
+    if (ageMs > staleAfterMs) {
+      const minutes = Math.floor(ageMs / 60000);
+      suffix = " !stale " + minutes + "m";
+    }
+    const body = cached.endsWith("\\n") ? cached.slice(0, cached.length - 1) : cached;
+    process.stdout.write(body + suffix + "\\n");
     process.exit(0);
   }
 }

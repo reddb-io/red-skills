@@ -67,3 +67,43 @@ describe("installing the native statusline front", () => {
     expect(result.detail).toContain("SC2020");
   });
 });
+
+describe("the native front dates its cached render", () => {
+  async function runNativeSource(cwd: string, stdin = ""): Promise<string> {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { createRequire } = await import("node:module");
+    const { pathToFileURL } = await import("node:url");
+    const { STATUSLINE_NATIVE_SOURCE } = await import("../src/statusline-native-source.js");
+    const run = promisify(execFile);
+    const program = join(cwd, "statusline-fast.ts");
+    await writeFile(program, STATUSLINE_NATIVE_SOURCE);
+    const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+    const { stdout } = await run(process.execPath, ["--import", tsx, program], {
+      cwd,
+      ...(stdin === "" ? {} : {}),
+    });
+    return stdout;
+  }
+
+  it("prints a fresh cached render verbatim, and labels a stale one with its age", async () => {
+    const { utimes } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "redskilled-native-stale-"));
+    roots.push(root);
+    const cache = join(root, ".red", "state", "statusline");
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, "last-render.txt"), "rskld 4.2.9 · main · 0w idle\n");
+
+    // Fresh: verbatim, no mark.
+    expect(await runNativeSource(root)).toBe("rskld 4.2.9 · main · 0w idle\n");
+
+    // An hour stale: the same truth, labeled old — the background renderer
+    // stopped rewriting the cache, and the old truth labeled old beats a
+    // frozen line wearing a live face.
+    const old = new Date(Date.now() - 60 * 60_000);
+    await utimes(join(cache, "last-render.txt"), old, old);
+    const stale = await runNativeSource(root);
+    expect(stale).toContain("rskld 4.2.9 · main · 0w idle");
+    expect(stale).toMatch(/!stale (5\d|6\d)m\n$/);
+  });
+});
