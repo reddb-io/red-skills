@@ -19,7 +19,7 @@ import {
 const roots: string[] = [];
 const fixtureApp = "apps/plugin-dev";
 const fixtureSource = `${fixtureApp}/src/index.ts`;
-const fixtureAddedSource = `${fixtureApp}/added.ts`;
+const fixtureAddedSource = `${fixtureApp}/src/added.ts`;
 const fixtureBackpressureCommand = `pnpm -C ${fixtureApp} test:invariants`;
 
 afterEach(async () => {
