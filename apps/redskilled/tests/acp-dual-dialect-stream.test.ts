@@ -161,3 +161,88 @@ describe("the ACP dual-dialect codec", () => {
     expect(answer.protocolVersion).toBe(1);
   });
 });
+
+describe("parity with the SDK's ndJsonStream (ADR 0170)", () => {
+  it("reads a JSON-RPC batch frame as an array without blocking later frames", async () => {
+    const pipe = bytePipe();
+    const stream = dualDialectStream(byteSink().writable, pipe.readable);
+
+    pipe.push('[{"jsonrpc":"2.0","method":"ping","id":1},{"jsonrpc":"2.0","method":"ping","id":2}]\n');
+    pipe.push('{"jsonrpc":"2.0","method":"after-the-batch","id":3}\n');
+
+    const messages = await readMessages(stream.readable, 2);
+    expect(messages[0]).toEqual([
+      { jsonrpc: "2.0", method: "ping", id: 1 },
+      { jsonrpc: "2.0", method: "ping", id: 2 },
+    ]);
+    // The frame behind the batch arrives — the batch used to sniff as TOON and
+    // wait forever for a blank-line terminator, wedging everything behind it.
+    expect(messages[1]).toEqual({ jsonrpc: "2.0", method: "after-the-batch", id: 3 });
+  });
+
+  it("skips a malformed frame, reports it, and keeps the connection open", async () => {
+    const pipe = bytePipe();
+    const stream = dualDialectStream(byteSink().writable, pipe.readable);
+
+    pipe.push('{"jsonrpc":"2.0","method":"broken",\n');
+    pipe.push('{"jsonrpc":"2.0","method":"alive","id":1}\n');
+
+    const messages = await readMessages(stream.readable, 1);
+    expect(messages[0]).toEqual({ jsonrpc: "2.0", method: "alive", id: 1 });
+  });
+
+  it("does not latch the peer dialect on a frame that fails to decode", async () => {
+    const pipe = bytePipe();
+    const sink = byteSink();
+    const stream = dualDialectStream(sink.writable, pipe.readable);
+
+    // Garbage that sniffs as TOON but decodes as neither dialect must not flip
+    // the connection into answering TOON.
+    pipe.push("%%% not a document %%%\n\n");
+    pipe.push('{"jsonrpc":"2.0","method":"ping","id":1}\n');
+    await readMessages(stream.readable, 1);
+
+    const writer = stream.writable.getWriter();
+    await writer.write({ jsonrpc: "2.0", result: {}, id: 1 });
+    writer.releaseLock();
+    expect(sink.text()).toBe('{"jsonrpc":"2.0","result":{},"id":1}\n');
+  });
+
+  it("writes an array as one JSON line even after the peer proved TOON", async () => {
+    const pipe = bytePipe();
+    const sink = byteSink();
+    const stream = dualDialectStream(sink.writable, pipe.readable);
+
+    pipe.push('toonrpc: "1.0"\nmethod: ping\nid: 1\n\n');
+    await readMessages(stream.readable, 1);
+
+    const writer = stream.writable.getWriter();
+    await writer.write([{ jsonrpc: "2.0", result: {}, id: 1 }] as never);
+    writer.releaseLock();
+    expect(sink.text()).toBe('[{"jsonrpc":"2.0","result":{},"id":1}]\n');
+  });
+
+  it("flushes a final unterminated JSON line at end of input", async () => {
+    const pipe = bytePipe();
+    const stream = dualDialectStream(byteSink().writable, pipe.readable);
+
+    pipe.push('{"jsonrpc":"2.0","method":"last-words","id":7}');
+    pipe.end();
+
+    const messages = await readMessages(stream.readable, 1);
+    expect(messages[0]).toEqual({ jsonrpc: "2.0", method: "last-words", id: 7 });
+  });
+
+  it("cancel releases the underlying socket reader", async () => {
+    let cancelled: unknown = "never";
+    const readable = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        cancelled = reason;
+      },
+    });
+    const stream = dualDialectStream(byteSink().writable, readable);
+
+    await stream.readable.cancel(new Error("session over"));
+    expect(cancelled).toEqual(new Error("session over"));
+  });
+});

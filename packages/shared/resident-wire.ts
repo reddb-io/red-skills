@@ -66,11 +66,17 @@ export interface ResidentWireFrame {
 /**
  * The dialect a frame is written in, decided by its first meaningful byte.
  *
- * Only `{` means JSON: every request and response on this wire is an object, and
- * a TOON document for one starts with its first key instead.
+ * `{` or `[` means JSON: every request and response on this wire is an object
+ * (a TOON document for one starts with its first key instead), and a `[` can
+ * only be a JSON-RPC batch — which the SDK emits by default, and which a TOON
+ * read would wait forever for a `\n\n` terminator on, wedging every frame
+ * behind it. Arrays therefore always travel as JSON lines (see
+ * `encodeWireFrame`), so a TOON root-form array is deliberately
+ * unrepresentable on this wire.
  */
 export function sniffWireDialect(text: string): ResidentWireDialect {
-  return text.trimStart().startsWith("{") ? "json" : "toon";
+  const head = text.trimStart()[0];
+  return head === "{" || head === "[" ? "json" : "toon";
 }
 
 /**
@@ -117,6 +123,20 @@ export function decodeWireFrame(frame: string): unknown {
   }
 }
 
+/**
+ * Decode one frame in exactly the dialect its bytes were sniffed as.
+ *
+ * The lenient {@link decodeWireFrame} exists for the trusted resident op
+ * socket, where rule 1 wants a reader that accepts both encodings. On a
+ * socket carrying third-party agents that leniency is a hazard: a truncated
+ * JSON line handed to the TOON parser can come back as a plausible-looking
+ * object instead of an error, and a mis-decoded message is worse than a
+ * refused one.
+ */
+export function decodeWireFrameStrict(frame: string, dialect: ResidentWireDialect): unknown {
+  return dialect === "json" ? readJson(frame) : readToon(frame);
+}
+
 function readJson(frame: string): unknown {
   return JSON.parse(frame) as unknown;
 }
@@ -134,6 +154,10 @@ function readToon(frame: string): unknown {
  * wire accepts JSON too.
  */
 export function encodeWireFrame(value: unknown, dialect: ResidentWireDialect): string {
+  // The symmetric half of the sniff rule: a `[`-leading frame reads as JSON,
+  // so an array is WRITTEN as one JSON line in either dialect — otherwise a
+  // TOON-encoded batch answer would come back to us sniffed as JSON and fail.
+  if (Array.isArray(value)) return `${JSON.stringify(value)}\n`;
   if (dialect === "toon") {
     const body = tryEncodeToon(value);
     if (body !== null) return body.endsWith("\n") ? `${body}\n` : `${body}\n\n`;
