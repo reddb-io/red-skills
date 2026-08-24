@@ -4,7 +4,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then for candidate in \"$PWD/plugins/brain\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/brain\" \"$HOME/.codex/plugins/cache/red-skills/brain\"/*; do if [ -f \"$candidate/.claude-plugin/plugin.json\" ]; then root=\"$candidate\"; break; fi; done; fi; if [ -z \"$root\" ] || [ ! -f \"$root/scripts/bootstrap.mjs\" ]; then printf 'rs_brain: could not locate brain plugin root; install or rebuild the plugin first\\n' >&2; exit 1; fi; exec node \"$root/scripts/bootstrap.mjs\" mcp"
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; installed=\"$HOME/.red/skills/current/plugins/brain\"; if [ -f \"$installed/.claude-plugin/plugin.json\" ]; then root=\"$installed\"; elif [ -z \"$root\" ]; then for candidate in \"$PWD/plugins/brain\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/brain\" \"$HOME/.codex/plugins/cache/red-skills/brain\"/*; do if [ -f \"$candidate/.claude-plugin/plugin.json\" ]; then root=\"$candidate\"; break; fi; done; fi; if [ -z \"$root\" ] || [ ! -f \"$root/scripts/bootstrap.mjs\" ]; then printf 'rs_brain: could not locate brain plugin root; install or rebuild the plugin first\\n' >&2; exit 1; fi; exec node \"$root/scripts/bootstrap.mjs\" mcp"
       ]
     }
   }
