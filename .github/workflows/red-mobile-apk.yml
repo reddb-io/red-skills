@@ -24,8 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      apk-name: ${{ steps.artifact.outputs.name }}
     env:
       REDDB_SKIP_POSTINSTALL: '1'
     steps:
@@ -101,7 +99,6 @@ jobs:
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           "$build_tools/apksigner" verify --verbose --print-certs "dist-apk/$name"
           sha256sum "dist-apk/$name" > "dist-apk/$name.sha256"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -125,6 +122,7 @@ jobs:
       - name: Wait for the matching GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           for attempt in $(seq 1 18); do
@@ -138,9 +136,16 @@ jobs:
       - name: Attach APK to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          APK_NAME: ${{ needs.build-apk.outputs.apk-name }}
         run: |
+          mapfile -t apks < <(find dist-apk -maxdepth 1 -type f -name '*.apk' -printf '%f\n' | sort)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "Expected exactly one downloaded APK, found ${#apks[@]}" >&2
+            exit 1
+          fi
+          APK_NAME="${apks[0]}"
+          test -f "dist-apk/$APK_NAME.sha256"
           existing=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           if grep -Fxq "$APK_NAME" <<< "$existing" || grep -Fxq "$APK_NAME.sha256" <<< "$existing"; then
             echo "Release already contains a Redskilled APK asset; refusing to replace it" >&2
