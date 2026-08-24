@@ -16,6 +16,7 @@ workspace, symlink, or build dependency on the sibling `design-system` repo.
 - `tokens/`: generated Tokens Layer plus the compact Density stop
 - `theme/`: Base Theme, Application Theme, and dark Color Scheme
 - `platform/`: published platform identity assets
+- `marks/`: the published inverse RedDB lockups used on dark application surfaces
 - `fonts/`: the TTF forms of the same pinned Space Grotesk and JetBrains Mono
   assets used to produce the browser-ready files in the Assets Contract, plus
   their OFL licenses

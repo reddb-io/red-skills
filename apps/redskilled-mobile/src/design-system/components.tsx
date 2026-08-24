@@ -15,14 +15,20 @@ import {
 
 import { colors, density, radii, spacing, type } from "./tokens";
 
-export function BrandMark({ size = 48 }: { size?: number }) {
+const REDDB_HORIZONTAL_ASPECT_RATIO = 509 / 128;
+
+export function BrandMark({ size = 24 }: { size?: number }) {
+  const clearspace = size * 0.25;
   return (
-    <Image
-      accessibilityIgnoresInvertColors
-      accessibilityLabel="RedDB"
-      source={require("../../vendor/design-system/platform/icon-512.png")}
-      style={{ borderRadius: radii.md, height: size, width: size }}
-    />
+    <View style={{ padding: clearspace }}>
+      <Image
+        accessibilityIgnoresInvertColors
+        accessibilityLabel="RedDB"
+        resizeMode="contain"
+        source={require("../../vendor/design-system/marks/reddb-horizontal-inverse-h128.png")}
+        style={{ height: size, width: size * REDDB_HORIZONTAL_ASPECT_RATIO }}
+      />
+    </View>
   );
 }
 

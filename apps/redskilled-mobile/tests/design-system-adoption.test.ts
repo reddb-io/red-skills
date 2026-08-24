@@ -57,6 +57,18 @@ describe("Redskilled Mobile Design System adoption", () => {
     expect(sha256(join(vendorRoot, "platform", "maskable-512.png"))).toBe(
       "f9eb2a35751029f85a1e6eb8846e3bcf7ee0eac2e642357bb11097175bf7102f",
     );
+    expect(sha256(join(vendorRoot, "platform", "adaptive-background-432.png"))).toBe(
+      "2012fc72372d92f36ba71a6c6b5d9e683ac08c7dde1eb3de319c8b968918e796",
+    );
+    expect(sha256(join(vendorRoot, "platform", "adaptive-foreground-432.png"))).toBe(
+      "4574177ccff1acf5558a0c777f8e676fb31970c2620568fa23a44c4251b85b24",
+    );
+    expect(sha256(join(vendorRoot, "marks", "reddb-horizontal-inverse-h128.png"))).toBe(
+      "c199948ac7c4b5b11c913634ac881d052a7d0d6aaa7c85766b253797ef177be5",
+    );
+    expect(sha256(join(vendorRoot, "marks", "reddb-stacked-inverse-h256.png"))).toBe(
+      "359cc4c0e7661250f91f934bd3e225d76d68ac3c6886108e64b5ba5b3d63d18d",
+    );
     expect(sha256(join(vendorRoot, "fonts", "space-grotesk-variable.ttf"))).toBe(
       "94f4af82871f6de575a33981e6609ebba43d9201c0a8b6275f4d6647ea527a3b",
     );
@@ -93,15 +105,38 @@ describe("Redskilled Mobile Design System adoption", () => {
     const config = JSON.parse(readFileSync(join(appRoot, "app.json"), "utf8")) as {
       expo: {
         icon: string;
-        android: { adaptiveIcon: { foregroundImage: string } };
+        android: { adaptiveIcon: { backgroundImage: string; foregroundImage: string } };
+        plugins: Array<string | [string, Record<string, unknown>]>;
         web: { favicon: string };
       };
     };
 
     expect(config.expo.icon).toBe("./vendor/design-system/platform/icon-512.png");
     expect(config.expo.android.adaptiveIcon.foregroundImage).toBe(
-      "./vendor/design-system/platform/maskable-512.png",
+      "./vendor/design-system/platform/adaptive-foreground-432.png",
+    );
+    expect(config.expo.android.adaptiveIcon.backgroundImage).toBe(
+      "./vendor/design-system/platform/adaptive-background-432.png",
     );
     expect(config.expo.web.favicon).toBe("./vendor/design-system/platform/icon-192.png");
+
+    const splash = config.expo.plugins.find(
+      (plugin): plugin is [string, Record<string, unknown>] =>
+        Array.isArray(plugin) && plugin[0] === "expo-splash-screen",
+    );
+    expect(splash?.[1]).toMatchObject({
+      backgroundColor: "#07080a",
+      image: "./vendor/design-system/marks/reddb-stacked-inverse-h256.png",
+      imageWidth: 160,
+      resizeMode: "contain",
+    });
+  });
+
+  it("uses the Brand-published inverse lockup on the dark application surface", () => {
+    const components = readFileSync(join(sourceRoot, "design-system", "components.tsx"), "utf8");
+
+    expect(components).toContain("reddb-horizontal-inverse-h128.png");
+    expect(components).not.toContain("platform/icon-512.png");
+    expect(components).toContain("size * 0.25");
   });
 });
