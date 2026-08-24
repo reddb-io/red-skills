@@ -53,6 +53,34 @@ export function defaultLinkStatusPath(homeDir = homedir()): string {
   return join(redskilledHomeDir(homeDir), "link", "status.json");
 }
 
+/**
+ * Read the public status projection the state store publishes beside itself.
+ *
+ * `null` is "nothing has been published here", stated rather than guessed —
+ * the file appears on the first state mutation, so a fresh install reads null
+ * until the Host companion has actually done something.
+ */
+export async function readPublicLinkStatus(
+  path = defaultLinkStatusPath(),
+): Promise<RedskilledLinkPublicStatus | null> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
+    const status = value as Record<string, unknown>;
+    if (status.version !== 1 || typeof status.active_paired_device_count !== "number") return null;
+    return { version: 1, active_paired_device_count: status.active_paired_device_count };
+  } catch {
+    return null;
+  }
+}
+
 export function createRedskilledLinkStateStore(options: {
   readonly path?: string;
   readonly statusPath?: string;

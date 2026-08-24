@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -147,6 +147,67 @@ export async function installRedskilledLinkUnit(
   const restart = run(["systemctl", "--user", "restart", plan.unitName]);
   if (restart.status !== 0) return failed(plan, restart, "systemd did not start the Host companion");
   return { unitPath: plan.unitPath, installed: true };
+}
+
+export interface RedskilledLinkUnitRemoval {
+  readonly unitPath: string;
+  readonly removed: boolean;
+  readonly detail?: string;
+}
+
+/**
+ * Take the Host companion back out: stop it, disable it, delete the unit.
+ *
+ * A best-effort inverse of install — a machine where the unit was never
+ * installed answers `removed: true`, because the state the operator asked for
+ * (no companion) already holds.
+ */
+export async function removeRedskilledLinkUnit(
+  io: RedskilledLinkUnitIO & { readonly unlink?: (path: string) => Promise<void> } = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RedskilledLinkUnitRemoval> {
+  const run = io.run ?? defaultRun;
+  const unlink = io.unlink ?? (async (target: string) => { await rm(target, { force: true }); });
+  const unitPath = redskilledLinkUnitPath(env);
+  const disable = run(["systemctl", "--user", "disable", "--now", REDSKILLED_LINK_UNIT_NAME]);
+  await unlink(unitPath);
+  const reload = run(["systemctl", "--user", "daemon-reload"]);
+  if (reload.status !== 0) {
+    return {
+      unitPath,
+      removed: false,
+      detail: (reload.stderr ?? reload.stdout ?? "").trim() || "systemd user manager did not reload",
+    };
+  }
+  return {
+    unitPath,
+    removed: true,
+    ...(disable.status === 0 ? {} : { detail: "the unit was not enabled; the file is gone either way" }),
+  };
+}
+
+export interface RedskilledLinkUnitStatus {
+  readonly unitName: typeof REDSKILLED_LINK_UNIT_NAME;
+  /** systemd's own words: "active", "inactive", "failed" — or null when unaskable. */
+  readonly active: string | null;
+  readonly enabled: string | null;
+}
+
+/** Ask systemd, and only systemd, whether the companion runs. */
+export function readRedskilledLinkUnitStatus(
+  io: RedskilledLinkUnitIO = {},
+): RedskilledLinkUnitStatus {
+  const run = io.run ?? defaultRun;
+  const answer = (argv: readonly string[]): string | null => {
+    const result = run(argv);
+    const word = (result.stdout ?? "").trim();
+    return word === "" ? null : word;
+  };
+  return {
+    unitName: REDSKILLED_LINK_UNIT_NAME,
+    active: answer(["systemctl", "--user", "is-active", REDSKILLED_LINK_UNIT_NAME]),
+    enabled: answer(["systemctl", "--user", "is-enabled", REDSKILLED_LINK_UNIT_NAME]),
+  };
 }
 
 function failed(
