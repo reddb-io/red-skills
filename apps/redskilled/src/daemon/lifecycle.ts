@@ -6,6 +6,7 @@ import { servedVersionPathIn, writeServedVersionTo } from "@reddb-io/shared/serv
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { planRegistrationBootRecovery, recordDaemonBootRecovery } from "./boot-recovery.js";
 import { startRedskillsAcpControlPlane, type RedskillsAcpControlPlane } from "../acp-control-plane.js";
+import { createMobileWorkerStop } from "../mobile-worker-stop.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { createWorkerTeardownLedger } from "./worker-teardown.js";
 import { createBudgetGraceRuntime, DEFAULT_REDSKILLED_BUDGET_GRACE_MS, signalWorkerForBudgetGrace } from "./budget-grace.js";
@@ -2392,12 +2393,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       return { id: (request as { id?: string }).id ?? randomUUID(), ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
-
   try {
     acpControlPlane = await startRedskillsAcpControlPlane({
       paths,
       startWorker,
       hostState,
+      hostAdministration: true,
+      mobileWorkerStop: createMobileWorkerStop(runWorkerCommand),
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
       registerProject: (request) => registerProject(request),
@@ -2410,7 +2412,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await stop({ reason: "requested", note: "ACP control plane failed to bind" }).catch(() => undefined);
     throw error;
   }
-
   armSampleTimer();
   armLeaseTimer();
   armRegistrationTimer();

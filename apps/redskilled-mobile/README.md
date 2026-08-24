@@ -8,11 +8,12 @@ Issue URL on a paired Redskilled Host.
 - Expo SDK 57 with `expo-dev-client`
 - Host + Issue URL dispatch screen
 - strict GitHub Issue URL parsing and canonicalisation
-- development-only dispatch gateway that produces a visible preview Worker
-- production fails closed until the Remote-link transport is implemented
+- one-use invitation pairing persisted in Android SecureStore
+- encrypted TOON Remote-link frames over the transport-only WSS relay
+- live Worker observation, existing-Issue dispatch, and single-Worker stop
 
-The preview is deliberately behind `__DEV__`; it is not a temporary network
-protocol. The production Remote-link gateway will use TOON wire frames.
+The relay cannot read operation payloads or mint a device capability. The Host
+projects only the Mobile operator allowlist onto local redskilled ACP.
 
 ## Commands
 

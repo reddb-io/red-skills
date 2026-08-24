@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./acp-client": "./src/acp-client.ts",
+    "./acp-operator-client": "./src/acp-operator-client.ts",
     "./acp-agent-catalog": "./src/acp-agent-catalog.ts",
     "./acp-worktree": "./src/acp-worktree.ts",
     "./cli": "./src/cli.ts",

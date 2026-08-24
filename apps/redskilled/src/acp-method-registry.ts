@@ -33,6 +33,7 @@ export type RedskillsAcpMethodDomainName =
   | "host"
   | "brain"
   | "memory"
+  | "operator"
   | "project"
   | "github"
   | "budget"
@@ -198,6 +199,12 @@ export const REDSKILLS_ACP_METHOD_DOMAINS: readonly RedskillsAcpMethodDomainDecl
     domain: "go",
     module: "apps/redskilled/src/acp-go-dispatch.ts",
     methods: ["goDispatch"],
+    served: true,
+  },
+  {
+    domain: "operator",
+    module: "apps/redskilled/src/acp-mobile-operator.ts",
+    methods: ["operatorState", "ticketDispatch", "workerStop"],
     served: true,
   },
   {

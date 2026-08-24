@@ -128,6 +128,30 @@ describe("the Ticket loop's declared arc", () => {
     // #4130: the land names the exact commit its publish validated.
     expect(land.commit).toBe(result.publication.commit);
   });
+
+  it("does not post a second claim when the daemon admitted a preclaimed Ticket", async () => {
+    const request = vi.fn(async (method: string) =>
+      method === REDSKILLS_ACP_METHODS.land
+        ? { version: 1, pull_request: 77 }
+        : { version: 1 },
+    );
+
+    const result = await runTicketLoop(deps({ preclaimed: true, request }));
+
+    expect(result.outcome).toBe("landed");
+    expect(stages(result.records)).toEqual([
+      "claim",
+      "implement",
+      "gate",
+      "publish",
+      "land",
+    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith(
+      REDSKILLS_ACP_METHODS.land,
+      expect.objectContaining({ owner_ticket: 4020 }),
+    );
+  });
 });
 
 describe("the brief contract, enforced at the preflight", () => {

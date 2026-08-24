@@ -569,7 +569,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
     expect(updates.map(lifecycleEvent).filter(Boolean)).toEqual(["admission", "tool-activity", "tool-activity"]);
 
     const firstBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
-    expect(firstBirth.project_label).toBe(project.projectId);
+    expect(firstBirth.project_label).toBe(project.projectLabel);
     // ADR 0149 §1: the Worker stands in its OWN workspace in OS temporary
     // storage, forked from the Project workspace rather than sharing it.
     expect(firstBirth.workspace_path).not.toBe(project.workspacePath);
@@ -825,7 +825,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       prompt: [{ type: "text", text: "observe the canonical Project" }],
     });
     const projectBirth = await waitForEvent(paths.eventLanePath, "worker-birth");
-    expect(projectBirth.project_label).toBe(firstProject.projectId);
+    expect(projectBirth.project_label).toBe(firstProject.projectLabel);
     expect(projectBirth.workspace_path).toBe(
       join(workerWorkspaceRoot(), projectBirth.worker_id, "worktree"),
     );
@@ -833,7 +833,7 @@ describe("the public RedSkills ACP v1 control plane", () => {
       "_redskills/host_state",
       {},
     );
-    expect(liveScoped.workers.map((worker) => worker.project_label)).toEqual([firstProject.projectId]);
+    expect(liveScoped.workers.map((worker) => worker.project_label)).toEqual([firstProject.projectLabel]);
 
     const secondAdapter = launchCli(["acp"], env, ["pipe", "pipe", "pipe"]);
     const second = client({ name: "project-client-b" }).connect(childStream(secondAdapter));

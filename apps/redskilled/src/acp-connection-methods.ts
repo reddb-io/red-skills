@@ -30,6 +30,7 @@ import {
 } from "./acp-go-dispatch.js";
 import { hostStateMethodDomain } from "./acp-host-methods.js";
 import { memoryMethodDomain } from "./acp-memory.js";
+import { mobileOperatorMethodDomain } from "./acp-mobile-operator.js";
 import { telemetryMethodDomain } from "./acp-telemetry.js";
 import {
   redskillsAcpMethodTable,
@@ -54,12 +55,24 @@ import {
 } from "./project-control.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
+import type {
+  MobileTicketDispatchAnswer,
+  MobileTicketDispatchParams,
+  MobileWorkerStopAnswer,
+  MobileWorkerStopParams,
+} from "@reddb-io/protocol-acp";
 
 export interface ConnectionMethodDeps {
   readonly paths: RedskilledPaths;
   readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
   readonly githubGateway: RedskilledGithubGatewayRegistration | undefined;
   readonly hostAdministration: boolean;
+  readonly mobileTicketDispatch: (
+    params: MobileTicketDispatchParams,
+  ) => Promise<MobileTicketDispatchAnswer>;
+  readonly mobileWorkerStop: (
+    params: MobileWorkerStopParams,
+  ) => Promise<MobileWorkerStopAnswer>;
   /**
    * The host's ONE brain store holder (ADR 0152).
    *
@@ -124,6 +137,12 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
     goDispatchMethodDomain({
       tracker: createAcpGithubGoTicketTracker(deps.githubGateway, deps.scopedProject),
       admit,
+    }),
+    mobileOperatorMethodDomain({
+      hostAdministration: deps.hostAdministration,
+      hostState: deps.hostState,
+      dispatch: deps.mobileTicketDispatch,
+      stop: deps.mobileWorkerStop,
     }),
     worktreeMethodDomain({
       registeredCheckout: () => registeredCheckout(deps),

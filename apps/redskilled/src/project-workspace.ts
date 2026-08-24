@@ -29,6 +29,8 @@ export interface AcpProjectIdentity {
 
 export interface AcpProjectWorkspace extends AcpProjectIdentity {
   readonly workspacePath: string;
+  /** Daemon-selected credential binding; absent for checkout-derived Projects. */
+  readonly credentialProfile?: string;
 }
 
 export interface ResolveAcpProjectIdentityOptions {
@@ -109,6 +111,40 @@ export async function ensureAcpProjectWorkspace(
   return { ...identity, workspacePath };
 }
 
+/** Materialize a clean Project directly from its canonical remote. */
+export async function ensureRemoteAcpProjectWorkspace(
+  identity: AcpProjectIdentity,
+  workspaceRoot: string,
+  credential: string,
+): Promise<AcpProjectWorkspace> {
+  const projectDir = join(workspaceRoot, projectDirectoryName(identity.projectId));
+  const workspacePath = join(projectDir, "workspace");
+  if (await exists(workspacePath)) return { ...identity, checkoutRoot: workspacePath, workspacePath };
+  if (identity.remoteUrl == null) throw new Error("a remote Project requires one canonical clone URL");
+
+  await mkdir(projectDir, { recursive: true, mode: 0o700 });
+  const staging = await mkdtemp(join(projectDir, "remote-"));
+  const candidate = join(staging, "workspace");
+  const authorization = Buffer.from(`x-access-token:${credential}`, "utf8").toString("base64");
+  try {
+    await gitOutput(projectDir, ["clone", "--quiet", "--", identity.remoteUrl, candidate], true, {
+      ...process.env,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.extraHeader",
+      GIT_CONFIG_VALUE_0: `Authorization: Basic ${authorization}`,
+      GIT_TERMINAL_PROMPT: "0",
+    });
+    try {
+      await rename(candidate, workspacePath);
+    } catch (error) {
+      if (!(await exists(workspacePath))) throw error;
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+  return { ...identity, checkoutRoot: workspacePath, workspacePath };
+}
+
 interface GithubRepositoryAnswer {
   readonly id: string;
   readonly fullName: string;
@@ -167,13 +203,19 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function gitOutput(cwd: string, args: readonly string[], required = false): Promise<string | undefined> {
+async function gitOutput(
+  cwd: string,
+  args: readonly string[],
+  required = false,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
   return await new Promise<string | undefined>((resolve, reject) => {
     execFile("git", [...args], {
       cwd,
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
+      env,
     }, (error, stdout) => {
       if (error != null) {
         if (required) reject(error);

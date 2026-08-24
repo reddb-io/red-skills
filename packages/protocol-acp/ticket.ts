@@ -103,6 +103,8 @@ export interface RedskillsTicketHandoff {
    * refusing the handoff would strand the work with no channel to say why.
    */
   readonly standing_orders?: string;
+  /** The daemon won the remote claim before birth; the Worker must not post it twice. */
+  readonly preclaimed?: true;
 }
 
 /** The six fields a handoff must state; the rest are refinements. */
@@ -216,6 +218,7 @@ function optionalTicketFields(ticket: Record<string, unknown>): Partial<Redskill
     ...(typeof ticket.standing_orders === "string" && ticket.standing_orders.trim() !== ""
       ? { standing_orders: ticket.standing_orders }
       : {}),
+    ...(ticket.preclaimed === true ? { preclaimed: true as const } : {}),
   };
 }
 

@@ -149,6 +149,7 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
       workerId: ticket.worker_id,
       sessionId,
       ...(ticket.runner == null ? {} : { runner: ticket.runner }),
+      ...(ticket.preclaimed === true ? { preclaimed: true } : {}),
       ...(ticket.run_mode == null ? {} : { runMode: ticket.run_mode }),
       ...(ticket.reseed_budget == null ? {} : { reseedBudget: ticket.reseed_budget }),
       request: boundedRequest(parent),

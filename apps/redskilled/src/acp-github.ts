@@ -3,6 +3,7 @@ import { GithubBackpressureError } from "@reddb-io/github";
 import { REDSKILLS_ACP_METHODS } from "@reddb-io/protocol-acp";
 import {
   RedskilledGithubAuthorityError,
+  credentialForAcpProject,
   type RedskilledGithubGatewayRegistration,
   type RedskilledGithubCustodyHandoff,
   type RedskilledGithubCustodyRecord,
@@ -56,11 +57,7 @@ export async function bindAcpProjectGithubUpdates(
   project: AcpProjectWorkspace,
   notify: (method: typeof REDSKILLED_GITHUB_UPDATE_METHOD, update: RedskilledGithubUpdate) => Promise<void>,
 ): Promise<AcpGithubUpdateObserver> {
-  const selection = await gateway?.credentialForProject({
-    projectId: project.projectId,
-    projectLabel: project.projectLabel,
-    workspacePath: project.workspacePath,
-  });
+  const selection = await credentialForAcpProject(gateway, project);
   if (gateway == null || selection == null) return emptyObserver();
   const reader = gateway.gateway.forProject({
     projectId: project.projectId,
@@ -109,11 +106,7 @@ async function servedByProjectReader<T>(
   run: (reader: RedskilledGithubProjectReader) => Promise<T>,
 ): Promise<T> {
   try {
-    const selection = await gateway?.credentialForProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-    });
+    const selection = await credentialForAcpProject(gateway, project);
     if (gateway == null || selection == null) {
       throw RequestError.authRequired(
         {
@@ -231,11 +224,7 @@ export function bindAcpProjectGithubWrite(
   return async ({ params }: { readonly params: GithubWriteParams }) => {
     const project = projectForConnection();
     try {
-      const selection = await gateway?.credentialForProject({
-        projectId: project.projectId,
-        projectLabel: project.projectLabel,
-        workspacePath: project.workspacePath,
-      });
+      const selection = await credentialForAcpProject(gateway, project);
       if (gateway == null || selection == null) {
         throw RequestError.authRequired(
           {
@@ -283,11 +272,7 @@ export function bindAcpProjectGithubCustodyStatus(
     const project = projectForConnection();
     let selection;
     try {
-      selection = await gateway.credentialForProject({
-        projectId: project.projectId,
-        projectLabel: project.projectLabel,
-        workspacePath: project.workspacePath,
-      });
+      selection = await credentialForAcpProject(gateway, project);
     } catch (error) {
       // Project control remains observable when optional GitHub custody has no
       // usable credential profile. Credential-bound custody mutations still
@@ -312,11 +297,7 @@ async function custodyReader(
 ): Promise<{
   readonly reader: RedskilledGithubManagedProjectReader;
 }> {
-  const selection = await gateway?.credentialForProject({
-    projectId: project.projectId,
-    projectLabel: project.projectLabel,
-    workspacePath: project.workspacePath,
-  });
+  const selection = await credentialForAcpProject(gateway, project);
   if (gateway == null || selection == null) {
     throw RequestError.authRequired(
       {

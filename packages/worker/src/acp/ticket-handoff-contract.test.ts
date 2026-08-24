@@ -80,6 +80,8 @@ describe("ticketHandoffFromMeta", () => {
       ?.validation_commands).toBeUndefined();
     expect(ticketHandoffFromMeta(meta({ ...BASE, reseed_budget: -3 }))?.reseed_budget).toBe(0);
     expect(ticketHandoffFromMeta(meta({ ...BASE, runner: 7 }))?.runner).toBeUndefined();
+    expect(ticketHandoffFromMeta(meta({ ...BASE, preclaimed: true }))?.preclaimed).toBe(true);
+    expect(ticketHandoffFromMeta(meta({ ...BASE, preclaimed: "yes" }))?.preclaimed).toBeUndefined();
   });
 });
 

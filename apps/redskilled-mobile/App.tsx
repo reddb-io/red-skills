@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,28 +15,48 @@ import {
 
 import { parseGitHubIssueUrl } from "./src/domain/issue-url";
 import type {
+  MobileWorker,
   PairedHost,
-  TicketDispatchReceipt,
 } from "./src/domain/ticket-dispatch";
-import { createPreviewDispatchGateway } from "./src/transport/preview-dispatch-gateway";
-
-const PREVIEW_HOST: PairedHost = {
-  id: "preview-host",
-  name: "Host de desenvolvimento",
-  status: "online",
-};
-
-const PREVIEW_HOSTS = __DEV__ ? [PREVIEW_HOST] : [];
+import { pairRedskilledHost } from "@reddb-io/red-skills-link-protocol/mobile-client";
+import type { RedskilledLinkPairedHost } from "@reddb-io/red-skills-link-protocol/protocol";
+import { createRemoteOperatorGateway } from "./src/transport/remote-operator-gateway";
+import { loadPairedHost, savePairedHost } from "./src/transport/paired-host-store";
 
 export default function App() {
-  const [selectedHostId, setSelectedHostId] = useState(
-    PREVIEW_HOSTS[0]?.id ?? null,
-  );
+  const [pairedHost, setPairedHost] = useState<RedskilledLinkPairedHost | null>(null);
+  const [pairingCode, setPairingCode] = useState("");
+  const [isPairing, setIsPairing] = useState(false);
   const [issueUrl, setIssueUrl] = useState("");
   const [isDispatching, setIsDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [workers, setWorkers] = useState<TicketDispatchReceipt[]>([]);
-  const gateway = useMemo(() => createPreviewDispatchGateway(), []);
+  const [workers, setWorkers] = useState<MobileWorker[]>([]);
+  const gateway = useMemo(
+    () => pairedHost == null ? null : createRemoteOperatorGateway(pairedHost),
+    [pairedHost],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void loadPairedHost().then((host) => {
+      if (active) setPairedHost(host);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (gateway == null) return;
+    let active = true;
+    const refresh = () => void gateway.state().then((state) => {
+      if (active) setWorkers([...state]);
+    }).catch(() => undefined);
+    refresh();
+    const timer = setInterval(refresh, 3_000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [gateway]);
 
   const issue = useMemo(() => {
     try {
@@ -46,13 +66,15 @@ export default function App() {
     }
   }, [issueUrl]);
 
-  const selectedHost = PREVIEW_HOSTS.find(
-    (host) => host.id === selectedHostId,
-  );
+  const selectedHost: PairedHost | null = pairedHost == null ? null : {
+    id: pairedHost.host_id,
+    name: pairedHost.host_name,
+    status: "online",
+  };
   const canDispatch = selectedHost != null && issue != null && !isDispatching;
 
   async function dispatchIssue() {
-    if (selectedHost == null || issue == null) return;
+    if (selectedHost == null || issue == null || gateway == null) return;
 
     setIsDispatching(true);
     setError(null);
@@ -61,12 +83,45 @@ export default function App() {
         hostId: selectedHost.id,
         issueUrl: issue.canonicalUrl,
       });
-      setWorkers((current) => [receipt, ...current]);
+      setWorkers((current) => [{
+        workerId: receipt.workerId,
+        repository: receipt.repository,
+        ticket: receipt.ticket,
+        startedAt: new Date().toISOString(),
+      }, ...current.filter((worker) => worker.workerId !== receipt.workerId)]);
       setIssueUrl("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Dispatch recusado");
     } finally {
       setIsDispatching(false);
+    }
+  }
+
+  async function pairHost() {
+    if (pairingCode.trim() === "") return;
+    setIsPairing(true);
+    setError(null);
+    try {
+      const host = await pairRedskilledHost(pairingCode, `Redskilled ${Platform.OS}`);
+      await savePairedHost(host);
+      setPairedHost(host);
+      setPairingCode("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Pairing refused");
+    } finally {
+      setIsPairing(false);
+    }
+  }
+
+  async function stopWorker(workerId: string) {
+    if (gateway == null) return;
+    setError(null);
+    try {
+      if (await gateway.stop(workerId)) {
+        setWorkers((current) => current.filter((worker) => worker.workerId !== workerId));
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Worker stop refused");
     }
   }
 
@@ -91,46 +146,45 @@ export default function App() {
             </View>
           </View>
 
-          {__DEV__ ? (
-            <View style={styles.previewBanner}>
-              <View style={styles.previewDot} />
-              <Text style={styles.previewText}>
-                Preview local: o Worker abaixo é simulado até o Remote link entrar.
-              </Text>
-            </View>
-          ) : null}
-
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>HOST</Text>
-            {PREVIEW_HOSTS.length === 0 ? (
+            {selectedHost == null ? (
               <View style={styles.emptyHost}>
-                <Text style={styles.emptyTitle}>Nenhum Host pareado</Text>
+                <Text style={styles.emptyTitle}>No paired Host</Text>
                 <Text style={styles.secondaryText}>
-                  Escaneie o convite gerado por /redskilled para começar.
+                  Paste the one-use invitation generated by redskilled-link.
                 </Text>
+                <TextInput
+                  accessibilityLabel="Redskilled Host invitation"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={setPairingCode}
+                  placeholder="Pairing invitation"
+                  placeholderTextColor="#656C78"
+                  style={styles.input}
+                  value={pairingCode}
+                />
+                <Pressable
+                  disabled={pairingCode.trim() === "" || isPairing}
+                  onPress={() => void pairHost()}
+                  style={styles.pairButton}
+                >
+                  {isPairing ? <ActivityIndicator color="#07110B" /> : (
+                    <Text style={styles.dispatchButtonText}>PAIR HOST</Text>
+                  )}
+                </Pressable>
               </View>
             ) : (
-              PREVIEW_HOSTS.map((host) => {
-                const selected = host.id === selectedHostId;
-                return (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    key={host.id}
-                    onPress={() => setSelectedHostId(host.id)}
-                    style={[styles.hostCard, selected && styles.hostCardSelected]}
-                  >
-                    <View>
-                      <Text style={styles.hostName}>{host.name}</Text>
-                      <Text style={styles.hostMeta}>WireGuard · 24 ms</Text>
-                    </View>
-                    <View style={styles.onlinePill}>
-                      <View style={styles.onlineDot} />
-                      <Text style={styles.onlineText}>ONLINE</Text>
-                    </View>
-                  </Pressable>
-                );
-              })
+              <View style={[styles.hostCard, styles.hostCardSelected]}>
+                <View>
+                  <Text style={styles.hostName}>{selectedHost.name}</Text>
+                  <Text style={styles.hostMeta}>Encrypted WSS · paired device</Text>
+                </View>
+                <View style={styles.onlinePill}>
+                  <View style={styles.onlineDot} />
+                  <Text style={styles.onlineText}>PAIRED</Text>
+                </View>
+              </View>
             )}
           </View>
 
@@ -212,11 +266,13 @@ export default function App() {
                   <View style={styles.workerPulse} />
                   <View style={styles.workerBody}>
                     <Text style={styles.workerTitle}>
-                      {worker.repository} #{worker.ticket}
+                      {worker.repository}{worker.ticket == null ? "" : ` #${worker.ticket}`}
                     </Text>
                     <Text style={styles.hostMeta}>{worker.workerId}</Text>
                   </View>
-                  <Text style={styles.runningText}>RUNNING</Text>
+                  <Pressable onPress={() => void stopWorker(worker.workerId)}>
+                    <Text style={styles.stopText}>STOP</Text>
+                  </Pressable>
                 </View>
               ))
             )}
@@ -334,7 +390,15 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderStyle: "dashed",
     borderWidth: 1,
+    gap: 12,
     padding: 18,
+  },
+  pairButton: {
+    alignItems: "center",
+    backgroundColor: "#48E37B",
+    borderRadius: 12,
+    justifyContent: "center",
+    minHeight: 48,
   },
   dispatchCard: {
     backgroundColor: "#11151B",
@@ -431,6 +495,12 @@ const styles = StyleSheet.create({
   workerTitle: { color: "#E8ECF0", fontSize: 14, fontWeight: "700" },
   runningText: {
     color: "#65E88D",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+  stopText: {
+    color: "#F07B7B",
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 1.1,

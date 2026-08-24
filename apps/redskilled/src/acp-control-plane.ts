@@ -15,13 +15,12 @@ import {
   methods,
   RequestError,
   type McpServer,
-  type NewSessionRequest,
   type PromptRequest,
   type PromptResponse,
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import { formatStandingOrdersBrief, type StandingOrdersStore } from "./standing-orders.js";
+import { formatStandingOrdersBrief } from "./standing-orders.js";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import {
   ACP_AGENT_IDS,
@@ -47,26 +46,13 @@ import {
 } from "./acp-session-journal.js";
 import { isAcpRetakePrompt, notifyV1AcpRetakeEvidence, notifyV2AcpRetakeEvidence } from "./acp-retake-evidence.js";
 import type { RedskilledHostState } from "./host-state.js";
-import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledPaths } from "./paths.js";
 import { resolvePermission } from "./acp-permission.js";
-import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
   demandTurnRunnerFor,
-  type DemandTurnRecord,
   type DemandTurnResult,
 } from "./acp-demand-turn.js";
 
-/** One demand birth's turn, named the way the demand loop holds a project. */
-export interface DemandBirthTurn {
-  readonly workspacePath: string;
-  readonly prompt: string;
-  readonly workItem?: string;
-  /** The runner the registration's launch declared (its `--child-agent` token). */
-  readonly runner?: string;
-  /** The Ticket handoff that puts the Worker in its Ticket loop (#4118). */
-  readonly ticket?: Readonly<Record<string, unknown>>;
-}
 import {
   bindProjectControl,
   createProjectControlStore,
@@ -82,11 +68,9 @@ import {
   type AcpProjectIdentity,
   type AcpProjectWorkspace,
 } from "./project-workspace.js";
-import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 import {
   bindTargetedDispatch,
   createAcpSessionJournal as createAcpDispatchJournal,
-  type AcpSessionJournal as AcpDispatchJournal,
   type AcpTargetedDispatchIntent,
 } from "./acp-dispatch-intent.js";
 import {
@@ -104,58 +88,22 @@ export { runNativeAcpWorker } from "@reddb-io/worker/acp";
 import { runAcpWorkflowTurn } from "./acp-workflow-turn.js";
 import { createHostBrainStore, type HostBrainStore } from "./brain-store.js";
 import { createProjectMemoryStore, type ProjectMemoryStore } from "./memory-store.js";
+import { createMobileTicketDispatcher } from "./mobile-ticket-dispatch.js";
+import type {
+  DemandBirthTurn,
+  PublicSession,
+  RedskillsAcpControlPlane,
+  StartRedskillsAcpControlPlaneOptions,
+} from "./acp-control-plane-contract.js";
+
+export type {
+  DemandBirthTurn,
+  PublicSession,
+  RedskillsAcpControlPlane,
+  StartRedskillsAcpControlPlaneOptions,
+} from "./acp-control-plane-contract.js";
 
 export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-acp";
-
-export interface PublicSession {
-  readonly request: NewSessionRequest;
-  readonly project: AcpProjectWorkspace;
-  readonly dispatchJournal: AcpDispatchJournal;
-}
-
-export interface RedskillsAcpControlPlane {
-  readonly socketPath: string;
-  /** Run one turn for a Worker nobody is watching (#4100, `acp-demand-turn.ts`). */
-  runDemandTurn(request: DemandBirthTurn): Promise<DemandTurnResult>;
-  close(): Promise<void>;
-}
-
-export interface StartRedskillsAcpControlPlaneOptions {
-  readonly paths: RedskilledPaths;
-  readonly startWorker: (spec: RedskilledWorkerSpec) => LaunchedWorker;
-  readonly hostState: () => RedskilledHostState;
-  readonly githubGateway?: RedskilledGithubGatewayRegistration;
-  /** Explicit endpoint authority; ordinary public/project ACP stays false. */
-  readonly hostAdministration?: boolean;
-  /** Where a dead Worker's evidence is kept; this operator's lane by default. */
-  readonly evidenceRoot?: string;
-  /** How long an expired evidence lane survives (ADR 0149 §2). Host policy. */
-  readonly evidenceTtlMs?: number;
-  /** Daemon clock used to date status projections. */
-  readonly clock?: () => string;
-  /** The host's one brain holder (ADR 0152); injected only by a test. */
-  readonly brainStore?: HostBrainStore;
-  /** The daemon's per-Project memory holder (ADR 0152); injected only by a test. */
-  readonly memoryStore?: ProjectMemoryStore;
-  /** Where an unattended turn's lifecycle goes when no client listens (#4100). */
-  readonly recordDemandTurn?: (record: DemandTurnRecord) => void;
-  /**
-   * Register a project with the demand loop, on its own behalf (#4101).
-   *
-   * The daemon's own registration path, handed in rather than reached for: the
-   * control plane must not learn a second way to write the record the lifecycle
-   * owns. Absent means this endpoint cannot register — legal in a test, and the
-   * drain then answers exactly as it did before registrations reached it.
-   */
-  readonly registerProject?: (request: RedskilledProjectRegistrationRequest) => unknown;
-  /** The matching release path: a stop hands the self-sustaining registration
-   * back (#4159). Absent means a stop flips the intent only — legal in a test. */
-  readonly releaseProject?: (projectLabel: string) => unknown;
-  /** Stamp a native Worker's turn events as its statusline pulse (#4181). */
-  readonly workerPulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
-  /** The standing orders store for injecting orders into Worker briefs. */
-  readonly standingOrdersStore?: StandingOrdersStore;
-}
 
 /** The store handles every connection on this endpoint shares (ADR 0152). */
 interface StoreHolders {
@@ -177,6 +125,21 @@ export async function startRedskillsAcpControlPlane(
   const projectControls = await projectControlStore.read();
   const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
   const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
+  const runTurn = demandTurnRunnerFor(options, sessionJournal);
+  const connectionOptions = {
+    ...options,
+    mobileTicketDispatch: options.mobileTicketDispatch ?? createMobileTicketDispatcher({
+      paths,
+      githubGateway: options.githubGateway,
+      hostState: options.hostState,
+      runTurn,
+      onTurnError: (error) => options.recordDemandTurn?.({
+        event: "mobile-turn-failed",
+        project_label: "mobile-operator",
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    }),
+  };
   // Above the connection loop on purpose: every session shares this one handle.
   const brainStore = options.brainStore ?? createHostBrainStore();
   const memoryStore = options.memoryStore ?? createProjectMemoryStore();
@@ -199,7 +162,7 @@ export async function startRedskillsAcpControlPlane(
     socket.once("close", () => sockets.delete(socket));
     void servePublicConnection(
       socket,
-      { ...options, brainStore, memoryStore },
+      { ...connectionOptions, brainStore, memoryStore },
       workspaceFor,
       projectControls,
       persistProjectControls,
@@ -208,7 +171,6 @@ export async function startRedskillsAcpControlPlane(
   });
   await listen(server, paths.acpSocketPath);
 
-  const runTurn = demandTurnRunnerFor(options, sessionJournal);
   // The demand loop holds a label and a path, never a bound Project: resolving
   // here keeps the one workspace resolver in the one place that owns it.
   const runDemandTurn = async (request: DemandBirthTurn): Promise<DemandTurnResult> => runTurn({
@@ -219,6 +181,8 @@ export async function startRedskillsAcpControlPlane(
       ? {}
       : { runner: request.runner as AcpAgentId }),
     ...(request.ticket == null ? {} : { ticket: request.ticket }),
+    ...(request.workerId == null ? {} : { workerId: request.workerId }),
+    ...(request.onBorn == null ? {} : { onBorn: request.onBorn }),
   });  let closed = false;
   return {
     socketPath: paths.acpSocketPath,
@@ -293,6 +257,12 @@ async function servePublicConnection(
     startWorker: options.startWorker,
     githubGateway: options.githubGateway,
     hostAdministration: options.hostAdministration === true,
+    mobileTicketDispatch: options.mobileTicketDispatch ?? (async () => {
+      throw new Error("Mobile Ticket dispatch is not installed on this ACP endpoint");
+    }),
+    mobileWorkerStop: options.mobileWorkerStop ?? (async () => {
+      throw new Error("Mobile Worker stop is not installed on this ACP endpoint");
+    }),
     brainStore: options.brainStore,
     memoryStore: options.memoryStore,
     sessionJournal,
@@ -709,7 +679,7 @@ function projectState(host: RedskilledHostState, project: AcpProjectWorkspace) {
     project_id: project.projectId,
     project_label: project.projectLabel,
     workspace_path: project.workspacePath,
-    workers: host.workers.filter((worker) => worker.project_label === project.projectId),
+    workers: host.workers.filter((worker) => worker.project_label === project.projectLabel),
   };
 }
 

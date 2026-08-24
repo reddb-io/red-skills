@@ -84,6 +84,7 @@ export const DEPENDENCY_LAYERS: readonly DependencyLayer[] = [
       "packages/browser-bridge",
       "packages/github",
       "packages/protocol-acp",
+      "packages/red-skills-link-protocol",
       "packages/redskilled-render",
     ],
     means: "a typed surface onto one outside system — a protocol, an API, a store, a render target; it speaks to the world and must never speak to a runtime that happens to use it",
