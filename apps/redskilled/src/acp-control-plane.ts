@@ -167,7 +167,15 @@ export async function startRedskillsAcpControlPlane(
       projectControls,
       persistProjectControls,
       sessionJournal,
-    ).catch(() => socket.destroy());
+    ).catch((error) => {
+      options.recordAcpFailure?.({
+        projectLabel: "redskilled/acp",
+        detail: `redskilled could not serve a public ACP connection: ${
+          error instanceof Error ? error.message : String(error)}`,
+        surface: "connection",
+      });
+      socket.destroy();
+    });
   });
   await listen(server, paths.acpSocketPath);
 
@@ -509,7 +517,14 @@ async function servePublicConnection(
               sessions, params, upstream, invocation, projectControls, persistProjectControls, readProjectStatus,
             );
         })
-        .catch(() => {})
+        .catch((error) => {
+          options.recordAcpFailure?.({
+            projectLabel: sessions.get(params.sessionId)?.project.projectLabel ?? "redskilled/acp",
+            detail: `an ACP v2 prompt turn failed outside its own answer path: ${
+              error instanceof Error ? error.message : String(error)}`,
+            surface: "turn",
+          });
+        })
         .finally(() => v2Turns.delete(params.sessionId));
       v2Turns.set(params.sessionId, turn);
       return {};
@@ -661,15 +676,16 @@ async function runV2PublicTurn(
     });
   } catch (error) {
     if (worker != null) cleanupWorkflowWorker(params.sessionId, worker, active);
+    const detail = error instanceof Error ? error.message : String(error);
+    options.recordAcpFailure?.({
+      projectLabel: session.project.projectLabel,
+      detail: `an ACP v2 turn ended as a refusal: ${detail}`,
+      surface: "turn",
+    });
     await upstream.notify(acpV2.methods.client.session.update, {
       sessionId: params.sessionId,
       update: { sessionUpdate: "state_update", state: "idle", stopReason: "refusal" },
-      _meta: {
-        redskills: {
-          authority: "redskilled",
-          detail: error instanceof Error ? error.message : String(error),
-        },
-      },
+      _meta: { redskills: { authority: "redskilled", detail } },
     });
   }
 }

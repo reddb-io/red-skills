@@ -198,6 +198,7 @@ describe("_redskills/metrics", () => {
         record: () => Promise.reject(new Error("disk full")),
         recordWorker: () => Promise.reject(new Error("disk full")),
         recordDemandRefusal: () => Promise.reject(new Error("disk full")),
+        recordAcpFailure: () => Promise.reject(new Error("disk full")),
         recordDaemonStart: () => Promise.reject(new Error("disk full")),
         recordDaemonDeath: () => Promise.reject(new Error("disk full")),
         recordDaemonTakeoverFailed: () => Promise.reject(new Error("disk full")),
