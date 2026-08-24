@@ -132,14 +132,13 @@ describe("running the declared stages", () => {
     });
 
     const verdict = gateVerdict(result.stages);
+    const failingCommand = `pnpm -C ${join(root, fixtureApp)} typecheck`;
     expect(verdict.ok).toBe(false);
     expect(verdict.failedStage).toBe("feedback");
     expect(
       result.checks.find((check) => check.status === "failed")?.record.command,
-    ).toBe(`pnpm -C ${join(root, fixtureApp)} typecheck`);
-    expect(result.detail).toContain(
-      `pnpm -C ${join(root, fixtureApp)} typecheck`,
-    );
+    ).toBe(failingCommand);
+    expect(result.detail).toMatch(new RegExp(`^${escapeRegExp(failingCommand)}:`));
     expect(result.detail).toContain("TS2532");
   });
 
@@ -201,3 +200,7 @@ describe("running the declared stages", () => {
     ]);
   }, 20_000);
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
