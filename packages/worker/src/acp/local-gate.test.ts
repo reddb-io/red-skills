@@ -107,8 +107,8 @@ describe("running the declared stages", () => {
 
     expect(gateVerdict(result.stages).ok).toBe(true);
     // The cone is the touched package plus nothing else it feeds.
-    expect(commands.map((argv) => argv.slice(1).join(" "))).toEqual([
-      `-C ${join(root, fixtureApp)} typecheck`,
+    expect(commands).toEqual([
+      ["pnpm", "-C", join(root, fixtureApp), "typecheck"],
     ]);
     expect(
       result.stages.find((stage) => stage.stage === "backpressure")?.skipped,
@@ -138,7 +138,9 @@ describe("running the declared stages", () => {
     expect(
       result.checks.find((check) => check.status === "failed")?.record.command,
     ).toBe(failingCommand);
-    expect(result.detail).toMatch(new RegExp(`^${escapeRegExp(failingCommand)}:`));
+    expect(result.detail).toMatch(
+      new RegExp(`^${escapeRegExp(failingCommand)}:`),
+    );
     expect(result.detail).toContain("TS2532");
   });
 
@@ -195,8 +197,8 @@ describe("running the declared stages", () => {
         return { code: 0, stdout: "", stderr: "" };
       },
     });
-    expect(commands.map((argv) => argv.slice(1).join(" "))).toEqual([
-      `-C ${join(root, fixtureApp)} typecheck`,
+    expect(commands).toEqual([
+      ["pnpm", "-C", join(root, fixtureApp), "typecheck"],
     ]);
   }, 20_000);
 });
