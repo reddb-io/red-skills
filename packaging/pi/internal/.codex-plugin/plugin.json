@@ -1,6 +1,6 @@
 {
   "name": "internal",
-  "version": "4.2.7",
+  "version": "4.2.8",
   "description": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
   "author": {
     "name": "reddb.io",
