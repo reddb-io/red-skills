@@ -39,10 +39,12 @@ import {
   localRedskilledPublishedEvidence,
   planRedskilledMajorHold,
   planRedskilledReplacement,
+  proveRedskilledSuccessorEntry,
   REDSKILLED_REPLACE_EXIT_CODE,
   RedskilledReplacementEntryError,
   requireRedskilledReplacementEntry,
 } from "../src/self-replace.js";
+import { replaceWithViableSuccessor } from "../src/daemon/takeover.js";
 
 const require_ = createRequire(import.meta.url);
 const tsxLoader = require_.resolve("tsx");
@@ -558,6 +560,9 @@ describe("a daemon that has observed a newer published version", () => {
         repointSupervisor: (entry) => repoints.push(entry.version),
         exit: (code) => exits.push(code),
         spawnSuccessor: (entry) => spawns.push(entry.command),
+        // This test pins the handover choreography; the viability proof has
+        // its own suite below.
+        proveSuccessor: async () => {},
       },
     });
     running.push(daemon);
@@ -917,5 +922,126 @@ describe("a read the registry never answers", () => {
     // an unreachable registry must never be the reason a major is crossed.
     expect(evidence.version).toBe(PUBLISHED_VERSION);
     expect(evidence.newest).toBe("2.0.0");
+  });
+});
+
+describe("the supervised path proves its successor before repointing", () => {
+  const target = {
+    socketPath: "/run/test/redskilled.sock",
+    leasePath: "/run/test/redskilled.lease.toon",
+    eventLanePath: "/tmp/test/redskilled.log.toonl",
+    sessionKeyHash: "abc",
+    machineIdHash: "def",
+    machineClaimPath: "/tmp/test/claim.toon",
+  } as never;
+  const decision = { act: "replace", to: "9.9.9", via: "supervisor-exit" } as const;
+  const entry = { command: "/usr/bin/node", args: ["/opt/redskilled-9.9.9.bundle.min.mjs"], source: "stable-home" } as never;
+
+  function takeoverFailures() {
+    const failures: string[] = [];
+    return {
+      failures,
+      eventLane: {
+        recordDaemonTakeoverFailed: async (input: { detail: string }) => {
+          failures.push(input.detail);
+          return {} as never;
+        },
+        flush: async () => {},
+      } as never,
+    };
+  }
+
+  it("a successor that cannot prove its version costs the upgrade and leaves the drop-in untouched", async () => {
+    const repointed: unknown[] = [];
+    const { failures, eventLane } = takeoverFailures();
+    let stopped = false;
+
+    const replaced = await replaceWithViableSuccessor({
+      decision,
+      io: {
+        resolveEntry: () => entry,
+        repointSupervisor: (resolved) => void repointed.push(resolved),
+        proveSuccessor: async () => {
+          throw new Error("the 9.9.9 successor did not answer --version within 60000ms");
+        },
+      },
+      paths: target,
+      incumbentVersion: "9.9.8",
+      incumbentPid: 4242,
+      clock: () => "2026-08-24T21:00:00.000Z",
+      eventLane,
+      flushRegistration: async () => {},
+      stop: async () => {
+        stopped = true;
+      },
+      onViable: () => {},
+    });
+
+    expect(replaced).toBe(false);
+    expect(stopped).toBe(false);
+    expect(repointed).toEqual([]);
+    expect(failures).toEqual([expect.stringContaining("failed its pre-repoint viability proof")]);
+    expect(failures[0]).toContain("incumbent 9.9.8 remains live");
+  });
+
+  it("a proved successor repoints the unit and the handover proceeds", async () => {
+    const repointed: unknown[] = [];
+    const { failures, eventLane } = takeoverFailures();
+    let stopped = false;
+
+    const replaced = await replaceWithViableSuccessor({
+      decision,
+      io: {
+        resolveEntry: () => entry,
+        repointSupervisor: (resolved) => void repointed.push(resolved),
+        proveSuccessor: async () => {},
+        exit: () => {},
+      },
+      paths: target,
+      incumbentVersion: "9.9.8",
+      incumbentPid: 4242,
+      clock: () => "2026-08-24T21:00:00.000Z",
+      eventLane,
+      flushRegistration: async () => {},
+      stop: async () => {
+        stopped = true;
+      },
+      onViable: () => {},
+    });
+
+    expect(replaced).toBe(true);
+    expect(stopped).toBe(true);
+    expect(repointed).toEqual([entry]);
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("proveRedskilledSuccessorEntry", () => {
+  // A script FILE, not `-e`: node consumes a trailing `--version` for itself
+  // when the program comes from -e, which is exactly the false positive a
+  // proof must not be built on.
+  async function scriptEntry(body: string): Promise<{ command: string; args: string[] }> {
+    const dir = await mkdtemp(join(tmpdir(), "redskilled-successor-proof-"));
+    roots.push(dir);
+    const file = join(dir, "successor.mjs");
+    await writeFile(file, body);
+    return { command: process.execPath, args: [file] };
+  }
+
+  it("accepts an entry whose --version answer carries the target version", async () => {
+    const entry = await scriptEntry("console.log('redskilled 9.9.9+test');\n");
+    await expect(proveRedskilledSuccessorEntry(entry as never, "9.9.9")).resolves.toBeUndefined();
+  });
+
+  it("refuses an entry that answers with some other version", async () => {
+    const entry = await scriptEntry("console.log('redskilled 1.0.0');\n");
+    await expect(proveRedskilledSuccessorEntry(entry as never, "9.9.9"))
+      .rejects.toThrow(/answered --version with/);
+  });
+
+  it("refuses an entry that cannot run at all", async () => {
+    const entry = await scriptEntry("process.exit(3);\n");
+    await expect(proveRedskilledSuccessorEntry(entry as never, "9.9.9"))
+      .rejects.toThrow(/exited 3/);
   });
 });
