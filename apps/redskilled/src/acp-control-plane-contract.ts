@@ -62,4 +62,16 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly releaseProject?: (projectLabel: string) => unknown;
   readonly workerPulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
   readonly standingOrdersStore?: StandingOrdersStore;
+  /**
+   * Durable sink for failures the ACP surface would otherwise discard.
+   *
+   * The surface always answers its client (a refusal-shaped update, or a
+   * destroyed socket); this hook is the daemon-side record of the same fact.
+   * Optional so tests and thin embeddings run without an event lane.
+   */
+  readonly recordAcpFailure?: (failure: {
+    readonly projectLabel: string;
+    readonly detail: string;
+    readonly surface: "connection" | "turn";
+  }) => void;
 }

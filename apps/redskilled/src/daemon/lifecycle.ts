@@ -2402,9 +2402,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       mobileWorkerStop: createMobileWorkerStop(runWorkerCommand),
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),
       ...(options.evidenceTtlMs == null ? {} : { evidenceTtlMs: options.evidenceTtlMs }),
-      registerProject: (request) => registerProject(request),
-      releaseProject: (projectLabel) => deregisterProject(projectLabel),
+      registerProject: (request) => registerProject(request), releaseProject: (projectLabel) => deregisterProject(projectLabel),
       workerPulse: (pulse) => recordWorkerPulse(pulse),
+      recordAcpFailure: (failure) => void eventLane.recordAcpFailure({ ts: clock(), ...failure }).catch(() => undefined),
       recordDemandTurn: (record) => void process.stderr.write(describeDemandTurn(record)),
       standingOrdersStore,
     });

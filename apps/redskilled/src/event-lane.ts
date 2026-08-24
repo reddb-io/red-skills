@@ -125,6 +125,7 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
     searchElement:
       | RedskilledWorkerEventKind
       | "demand-refusal"
+      | "acp-failure"
       | "daemon-start"
       | "daemon-death"
       | "daemon-stop"
@@ -149,6 +150,7 @@ export type RedskilledPublicHostEventKind = typeof REDSKILLED_PUBLIC_HOST_EVENT_
 /** The daemon-owned records that deliberately name no Worker. */
 export const REDSKILLED_DAEMON_EVENT_KINDS = [
   "demand-refusal",
+  "acp-failure",
   "daemon-start",
   "daemon-death",
   "daemon-stop",
@@ -359,6 +361,21 @@ export interface RecordDemandRefusalInput {
   readonly detail: string;
 }
 
+/**
+ * One failure the public ACP surface would otherwise discard.
+ *
+ * The ACP path answers its client (a refusal-shaped update, or a destroyed
+ * socket) and historically kept nothing — the exact "daemon looks broken and
+ * emits no errors" shape. This record is the durable half of that answer.
+ */
+export interface RecordAcpFailureInput {
+  readonly ts: string;
+  readonly projectLabel: string;
+  readonly detail: string;
+  /** Which ACP surface failed: serving a connection, or running a turn. */
+  readonly surface: "connection" | "turn";
+}
+
 /** Build one event from a Worker view. PURE. */
 export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput): RedskilledHostEvent {
   const budget = input.worker.budget ?? {};
@@ -405,6 +422,17 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     sender_class: input.senderClass ?? null,
     confidence: input.confidence ?? null,
     reason: "reason" in input ? input.reason ?? null : null,
+  };
+}
+
+/** Build an ACP-surface failure record without inventing a Worker. PURE. */
+export function buildAcpFailureEvent(input: RecordAcpFailureInput): RedskilledHostEvent {
+  return {
+    ...buildDemandRefusalEvent(input),
+    kind: "acp-failure",
+    event: "acp-failure",
+    worker_id: `acp:${input.surface}`,
+    reason: input.surface,
   };
 }
 
@@ -467,6 +495,8 @@ export interface RedskilledEventLane {
   recordWorker(input: RecordWorkerEventInput): Promise<RedskilledHostEvent>;
   /** Append one demand decision that refused an otherwise birth-eligible project. */
   recordDemandRefusal(input: RecordDemandRefusalInput): Promise<RedskilledHostEvent>;
+  /** Append one failure the public ACP surface would otherwise discard. */
+  recordAcpFailure(input: RecordAcpFailureInput): Promise<RedskilledHostEvent>;
   /** Append the daemon's boot after durable intent and Worker reality agree. */
   recordDaemonStart(input: RecordDaemonStartInput): Promise<RedskilledHostEvent>;
   /** Append a successor's retroactive account of an unrecorded predecessor death. */
@@ -527,6 +557,7 @@ export function createRedskilledEventLane(
     record: (input) => append(buildHostEvent(input)),
     recordWorker: (input) => append(buildHostEvent(input)),
     recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
+    recordAcpFailure: (input) => append(buildAcpFailureEvent(input)),
     recordDaemonStart: (input) => append(buildDaemonStartEvent(input)),
     recordDaemonDeath: (input) => append(buildDaemonDeathEvent(input)),
     recordDaemonTakeoverFailed: (input) => append(buildDaemonTakeoverFailedEvent(input)),
