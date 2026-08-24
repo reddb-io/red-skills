@@ -43,6 +43,7 @@ assert_before() {
 verify_line="$(line_of_step "Verify the tag matches the tree")"
 pack_line="$(line_of_step "Pack npm package + producer/consumer contract check")"
 release_bundle_line="$(line_of_step "Build release engine bundle" || true)"
+link_bundle_line="$(line_of_step "Build redskilled-link companion bundle" || true)"
 publish_line="$(line_of_step "Publish to npm")"
 smoke_line="$(line_of_step "Smoke published npm package from registry")"
 release_line="$(line_of_step "GitHub Release")"
@@ -67,6 +68,17 @@ assert_before "release engine bundle build" "$release_bundle_line" "pack/contrac
 grep -qF 'working-directory: apps/release' "$WORKFLOW" ||
   fail "release engine bundle must be built from apps/release so pnpm bundle emits dist/release.bundle.min.mjs"
 pass "release engine bundle is built before the pack"
+
+# A workstation payload is part of the signed identity even when it is not in
+# the npm tarball. Enumerating the companion without producing it made v4.2.0
+# fail at package-set construction before npm publish.
+[ -n "$link_bundle_line" ] || fail "release workflow must build the redskilled-link companion bundle"
+assert_before "redskilled-link companion bundle build" "$link_bundle_line" "pack/contract check" "$pack_line"
+if grep -qF 'working-directory: apps/redskilled-link' "$WORKFLOW"; then
+  pass "redskilled-link companion bundle is produced for the signed workstation set"
+else
+  fail "redskilled-link companion must build from apps/redskilled-link"
+fi
 
 # That the version surfaces agree with EACH OTHER is the version-train
 # invariant, run on every PR by the release engine's own gate. What this
