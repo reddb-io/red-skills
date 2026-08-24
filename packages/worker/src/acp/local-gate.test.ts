@@ -121,21 +121,26 @@ describe("running the declared stages", () => {
 
   it("names the failing command in the detail a re-seed carries", async () => {
     const root = await workspace();
+    const failingCommand = `pnpm -C ${join(root, fixtureApp)} typecheck`;
+    const invokedCommands: string[] = [];
     const result = await runWorkerLocalGate({
       worktree: root,
       base: "main",
       changedFiles: async () => [fixtureSource],
-      feedbackExec: async () => ({
-        code: 2,
-        stdout: "",
-        stderr: "TS2532: Object is possibly undefined",
-      }),
+      feedbackExec: async (args) => {
+        invokedCommands.push(args.join(" "));
+        return {
+          code: 2,
+          stdout: "",
+          stderr: "TS2532: Object is possibly undefined",
+        };
+      },
     });
 
     const verdict = gateVerdict(result.stages);
-    const failingCommand = `pnpm -C ${join(root, fixtureApp)} typecheck`;
     expect(verdict.ok).toBe(false);
     expect(verdict.failedStage).toBe("feedback");
+    expect(invokedCommands).toEqual([failingCommand]);
     expect(
       result.checks.find((check) => check.status === "failed")?.record.command,
     ).toBe(failingCommand);
