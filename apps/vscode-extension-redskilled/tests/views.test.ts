@@ -11,6 +11,7 @@ import { readSettings, MIN_POLL_INTERVAL_MS } from "../src/config.js";
 import type { HostSnapshot } from "../src/model/snapshot.js";
 import type { RedskilledHostEvent } from "../src/redskilled/event-lane.js";
 import { statuslinePayload, hostState, worker } from "./fixtures.js";
+import { dashboard } from "./fixtures.js";
 
 function snapshotOf(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
@@ -19,12 +20,12 @@ function snapshotOf(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     source: "derived from XDG_RUNTIME_DIR",
     payload: statuslinePayload(),
     hostState: hostState(),
-    dashboard: null,
+    dashboard: dashboard(),
     lane: { path: "/tmp/rsk/lane.toonl", exists: true, truncated: false, events: [] },
     error: null,
     readAt: "2026-08-01T10:00:00.000Z",
     ...overrides,
-  };
+  } as HostSnapshot;
 }
 
 function labels(nodes: readonly ViewNode[]): string[] {

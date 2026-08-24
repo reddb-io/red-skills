@@ -8,7 +8,7 @@ import {
 } from "../src/watch/signals.js";
 import type { HostSnapshot } from "../src/model/snapshot.js";
 import type { RedskilledHostEvent } from "../src/redskilled/event-lane.js";
-import { hostState, statuslinePayload, worker } from "./fixtures.js";
+import { dashboard, hostState, statuslinePayload, worker } from "./fixtures.js";
 
 const PREFERENCES: NotificationPreferences = { ...DEFAULT_NOTIFICATION_PREFERENCES, workerBirth: true };
 
@@ -19,12 +19,12 @@ function snapshotOf(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     source: "a test",
     payload: statuslinePayload(),
     hostState: hostState(),
-    dashboard: null,
+    dashboard: dashboard(),
     lane: { path: "/tmp/rsk/lane.toonl", exists: true, truncated: false, events: [] },
     error: null,
     readAt: "2026-08-01T10:00:00.000Z",
     ...overrides,
-  };
+  } as HostSnapshot;
 }
 
 function event(overrides: Partial<RedskilledHostEvent>): RedskilledHostEvent {

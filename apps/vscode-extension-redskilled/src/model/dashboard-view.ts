@@ -1,13 +1,14 @@
 /**
  * dashboard-view — what the status bar says and what the panel shows. PURE.
  *
- * **Every fact here was computed by the daemon.** The header line, the Worker
- * rows, the pipeline bars and the counts arrive finished from
- * `statusline-dashboard`; this module decides only where the text goes and how it
- * is escaped for a webview. That is the rule the statusline pair was built on
- * (ADR 0130 rule 10): an editor panel and a herdr pane each doing their own
- * Worker math would be two dashboards lying in two different ways about the same
- * instant.
+ * **Every fact here originates from the daemon's one payload read.** The header
+ * line, the Worker rows, the pipeline bars and the counts are drawn by the
+ * shared `renderRedskilledDashboard` (in `./snapshot.ts`, from the payload the
+ * daemon served — one read, one render, ADR 0132 decisions 1 and 9); this
+ * module decides only where the finished text goes and how it is escaped for a
+ * webview. That is the rule the statusline pair was built on (ADR 0130 rule
+ * 10): an editor panel and a herdr pane each doing their own Worker math would
+ * be two dashboards lying in two different ways about the same instant.
  *
  * Editor-free on purpose, so the whole of what a reader SEES is asserted by a
  * test that never opens a window. `views/status-bar.ts` and
@@ -46,14 +47,6 @@ export function statusBarView(snapshot: HostSnapshot): StatusBarView {
         snapshot.error?.message ?? "no reason given"
       }`,
       warning: true,
-    };
-  }
-  if (snapshot.dashboard === null) {
-    return {
-      text: "$(server) redskilled",
-      tooltip:
-        "This daemon does not serve statusline-dashboard. It answers the Worker set, and the dashboard is rendered by the daemon rather than here, so there is nothing to draw until it does.",
-      warning: false,
     };
   }
   const header = snapshot.dashboard.header;
@@ -127,15 +120,6 @@ function dashboardBody(snapshot: HostSnapshot): string {
     ].join("\n");
   }
   const dashboard = snapshot.dashboard;
-  if (dashboard === null) {
-    return [
-      '<p class="absence">',
-      escapeHtml(
-        "This daemon does not serve statusline-dashboard. The dashboard is rendered by the daemon rather than here, so there is nothing to draw until it does.",
-      ),
-      "</p>",
-    ].join("\n");
-  }
   return [
     `<pre class="header">${escapeHtml(stripAnsi(dashboard.header.line))}</pre>`,
     ...(dashboard.rows.length === 0

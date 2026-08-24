@@ -23,32 +23,45 @@ export interface SnapshotFailure {
   readonly message: string;
 }
 
-export interface HostSnapshot {
-  readonly reachable: boolean;
+/**
+ * A discriminated union, so the type system itself removes the dead branch: a
+ * reachable snapshot ALWAYS carries a payload and its locally-drawn dashboard
+ * (they are read and rendered together), and only an unreachable one is null.
+ * The view briefly carried a reachable-but-no-dashboard rendering whose message
+ * ("this daemon does not serve statusline-dashboard") was false by
+ * construction — no such state can be built.
+ */
+export type HostSnapshot = ReachableHostSnapshot | UnreachableHostSnapshot;
+
+export interface ReachableHostSnapshot extends HostSnapshotCommon {
+  readonly reachable: true;
+  readonly payload: RedskilledStatuslinePayload;
+  readonly dashboard: RedskilledDashboard;
+  readonly error: null;
+}
+
+export interface UnreachableHostSnapshot extends HostSnapshotCommon {
+  readonly reachable: false;
+  readonly payload: null;
+  readonly dashboard: null;
+  readonly error: SnapshotFailure;
+}
+
+export interface HostSnapshotCommon {
   readonly socketPath: string;
   /** How the socket path was decided — carried for the unreachable case. */
   readonly source: string;
-  readonly payload: RedskilledStatuslinePayload | null;
   /**
    * The host document, or `null`.
    *
    * Null does NOT imply unreachable: `host-state` is read best-effort beside the
    * payload, so a daemon that serves one and refuses the other still yields a
-   * usable frame instead of an outage.
+   * usable frame instead of an outage. The dashboard, by contrast, is drawn
+   * HERE from the payload beside it (**one read, one render** — ADR 0132
+   * decisions 1 and 9), so it exists exactly when the payload does.
    */
   readonly hostState: RedskilledHostState | null;
-  /**
-   * The table for this frame, drawn HERE from the payload beside it.
-   *
-   * **One read, one render** (ADR 0132 decisions 1 and 9): it used to be a second
-   * socket call, which spent a round trip per frame to receive text this process
-   * could compute from bytes it already held. It is `null` exactly when the
-   * payload is — an unreachable daemon — and never because a daemon was too old
-   * to lay a table out, because no daemon lays one out any more.
-   */
-  readonly dashboard: RedskilledDashboard | null;
   readonly lane: EventLaneRead;
-  readonly error: SnapshotFailure | null;
   readonly readAt: string;
 }
 
