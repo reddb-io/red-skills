@@ -48,6 +48,41 @@ export interface AcpSessionJournalRecord {
   readonly entries: readonly AcpSessionJournalEntry[];
   /** Provider-native artifacts are retained beside, never inside, public history. */
   readonly session_evidence: readonly AcpSessionEvidenceReference[];
+  /** Absent on legacy rows, which retention treats as the oldest. */
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+/** How long a connect-only session (no entries, no evidence) is kept. */
+export const ACP_SESSION_EMPTY_TTL_MS = 24 * 60 * 60 * 1000;
+/** The most sessions the journal retains; the newest survive. */
+export const ACP_SESSION_JOURNAL_CAP = 200;
+
+/**
+ * The journal's own retention, applied by its writer.
+ *
+ * Every MCP surface and every self-healing re-dial opens a session, so about
+ * half of the journal's rows were connect-and-never-prompt records that grew
+ * without bound — and each append rewrites the WHOLE snapshot, so an unbounded
+ * map made cumulative write cost quadratic. Empty rows past their TTL are
+ * dropped, and the map is capped at the newest records; a legacy row without
+ * timestamps counts as the oldest. PURE.
+ */
+export function compactAcpSessions(
+  records: readonly AcpSessionJournalRecord[],
+  nowMs: number,
+): AcpSessionJournalRecord[] {
+  const stampOf = (record: AcpSessionJournalRecord): number => {
+    const stamp = Date.parse(record.updated_at ?? record.created_at ?? "");
+    return Number.isFinite(stamp) ? stamp : 0;
+  };
+  const kept = records.filter((record) =>
+    record.entries.length > 0 || record.session_evidence.length > 0 ||
+    nowMs - stampOf(record) <= ACP_SESSION_EMPTY_TTL_MS);
+  return kept
+    .sort((left, right) => stampOf(right) - stampOf(left))
+    .slice(0, ACP_SESSION_JOURNAL_CAP)
+    .sort((left, right) => left.public_session_id.localeCompare(right.public_session_id));
 }
 
 export type AcpSessionEvidenceAvailability = "available" | "absent" | "inaccessible";
@@ -105,8 +140,17 @@ export function acpSessionJournalPath(registrationIntentPath: string): string {
   return join(dirname(registrationIntentPath), "redskilled.acp-sessions.toon");
 }
 
-export async function createAcpSessionJournal(path: string): Promise<AcpSessionJournal> {
-  const sessions = await readSnapshot(path);
+export async function createAcpSessionJournal(
+  path: string,
+  clock: () => string = () => new Date().toISOString(),
+): Promise<AcpSessionJournal> {
+  const loaded = await readSnapshot(path);
+  // Retention runs where the writer runs: a journal loaded by a fresh daemon
+  // sheds its expired connect-only rows before the first append rewrites it.
+  const sessions = new Map(
+    compactAcpSessions([...loaded.values()], Date.parse(clock()))
+      .map((record) => [record.public_session_id, record] as const),
+  );
   let tail: Promise<void> = Promise.resolve();
 
   const persist = (): Promise<void> => {
@@ -120,6 +164,7 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
     if (held == null) throw new Error("unknown durable RedSkills ACP session");
     sessions.set(publicSessionId, {
       ...held,
+      updated_at: clock(),
       entries: [...held.entries, { ...entry, sequence: held.entries.length + 1 } as AcpSessionJournalEntry],
     });
     return persist();
@@ -127,6 +172,12 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
 
   return {
     create(publicSessionId, project) {
+      // Opportunistic retention: every new session sheds whatever expired
+      // since boot, so a long-lived daemon's journal stays bounded too.
+      const now = clock();
+      const compacted = compactAcpSessions([...sessions.values()], Date.parse(now));
+      sessions.clear();
+      for (const record of compacted) sessions.set(record.public_session_id, record);
       sessions.set(publicSessionId, {
         public_session_id: publicSessionId,
         project_id: project.projectId,
@@ -134,6 +185,8 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
         workspace_path: project.workspacePath,
         entries: [],
         session_evidence: [],
+        created_at: now,
+        updated_at: now,
       });
       return persist();
     },
@@ -160,6 +213,7 @@ export async function createAcpSessionJournal(path: string): Promise<AcpSessionJ
       if (held == null) throw new Error("unknown durable RedSkills ACP session");
       sessions.set(publicSessionId, {
         ...held,
+        updated_at: clock(),
         session_evidence: [
           ...held.session_evidence,
           { worker_id: workerId, ...report, retention: "evidence" },
