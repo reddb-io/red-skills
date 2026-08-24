@@ -652,6 +652,21 @@ jobs:
           set -euo pipefail
           pnpm bundle
 
+      # The Remote-link Host/Relay companion is a signed workstation payload,
+      # so it must exist before the package-set manifest enumerates and hashes
+      # every declared asset. It is private workspace source, not an npm bin;
+      # the release bundle is the artifact operators install.
+      - name: Build redskilled-link companion bundle
+        if: steps.target.outputs.publish == 'true'
+        working-directory: apps/redskilled-link
+        env:
+          RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
+          RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
+          RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
+        run: |
+          set -euo pipefail
+          pnpm bundle
+
       # The release engine ships as dist/release.bundle.min.mjs behind the
       # packaged `red-skills-release` bin. Every prior publish staged the bin
       # and skipped the bundle ("release.bundle.min.mjs not built; skipping"),
