@@ -132,13 +132,26 @@ describe("a display that published no heartbeat gets the age of its last pulse",
     expect(derived?.heartbeat).toBe("7m5s");
   });
 
-  it("never overrides a heartbeat the publisher stated", () => {
+  it("keeps a freshly published heartbeat untouched", () => {
+    const published = coerceWorkerDisplay({ heartbeat: "3s" })!;
+    const derived = displayWithDerivedHeartbeat(
+      { display: published, published_at: "2026-08-20T17:00:00.000Z" },
+      Date.parse("2026-08-20T17:00:12.000Z"),
+    );
+    expect(derived?.heartbeat).toBe("3s");
+  });
+
+  it("dates a published heartbeat whose publication went stale", () => {
+    // A project that said "3s" and then stopped publishing showed hb=3s
+    // FOREVER — a wedged Worker rendered identically to a working one. The
+    // string is the project's vocabulary and stays, but the row now says how
+    // old the claim itself is.
     const published = coerceWorkerDisplay({ heartbeat: "3s" })!;
     const derived = displayWithDerivedHeartbeat(
       { display: published, published_at: "2026-08-20T17:00:00.000Z" },
       Date.parse("2026-08-20T17:09:00.000Z"),
     );
-    expect(derived?.heartbeat).toBe("3s");
+    expect(derived?.heartbeat).toBe("3s (published 9m0s ago)");
   });
 
   it("stays honest with no record and no clock", () => {
