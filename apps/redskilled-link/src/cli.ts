@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createRedskillsOperatorAcpClient } from "@reddb-io/redskilled/acp-operator-client";
@@ -9,13 +10,26 @@ import { runRedskilledLinkHost } from "./host.js";
 import { runRedskilledLinkOnboarding } from "./onboarding.js";
 import { showInvitationQr } from "./qr-terminal.js";
 import { startRedskilledRelay } from "./relay.js";
-import { createRedskilledLinkStateStore } from "./state.js";
+import {
+  createRedskilledLinkStateStore,
+  defaultLinkStatePath,
+  defaultLinkStatusPath,
+  readPublicLinkStatus,
+} from "./state.js";
+import {
+  currentRedskilledLinkEntry,
+  installRedskilledLinkUnit,
+  planRedskilledLinkUnit,
+  readRedskilledLinkUnitStatus,
+  removeRedskilledLinkUnit,
+} from "./supervision.js";
 
 export const REDSKILLED_LINK_USAGE = [
   "redskilled-link onboard [--relay wss://relay.example] [--name HOST]",
   "redskilled-link relay [--host 127.0.0.1] [--port 8787]",
   "redskilled-link invite [--relay wss://relay.example] [--name HOST] [--qr]",
   "redskilled-link host [--relay wss://relay.example] [--name HOST]",
+  "redskilled-link unit install|remove|status [--state PATH]",
   "",
 ].join("\n");
 
@@ -51,8 +65,65 @@ export async function runRedskilledLinkCli(argv: readonly string[]): Promise<num
     await runRedskilledLinkHost({ state: store, operator: createRedskillsOperatorAcpClient() });
     return 0;
   }
+  if (command === "unit") {
+    return await runUnitCommand(args);
+  }
   process.stdout.write(REDSKILLED_LINK_USAGE);
   return 0;
+}
+
+/**
+ * Supervise the Host companion the way the daemon supervises itself: a
+ * systemd user unit with an absolute ExecStart and Restart=always. `status`
+ * answers from BOTH authorities — systemd for the process, and the public
+ * `status.json` projection the state store publishes for what the link has
+ * actually done — because a running unit with zero paired devices and a dead
+ * unit with three are different outages.
+ */
+async function runUnitCommand(args: readonly string[]): Promise<number> {
+  const [operation = "status"] = args;
+  if (operation === "install") {
+    const statePath = value(args, "--state") ?? defaultLinkStatePath();
+    const unit = await installRedskilledLinkUnit(planRedskilledLinkUnit({
+      entry: currentRedskilledLinkEntry(),
+      statePath,
+    }));
+    if (!unit.installed) {
+      process.stderr.write(`redskilled-link unit: ${unit.detail ?? "systemd refused the install"}\n`);
+      return 1;
+    }
+    process.stdout.write(`Host companion installed and started: ${unit.unitPath}\n`);
+    return 0;
+  }
+  if (operation === "remove") {
+    const removal = await removeRedskilledLinkUnit();
+    if (!removal.removed) {
+      process.stderr.write(`redskilled-link unit: ${removal.detail ?? "systemd refused the removal"}\n`);
+      return 1;
+    }
+    process.stdout.write(`Host companion removed: ${removal.unitPath}\n`);
+    return 0;
+  }
+  if (operation === "status") {
+    const unit = readRedskilledLinkUnitStatus();
+    const statePath = value(args, "--state");
+    const statusPath = statePath == null
+      ? defaultLinkStatusPath()
+      : join(dirname(statePath), "status.json");
+    const published = await readPublicLinkStatus(statusPath);
+    process.stdout.write([
+      `Unit: ${unit.unitName}`,
+      `Active: ${unit.active ?? "unknown (systemd did not answer)"}`,
+      `Enabled: ${unit.enabled ?? "unknown (systemd did not answer)"}`,
+      published == null
+        ? `Published status: none at ${statusPath} (the companion has not written one yet)`
+        : `Paired devices: ${published.active_paired_device_count}`,
+      "",
+    ].join("\n"));
+    return 0;
+  }
+  process.stderr.write(`redskilled-link unit: unknown operation ${JSON.stringify(operation)}\n${REDSKILLED_LINK_USAGE}`);
+  return 2;
 }
 
 function stateStore(args: readonly string[]) {

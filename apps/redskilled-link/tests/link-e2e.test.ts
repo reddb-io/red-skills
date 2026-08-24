@@ -71,7 +71,18 @@ describe("app <> relay <> Host <> redskilled", () => {
       paired,
       WebSocket as unknown as LinkWebSocketConstructor,
     );
-    await expect(app.state()).resolves.toEqual({ version: 1, daemon_version: "4.2.0", workers: [] });
+    await expect(app.state()).resolves.toEqual({
+      version: 2,
+      daemon_version: "4.2.0",
+      workers: [],
+      host: {
+        daemon_version: "4.2.0",
+        started_at: "2026-08-23T08:00:00.000Z",
+        worker_ceiling: 4,
+        staleness: null,
+        generated_at: "2026-08-23T12:10:00.000Z",
+      },
+    });
     await expect(app.dispatch("https://github.com/reddb-io/red-skills/issues/42")).resolves.toEqual({
       version: 1,
       repository: "reddb-io/red-skills",
