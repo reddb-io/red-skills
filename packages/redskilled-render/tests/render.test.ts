@@ -471,7 +471,9 @@ describe("an unknown project's registration history (#3191)", () => {
     expect(rendered.project_match).toBe("unregistered");
     expect(rendered.repair).toBeUndefined();
     expect(rendered.repair_reason).toBeUndefined();
-    expect(rendered.line).toBe("0w idle 0B v3.3.11");
+    // One verdict on both surfaces: the dashboard has always marked an
+    // unregistered directory, and the line now carries the same quiet mark.
+    expect(rendered.line).toBe("0w idle !unregistered 0B v3.3.11");
   });
 
   it.each([
