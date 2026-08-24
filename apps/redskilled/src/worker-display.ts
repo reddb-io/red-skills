@@ -302,15 +302,34 @@ export function isRedskilledWorkerDisplay(value: unknown): value is RedskilledWo
  * `published_at` IS its last sign of life; deriving at payload-build time keeps
  * the wire shape and every renderer untouched while `hb=?` becomes an honest age.
  */
+/** How old a display publication may be before its heartbeat string is dated. */
+export const WORKER_DISPLAY_STALE_PUBLICATION_MS = 30_000;
+
 export function displayWithDerivedHeartbeat(
   record: RedskilledWorkerDisplayRecord | undefined,
   nowMs: number | null,
 ): RedskilledWorkerDisplay | null {
   if (record == null) return null;
-  if (record.display.heartbeat != null || nowMs == null) return record.display;
+  if (nowMs == null) return record.display;
   const at = Date.parse(record.published_at);
   if (!Number.isFinite(at)) return record.display;
-  const seconds = Math.max(0, Math.round((nowMs - at) / 1000));
-  const heartbeat = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
-  return { ...record.display, heartbeat };
+  const ageMs = Math.max(0, nowMs - at);
+  if (record.display.heartbeat == null) {
+    return { ...record.display, heartbeat: formatDisplayAge(ageMs) };
+  }
+  // A published heartbeat string used to render FOREVER: a project that said
+  // "3s" and then stopped publishing showed hb=3s indefinitely, so a wedged
+  // Worker rendered identically to a working one. The string is the project's
+  // own vocabulary and stays — but once its PUBLICATION is stale, the row says
+  // how old the claim itself is.
+  if (ageMs <= WORKER_DISPLAY_STALE_PUBLICATION_MS) return record.display;
+  return {
+    ...record.display,
+    heartbeat: `${record.display.heartbeat} (published ${formatDisplayAge(ageMs)} ago)`,
+  };
+}
+
+function formatDisplayAge(ageMs: number): string {
+  const seconds = Math.max(0, Math.round(ageMs / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
 }
