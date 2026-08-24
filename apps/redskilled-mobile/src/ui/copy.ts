@@ -22,8 +22,14 @@ export const copy = {
     invitationLabel: "Host pairing invitation",
     invitationPlaceholder: "Paste the pairing invitation",
     pairAction: "PAIR HOST",
-    paired: "PAIRED",
     pairedDescription: "Encrypted link · paired device",
+    status: {
+      connecting: "CONNECTING",
+      online: "ONLINE",
+      stale: "STALE",
+      unreachable: "UNREACHABLE",
+    } as const,
+    daemonVersion: (version: string) => `daemon v${version}`,
   },
   dispatch: {
     section: "DISPATCH",
@@ -42,11 +48,14 @@ export const copy = {
     emptyDescription:
       "A dispatched Worker will appear here with its repository and Ticket.",
     running: "RUNNING",
+    pending: "DISPATCHING",
+    heartbeat: (seconds: number) => `HB ${seconds}S AGO`,
     stop: "STOP",
   },
   errors: {
     pairing: "The Host refused this pairing invitation.",
     dispatch: "The Host refused this Ticket dispatch.",
     stop: "The Host refused to stop this Worker.",
+    state: (detail: string) => `The Host did not answer the last state read: ${detail}`,
   },
 } as const;

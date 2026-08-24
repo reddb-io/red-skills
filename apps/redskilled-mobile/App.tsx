@@ -27,8 +27,10 @@ import {
   SectionHeading,
 } from "./src/design-system/components";
 import { colors, density, radii, spacing, type } from "./src/design-system/tokens";
+import { deriveHostStatus } from "./src/domain/host-status";
 import { parseGitHubIssueUrl } from "./src/domain/issue-url";
-import type { MobileWorker, PairedHost } from "./src/domain/ticket-dispatch";
+import type { MobileHostSnapshot, MobileWorker, PairedHost } from "./src/domain/ticket-dispatch";
+import { reconcilePendingWorkers } from "./src/domain/worker-reconcile";
 import { loadPairedHost, savePairedHost } from "./src/transport/paired-host-store";
 import { createRemoteOperatorGateway } from "./src/transport/remote-operator-gateway";
 import { copy } from "./src/ui/copy";
@@ -47,7 +49,10 @@ export default function App() {
   const [issueUrl, setIssueUrl] = useState("");
   const [isDispatching, setIsDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [workers, setWorkers] = useState<MobileWorker[]>([]);
+  const [workers, setWorkers] = useState<readonly MobileWorker[]>([]);
+  const [snapshot, setSnapshot] = useState<MobileHostSnapshot | null>(null);
+  const [lastAnsweredAt, setLastAnsweredAt] = useState<number | null>(null);
+  const [linkFailure, setLinkFailure] = useState<string | null>(null);
   const gateway = useMemo(
     () => pairedHost == null ? null : createRemoteOperatorGateway(pairedHost),
     [pairedHost],
@@ -64,9 +69,23 @@ export default function App() {
   useEffect(() => {
     if (gateway == null) return;
     let active = true;
-    const refresh = () => void gateway.state().then((state) => {
-      if (active) setWorkers([...state]);
-    }).catch(() => undefined);
+    // Every outcome lands in state: an answered read stamps the instant the
+    // status verdict derives from, and a failed read records WHY instead of
+    // being swallowed — the card then reads stale/unreachable by evidence.
+    const refresh = () => void gateway.state().then((read) => {
+      if (!active) return;
+      setSnapshot(read);
+      setLastAnsweredAt(Date.now());
+      setLinkFailure(null);
+      setWorkers((current) => reconcilePendingWorkers(
+        read.workers,
+        current.filter((worker) => worker.pending === true),
+        Date.now(),
+      ));
+    }).catch((failure: unknown) => {
+      if (!active) return;
+      setLinkFailure(failure instanceof Error ? failure.message : String(failure));
+    });
     refresh();
     const timer = setInterval(refresh, 3_000);
     return () => {
@@ -83,10 +102,11 @@ export default function App() {
     }
   }, [issueUrl]);
 
+  const hostStatus = deriveHostStatus(lastAnsweredAt, Date.now());
   const selectedHost: PairedHost | null = pairedHost == null ? null : {
     id: pairedHost.host_id,
     name: pairedHost.host_name,
-    status: "online",
+    status: hostStatus,
   };
   const canDispatch = selectedHost != null && issue != null && !isDispatching;
 
@@ -105,6 +125,7 @@ export default function App() {
         repository: receipt.repository,
         ticket: receipt.ticket,
         startedAt: new Date().toISOString(),
+        pending: true,
       }, ...current.filter((worker) => worker.workerId !== receipt.workerId)]);
       setIssueUrl("");
     } catch {
@@ -259,10 +280,17 @@ export default function App() {
                   </View>
                   <View style={styles.hostText}>
                     <Text style={styles.hostName}>{selectedHost.name}</Text>
-                    <Text style={styles.metadata}>{copy.host.pairedDescription}</Text>
+                    <Text style={styles.metadata}>
+                      {snapshot?.daemonVersion == null
+                        ? copy.host.pairedDescription
+                        : `${copy.host.pairedDescription} · ${copy.host.daemonVersion(snapshot.daemonVersion)}`}
+                    </Text>
+                    {linkFailure == null || hostStatus === "online" ? null : (
+                      <Text style={styles.metadata}>{copy.errors.state(linkFailure)}</Text>
+                    )}
                   </View>
                 </View>
-                <Pill glyph="◆" label={copy.host.paired} />
+                <Pill glyph="◆" label={copy.host.status[selectedHost.status]} />
               </Card>
             )}
           </View>
@@ -341,7 +369,16 @@ export default function App() {
                         {worker.repository}{worker.ticket == null ? "" : ` #${worker.ticket}`}
                       </Text>
                       <Text numberOfLines={1} style={styles.workerId}>{worker.workerId}</Text>
-                      <Text style={styles.runningText}>{copy.workers.running}</Text>
+                      <Text style={styles.runningText}>
+                        {worker.pending === true
+                          ? copy.workers.pending
+                          : [
+                            (worker.phase ?? copy.workers.running).toUpperCase(),
+                            worker.heartbeatAgeMs == null
+                              ? null
+                              : copy.workers.heartbeat(Math.round(worker.heartbeatAgeMs / 1000)),
+                          ].filter((part) => part != null).join(" · ")}
+                      </Text>
                     </View>
                     <Button
                       label={copy.workers.stop}
