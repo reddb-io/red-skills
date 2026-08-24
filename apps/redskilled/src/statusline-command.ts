@@ -30,6 +30,8 @@ import {
 } from "./client.js";
 import { probeRedskilledStatuslinePayload } from "./statusline-probe.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
+import { homedir } from "node:os";
+import { daemonDeathLanePath, readLastDaemonDeathHeadline } from "./statusline-last-evidence.js";
 import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
@@ -101,6 +103,8 @@ export async function runStatusline(
     readonly client?: RedskilledClientConfig;
     /** The clock, for the one instant no daemon supplies: an absence's own. */
     readonly now?: () => string;
+    /** The operator home the daemon's death lane hangs off; tests inject it. */
+    readonly homeDir?: string;
     /** The bedrock's own seams — the host payload, local git, the build stamp. */
     readonly bedrock?: StatuslineBedrockIO;
   } = {},
@@ -127,10 +131,25 @@ export async function runStatusline(
     });
   } catch (err) {
     warn(`redskilled statusline: ${err instanceof Error ? err.message : String(err)}\n`);
+    const generatedAt = (io.now ?? (() => new Date().toISOString()))();
     render = renderRedskilledStatuslineAbsence({
       options: resolved.options,
-      generated_at: (io.now ?? (() => new Date().toISOString()))(),
+      generated_at: generatedAt,
     });
+    // The dead daemon's own evidence, read directly: "unreachable" alone reads
+    // the same on a machine mid-upgrade and one that has been down for a day,
+    // and the death lane on disk has known which the whole time.
+    try {
+      const headline = readLastDaemonDeathHeadline(
+        daemonDeathLanePath(io.homeDir ?? homedir()),
+        Date.parse(generatedAt),
+      );
+      if (headline != null) {
+        render = { ...render, lines: [...render.lines, headline] };
+      }
+    } catch {
+      // The absence line stands on its own; evidence is a bonus, never a cost.
+    }
   }
   // Every line the shared render produced, in order — one write, whatever the
   // taste. With `--verbose` that is the Worker line plus a second line per
