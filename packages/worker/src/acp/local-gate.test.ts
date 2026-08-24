@@ -19,6 +19,7 @@ import {
 const roots: string[] = [];
 const fixtureApp = "apps/plugin-dev";
 const fixtureSource = `${fixtureApp}/src/index.ts`;
+const fixtureAddedSource = `${fixtureApp}/added.ts`;
 const fixtureBackpressureCommand = `pnpm -C ${fixtureApp} test:invariants`;
 
 afterEach(async () => {
@@ -145,6 +146,7 @@ describe("running the declared stages", () => {
       result.checks.find((check) => check.status === "failed")?.record.command,
     ).toBe(failingCommand);
     expect(result.detail).toMatch(new RegExp(`^${escapeRegExp(failingCommand)}:`));
+    expect(result.detail).toContain("typecheck");
     expect(result.detail).toContain("TS2532");
   });
 
@@ -183,13 +185,13 @@ describe("running the declared stages", () => {
   it("reads the real diff when the caller names no seam", async () => {
     const root = await workspace();
     await writeFile(
-      join(root, fixtureApp, "added.ts"),
+      join(root, fixtureAddedSource),
       "export const added = 1;\n",
     );
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: root, stdio: "pipe" });
     git("checkout", "-b", "afk/4020");
-    git("add", "--", `${fixtureApp}/added.ts`);
+    git("add", "--", fixtureAddedSource);
     git("commit", "-m", "Refs #4020");
 
     const commands: string[][] = [];
