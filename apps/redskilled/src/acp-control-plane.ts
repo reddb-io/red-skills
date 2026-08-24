@@ -67,7 +67,9 @@ import {
   resolveAcpProjectIdentity,
   type AcpProjectIdentity,
   type AcpProjectWorkspace,
+  type ResolveAcpProjectIdentityOptions,
 } from "./project-workspace.js";
+import { createProjectIdentityStore, projectIdentityStorePath } from "./project-identity-store.js";
 import {
   bindTargetedDispatch,
   createAcpSessionJournal as createAcpDispatchJournal,
@@ -109,6 +111,8 @@ export { ACP_V2_DRAFT_REVISION, REDSKILLS_WIRE_MAJOR } from "@reddb-io/protocol-
 interface StoreHolders {
   readonly brainStore: HostBrainStore;
   readonly memoryStore: ProjectMemoryStore;
+  /** The endpoint's one identity resolution policy; every bind rides it. */
+  readonly identityOptions?: ResolveAcpProjectIdentityOptions;
 }
 
 /** Bind the daemon-owned public ACP endpoint. */
@@ -122,6 +126,21 @@ export async function startRedskillsAcpControlPlane(
   // Closing the client therefore drops observation only; drain intent remains
   // until the shared reducer receives an explicit stop.
   const projectControlStore = createProjectControlStore(projectControlStorePath(paths.registrationIntentPath));
+  // One identity resolution policy for every bind on this endpoint: the durable
+  // slug cache answers first, the daemon's own personal credential authenticates
+  // a miss, and a demotion to `remote:<slug>` is recorded instead of silent —
+  // identity deciding differently per bind is how one repository became two
+  // projects with split control state.
+  const identityOptions: ResolveAcpProjectIdentityOptions = {
+    identityCache: createProjectIdentityStore(projectIdentityStorePath(paths.registrationIntentPath)),
+    resolveToken: async () =>
+      (await options.githubGateway?.credentialForProfile?.("personal"))?.secret ?? null,
+    onIdentityDemotion: (slug, reason) => options.recordAcpFailure?.({
+      projectLabel: slug,
+      detail: `project identity fell back to remote:${slug} — ${reason}`,
+      surface: "connection",
+    }),
+  };
   const projectControls = await projectControlStore.read();
   const persistProjectControls = projectControlStore.replace.bind(projectControlStore);
   const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
@@ -162,7 +181,7 @@ export async function startRedskillsAcpControlPlane(
     socket.once("close", () => sockets.delete(socket));
     void servePublicConnection(
       socket,
-      { ...connectionOptions, brainStore, memoryStore },
+      { ...connectionOptions, brainStore, memoryStore, identityOptions },
       workspaceFor,
       projectControls,
       persistProjectControls,
@@ -182,7 +201,7 @@ export async function startRedskillsAcpControlPlane(
   // The demand loop holds a label and a path, never a bound Project: resolving
   // here keeps the one workspace resolver in the one place that owns it.
   const runDemandTurn = async (request: DemandBirthTurn): Promise<DemandTurnResult> => runTurn({
-    project: await workspaceFor(await resolveAcpProjectIdentity(request.workspacePath)),
+    project: await workspaceFor(await resolveAcpProjectIdentity(request.workspacePath, identityOptions)),
     prompt: request.prompt,
     ...(request.workItem == null ? {} : { workItem: request.workItem }),
     ...(request.runner == null || !(ACP_AGENT_IDS as readonly string[]).includes(request.runner)
@@ -226,7 +245,7 @@ async function servePublicConnection(
   let attached = true;
 
   const bindProject = async (cwd: string, incompatible: () => Error): Promise<AcpProjectWorkspace> => {
-    const identity = await resolveAcpProjectIdentity(cwd);
+    const identity = await resolveAcpProjectIdentity(cwd, options.identityOptions);
     if (connectionProject != null && connectionProject.projectId !== identity.projectId) throw incompatible();
     connectionProject ??= await workspaceFor(identity);
     return connectionProject;

@@ -36,6 +36,23 @@ export interface AcpProjectWorkspace extends AcpProjectIdentity {
 export interface ResolveAcpProjectIdentityOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly fetchImpl?: typeof fetch;
+  /** The daemon's own credential; env vars remain the fallback. */
+  readonly resolveToken?: () => string | null | Promise<string | null>;
+  /**
+   * Durable slug → GitHub identity answers. A hit is authoritative and costs
+   * no network: a GitHub numeric id is immutable across renames, and identity
+   * deciding differently per bind is exactly the split this closes.
+   */
+  readonly identityCache?: {
+    read(slug: string): Promise<{ github_id: string; full_name: string } | undefined>;
+    remember(entry: { slug: string; githubId: string; fullName: string }): Promise<void>;
+  };
+  /**
+   * Told when a GitHub-remoted checkout could not resolve its `github:<id>`
+   * and fell back to `remote:<slug>` — the silent demotion that used to split
+   * one repository into two project identities.
+   */
+  readonly onIdentityDemotion?: (slug: string, reason: string) => void;
 }
 
 /** Resolve identity without creating Project state, so authority can be checked first. */
@@ -47,10 +64,33 @@ export async function resolveAcpProjectIdentity(
   const gitCommonDir = await gitOutput(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const remoteUrl = await gitOutput(cwd, ["remote", "get-url", "origin"]);
   const remoteSlug = repoSlugFromRemoteUrl(remoteUrl);
+  // The cache answers first, with no network: one successful resolution is
+  // authoritative forever (GitHub ids survive renames), so a rate-limited or
+  // offline bind can no longer demote a known repository to a second identity.
+  const cached = remoteSlug == null
+    ? undefined
+    : await options.identityCache?.read(remoteSlug).catch(() => undefined);
+  if (cached != null) {
+    return {
+      projectId: `github:${cached.github_id}`,
+      projectLabel: cached.full_name,
+      checkoutRoot,
+      ...(remoteUrl == null ? {} : { remoteUrl }),
+    };
+  }
+  let demotionReason = "the GitHub repository read answered without an identity";
   const github = remoteSlug == null
     ? undefined
-    : await readGithubRepository(remoteSlug, remoteUrl, options).catch(() => undefined);
+    : await readGithubRepository(remoteSlug, remoteUrl, options).catch((error) => {
+        demotionReason = error instanceof Error ? error.message : String(error);
+        return undefined;
+      });
   if (github != null) {
+    await options.identityCache?.remember({
+      slug: remoteSlug as string,
+      githubId: github.id,
+      fullName: github.fullName,
+    }).catch(() => undefined);
     return {
       projectId: `github:${github.id}`,
       projectLabel: github.fullName,
@@ -58,6 +98,7 @@ export async function resolveAcpProjectIdentity(
       ...(remoteUrl == null ? {} : { remoteUrl }),
     };
   }
+  if (remoteSlug != null) options.onIdentityDemotion?.(remoteSlug, demotionReason);
 
   // Non-GitHub directories remain usable by generic ACP clients. This fallback
   // is deliberately named as local/remote evidence; it never masquerades as an
@@ -158,7 +199,11 @@ async function readGithubRepository(
   const env = options.env ?? process.env;
   const configuredOrigin = env.GITHUB_API_URL?.trim();
   const isGithubRemote = /(^|[.@/:])github\.com(?=[:/])/i.test(remoteUrl ?? "");
-  const token = (env.REDSKILLED_HOST_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
+  // The daemon's own credential first: an unauthenticated read runs against a
+  // 60/hour/IP budget, and exhausting it mid-day is what flipped identity per
+  // bind. Env vars stay as the fallback for embeddings without a gateway.
+  const resolved = options.resolveToken == null ? null : await options.resolveToken();
+  const token = (resolved ?? env.REDSKILLED_HOST_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
   if (!configuredOrigin && !isGithubRemote && token === "") return undefined;
 
   const origin = (configuredOrigin || "https://api.github.com").replace(/\/+$/, "");
