@@ -8,9 +8,11 @@
  * bundle versions. A path it needs is a path it was given.
  */
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { defaultLaunchProbe } from "./launch-probe.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
@@ -913,7 +915,7 @@ function servePaths(values: {
 }
 
 const invokedDirectly = process.argv[1] != null &&
-  import.meta.url === new URL(`file://${process.argv[1]}`).href;
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
   const argv = process.argv.slice(2);
