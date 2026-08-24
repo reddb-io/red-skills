@@ -749,3 +749,40 @@ describe("withheld is not unmeasured", () => {
     expect(rendered.line).toContain("!unmeasured");
   });
 });
+
+describe("the global dashboard header answers for the host, and only the host", () => {
+  // One payload, one difference: the mode. The session sits in an UNREGISTERED
+  // acme/widgets checkout, which is exactly the shape that used to leak a
+  // directory verdict onto a host-wide line.
+  const doc = () => payload({ known_projects: [], registered_projects: [] });
+
+  it("names the host, drops the directory's registration verdict, and counts workers flat", () => {
+    const global = renderRedskilledDashboard(doc(), {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      mode: "global",
+      project: "acme/widgets",
+      maxWidth: 400,
+    });
+    const head = stripAnsi(global.header.line);
+    expect(head).toContain("host");
+    // The cwd's project keeps its facts on its own project row, never here.
+    expect(head).not.toContain("acme/widgets");
+    expect(head).not.toContain("!unregistered");
+    // `selected` IS the host set in global mode, so a ratio was always 1.
+    expect(head).toContain("wrk=1 ");
+    expect(head).not.toContain("wrk=1/1");
+  });
+
+  it("keeps the cwd identity, its verdict and the ratio on the local header", () => {
+    const local = renderRedskilledDashboard(doc(), {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      mode: "local",
+      project: "acme/widgets",
+      maxWidth: 400,
+    });
+    const head = stripAnsi(local.header.line);
+    expect(head).toContain("acme/widgets");
+    expect(head).toContain("!unregistered");
+    expect(head).toContain("wrk=1/1");
+  });
+});

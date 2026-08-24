@@ -441,10 +441,18 @@ function buildHeader(
   selected: readonly RedskilledRenderWorker[],
   match: RedskilledStatuslineProjectMatch,
 ): RedskilledDashboardHeader {
+  // **The global header answers for the HOST, and only the host.** It used to
+  // mix scopes on one line: identity and remote counters from the CWD's
+  // project, worker totals from the host, and a `!unregistered` verdict about
+  // the directory beside host-wide numbers — so one line described two
+  // subjects and read as one. In global mode the cwd's project keeps its facts
+  // on its own project ROW; the header keeps the host's.
+  const global = options.mode === "global";
+  const headerProject = global ? null : options.project;
   const activity = (payload.repository_activity?.projects ?? []).find(
-    (project) => project.project_label === options.project,
+    (project) => project.project_label === headerProject,
   );
-  const counts = dashboardCounts(payload, options.project);
+  const counts = dashboardCounts(payload, headerProject);
   const windows: RedskilledDashboardWindows = {
     memory_used_fraction: payload.host.ceiling_used_fraction,
     memory_used_bytes: payload.host.consumption.memory_bytes,
@@ -454,7 +462,7 @@ function buildHeader(
     interactive_reservation: payload.host.ceiling.interactive_reservation ?? 0,
   };
   const model = firstPublishedModel(selected);
-  const repo = activity?.repository ?? options.project;
+  const repo = global ? "host" : activity?.repository ?? options.project;
 
   const engine = payload.engine ?? null;
   const version = engine?.running_version ?? payload.daemon.daemon_version;
@@ -469,8 +477,10 @@ function buildHeader(
     version,
     engine != null && engine.current === false ? ENGINE_BEHIND_MARK : "",
   )];
-  if (match === "unregistered" || match === "name-only") parts.push(UNREGISTERED_MARK);
-  if (match === "lapsed") parts.push(LAPSED_MARK);
+  // A registration verdict is about the DIRECTORY, so in global mode it
+  // belongs on that project's row, never on the host header.
+  if (!global && (match === "unregistered" || match === "name-only")) parts.push(UNREGISTERED_MARK);
+  if (!global && match === "lapsed") parts.push(LAPSED_MARK);
   const liveRates = metrics?.history_48h == null ? null : hourlyHeadline(metrics.history_48h);
   if (liveRates != null) parts.push(colourKeyValues(liveRates));
   const repairing = payload.workers.filter(isRepairWorker).length;
@@ -479,6 +489,10 @@ function buildHeader(
     parts.push(
       `${colourKeyValues(`workers=${coding} coding +`)} ${MODEL_BG}${PAPER}${repairing} repairing${NOBG}${SOFT}`,
     );
+  } else if (global) {
+    // In global mode `selected` IS the host's Worker set, so the old
+    // `wrk=N/N` ratio was always 1 — a precise-looking non-fact.
+    parts.push(colourKeyValues(`wrk=${payload.host.worker_count}`));
   } else {
     parts.push(colourKeyValues(`wrk=${selected.length}/${payload.host.worker_count}`));
   }
@@ -490,12 +504,12 @@ function buildHeader(
   if (model != null) parts.push(`${MODEL_BG}${PAPER}${model}${NOBG}${SOFT}`);
   // The counters come from the ONE builder both densities share, so the table
   // and the line can never date the same poll differently.
-  for (const token of remoteCounterTokens(payload, options.project)) parts.push(colourKeyValues(token));
+  for (const token of remoteCounterTokens(payload, headerProject)) parts.push(colourKeyValues(token));
   // The blanket marker is what a daemon WITHOUT the dated block can say. Once
   // each counter carries its own age, repeating it would warn a second time
   // about the numbers that already said so and warn at all about the ones that
   // are fresh.
-  if (counts.stale && !hasDatedCounters(payload, options.project)) parts.push("!counts stale");
+  if (counts.stale && !hasDatedCounters(payload, headerProject)) parts.push("!counts stale");
   // The rates go here, where a status bar still reads them, and they are the
   // FIRST thing dropped when the line does not fit — see below. Everything
   // before them answers "is this machine healthy"; the rates answer "how fast is
