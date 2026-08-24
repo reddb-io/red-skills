@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { decodeInvitation } from "@reddb-io/red-skills-link-protocol/crypto";
 import { runRedskilledLinkOnboarding } from "../src/onboarding.js";
-import { planRedskilledLinkUnit } from "../src/supervision.js";
+import { currentRedskilledLinkEntry, planRedskilledLinkUnit } from "../src/supervision.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -75,6 +75,26 @@ describe("redskilled link onboarding", () => {
 });
 
 describe("redskilled-link user unit", () => {
+  it("copies a cache-resident companion to the durable daemon bin before supervising it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-link-stable-entry-"));
+    roots.push(root);
+    const cacheEntry = join(root, "temporary-npx-cache", "redskilled-link.bundle.min.mjs");
+    await mkdir(join(root, "temporary-npx-cache"), { recursive: true });
+    await writeFile(cacheEntry, "export const bundle = 'one';");
+
+    const entry = currentRedskilledLinkEntry({
+      scriptPath: cacheEntry,
+      execPath: "/usr/bin/node",
+      execArgv: [],
+      homeDir: root,
+    });
+
+    expect(entry.command).toBe("/usr/bin/node");
+    expect(entry.args).toHaveLength(1);
+    expect(entry.args[0]).toMatch(new RegExp(`^${root}/\\.red/redskilled/bin/redskilled-link-[a-f0-9]{16}\\.bundle\\.min\\.mjs$`));
+    await expect(readFile(entry.args[0]!, "utf8")).resolves.toBe("export const bundle = 'one';");
+  });
+
   it("keeps the companion alive without putting relay credentials in ExecStart", () => {
     const plan = planRedskilledLinkUnit({
       entry: { command: "/usr/bin/node", args: ["/opt/redskilled-link.bundle.min.mjs"] },
