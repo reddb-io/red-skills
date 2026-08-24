@@ -83,8 +83,10 @@ describe("the rs_dev routing table matches the live surfaces (#4113)", () => {
     ]);
   });
 
-  it("serves nothing through a daemon method yet, so slice 2 has a landing pad", () => {
-    expect(MCP_TOOL_ROUTING.filter((route) => route.kind === "served")).toEqual([]);
+  it("serves worker_dispatch through the daemon's go_dispatch method — the first slice-2 landing", () => {
+    expect(MCP_TOOL_ROUTING.filter((route) => route.kind === "served")).toEqual([
+      { tool: "worker_dispatch", kind: "served", method: "_redskills/go_dispatch" },
+    ]);
   });
 
   it("resolves one route by name and misses an undeclared one", () => {
@@ -147,7 +149,7 @@ describe("the audit refuses a table that drifted from a live source", () => {
 });
 
 describe("the adapter refuses an unserved verb instead of prompting a Worker", () => {
-  it.each(["queue_status", "project_activation", "worker_dispatch", "logs"])(
+  it.each(["queue_status", "project_activation", "worker_stop", "logs"])(
     "refuses %s by name, naming what does work, without reaching prompt",
     async (tool) => {
       const client = session();

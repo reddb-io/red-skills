@@ -41,19 +41,21 @@ mints the disposable Ticket, admits the Worker against the host budget, and retu
 its id — all inside that call. `/go` mints nothing itself, places no workspace, and
 runs no boot phase over the human's checkout.
 
-`worker_dispatch` takes **exactly one** of `demand` or `issue`, and `mode` is valid
-only with `demand` — the schema enforces the `/go`-versus-`/afk` boundary that the
-hard rules below state in prose. The complete surface, host tool-name prefixing,
-and the mutation-mode contract are in [`../afk/MCP.md`](../afk/MCP.md).
+`worker_dispatch` takes **exactly one** of `demand` or `issue`, and today only
+the `demand` form is served — the `go_dispatch` wire deliberately carries one
+field, so the `/go`-versus-`/afk` boundary the hard rules below state in prose
+is also the wire's: an `issue`-form dispatch refuses by name and belongs to the
+registered drain. The complete surface, host tool-name prefixing, and the
+mutation-mode contract are in [`../afk/MCP.md`](../afk/MCP.md).
 
 | Dispatch parameter | Meaning |
 | --- | --- |
-| `demand` | the approved Task, as one string |
-| `dod` | the approved semantic Definition of Done |
-| `mode` | `direct-PR` (default), `no-mistakes`, `local-only`, or `scout` |
-| `runner` | a pinned backend; omitted, the host resolves its own |
-| `verify` | one ephemeral command appended to `post_done` for this dispatch |
-| `tags` | territory `tag:<value>` labels stamped on the minted Ticket |
+| `demand` | the approved Task, as one string — fold the approved Definition of Done and any agreed verify command into this text, under their own headings |
+
+`mode`, `runner`, `verify`, and `tags` are not yet expressible on the
+`go_dispatch` wire; the tool refuses them by name instead of dropping them.
+Widening the wire is a recorded follow-up, decided by the daemon, never smuggled
+through a dispatch argument.
 
 **What `/go` never does by hand.** No `git worktree add`, no branch pushed from
 the human's checkout, no CI watched in a shell loop, no `gh pr merge`: the

@@ -196,17 +196,17 @@ holds both halves of that in place.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `worker_dispatch` | mutating | **REFUSES (#4113).** Run one tracked issue, or mint and run one disposable demand. |
+| `worker_dispatch` | mutating | **Serves demand dispatches** through the daemon's `_redskills/go_dispatch`: mints the disposable `lane:go` Ticket, admits the Worker, and answers `{worker_id, ticket, lane}`. An `issue`-form dispatch, `mode`, or `runner` refuses by name — the wire deliberately carries the demand alone. |
 | `worker_stop` | mutating | **REFUSES (#4113).** Terminate one worker process tree. |
 | `worker_recycle` | mutating | **REFUSES (#4113).** Terminate one fleet worker so its supervisor refills the slot. |
 | `worker_request` | mutating | **REFUSES (#4113).** Dispatch a worker with a special request injected at spawn time. |
 
-`worker_dispatch` takes **exactly one** of `issue` or `demand`; `mode` is valid
-only for a `demand`. Go modes (`no-mistakes` / `direct-PR` / `local-only`) run
-the standard AFK engine and open a PR. The `scout` mode runs a **read-only
-investigation**: it mints a disposable `lane:scout` issue, runs the engine with
-`run_mode=scout` (no push, no PR, no merge), and posts the agent's report as a
-comment before closing the issue. Scout cannot be combined with `issue`.
+`worker_dispatch` takes **exactly one** of `issue` or `demand`, and today only
+the `demand` form is served: the `go_dispatch` wire carries one field, so fold
+the Definition of Done and any verify command into the demand text itself. An
+`issue`-form dispatch belongs to the registered drain (arm `/afk`), and `mode`
+and `runner` are not yet expressible on the wire — the tool refuses each by
+name rather than dropping it.
 
 ### Runner — backends and live steering
 

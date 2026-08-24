@@ -9,6 +9,7 @@ import {
   renderUnservedToolRefusal,
   type McpToolControlOperation,
 } from "./core/mcp-tool-routing.js";
+import { dispatchInput } from "./mcp-tools/worker.js";
 
 /**
  * The control map, DERIVED from the declared routing table (#4113).
@@ -71,13 +72,29 @@ export async function invokeProjectMcp(
     if (operation === "status") return await session.control("status");
     return await session.control(operation, controlRequest(input));
   }
+  const declared = mcpToolRoute(tool);
+  // The first served row: a demand-form dispatch reaches the daemon's own
+  // go-dispatch method. The wire deliberately carries ONE field, so the tool
+  // arguments the wire cannot express refuse by name — an issue-form dispatch
+  // belongs to the registered drain, and mode/runner are the daemon's verdicts
+  // on this lane.
+  if (declared?.kind === "served" && tool === "worker_dispatch") {
+    const parsed = dispatchInput({ ...input });
+    if (parsed.issue !== undefined || parsed.mode !== undefined || parsed.runner !== undefined) {
+      throw new Error(
+        'rs_dev tool "worker_dispatch" serves demand dispatches through the daemon\'s go-dispatch ' +
+          "method; a tracked-issue dispatch rides the registered drain (arm /afk), and mode/runner " +
+          "are not expressible on the go_dispatch wire",
+      );
+    }
+    return await session.goDispatch(parsed.demand as string);
+  }
   // **Refuse by name; never prompt a Worker with the call's own text.** Every
   // remaining published tool is declared `unserved`: the verb lives in no
   // process, so `session.prompt("/queue_status {}")` reached a Worker with no
   // ticket handoff for it, which narrated one line and ended the turn. The
   // caller read a healthy-looking empty envelope and went hunting capacity,
   // sockets and version skew (#4113).
-  const declared = mcpToolRoute(tool);
   if (declared?.kind === "unserved") throw new Error(renderUnservedToolRefusal(declared));
   throw new Error(`unsupported ACP Project capability ${JSON.stringify(tool)}`);
 }
