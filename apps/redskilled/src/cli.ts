@@ -73,6 +73,7 @@ import {
   type RedskilledUnitIO,
 } from "./supervision.js";
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
+import { startGithubCustodyTender } from "./github-custody-tender.js";
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
 import { runAcpWorkerCommand } from "@reddb-io/worker/acp";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
@@ -613,7 +614,22 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // read every kill as a planned handover (#2919).
       process.once(signal, () => void daemon.stop({ reason: "signal", signal }).catch(() => undefined));
     }
+    // Resume the durable merge-custody obligations the previous daemon's death
+    // stranded: the custodian's timers are in-memory and were re-armed only by
+    // a client's handoff/status call, so every restart parked active records on
+    // `repair-custodian` until someone happened to ask. Wired here in the CLI —
+    // the lifecycle file is baseline-pinned — and stopped with the daemon.
+    const custodyTender = startGithubCustodyTender({
+      custodyPath: join(redskilledHomeDir(homedir()), "state", "github", "custody.toon"),
+      registration: githubGateway,
+      onReport: (report) => {
+        if (report.resumed === 0 && report.unresolved.length === 0) return;
+        process.stderr.write(`merge-custody tender: resumed ${report.resumed} execution(s)${
+          report.unresolved.length === 0 ? "" : `; no credential for ${report.unresolved.join(", ")}`}\n`);
+      },
+    });
     await daemon.closed;
+    custodyTender.stop();
     deaths.phase("closed");
     return 0;
   }
