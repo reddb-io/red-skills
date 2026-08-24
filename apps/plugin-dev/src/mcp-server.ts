@@ -26,7 +26,7 @@ import { createRsGithubMcpServer, RS_GITHUB_REQUEST_METHOD } from "./mcp-github/
 const buildInfo = readBuildInfo("redskilled-mcp");
 
 export function createRedskilledMcpServer(
-  root = process.cwd(),
+  root: string | (() => string | Promise<string>) = process.cwd(),
   acpInvoke?: (method: string, input: Record<string, unknown>) => Promise<unknown>,
 ): McpServer {
   const server = new McpServer({ name: RS_DEV_MCP_SERVER_NAME, version: buildInfo.version });
@@ -56,10 +56,24 @@ export function createRedskilledMcpServer(
   // Since #4293 the same seam also completes an UNDERSPECIFIED drain from the
   // project's `afk.standing` declaration, so `drain` with no runner argument
   // runs the executor the repository declared rather than the governed default.
-  const enrich = (tool: string, input: Record<string, unknown>): Record<string, unknown> =>
-    tool === "drain" && input.registration == null
-      ? drainInputFor(root, buildInfo.version, input)
-      : input;
+  // The root may be a SUPPLIER: the ACP session binds to the resolved project
+  // root, and a registration built from this process's launch cwd instead names
+  // the wrong checkout — `repositoryOf` then fails and the drain silently
+  // records intent without a registration (#4101's shape, reopened live).
+  const resolveRoot = async (): Promise<string> => (typeof root === "string" ? root : await root());
+  const enrich = async (tool: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    if (tool !== "drain" || input.registration != null) return input;
+    let resolved: string;
+    try {
+      resolved = await resolveRoot();
+    } catch (error) {
+      throw new Error(
+        `rs_dev drain cannot build its registration: the session's project root did not resolve (${
+          error instanceof Error ? error.message : String(error)}); a drain without a registration would record intent nothing acts on, so it is refused instead`,
+      );
+    }
+    return drainInputFor(resolved, buildInfo.version, input);
+  };
   for (const tool of createCastleMcpTools(dependencies)) {
     registerTool(
       tool.name,
@@ -73,7 +87,7 @@ export function createRedskilledMcpServer(
           {
             type: "text" as const,
             text: encodeRedskilledMcpToon(
-              await invoke(tool.name, enrich(tool.name, input)),
+              await invoke(tool.name, await enrich(tool.name, input)),
             ),
           },
         ],
@@ -235,7 +249,7 @@ async function run(): Promise<void> {
       }));
     return projectPromise;
   };
-  server = createRedskilledMcpServer(fallbackRoot, async (method, input) =>
+  server = createRedskilledMcpServer(projectRoot, async (method, input) =>
     invokeProjectMcp(await project(), method, input));
   const close = () => {
     void server.close();
