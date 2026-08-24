@@ -54,6 +54,11 @@ export function drainRegistrationFor(
     workspacePath: root,
     target,
     version,
+    // The declaration IS the standing intent: a repo that declares
+    // `afk.standing` wants its registration to survive daemon restarts, and
+    // the daemon restarts on every self-upgrade — a non-standing lease from a
+    // declared drain lapsed within one release-train tick.
+    ...(standing == null ? {} : { standing: true }),
     ...(runner == null ? {} : { runner }),
     ...(trunkBranch(root) == null ? {} : { trunkBranch: trunkBranch(root) }),
     ...(declared.length === 0 ? {} : { validationCommands: declared }),

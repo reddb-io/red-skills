@@ -103,6 +103,26 @@ describe("what a drain that states nothing resolves", () => {
     expect((input.registration as { argv: readonly string[] }).argv).not.toContain("--child-agent");
   });
 
+  it("a drain completed from afk.standing carries standing intent to the daemon", () => {
+    const input = drainInputFor(checkout(DECLARED), "4.0.1", {}, identity);
+
+    expect((input.registration as { standing?: boolean }).standing).toBe(true);
+  });
+
+  it("an explicit drain in a repo that declares afk.standing also registers standing", () => {
+    // The declaration IS the standing intent: the repo said its drain should
+    // survive daemon restarts, and the daemon restarts on every self-upgrade.
+    const input = drainInputFor(checkout(DECLARED), "4.0.1", { runner: "codex", target: 1 }, identity);
+
+    expect((input.registration as { standing?: boolean }).standing).toBe(true);
+  });
+
+  it("a drain in a repo with no standing declaration carries none", () => {
+    const input = drainInputFor(checkout(null), "4.0.1", {}, identity);
+
+    expect(input.registration).not.toHaveProperty("standing");
+  });
+
   it("keeps an incomplete declaration inert — it registers the governed default, not a guess", () => {
     const input = drainInputFor(
       checkout("    afk:\n      standing:\n        runner: claude-code\n"),

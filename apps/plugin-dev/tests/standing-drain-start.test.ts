@@ -119,21 +119,29 @@ describe("what the seam refuses to do", () => {
     expect(warn.mock.calls[0]![0]).toContain("afk.standing.target");
   });
 
-  it("sends nothing when the checkout cannot name a repository", async () => {
+  it("sends nothing when the checkout cannot name a repository, and says so to the operator", async () => {
     const drain = drainSpy();
+    const warn = warnSpy();
 
     await expect(ensureStandingDrain({
       version: "4.1.27",
       root: () => "/repo",
       drain,
-      warn: warnSpy(),
+      warn,
       reading: () => DECLARED,
       // The shape `drainRegistrationFor` returns for a directory with no
       // `owner/name`: no registration, so there is no queue to register.
       input: (_root, _version, stated) => ({ ...stated }),
-    })).resolves.toEqual({ kind: "unregisterable" });
+    })).resolves.toEqual({
+      kind: "unregisterable",
+      detail: expect.stringContaining("the declaration registers nothing"),
+    });
 
     expect(drain).not.toHaveBeenCalled();
+    // This outcome was silent: a declaration that could not register looked
+    // identical to one that did.
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain("no owner/name repository");
   });
 
   it("never rejects when the daemon refuses — the tool surface outlives the daemon", async () => {
