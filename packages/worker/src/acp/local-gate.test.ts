@@ -145,9 +145,9 @@ describe("running the declared stages", () => {
     expect(
       result.checks.find((check) => check.status === "failed")?.record.command,
     ).toBe(failingCommand);
-    expect(result.detail).toMatch(new RegExp(`^${escapeRegExp(failingCommand)}:`));
-    expect(result.detail).toContain("typecheck");
-    expect(result.detail).toContain("TS2532");
+    expect(result.detail).toBe(
+      `${failingCommand}: TS2532: Object is possibly undefined`,
+    );
   });
 
   it("runs the operator's commands only after feedback passed", async () => {
@@ -208,7 +208,3 @@ describe("running the declared stages", () => {
     ]);
   }, 20_000);
 });
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
