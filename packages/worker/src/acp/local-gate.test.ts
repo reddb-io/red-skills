@@ -81,9 +81,11 @@ describe("reading the Worktree's package topology", () => {
 
     expect(layout.hasPackage(".")).toBe(true);
     expect(layout.hasPackage(fixtureApp)).toBe(true);
+    expect(layout.hasPackage("packages/lib")).toBe(true);
     expect(layout.hasPackage("apps/absent")).toBe(false);
     expect(layout.hasScript(fixtureApp, "typecheck")).toBe(true);
     expect(layout.hasScript(fixtureApp, "test")).toBe(false);
+    expect(layout.hasScript("packages/lib", "typecheck")).toBe(false);
     expect(graph.packages.map((pkg) => pkg.dir).sort()).toEqual([
       ".",
       fixtureApp,
@@ -158,6 +160,7 @@ describe("running the declared stages", () => {
     expect(result.detail).toBe(
       `${failingCommand}: TS2532: Object is possibly undefined`,
     );
+    expect(result.detail).toContain("typecheck: TS2532");
   });
 
   it("runs the operator's commands only after feedback passed", async () => {
