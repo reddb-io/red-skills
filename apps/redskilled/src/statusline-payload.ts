@@ -104,6 +104,12 @@ export {
 /** What a Worker is doing, as the daemon knows it. */
 export type RedskilledWorkerState = "running" | "reattached";
 
+/** An ISO instant in milliseconds, or `null` when it is not one. PURE. */
+function instant(value: string): number | null {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /**
  * One Worker's measured consumption, or the honest absence of it.
  *
@@ -225,16 +231,17 @@ export interface RedskilledStatuslineHost {
 }
 
 /** How current this answer is, decided by the daemon and rendered by the consumer. */
-export interface RedskilledStatuslineStaleness {
-  readonly sampled_at: string | null;
-  readonly age_ms: number | null;
-  readonly threshold_ms: number;
-  readonly stale: boolean;
-  readonly measured_worker_count: number;
-  /** Live Workers the last sample did not measure, by id. */
-  readonly unmeasured_workers: readonly string[];
-  readonly reason: string;
-}
+// The freshness verdict's own judgements — the Worker-sample window, and the
+// daemon-beat aging that replaces it on a zero-Worker host — live in
+// `./statusline-staleness.js`. Re-exported because this module's payload
+// interface NAMES the type, so a consumer typing a payload reaches it from
+// the module it already imports.
+export {
+  buildStatuslineStaleness,
+  type RedskilledStatuslineStaleness,
+} from "./statusline-staleness.js";
+import { buildStatuslineStaleness } from "./statusline-staleness.js";
+import type { RedskilledStatuslineStaleness } from "./statusline-staleness.js";
 
 /** Which daemon answered, so two answers can be told apart rather than averaged. */
 export interface RedskilledStatuslineDaemon {
@@ -528,13 +535,15 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       machine_id_hash: input.hostState.machine_id_hash,
       session_key_hash: input.hostState.session_key_hash,
     },
-    staleness: buildStaleness({
+    staleness: buildStatuslineStaleness({
       sampledAt: input.sampledAt,
       ageMs,
       threshold,
       workerCount: workers.length,
       measuredCount,
       unmeasured,
+      now: input.now,
+      health: input.hostState.request_health,
     }),
     host: {
       worker_count: workers.length,
@@ -738,56 +747,6 @@ function buildProjects(workers: readonly RedskilledStatuslineWorker[]): readonly
     .sort((a, b) => a.project_label.localeCompare(b.project_label));
 }
 
-/**
- * Date the answer, in a sentence a surface can render unchanged.
- *
- * A host holding no Workers is never stale: there is nothing to measure, and
- * calling that state old would put a warning on every idle machine.
- */
-function buildStaleness(input: {
-  readonly sampledAt: string | null;
-  readonly ageMs: number | null;
-  readonly threshold: number;
-  readonly workerCount: number;
-  readonly measuredCount: number;
-  readonly unmeasured: readonly string[];
-}): RedskilledStatuslineStaleness {
-  const common = {
-    sampled_at: input.sampledAt,
-    age_ms: input.ageMs,
-    threshold_ms: input.threshold,
-    measured_worker_count: input.measuredCount,
-    unmeasured_workers: input.unmeasured,
-  };
-  if (input.workerCount === 0) {
-    return { ...common, stale: false, reason: "the host holds no Workers, so there is nothing to measure and nothing to age" };
-  }
-  if (input.sampledAt == null || input.ageMs == null) {
-    return {
-      ...common,
-      stale: true,
-      reason: `this answer is stale: the daemon has taken no measurement of its ${input.workerCount} live Worker(s) yet`,
-    };
-  }
-  if (input.ageMs > input.threshold) {
-    return {
-      ...common,
-      stale: true,
-      reason: `this answer is stale: its measurement is ${input.ageMs}ms old, past the ${input.threshold}ms staleness window`,
-    };
-  }
-  return {
-    ...common,
-    stale: false,
-    reason: `measured ${input.ageMs}ms ago, within the ${input.threshold}ms staleness window`,
-  };
-}
-
-/** An ISO instant in milliseconds, or `null` when it is not one. PURE. */
-function instant(value: string): number | null {
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : null;
-}
 
 // The fail-closed shape check moved to its own module (see the note there);
 // re-exported so every consumer keeps the import it already had.
