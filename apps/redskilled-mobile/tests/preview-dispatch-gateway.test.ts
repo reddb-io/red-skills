@@ -29,6 +29,6 @@ describe("preview dispatch gateway", () => {
         hostId: "host-1",
         issueUrl: "https://github.com/reddb-io/red-skills/issues/42",
       }),
-    ).rejects.toThrow("Remote link ainda não está configurado");
+    ).rejects.toThrow("Remote link is not configured yet");
   });
 });

@@ -13,7 +13,7 @@ export function createPreviewDispatchGateway(
       request: TicketDispatchRequest,
     ): Promise<TicketDispatchReceipt> {
       if (!isDevelopment) {
-        throw new Error("Remote link ainda não está configurado");
+        throw new Error("Remote link is not configured yet");
       }
 
       const issue = parseGitHubIssueUrl(request.issueUrl);
