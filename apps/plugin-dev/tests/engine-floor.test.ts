@@ -290,27 +290,48 @@ describe("the dispatch-time reading", () => {
 });
 
 describe("worker_dispatch crosses only the public ACP Project surface", () => {
-  it.each([
-    [{ issue: 3031 }],
-    [{ demand: "fix it" }],
-  ])("refuses %o by name rather than narrate it at a Worker (#4113)", async (input) => {
-    // This assertion used to read the other way: the adapter handed
-    // `/worker_dispatch {"issue":3031}` to `session.prompt`, and the test
-    // called that "crossing the public surface". It crossed nothing — the
-    // Worker had no ticket handoff for the text, narrated one line and ended
-    // the turn, and the caller read an empty envelope as success. **A
-    // fallthrough is only a degradation when something exists to degrade to.**
+  // These assertions have read two other ways: first the adapter handed
+  // `/worker_dispatch {...}` to `session.prompt` (which crossed nothing — the
+  // Worker had no ticket handoff, narrated one line, and the caller read an
+  // empty envelope as success), then it refused everything pending #4113.
+  // Since #4385 the demand form is SERVED through the daemon's go-dispatch
+  // method, and only what the one-field wire cannot express refuses by name.
+  function dispatchSession() {
     const prompt = vi.fn(async () => ({ stopReason: "end_turn", updates: [] }));
+    const goDispatch = vi.fn(async (demand: string) => ({
+      version: 1,
+      worker_id: "worker-go",
+      ticket: 1,
+      lane: "lane:go",
+      demand,
+    }));
     const session = {
       prompt,
+      goDispatch,
       control: vi.fn(),
       cancel: vi.fn(),
       permission: vi.fn(),
       close: vi.fn(),
     } as unknown as RedskillsProjectAcpSession;
+    return { session, prompt, goDispatch };
+  }
 
-    await expect(invokeProjectMcp(session, "worker_dispatch", input))
-      .rejects.toThrow(/rs_dev tool "worker_dispatch" is not served/);
+  it("refuses { issue: 3031 } by name rather than narrate it at a Worker", async () => {
+    const { session, prompt, goDispatch } = dispatchSession();
+
+    await expect(invokeProjectMcp(session, "worker_dispatch", { issue: 3031 }))
+      .rejects.toThrow(/a tracked-issue dispatch rides the registered drain/);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(goDispatch).not.toHaveBeenCalled();
+  });
+
+  it("serves { demand: 'fix it' } through the daemon's go-dispatch method, never a prompt", async () => {
+    const { session, prompt, goDispatch } = dispatchSession();
+
+    const answer = await invokeProjectMcp(session, "worker_dispatch", { demand: "fix it" });
+
+    expect(goDispatch).toHaveBeenCalledWith("fix it");
+    expect(answer).toMatchObject({ lane: "lane:go" });
     expect(prompt).not.toHaveBeenCalled();
   });
 });

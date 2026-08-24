@@ -121,6 +121,8 @@ export const WORKING_MODE_DOC_CONTRACT: readonly SkillToolBinding[] = [
       "runner_list",
       "standing_orders_append",
       "standing_orders_show",
+      // The router now names the served demand-dispatch route (#4385).
+      "worker_dispatch",
     ],
     why: "the router names the tool each destination is reached by, so a route is callable rather than descriptive",
   },
