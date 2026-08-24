@@ -12,6 +12,7 @@ import {
   RS_DEV_MCP_SERVER_NAME,
   type CastleMcpDependencies,
 } from "./mcp-tools/index.js";
+import { applyDangerPosture, type DangerPosture } from "./mcp-tools/posture.js";
 import { encodeRedskilledMcpToon } from "./mcp-toon.js";
 import { invokeProjectMcp } from "./project-acp-adapter.js";
 import { drainInputFor } from "./core/drain-registration-resolve.js";
@@ -24,6 +25,15 @@ import { createAcpLaneFollower } from "./acp-lane-follower.js";
 import { createRsGithubMcpServer, RS_GITHUB_REQUEST_METHOD } from "./mcp-github/index.js";
 
 const buildInfo = readBuildInfo("redskilled-mcp");
+
+/**
+ * The posture the LIVE adapter serves under: a MUTATING tool asks first.
+ *
+ * A constant rather than config on purpose — the gate exists so `gate_run` and
+ * `land_branch` cannot fire off one mis-tabbed tool call, and a knob that could
+ * relax it per-checkout would be the mis-tab with a longer fuse.
+ */
+export const RS_DEV_DANGER_POSTURE: DangerPosture = "confirm";
 
 export function createRedskilledMcpServer(
   root: string | (() => string | Promise<string>) = process.cwd(),
@@ -74,7 +84,22 @@ export function createRedskilledMcpServer(
     }
     return drainInputFor(resolved, buildInfo.version, input);
   };
-  for (const tool of createCastleMcpTools(dependencies)) {
+  // **The posture gate guards the path that runs.** `createCastleMcpTools`
+  // wires the danger posture around each tool's OWN invoke, but this adapter
+  // replaces every invocation with the ACP call — so the gate it shipped with
+  // guarded a body that never executes. Rebuild the surface with the ACP call
+  // as the body and wrap THAT: a `dangerClass` tool now refuses without
+  // `confirmation: true`, and the augmented schema is what the SDK publishes —
+  // an argument absent from the schema never reaches the handler. Output
+  // contracts stay off this path for now: the daemon's refusal envelopes are
+  // deliberately not the tools' declared payloads, and a validator that turned
+  // an honest refusal into a thrown error would be the second dishonesty.
+  const acpTools = createCastleMcpTools(dependencies).map((tool) => ({
+    ...tool,
+    invoke: async (input: Record<string, unknown>) =>
+      invoke(tool.name, await enrich(tool.name, input)),
+  }));
+  for (const tool of applyDangerPosture(acpTools, RS_DEV_DANGER_POSTURE)) {
     registerTool(
       tool.name,
       {
@@ -86,9 +111,7 @@ export function createRedskilledMcpServer(
         content: [
           {
             type: "text" as const,
-            text: encodeRedskilledMcpToon(
-              await invoke(tool.name, await enrich(tool.name, input)),
-            ),
+            text: encodeRedskilledMcpToon(await tool.invoke(input)),
           },
         ],
       }),
