@@ -74,6 +74,7 @@ import {
 } from "./supervision.js";
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
 import { startGithubCustodyTender } from "./github-custody-tender.js";
+import { stabilizeRunningRedskilledEntry } from "./stable-bundle.js";
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
 import { runAcpWorkerCommand } from "@reddb-io/worker/acp";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
@@ -586,6 +587,15 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       deaths.uninstall();
       return 0;
     }
+    // The serving daemon files its OWN bundle into the stable lane. The
+    // pinned-dispatch replacement path resolves no bundle file and therefore
+    // never stabilizes, which froze the lane — and the statusline, which
+    // resolves its renderer there, kept running the last file-resolved
+    // release while the daemon marched on. Best-effort: a decline costs only
+    // durability, never the boot.
+    stabilizeRunningRedskilledEntry({
+      version: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+    });
     // A supervised boot proves the running invocation works — the one moment a
     // drop-in poisoned with a relative ExecStart command (#3554) can be
     // converged to this process's own absolute invocation. Best-effort by

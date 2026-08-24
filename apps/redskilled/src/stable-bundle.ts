@@ -149,6 +149,33 @@ export function stabilizeRedskilledEntry<T extends StabilizableRedskilledEntry>(
 }
 
 /**
+ * File THIS process's own bundle (and its statusline sibling) into the lane.
+ *
+ * The pinned-dispatch replacement path resolves no bundle FILE, so it never
+ * stabilized — one such takeover and every later release also rode the pin,
+ * and the stable lane froze while the daemon marched on: the statusline kept
+ * rendering the last file-resolved version. The serving daemon closes that
+ * loop by filing the entry it is running, under the version it reports.
+ *
+ * Best-effort like the underlying copy: a local build, a missing home, or any
+ * filesystem refusal declines and the answer is `undefined` — never a throw,
+ * because this runs on the boot that is about to serve clients.
+ */
+export function stabilizeRunningRedskilledEntry(options: {
+  readonly version: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly entryPath?: string;
+}): string | undefined {
+  const entry = options.entryPath ?? process.argv[1];
+  if (entry == null || entry === "") return undefined;
+  const stabilized = stabilizeRedskilledEntry(
+    { command: process.execPath, args: [entry], entry },
+    { version: options.version, homeDir: stableBundleHomeOf(options.env ?? process.env) },
+  );
+  return stabilized.entry === entry ? undefined : stabilized.entry;
+}
+
+/**
  * The operator home an env describes — and ONLY what it describes.
  *
  * Deliberately no `homedir()` fallback: resolution scoped by an injected env

@@ -37,7 +37,12 @@ import {
   type RedskilledServeTarget,
 } from "./daemon-entry.js";
 import type { RedskilledPaths } from "./paths.js";
-import { stabilizeRedskilledEntry, stableBundleHomeOf } from "./stable-bundle.js";
+import {
+  redskilledStableBundleDir,
+  redskilledStableBundleName,
+  stabilizeRedskilledEntry,
+  stableBundleHomeOf,
+} from "./stable-bundle.js";
 
 /** The unit's name — one per machine, matching the daemon's own scope. */
 export const REDSKILLED_UNIT_NAME = "redskilled.service";
@@ -227,10 +232,13 @@ export interface RedskilledUnitHealReport {
   /**
    * `absent` — no drop-in to heal; `absolute` — already healthy, untouched;
    * `healed` — relative command rewritten to this process's own absolute
-   * invocation; `unparsed` — no readable ExecStart, left alone; `foreign` —
-   * the drop-in serves some other session's socket, never ours to rewrite.
+   * invocation; `stabilized` — a pinned npx dispatch rewritten onto the stable
+   * copy of the running version, so the next boot needs neither the npm cache
+   * nor the network; `unparsed` — no readable ExecStart, left alone;
+   * `foreign` — the drop-in serves some other session's socket, never ours to
+   * rewrite.
    */
-  readonly status: "absent" | "absolute" | "healed" | "unparsed" | "foreign";
+  readonly status: "absent" | "absolute" | "healed" | "stabilized" | "unparsed" | "foreign";
   /** The ExecStart command the drop-in carried, when one was readable. */
   readonly command?: string;
 }
@@ -267,6 +275,7 @@ export function healRedskilledUnitDropIn(
     readonly version?: string;
     readonly readFile?: (path: string) => string;
     readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
+    readonly exists?: (path: string) => boolean;
   } = {},
 ): RedskilledUnitHealReport {
   const path = redskilledReplacementDropInPath(options.env ?? process.env);
@@ -279,7 +288,29 @@ export function healRedskilledUnitDropIn(
   const words = execStartWordsOf(text);
   const command = words?.[0];
   if (words == null || command == null) return { path, status: "unparsed" };
-  if (isAbsolute(command)) return { path, status: "absolute", command };
+  if (isAbsolute(command)) {
+    // An absolute PINNED NPX dispatch is healthy but not durable: it resolves
+    // through the npm cache (which npm may GC) and, because it names no bundle
+    // FILE, the replacement path never stabilizes it — so the stable lane
+    // froze at the last file-resolved release while the daemon marched on.
+    // Once the running version's stable copy exists, the drop-in is rewritten
+    // onto it. The foreign-socket guard runs first, exactly as for the
+    // relative heal: another session's drop-in is never ours to rewrite.
+    const pinned = pinnedNpxDispatchOf(words);
+    if (pinned == null) return { path, status: "absolute", command };
+    if (options.socketPath == null || !words.includes(options.socketPath)) {
+      return { path, status: "foreign", command };
+    }
+    if (options.version == null || pinned.version !== options.version) {
+      return { path, status: "absolute", command };
+    }
+    const homeDir = stableBundleHomeOf(options.env ?? process.env);
+    if (homeDir == null) return { path, status: "absolute", command };
+    const stable = join(redskilledStableBundleDir(homeDir), redskilledStableBundleName(pinned.version));
+    if (!(options.exists ?? existsSync)(stable)) return { path, status: "absolute", command };
+    writeHealedDropIn(path, [options.execPath ?? process.execPath, stable, ...pinned.tail], options.run);
+    return { path, status: "stabilized", command };
+  }
   if (options.socketPath == null || !words.includes(options.socketPath)) {
     return { path, status: "foreign", command };
   }
@@ -295,7 +326,16 @@ export function healRedskilledUnitDropIn(
       ...(options.version == null ? {} : { version: options.version }),
     },
   );
-  const argv = [execPath, ...(stabilized?.args ?? tail)];
+  writeHealedDropIn(path, [execPath, ...(stabilized?.args ?? tail)], options.run);
+  return { path, status: "healed", command };
+}
+
+/** Rewrite the drop-in's ExecStart atomically and ask systemd to re-read it. */
+function writeHealedDropIn(
+  path: string,
+  argv: readonly string[],
+  run?: (argv: readonly string[]) => RedskilledUnitRunResult,
+): void {
   const healed = [
     "[Service]",
     "ExecStart=",
@@ -307,8 +347,24 @@ export function healRedskilledUnitDropIn(
   renameSync(temporary, path);
   // A failed reload is not undone: the file on disk is already correct, and
   // systemd reads it on its own next reload or login — later beats never.
-  (options.run ?? defaultRun)(["systemctl", "--user", "daemon-reload"]);
-  return { path, status: "healed", command };
+  (run ?? defaultRun)(["systemctl", "--user", "daemon-reload"]);
+}
+
+/**
+ * The pinned npx dispatch an ExecStart carries, when it is one.
+ *
+ * The shape ADR 0091 pins: `<npx> -y -p @reddb-io/red-skills@<version>
+ * red-skills-redskilled <args…>`. The answer is the version and everything
+ * after the binary name — the serve flags a rewrite must carry verbatim.
+ */
+function pinnedNpxDispatchOf(
+  words: readonly string[],
+): { readonly version: string; readonly tail: readonly string[] } | undefined {
+  const binary = words.indexOf("red-skills-redskilled");
+  if (binary <= 0) return undefined;
+  const pin = words.slice(0, binary).map((word) => /^@reddb-io\/red-skills@(.+)$/.exec(word)?.[1])
+    .find((version) => version != null);
+  return pin == null ? undefined : { version: pin, tail: words.slice(binary + 1) };
 }
 
 /** The words of the LAST non-empty `ExecStart=` line, unquoted. */
