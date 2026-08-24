@@ -167,6 +167,11 @@
       "moveKey": "24cdd7f5b667"
     },
     {
+      "id": "apps/redskilled-link/src/state.ts#json-stringify-file-write#0f89e1a2aec2",
+      "classification": "external",
+      "reason": "The public link status.json is read by non-TOON surfaces (mobile app, shell probes) as ecosystem JSON by design."
+    },
+    {
       "id": "apps/release/src/cli.ts#json-parse-file-read#06f60309d571",
       "classification": "external",
       "reason": "npm package.json manifests are an external JSON format the release engine must read as-is"
