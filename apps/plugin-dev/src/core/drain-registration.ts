@@ -35,6 +35,14 @@ export interface DrainRegistrationInput {
   readonly runner?: string | undefined;
   /** The published version whose binary a birth reaches for (ADR 0091). */
   readonly version: string;
+  /**
+   * The project declared this drain as standing policy (`afk.standing`).
+   *
+   * The daemon keeps a standing registration recoverable across its own
+   * restarts — and it restarts on every self-upgrade, so a declared drain
+   * that omitted this lapsed within one release train tick.
+   */
+  readonly standing?: boolean | undefined;
   /** The label that defines "queued"; the executable lane's own by default. */
   readonly readyLabel?: string | undefined;
   /** The operator's declared wall-clock budget for this drain; absent = none. */
@@ -74,6 +82,14 @@ export interface DrainRegistration {
    */
   readonly budget_ms?: number;
   readonly target: number;
+  /**
+   * Standing intent, carried only when the project declared one.
+   *
+   * The daemon's boot recovery keeps a `standing` registration recoverable
+   * indefinitely; without it a registration is a five-minute lease that dies
+   * with the daemon's next self-upgrade restart.
+   */
+  readonly standing?: true;
 }
 
 /**
@@ -136,5 +152,6 @@ export function buildDrainRegistration(input: DrainRegistrationInput): DrainRegi
       : { validation_commands: [...input.validationCommands] }),
     ...(input.budgetMs == null ? {} : { budget_ms: input.budgetMs }),
     target: input.target,
+    ...(input.standing === true ? { standing: true } : {}),
   };
 }

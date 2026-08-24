@@ -34,7 +34,7 @@ export type StandingDrainStartOutcome =
   /** The project declared something unusable; the operator was told. */
   | { readonly kind: "incomplete"; readonly detail: string }
   /** The checkout cannot name a repository, so there is no queue to register. */
-  | { readonly kind: "unregisterable" }
+  | { readonly kind: "unregisterable"; readonly detail: string }
   /** The declaration reached the daemon. */
   | { readonly kind: "registered"; readonly runner: string; readonly target: number }
   /** The declaration was read and the daemon refused or did not answer. */
@@ -81,8 +81,16 @@ export async function ensureStandingDrain(
   try {
     const input = (deps.input ?? drainInputFor)(root, deps.version, { runner, target });
     // A registration is what the daemon births from; a drain without one records
-    // an intent nobody polls for. Saying so beats sending it.
-    if (input.registration == null) return { kind: "unregisterable" };
+    // an intent nobody polls for. Saying so beats sending it — and saying it to
+    // the OPERATOR too: this outcome was silent, so a declaration that could
+    // not register looked identical to one that did.
+    if (input.registration == null) {
+      const detail = `redskilled MCP: ${root} declares a standing drain at ${runner} x${target}, ` +
+        "but this checkout names no owner/name repository, so there is no queue to register — " +
+        "the declaration registers nothing";
+      warn(detail);
+      return { kind: "unregisterable", detail };
+    }
     await deps.drain(input);
     return { kind: "registered", runner, target };
   } catch (error) {
