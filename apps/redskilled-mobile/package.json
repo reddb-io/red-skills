@@ -5,6 +5,7 @@
   "dependencies": {
     "@reddb-io/red-skills-link-protocol": "workspace:*",
     "expo": "~57.0.15",
+    "expo-camera": "~57.0.4",
     "expo-dev-client": "~57.0.14",
     "expo-font": "~57.0.1",
     "expo-splash-screen": "~57.0.6",

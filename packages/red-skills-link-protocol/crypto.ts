@@ -9,6 +9,7 @@ import type {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+export const REDSKILLED_PAIRING_URI_PREFIX = "redskilled://pair/";
 
 export interface EncryptedLinkPayload {
   readonly nonce: string;
@@ -45,8 +46,19 @@ export function encodeInvitation(invitation: RedskilledLinkInvitation): string {
   return base64Url(encoder.encode(encodeWireFrame(invitation, "toon")));
 }
 
+export function encodeInvitationUri(invitation: RedskilledLinkInvitation): string {
+  return `${REDSKILLED_PAIRING_URI_PREFIX}${encodeInvitation(invitation)}`;
+}
+
 export function decodeInvitation(value: string): RedskilledLinkInvitation {
-  const decoded = decodeWireFrame(decoder.decode(fromBase64Url(value.trim())));
+  const trimmed = value.trim();
+  const code = trimmed.startsWith(REDSKILLED_PAIRING_URI_PREFIX)
+    ? trimmed.slice(REDSKILLED_PAIRING_URI_PREFIX.length)
+    : trimmed;
+  if (code === "" || code.includes("/") || code.includes("?") || code.includes("#")) {
+    throw new Error("invalid redskilled-link invitation URI");
+  }
+  const decoded = decodeWireFrame(decoder.decode(fromBase64Url(code)));
   if (!isInvitation(decoded)) throw new Error("invalid redskilled-link invitation");
   return decoded;
 }

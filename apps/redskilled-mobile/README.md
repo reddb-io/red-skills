@@ -9,6 +9,7 @@ Issue URL on a paired Redskilled Host.
 - Host + Issue URL dispatch screen
 - strict GitHub Issue URL parsing and canonicalisation
 - one-use invitation pairing persisted in Android SecureStore
+- camera QR pairing from the Host-generated connection URI, with manual-code fallback
 - encrypted TOON Remote-link frames over the transport-only WSS relay
 - live Worker observation, existing-Issue dispatch, and single-Worker stop
 

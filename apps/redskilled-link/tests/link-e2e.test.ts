@@ -4,7 +4,7 @@ import { join } from "node:path";
 import WebSocket from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { encodeInvitation, encryptLinkPayload } from "@reddb-io/red-skills-link-protocol/crypto";
+import { encodeInvitation, encodeInvitationUri, encryptLinkPayload } from "@reddb-io/red-skills-link-protocol/crypto";
 import { runRedskilledLinkHost } from "../src/host.js";
 import {
   createRedskilledMobileLinkClient,
@@ -95,5 +95,33 @@ describe("app <> relay <> Host <> redskilled", () => {
     }, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     expect(JSON.stringify(encrypted)).not.toContain(issueUrl);
     expect(JSON.stringify(encrypted)).not.toContain("ticket_dispatch");
+  });
+
+  it("pairs from the redskilled:// URI carried by the QR", async () => {
+    const relay = await startRedskilledRelay();
+    relays.push(relay);
+    const root = await mkdtemp(join(tmpdir(), "redskilled-link-uri-"));
+    roots.push(root);
+    const state = createRedskilledLinkStateStore({
+      path: join(root, "state.toon"), relayUrl: `ws://127.0.0.1:${relay.port}`, hostName: "URI Host",
+    });
+    const controller = new AbortController();
+    controllers.push(controller);
+    const host = runRedskilledLinkHost({
+      state,
+      operator: {
+        state: async () => ({ version: 1, daemon_version: "test", workers: [] }),
+        dispatch: async () => { throw new Error("not reached"); },
+        stop: async () => { throw new Error("not reached"); },
+      },
+    }, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(pairRedskilledHost(
+      encodeInvitationUri(await state.createInvitation()),
+      "Android",
+      WebSocket as unknown as LinkWebSocketConstructor,
+    )).resolves.toMatchObject({ host_name: "URI Host" });
+    controller.abort();
+    await host;
   });
 });

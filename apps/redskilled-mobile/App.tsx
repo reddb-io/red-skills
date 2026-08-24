@@ -1,6 +1,7 @@
 import { useFonts } from "expo-font";
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -40,6 +41,9 @@ export default function App() {
   const [pairedHost, setPairedHost] = useState<RedskilledLinkPairedHost | null>(null);
   const [pairingCode, setPairingCode] = useState("");
   const [isPairing, setIsPairing] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const scanLocked = useRef(false);
   const [issueUrl, setIssueUrl] = useState("");
   const [isDispatching, setIsDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,12 +114,12 @@ export default function App() {
     }
   }
 
-  async function pairHost() {
-    if (pairingCode.trim() === "") return;
+  async function pairHost(invitation: string) {
+    if (invitation.trim() === "") return;
     setIsPairing(true);
     setError(null);
     try {
-      const host = await pairRedskilledHost(pairingCode, `Redskilled ${Platform.OS}`);
+      const host = await pairRedskilledHost(invitation, `Redskilled ${Platform.OS}`);
       await savePairedHost(host);
       setPairedHost(host);
       setPairingCode("");
@@ -123,6 +127,18 @@ export default function App() {
       setError(copy.errors.pairing);
     } finally {
       setIsPairing(false);
+    }
+  }
+
+  async function scanPairingInvitation({ data }: BarcodeScanningResult) {
+    if (scanLocked.current) return;
+    scanLocked.current = true;
+    setPairingCode(data);
+    setScannerOpen(false);
+    try {
+      await pairHost(data);
+    } finally {
+      scanLocked.current = false;
     }
   }
 
@@ -181,6 +197,45 @@ export default function App() {
                   glyph="+"
                   title={copy.host.emptyTitle}
                 />
+                <Button
+                  label={copy.host.scanAction}
+                  onPress={() => {
+                    scanLocked.current = false;
+                    setScannerOpen(true);
+                    setError(null);
+                  }}
+                  variant="secondary"
+                />
+                {!scannerOpen ? null : cameraPermission == null ? (
+                  <View accessibilityLabel={copy.host.cameraLoading} style={styles.cameraLoading}>
+                    <ActivityIndicator color={colors.primary} />
+                    <Text style={styles.cameraCopy}>{copy.host.cameraLoading}</Text>
+                  </View>
+                ) : !cameraPermission.granted ? (
+                  <View style={styles.cameraPermission}>
+                    <Text style={styles.cameraCopy}>{copy.host.cameraPermission}</Text>
+                    {cameraPermission.canAskAgain ? (
+                      <Button label={copy.host.cameraAllow} onPress={() => void requestCameraPermission()} />
+                    ) : (
+                      <Feedback>{copy.host.cameraUnavailable}</Feedback>
+                    )}
+                    <Button label={copy.host.cameraCancel} onPress={() => setScannerOpen(false)} variant="ghost" />
+                  </View>
+                ) : (
+                  <View style={styles.cameraPanel}>
+                    <View style={styles.cameraFrame}>
+                      <CameraView
+                        accessibilityLabel={copy.host.cameraLabel}
+                        barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                        facing="back"
+                        onBarcodeScanned={(result) => void scanPairingInvitation(result)}
+                        style={styles.camera}
+                      />
+                    </View>
+                    <Text style={styles.cameraCopy}>{copy.host.cameraHint}</Text>
+                    <Button label={copy.host.cameraCancel} onPress={() => setScannerOpen(false)} variant="ghost" />
+                  </View>
+                )}
                 <Field
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -193,7 +248,7 @@ export default function App() {
                   disabled={pairingCode.trim() === ""}
                   label={copy.host.pairAction}
                   loading={isPairing}
-                  onPress={() => void pairHost()}
+                  onPress={() => void pairHost(pairingCode)}
                 />
               </Card>
             ) : (
@@ -350,6 +405,24 @@ const styles = StyleSheet.create({
     marginTop: density.gapSm,
   },
   section: { gap: density.gapLg },
+  cameraLoading: { alignItems: "center", gap: density.gapLg, padding: density.insetMd },
+  cameraPermission: { gap: density.gapLg },
+  cameraPanel: { gap: density.gapLg },
+  cameraFrame: {
+    aspectRatio: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radii.md,
+    borderWidth: spacing.hairline,
+    overflow: "hidden",
+  },
+  camera: { flex: 1 },
+  cameraCopy: {
+    color: colors.muted,
+    fontFamily: type.family.sans,
+    fontSize: type.size.sm,
+    lineHeight: 20,
+    textAlign: "center",
+  },
   hostCard: {
     alignItems: "center",
     flexDirection: "row",

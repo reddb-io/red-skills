@@ -83,7 +83,7 @@ describe("--help answers with the socket unreachable", () => {
   });
 
   it("answers every subcommand's own help without dispatching it", async () => {
-    for (const command of ["serve", "host-state", "statusline", "unit", "provision", "reclaim", "reap"]) {
+    for (const command of ["serve", "host-state", "statusline", "link", "unit", "provision", "reclaim", "reap"]) {
       printed = "";
 
       const code = await runRedskilledCli([command, "--help"]);

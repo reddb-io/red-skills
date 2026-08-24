@@ -74,6 +74,7 @@ import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-re
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
 import { runAcpWorkerCommand } from "@reddb-io/worker/acp";
 import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
+import { runRedskilledLinkCommand } from "./link-command.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -94,6 +95,7 @@ Commands:
   dashboard [local]     the host's screen; local scopes it to this repo
   github-spend          report which operations spent GitHub budget
   incidents             list/show bounded CPU and memory forensic captures
+  link                  connect Redskilled Mobile; prints a pairing URI and QR
   unit                  install | uninstall | status — the optional supervisor
   provision             make this machine ready; --check is the read-only half
   reclaim               clear runtime dirs left by dead sessions
@@ -165,6 +167,19 @@ hour. This is durable process attribution, never GitHub's authoritative balance.
   --hours <n>        positive number of hours ending now (default: 1)
 `,
   incidents: RESOURCE_INCIDENTS_USAGE,
+  link: `Usage: redskilled link [options]
+
+Starts the supervised Remote link Host companion and creates a short-lived,
+one-use Mobile pairing invitation. In a TTY it shows a QR, then prints the
+connection URI and manual code. A configured Host may subsequently run this
+command with no options.
+
+  --relay <wss://url>       configure or replace the self-hosted relay URL
+  --name <host-name>        name shown by Redskilled Mobile
+  --transport <wss|wireguard>
+                            WSS is available; WireGuard reports unavailable
+  --allow-insecure-relay    permit ws:// only for local development
+`,
   statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
 
 Renders the status line the agent host prints verbatim. Config is read on this
@@ -436,6 +451,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     | "dashboard"
     | "github-spend"
     | "incidents"
+    | "link"
     | "unit"
     | "provision"
     | "reclaim"
@@ -451,6 +467,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       dashboard: {},
       "github-spend": {},
       incidents: {},
+      link: {},
       unit: {},
       provision: {},
       reclaim: {},
@@ -614,6 +631,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "dashboard") return await runDashboard(args);
   if (command === "github-spend") return await runGithubSpend(args);
   if (command === "incidents") return await runResourceIncidents(args);
+  if (command === "link") return runRedskilledLinkCommand(args);
   if (command === "unit") return await runUnit(args);
 
   if (command === "provision") return await runProvision(args);
