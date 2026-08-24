@@ -18,6 +18,7 @@ import {
   redskilledStatuslineBundleName,
   STATUSLINE_BUNDLE_ASSET,
   stabilizeRedskilledEntry,
+  stabilizeRunningRedskilledEntry,
 } from "../src/stable-bundle.js";
 import { requireRedskilledReplacementEntry } from "../src/self-replace.js";
 
@@ -178,5 +179,48 @@ describe("the replacement resolver rides the stable home", () => {
     expect(entry.source).toBe("bundle-cache");
     expect(entry.args).toEqual([target]);
     expect(readFileSync(target, "utf8")).toBe("published bytes");
+  });
+});
+
+describe("stabilizing the RUNNING entry", () => {
+  it("stabilizeRunningRedskilledEntry files the unversioned running bundle under the daemon's own version", async () => {
+    const { homeDir, sourceDir } = await scratch();
+    const entry = join(sourceDir, "redskilled.bundle.min.mjs");
+    await writeFile(entry, "the served bytes");
+    await writeFile(join(sourceDir, STATUSLINE_BUNDLE_ASSET), "the lean renderer");
+
+    const stable = stabilizeRunningRedskilledEntry({
+      version: "4.2.9",
+      env: { HOME: homeDir },
+      entryPath: entry,
+    });
+
+    const target = join(redskilledStableBundleDir(homeDir), redskilledStableBundleName("4.2.9"));
+    expect(stable).toBe(target);
+    expect(readFileSync(target, "utf8")).toBe("the served bytes");
+    // The statusline sibling is filed in the same breath: it is the renderer
+    // the published statusline command resolves from this very lane.
+    expect(readFileSync(
+      join(redskilledStableBundleDir(homeDir), redskilledStatuslineBundleName("4.2.9")),
+      "utf8",
+    )).toBe("the lean renderer");
+  });
+
+  it("declines a local build and a home the env does not name", async () => {
+    const { homeDir, sourceDir } = await scratch();
+    const entry = join(sourceDir, "redskilled.bundle.min.mjs");
+    await writeFile(entry, "local bytes");
+
+    expect(stabilizeRunningRedskilledEntry({
+      version: "4.2.9+abcdef",
+      env: { HOME: homeDir },
+      entryPath: entry,
+    })).toBeUndefined();
+    expect(stabilizeRunningRedskilledEntry({
+      version: "4.2.9",
+      env: {},
+      entryPath: entry,
+    })).toBeUndefined();
+    expect(existsSync(join(redskilledStableBundleDir(homeDir), redskilledStableBundleName("4.2.9")))).toBe(false);
   });
 });

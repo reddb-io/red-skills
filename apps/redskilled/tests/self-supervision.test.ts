@@ -50,6 +50,7 @@ import {
   uninstallRedskilledUnit,
   type RedskilledUnitRunResult,
 } from "../src/supervision.js";
+import { redskilledStableBundleDir, redskilledStableBundleName } from "../src/stable-bundle.js";
 
 const require_ = createRequire(import.meta.url);
 const tsxLoader = require_.resolve("tsx");
@@ -468,5 +469,76 @@ describe("an installed user unit", () => {
     expect(status.findings).toEqual([
       expect.objectContaining({ code: "enabled-but-inactive" }),
     ]);
+  });
+});
+
+describe("stabilizing a pinned npx drop-in", () => {
+  it("rewrites a pinned npx ExecStart onto the stable copy of the running version", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const dropIn = redskilledReplacementDropInPath(env);
+    await mkdir(resolve(dropIn, ".."), { recursive: true });
+    await writeFile(
+      dropIn,
+      `[Service]\nExecStart=\nExecStart=/usr/local/bin/npx -y -p @reddb-io/red-skills@4.2.9 red-skills-redskilled serve --socket ${paths.socketPath}\n`,
+    );
+    const stableDir = redskilledStableBundleDir(paths.runtimeDir);
+    const stable = join(stableDir, redskilledStableBundleName("4.2.9"));
+    await mkdir(stableDir, { recursive: true });
+    await writeFile(stable, "the filed bytes");
+    const reload = recordingRun();
+
+    const report = healRedskilledUnitDropIn({
+      env,
+      socketPath: paths.socketPath,
+      execPath: "/fake/toolchain/node-lts/bin/node",
+      version: "4.2.9",
+      run: reload.run,
+    });
+
+    expect(report).toEqual({ path: dropIn, status: "stabilized", command: "/usr/local/bin/npx" });
+    expect(readFileSync(dropIn, "utf8")).toContain(
+      `ExecStart=/fake/toolchain/node-lts/bin/node ${stable} serve --socket ${paths.socketPath}`,
+    );
+    expect(reload.calls).toEqual([["systemctl", "--user", "daemon-reload"]]);
+  });
+
+  it("leaves a pinned npx ExecStart untouched when the stable copy is absent or the version differs", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const dropIn = redskilledReplacementDropInPath(env);
+    const pinned =
+      `[Service]\nExecStart=\nExecStart=/usr/local/bin/npx -y -p @reddb-io/red-skills@4.2.9 red-skills-redskilled serve --socket ${paths.socketPath}\n`;
+    await mkdir(resolve(dropIn, ".."), { recursive: true });
+    await writeFile(dropIn, pinned);
+    const reload = recordingRun();
+
+    // No stable copy on disk: healthy but not rewritable.
+    expect(healRedskilledUnitDropIn({ env, socketPath: paths.socketPath, version: "4.2.9", run: reload.run }))
+      .toEqual({ path: dropIn, status: "absolute", command: "/usr/local/bin/npx" });
+    // A different running version has no claim on this pin.
+    const stableDir = redskilledStableBundleDir(paths.runtimeDir);
+    await mkdir(stableDir, { recursive: true });
+    await writeFile(join(stableDir, redskilledStableBundleName("4.3.0")), "newer bytes");
+    expect(healRedskilledUnitDropIn({ env, socketPath: paths.socketPath, version: "4.3.0", run: reload.run }))
+      .toEqual({ path: dropIn, status: "absolute", command: "/usr/local/bin/npx" });
+    expect(readFileSync(dropIn, "utf8")).toBe(pinned);
+    expect(reload.calls).toEqual([]);
+  });
+
+  it("a pinned npx drop-in serving another session's socket is foreign, never rewritten", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const dropIn = redskilledReplacementDropInPath(env);
+    const pinned =
+      "[Service]\nExecStart=\nExecStart=/usr/local/bin/npx -y -p @reddb-io/red-skills@4.2.9 red-skills-redskilled serve --socket /run/someone-else.sock\n";
+    await mkdir(resolve(dropIn, ".."), { recursive: true });
+    await writeFile(dropIn, pinned);
+    const reload = recordingRun();
+
+    expect(healRedskilledUnitDropIn({ env, socketPath: paths.socketPath, version: "4.2.9", run: reload.run }))
+      .toEqual({ path: dropIn, status: "foreign", command: "/usr/local/bin/npx" });
+    expect(readFileSync(dropIn, "utf8")).toBe(pinned);
+    expect(reload.calls).toEqual([]);
   });
 });
