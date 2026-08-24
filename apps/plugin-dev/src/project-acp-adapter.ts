@@ -69,7 +69,20 @@ export async function invokeProjectMcp(
         `the Project control surface cannot express ${JSON.stringify(unsupported.sort())} for ${JSON.stringify(tool)}`,
       );
     }
-    if (operation === "status") return await session.control("status");
+    if (operation === "status") {
+      // The tool declares three scopes and used to answer PROJECT for all of
+      // them — a wrong answer wearing a healthy face. Host is served by the
+      // daemon's own host_state; worker refuses by name until a method serves
+      // it, because a scope silently substituted is worse than one refused.
+      if (input.scope === "host") return await session.hostState();
+      if (input.scope === "worker") {
+        throw new Error(
+          'status { scope: "worker" } is not served: worker vitals live in no daemon method yet; ' +
+            'read scope "host" and filter its workers, or use scope "project"',
+        );
+      }
+      return await session.control("status");
+    }
     return await session.control(operation, controlRequest(input));
   }
   const declared = mcpToolRoute(tool);

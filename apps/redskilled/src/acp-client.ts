@@ -92,6 +92,11 @@ export interface RedskillsProjectAcpSession {
    */
   goDispatch(demand: string): Promise<GoDispatchAnswer>;
   /**
+   * The daemon's whole host document: every Worker, every registration, the
+   * daemon's own health. The read `status { scope: host }` answers from.
+   */
+  hostState(): Promise<unknown>;
+  /**
    * Forward one brain tool call to the store the daemon holds for this host.
    *
    * The client names a tool and its arguments and nothing else: WHERE the brain
@@ -235,6 +240,10 @@ export async function connectRedskillsProjectAcp(
         REDSKILLS_ACP_METHODS.goDispatch,
         { demand },
       );
+    },
+    async hostState() {
+      const held = await ensureLive();
+      return await held.connection.agent.request<unknown>(REDSKILLS_ACP_METHODS.hostState, {});
     },
     async brain(call) {
       const held = await ensureLive();
