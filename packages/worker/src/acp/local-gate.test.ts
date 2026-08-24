@@ -19,6 +19,8 @@ import {
 const roots: string[] = [];
 const fixtureApp = "apps/plugin-dev";
 const fixtureSource = `${fixtureApp}/src/index.ts`;
+const fixtureAddedSource = `${fixtureApp}/added.ts`;
+const fixtureInvariantCommand = `pnpm -C ${fixtureApp} test:invariants`;
 
 afterEach(async () => {
   for (const root of roots.splice(0))
@@ -41,7 +43,7 @@ async function workspace(): Promise<string> {
     join(root, fixtureApp, "package.json"),
     JSON.stringify({
       name: "@fixture/dev",
-      scripts: { typecheck: "true" },
+      scripts: { typecheck: "true", "test:invariants": "true" },
       dependencies: { "@fixture/lib": "workspace:*" },
     }),
   );
@@ -148,7 +150,7 @@ describe("running the declared stages", () => {
     const blocked = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      backpressureCommands: ["pnpm -C apps/plugin-dev test:invariants"],
+      backpressureCommands: [fixtureInvariantCommand],
       changedFiles: async () => [fixtureSource],
       feedbackExec: async () => ({ code: 1, stdout: "", stderr: "red" }),
       backpressureExec: async ({ command }) => {
@@ -162,7 +164,7 @@ describe("running the declared stages", () => {
     const green = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      backpressureCommands: ["pnpm -C apps/plugin-dev test:invariants"],
+      backpressureCommands: [fixtureInvariantCommand],
       changedFiles: async () => [fixtureSource],
       feedbackExec: async () => ({ code: 0, stdout: "", stderr: "" }),
       backpressureExec: async ({ command }) => {
@@ -171,19 +173,19 @@ describe("running the declared stages", () => {
       },
     });
     expect(gateVerdict(green.stages).ok).toBe(true);
-    expect(ran).toEqual(["pnpm -C apps/plugin-dev test:invariants"]);
+    expect(ran).toEqual([fixtureInvariantCommand]);
   });
 
   it("reads the real diff when the caller names no seam", async () => {
     const root = await workspace();
     await writeFile(
-      join(root, fixtureApp, "added.ts"),
+      join(root, fixtureAddedSource),
       "export const added = 1;\n",
     );
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: root, stdio: "pipe" });
     git("checkout", "-b", "afk/4020");
-    git("add", "--", "apps/plugin-dev/added.ts");
+    git("add", "--", fixtureAddedSource);
     git("commit", "-m", "Refs #4020");
 
     const commands: string[][] = [];
