@@ -20,6 +20,7 @@
     "./github-gateway": "./src/github-gateway.ts",
     "./github-request": "./src/github-request.ts",
     "./launch-template": "./src/launch-template.ts",
+    "./link-command": "./src/link-command.ts",
     "./live-metrics": "./src/live-metrics.ts",
     "./major-handover": "./src/major-handover.ts",
     "./orphan-reaper": "./src/orphan-reaper.ts",

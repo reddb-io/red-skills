@@ -32,6 +32,7 @@ interface LinkState {
 
 export interface RedskilledLinkStateStore {
   identity(): Promise<Pick<LinkState, "host_id" | "host_name" | "relay_url">>;
+  configure(options: { readonly relayUrl?: string; readonly hostName?: string }): Promise<void>;
   createInvitation(ttlMs?: number): Promise<RedskilledLinkInvitation>;
   invitation(inviteId: string): Promise<LinkInvitationRecord | undefined>;
   pair(inviteId: string, device: Omit<LinkDeviceRecord, "paired_at" | "revoked" | "nonces">): Promise<void>;
@@ -45,20 +46,26 @@ export function defaultLinkStatePath(homeDir = homedir()): string {
 
 export function createRedskilledLinkStateStore(options: {
   readonly path?: string;
-  readonly relayUrl: string;
+  readonly relayUrl?: string;
   readonly hostName?: string;
   readonly now?: () => Date;
 }): RedskilledLinkStateStore {
   const path = options.path ?? defaultLinkStatePath();
   const now = options.now ?? (() => new Date());
-  const initial = (): LinkState => ({
-    version: 1,
-    host_id: randomUUID(),
-    host_name: options.hostName?.trim() || hostname(),
-    relay_url: options.relayUrl,
-    invitations: [],
-    devices: [],
-  });
+  const initial = (): LinkState => {
+    const relayUrl = options.relayUrl?.trim();
+    if (!relayUrl) {
+      throw new Error("redskilled link is not configured; run it once with --relay wss://relay.example");
+    }
+    return {
+      version: 1,
+      host_id: randomUUID(),
+      host_name: options.hostName?.trim() || hostname(),
+      relay_url: relayUrl,
+      invitations: [],
+      devices: [],
+    };
+  };
   const read = async (): Promise<LinkState> => {
     try {
       const parsed = decodeWireFrame(await readFile(path, "utf8"));
@@ -96,6 +103,15 @@ export function createRedskilledLinkStateStore(options: {
     async identity() {
       const state = await mutate((current) => [current, current]);
       return { host_id: state.host_id, host_name: state.host_name, relay_url: state.relay_url };
+    },
+    async configure(config) {
+      const relayUrl = config.relayUrl?.trim();
+      const hostName = config.hostName?.trim();
+      await mutate((state) => [{
+        ...state,
+        ...(relayUrl ? { relay_url: relayUrl } : {}),
+        ...(hostName ? { host_name: hostName } : {}),
+      }, undefined]);
     },
     async createInvitation(ttlMs = 10 * 60_000) {
       return await mutate((state) => {

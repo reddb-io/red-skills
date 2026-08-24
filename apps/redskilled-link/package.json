@@ -20,6 +20,7 @@
     "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/red-skills-link-protocol": "workspace:*",
     "@reddb-io/shared": "workspace:*",
+    "uqr": "^0.1.3",
     "ws": "8.18.3"
   },
   "devDependencies": {

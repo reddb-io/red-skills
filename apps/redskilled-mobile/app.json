@@ -9,6 +9,13 @@
     "userInterfaceStyle": "dark",
     "plugins": [
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Redskilled to scan one-use Host pairing invitations.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#07080a",
