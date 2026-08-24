@@ -203,14 +203,14 @@ describe("`project unknown`", () => {
     expect(render.line).toContain("idle");
   });
 
-  it("renders healthy idleness when the directory's project has no drain registration", () => {
+  it("marks a directory nothing will be born for, on the line as on the dashboard", () => {
     const render = renderRedskilledStatusline(
       payloadOf([worker({ project_label: "acme/other" })]),
       options({ project: "acme/widgets" }),
     );
 
     expect(render.project_match).toBe("unregistered");
-    expect(render.line).toBe("0w idle 0B v0.1.0");
+    expect(render.line).toBe("0w idle !unregistered 0B v0.1.0");
     expect(render.repair).toBeUndefined();
     expect(render.repair_reason).toBeUndefined();
   });

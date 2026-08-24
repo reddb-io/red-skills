@@ -319,6 +319,12 @@ function renderHead(
     if (workers.length === 0) {
       parts.push(idleCell(payload.last_outcome, options.project, payload.generated_at));
     }
+    // One verdict on both surfaces: the dashboard has always marked an
+    // unregistered directory, while this line rendered it as healthy idleness
+    // — the same payload read as opposite states depending on where an
+    // operator looked. A directory nothing will be born for carries the same
+    // quiet mark here.
+    if (match === "unregistered") parts.push(UNREGISTERED_MARK);
   } else if (match === "name-only") {
     // The Workers still count — they are running — but the line says out loud
     // that the host holds no registration, and it never says `idle`: a project
@@ -460,9 +466,11 @@ function compactLoopSpan(spanMs: number): string {
 /**
  * The head for a directory that is not currently matched to a registration. PURE.
  *
- * `unregistered` is ordinary idleness: no drain declared intent, so there is no
- * defect or repair to narrate. Every other branch represents prior intent or an
- * unresolved identity and keeps its explicit reason and actionability.
+ * `unregistered` narrates nothing HERE because the head already carries its
+ * mark (`!unregistered`, the dashboard's verdict, now on both surfaces): no
+ * drain declared intent, so there is no defect or repair to narrate beyond the
+ * mark. Every other branch represents prior intent or an unresolved identity
+ * and keeps its explicit reason and actionability.
  */
 function unmatchedHead(
   payload: RedskilledRenderPayload,
