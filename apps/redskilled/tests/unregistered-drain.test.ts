@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   bindProjectControl,
+  coreProjectInvocation,
   projectIsRegistered,
   projectStatusSnapshot,
+  runV2ProjectControlTurn,
   UNREGISTERED_DRAIN_WARNING,
   type ProjectControlState,
 } from "../src/project-control.js";
@@ -219,5 +221,83 @@ describe("a drain says the same thing twice without failing", () => {
 
     await expect(mutateProjectControl("drain", { registration: { selector: "" } }))
       .rejects.toThrow(/the selector was empty/);
+  });
+});
+
+describe("a v2 prompt-shaped drain rides the same bound control surface", () => {
+  const upstream = () => {
+    const notifications: { method: unknown; params: Record<string, unknown> }[] = [];
+    return {
+      notifications,
+      context: {
+        notify: async (method: unknown, params: Record<string, unknown>) => {
+          notifications.push({ method, params });
+        },
+      } as never,
+    };
+  };
+
+  it("registers before the intent is written and answers with the same warning the tool path answers with", async () => {
+    const registered: Record<string, unknown>[] = [];
+    const controls = new Map<string, ProjectControlState>();
+    const { mutateProjectControl, readProjectStatus } = bindProjectControl({
+      scopedProject: () => project,
+      projectControls: controls,
+      persistProjectControls: async () => {},
+      hostState: () => hostState(false),
+      clock: () => "2026-08-19T20:00:00.000Z",
+      readGithubCustody: async () => null,
+      registerProject: (request) => registered.push({ ...request }),
+    });
+    const wire = upstream();
+
+    await runV2ProjectControlTurn(
+      new Map([["session-1", { project } as never]]),
+      { sessionId: "session-1", prompt: [] } as never,
+      wire.context,
+      { operation: "drain", target: 2, registration: { selector: "is:issue" } },
+      { mutate: mutateProjectControl, read: readProjectStatus },
+    );
+
+    expect(registered).toEqual([{ selector: "is:issue", project_label: "reddb-io/red-skills" }]);
+    const terminal = wire.notifications.at(-1)?.params as {
+      _meta?: { redskills?: { projectControl?: { warning?: string } } };
+    };
+    expect(terminal._meta?.redskills?.projectControl?.warning).toBe(UNREGISTERED_DRAIN_WARNING);
+  });
+
+  it("a v2 prompt stop releases the registration", async () => {
+    const released: string[] = [];
+    const { mutateProjectControl, readProjectStatus } = bindProjectControl({
+      scopedProject: () => project,
+      projectControls: new Map<string, ProjectControlState>(),
+      persistProjectControls: async () => {},
+      hostState: () => hostState(true),
+      clock: () => "2026-08-19T20:00:00.000Z",
+      readGithubCustody: async () => null,
+      releaseProject: (label) => released.push(label),
+    });
+    const wire = upstream();
+
+    await runV2ProjectControlTurn(
+      new Map([["session-1", { project } as never]]),
+      { sessionId: "session-1", prompt: [] } as never,
+      wire.context,
+      { operation: "stop" },
+      { mutate: mutateProjectControl, read: readProjectStatus },
+    );
+
+    expect(released).toEqual(["reddb-io/red-skills"]);
+  });
+
+  it("coreProjectInvocation lifts a registration out of the prompt's brace args", () => {
+    const invocation = coreProjectInvocation([
+      { type: "text", text: '/drain {"target": 1, "registration": {"selector": "is:issue"}}' },
+    ]);
+    expect(invocation).toEqual({
+      operation: "drain",
+      target: 1,
+      registration: { selector: "is:issue" },
+    });
   });
 });

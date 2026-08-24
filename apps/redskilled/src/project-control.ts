@@ -328,6 +328,8 @@ export interface ProjectControlInvocation {
   readonly operation: ProjectControlCommand;
   readonly target?: number;
   readonly runner?: string;
+  /** A registration the caller authored with its drain; never invented here. */
+  readonly registration?: Readonly<Record<string, unknown>>;
 }
 
 const CONTROL_VERB: ReadonlyMap<string, ProjectControlCommand> = new Map([
@@ -357,10 +359,12 @@ export function coreProjectInvocation(prompt: unknown): ProjectControlInvocation
     ? args.target
     : undefined;
   const runner = typeof args.runner === "string" && args.runner.length > 0 ? args.runner : undefined;
+  const registration = record(args.registration);
   return {
     operation,
     ...(target == null ? {} : { target }),
     ...(runner == null ? {} : { runner }),
+    ...(registration == null ? {} : { registration }),
   };
 }
 
@@ -451,18 +455,27 @@ export async function runV2ProjectControlTurn(
   params: acpV2.PromptRequest,
   upstream: acpV2.AgentContext,
   invocation: ProjectControlInvocation,
-  projectControls: Map<string, ProjectControlState>,
-  persist: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>,
-  readStatus: (project: AcpProjectWorkspace) => Promise<ReturnType<typeof projectStatusSnapshot>>,
+  // The BOUND control surface, exactly as the v1 twin and the tool path get
+  // it. This turn briefly called `applyProjectControl` directly, so a v2
+  // prompt drain never registered, a stop never released, and the
+  // unregistered warning never fired — a fully silent revision bump (#4101).
+  control: {
+    readonly mutate: (
+      operation: ProjectControlOperation,
+      request: ProjectControlRequest,
+    ) => Promise<unknown>;
+    readonly read: (project: AcpProjectWorkspace) => Promise<ReturnType<typeof projectStatusSnapshot>>;
+  },
 ): Promise<void> {
   const session = sessions.get(params.sessionId);
   if (session == null) return;
   const operation = invocation.operation;
-  const control = operation === "status"
-    ? await readStatus(session.project)
-    : await applyProjectControl(session.project, operation, projectControls, persist, {
+  const answer = operation === "status"
+    ? await control.read(session.project)
+    : await control.mutate(operation, {
         target: invocation.target,
         runner: invocation.runner,
+        registration: invocation.registration,
       });
   await upstream.notify(acpV2.methods.client.session.update, {
     sessionId: params.sessionId,
@@ -484,7 +497,7 @@ export async function runV2ProjectControlTurn(
   await upstream.notify(acpV2.methods.client.session.update, {
     sessionId: params.sessionId,
     update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
-    _meta: { redskills: { authority: "redskilled", projectControl: control } },
+    _meta: { redskills: { authority: "redskilled", projectControl: answer } },
   });
 }
 

@@ -514,7 +514,7 @@ async function servePublicConnection(
           return invocation == null
             ? runV2PublicTurn(options, sessionJournal, sessions, active, params, upstream, () => attached)
             : runV2ProjectControlTurn(
-              sessions, params, upstream, invocation, projectControls, persistProjectControls, readProjectStatus,
+              sessions, params, upstream, invocation, { mutate: mutateProjectControl, read: readProjectStatus },
             );
         })
         .catch((error) => {
