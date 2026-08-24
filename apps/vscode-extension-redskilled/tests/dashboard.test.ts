@@ -109,7 +109,7 @@ function snapshotOf(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     error: null,
     readAt: "2026-08-01T10:00:00.000Z",
     ...overrides,
-  };
+  } as HostSnapshot;
 }
 
 describe("the status bar shows the daemon's own summary", () => {
@@ -143,11 +143,14 @@ describe("the status bar shows the daemon's own summary", () => {
     expect(view.tooltip).toContain("not reachable");
   });
 
-  it("says a daemon predating the op has nothing to draw, rather than drawing zeros", () => {
-    const view = statusBarView(snapshotOf({ dashboard: null }));
-    expect(view.warning).toBe(false);
-    expect(view.text).not.toContain("wrk=");
-    expect(view.tooltip).toContain("statusline-dashboard");
+  it("a reachable snapshot always carries a dashboard — the snapshot type forbids the old dead branch", () => {
+    // The view once carried a reachable-but-no-dashboard rendering whose
+    // message ("this daemon does not serve statusline-dashboard") was false by
+    // construction: the dashboard is rendered locally from the payload read in
+    // the same frame, so it exists exactly when the payload does. The
+    // discriminated HostSnapshot union now makes that state unrepresentable.
+    const view = statusBarView(snapshotOf());
+    expect(view.text).toContain("wrk=");
   });
 });
 
