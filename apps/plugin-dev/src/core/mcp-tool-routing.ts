@@ -35,7 +35,7 @@
  * `unserved` list is **shrink-only** — {@link UNSERVED_MCP_TOOL_BASELINE} may
  * only go down, because a number that can go up is a budget, not a ratchet.
  */
-import type { RedskillsAcpMethod } from "@reddb-io/protocol-acp";
+import { REDSKILLS_ACP_METHODS, type RedskillsAcpMethod } from "@reddb-io/protocol-acp";
 
 /** The operations the daemon's Project control surface accepts. */
 export type McpToolControlOperation = "drain" | "stop" | "status";
@@ -105,7 +105,12 @@ export const MCP_TOOL_ROUTING: readonly McpToolRoute[] = [
   unserved("queue_status", ENGINE_GONE),
   unserved("events_since", ENGINE_GONE),
   unserved("deadend_audit", ENGINE_GONE),
-  unserved("worker_dispatch", DAEMON_OWNED),
+  // The first slice-2 landing: the daemon has served its go-dispatch method
+  // since ADR 0150 §3, with zero callers — the /go skill dispatched through
+  // this tool, which refused. Demand-form dispatches now reach the method;
+  // issue-form and mode/runner arguments refuse by name in the adapter, since
+  // the wire deliberately carries one field (the demand).
+  { tool: "worker_dispatch", kind: "served", method: REDSKILLS_ACP_METHODS.goDispatch },
   unserved("worker_stop", DAEMON_OWNED),
   unserved("worker_recycle", DAEMON_OWNED),
   unserved("runner_list", DAEMON_OWNED),
@@ -155,7 +160,7 @@ export const MCP_TOOL_ROUTING: readonly McpToolRoute[] = [
  * served instead — the whole point of the ratchet is that "we added another
  * verb nothing implements" cannot pass review as a number bump.
  */
-export const UNSERVED_MCP_TOOL_BASELINE = 51;
+export const UNSERVED_MCP_TOOL_BASELINE = 50;
 
 const BY_TOOL: ReadonlyMap<string, McpToolRoute> = new Map(
   MCP_TOOL_ROUTING.map((route) => [route.tool, route]),

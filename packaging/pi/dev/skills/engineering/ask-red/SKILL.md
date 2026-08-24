@@ -95,7 +95,8 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   for project workflow truth and `/redskilled` for host process/budget truth.
   `/afk` and `/go` are clients of that canonical interface. The
   tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`, which names the
-  four verbs that answer today and marks every tool that refuses pending #4113. Repo owners tune worker-slot
+  verbs that answer today (the four control verbs plus demand-form
+  `worker_dispatch`) and marks every tool that refuses pending #4113. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
   A merge-queue ejection, or a clean fleet PR found outside the queue, belongs
@@ -175,11 +176,12 @@ ACP credential-budget observations (Project clients receive only their bound
 profile; explicit host administration receives all configured profiles and
 pools; warning and density policy stays daemon-owned) -> `/redskilled` and
 `apps/redskilled/src/acp-budget.ts`;
-`rs_dev` MCP (the canonical project interface; four verbs answer today —
-`drain`, `status`, `project_status`, `project_stop` — and every other tool,
-`help` and `project_reset` included, refuses by name pending #4113 because no
-`_redskills/*` daemon method serves it; a refusal is the verb being
-unimplemented, never a daemon, socket, capacity or version-skew fault) ->
+`rs_dev` MCP (the canonical project interface; four control verbs answer today —
+`drain`, `status`, `project_status`, `project_stop` — plus `worker_dispatch`,
+which serves demand-form dispatches through the daemon's `_redskills/go_dispatch`;
+every other tool, `help` and `project_reset` included, refuses by name pending
+#4113 because no `_redskills/*` daemon method serves it; a refusal is the verb
+being unimplemented, never a daemon, socket, capacity or version-skew fault) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 Worker GitHub publication (credential-free Workers request authenticated fetch,
 push, pull-request, and Issue operations through project-scoped ACP; redskilled

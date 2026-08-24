@@ -18,6 +18,7 @@ import { resolveRedskilledClientEndpoint } from "./client-rendezvous.js";
 import {
   REDSKILLS_ACP_METHODS,
   REDSKILLS_WIRE_MAJOR,
+  type GoDispatchAnswer,
   type RedskilledBrainAnswer,
   type RedskilledBrainCall,
   type RedskilledMemoryAnswer,
@@ -83,6 +84,13 @@ export interface RedskillsProjectAcpSession {
    * mutation is scheduled durably are all decided on the far side of this call.
    */
   github(request: RedskilledGithubRequest): Promise<RedskilledGithubRequestAnswer>;
+  /**
+   * Dispatch one ad-hoc demand through the daemon's own `/go` authority.
+   *
+   * The wire carries exactly the demand (ADR 0150 §3): lane, tracker, Worker
+   * kind, budget and placement are the daemon's verdicts.
+   */
+  goDispatch(demand: string): Promise<GoDispatchAnswer>;
   /**
    * Forward one brain tool call to the store the daemon holds for this host.
    *
@@ -219,6 +227,13 @@ export async function connectRedskillsProjectAcp(
       return await held.connection.agent.request<RedskilledGithubRequestAnswer>(
         REDSKILLS_ACP_METHODS.githubRequest,
         { request },
+      );
+    },
+    async goDispatch(demand) {
+      const held = await ensureLive();
+      return await held.connection.agent.request<GoDispatchAnswer>(
+        REDSKILLS_ACP_METHODS.goDispatch,
+        { demand },
       );
     },
     async brain(call) {
