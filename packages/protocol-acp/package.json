@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/protocol-acp",
-  "version": "4.2.5",
+  "version": "4.2.6",
   "private": true,
   "type": "module",
   "description": "The shared RedSkills ACP wire (ADR 0148, ADR 0145 §2-3, ADR 0153): ACP v1/v2 compat and draft-revision gating, the RedSkills wire major, the Unix-socket / Named Pipe local transport, and the `_redskills/*` method schemas. Depended on by the daemon, the Worker and the stateless adapters.",
