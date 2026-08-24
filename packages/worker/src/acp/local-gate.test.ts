@@ -22,6 +22,14 @@ const fixtureSource = `${fixtureApp}/src/index.ts`;
 const fixtureAddedSource = `${fixtureApp}/added.ts`;
 const fixtureBackpressureCommand = `pnpm -C ${fixtureApp} test:invariants`;
 
+function fixtureFeedbackArgs(root: string): string[] {
+  return ["pnpm", "-C", join(root, fixtureApp), "typecheck"];
+}
+
+function fixtureFeedbackCommand(root: string): string {
+  return fixtureFeedbackArgs(root).join(" ");
+}
+
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
@@ -109,9 +117,7 @@ describe("running the declared stages", () => {
 
     expect(gateVerdict(result.stages).ok).toBe(true);
     // The cone is the touched package plus nothing else it feeds.
-    expect(commands.map((argv) => argv.slice(1).join(" "))).toEqual([
-      `-C ${join(root, fixtureApp)} typecheck`,
-    ]);
+    expect(commands).toEqual([fixtureFeedbackArgs(root)]);
     expect(
       result.stages.find((stage) => stage.stage === "backpressure")?.skipped,
     ).toBe(true);
@@ -122,7 +128,7 @@ describe("running the declared stages", () => {
 
   it("names the failing command in the detail a re-seed carries", async () => {
     const root = await workspace();
-    const failingCommand = `pnpm -C ${join(root, fixtureApp)} typecheck`;
+    const failingCommand = fixtureFeedbackCommand(root);
     const invokedCommands: string[] = [];
     const result = await runWorkerLocalGate({
       worktree: root,
@@ -203,9 +209,7 @@ describe("running the declared stages", () => {
         return { code: 0, stdout: "", stderr: "" };
       },
     });
-    expect(commands.map((argv) => argv.slice(1).join(" "))).toEqual([
-      `-C ${join(root, fixtureApp)} typecheck`,
-    ]);
+    expect(commands).toEqual([fixtureFeedbackArgs(root)]);
   }, 20_000);
 });
 
