@@ -19,6 +19,7 @@ import {
 const roots: string[] = [];
 const fixtureApp = "apps/plugin-dev";
 const fixtureSource = `${fixtureApp}/src/index.ts`;
+const fixtureBackpressureCommand = `pnpm -C ${fixtureApp} test:invariants`;
 
 afterEach(async () => {
   for (const root of roots.splice(0))
@@ -148,7 +149,7 @@ describe("running the declared stages", () => {
     const blocked = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      backpressureCommands: ["pnpm -C apps/plugin-dev test:invariants"],
+      backpressureCommands: [fixtureBackpressureCommand],
       changedFiles: async () => [fixtureSource],
       feedbackExec: async () => ({ code: 1, stdout: "", stderr: "red" }),
       backpressureExec: async ({ command }) => {
@@ -162,7 +163,7 @@ describe("running the declared stages", () => {
     const green = await runWorkerLocalGate({
       worktree: root,
       base: "main",
-      backpressureCommands: ["pnpm -C apps/plugin-dev test:invariants"],
+      backpressureCommands: [fixtureBackpressureCommand],
       changedFiles: async () => [fixtureSource],
       feedbackExec: async () => ({ code: 0, stdout: "", stderr: "" }),
       backpressureExec: async ({ command }) => {
@@ -171,7 +172,7 @@ describe("running the declared stages", () => {
       },
     });
     expect(gateVerdict(green.stages).ok).toBe(true);
-    expect(ran).toEqual(["pnpm -C apps/plugin-dev test:invariants"]);
+    expect(ran).toEqual([fixtureBackpressureCommand]);
   });
 
   it("reads the real diff when the caller names no seam", async () => {
@@ -183,7 +184,7 @@ describe("running the declared stages", () => {
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: root, stdio: "pipe" });
     git("checkout", "-b", "afk/4020");
-    git("add", "--", "apps/plugin-dev/added.ts");
+    git("add", "--", `${fixtureApp}/added.ts`);
     git("commit", "-m", "Refs #4020");
 
     const commands: string[][] = [];
