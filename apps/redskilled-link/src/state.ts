@@ -17,6 +17,11 @@ export interface LinkDeviceRecord {
   readonly nonces: readonly string[];
 }
 
+export interface RedskilledLinkPublicStatus {
+  readonly version: 1;
+  readonly active_paired_device_count: number;
+}
+
 interface LinkInvitationRecord extends RedskilledLinkInvitation {
   readonly used_at?: string;
 }
@@ -44,13 +49,19 @@ export function defaultLinkStatePath(homeDir = homedir()): string {
   return join(redskilledHomeDir(homeDir), "link", "state.toon");
 }
 
+export function defaultLinkStatusPath(homeDir = homedir()): string {
+  return join(redskilledHomeDir(homeDir), "link", "status.json");
+}
+
 export function createRedskilledLinkStateStore(options: {
   readonly path?: string;
+  readonly statusPath?: string;
   readonly relayUrl?: string;
   readonly hostName?: string;
   readonly now?: () => Date;
 }): RedskilledLinkStateStore {
   const path = options.path ?? defaultLinkStatePath();
+  const statusPath = options.statusPath ?? join(dirname(path), "status.json");
   const now = options.now ?? (() => new Date());
   const initial = (): LinkState => {
     const relayUrl = options.relayUrl?.trim();
@@ -74,7 +85,10 @@ export function createRedskilledLinkStateStore(options: {
       return initial();
     }
   };
-  const mutate = async <T>(operation: (state: LinkState) => readonly [LinkState, T]): Promise<T> => {
+  const mutate = async <T>(
+    operation: (state: LinkState) => readonly [LinkState, T],
+    publishStatus = false,
+  ): Promise<T> => {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const lock = `${path}.lock`;
     let held;
@@ -93,6 +107,9 @@ export function createRedskilledLinkStateStore(options: {
       const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
       await writeFile(temporary, encodeWireFrame(next, "toon"), { mode: 0o600 });
       await rename(temporary, path);
+      // This projection is advisory. A failed public-status write must never
+      // turn an already-committed pairing into a client-visible error.
+      if (publishStatus) await writePublicStatus(statusPath, next).catch(() => undefined);
       return answer;
     } finally {
       await held.close();
@@ -101,7 +118,7 @@ export function createRedskilledLinkStateStore(options: {
   };
   return {
     async identity() {
-      const state = await mutate((current) => [current, current]);
+      const state = await mutate((current) => [current, current], true);
       return { host_id: state.host_id, host_name: state.host_name, relay_url: state.relay_url };
     },
     async configure(config) {
@@ -125,7 +142,7 @@ export function createRedskilledLinkStateStore(options: {
           expires_at: new Date(now().getTime() + ttlMs).toISOString(),
         };
         return [{ ...state, invitations: [...state.invitations, invitation] }, invitation];
-      });
+      }, true);
     },
     async invitation(inviteId) {
       const state = await read();
@@ -150,7 +167,7 @@ export function createRedskilledLinkStateStore(options: {
             : invite),
           devices: [...state.devices.filter((entry) => entry.device_id !== device.device_id), paired],
         }, undefined];
-      });
+      }, true);
     },
     async device(deviceId) {
       return (await read()).devices.find((device) => device.device_id === deviceId && !device.revoked);
@@ -170,9 +187,45 @@ export function createRedskilledLinkStateStore(options: {
   };
 }
 
+async function writePublicStatus(path: string, state: LinkState): Promise<void> {
+  const status: RedskilledLinkPublicStatus = {
+    version: 1,
+    active_paired_device_count: state.devices.filter((device) => !device.revoked).length,
+  };
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(status)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
 function isLinkState(value: unknown): value is LinkState {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
   const state = value as Record<string, unknown>;
   return state.version === 1 && typeof state.host_id === "string" && typeof state.host_name === "string" &&
-    typeof state.relay_url === "string" && Array.isArray(state.invitations) && Array.isArray(state.devices);
+    typeof state.relay_url === "string" && Array.isArray(state.invitations) &&
+    state.invitations.every(isLinkInvitationRecord) && Array.isArray(state.devices) &&
+    state.devices.every(isLinkDeviceRecord);
+}
+
+function isLinkInvitationRecord(value: unknown): value is LinkInvitationRecord {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const invitation = value as Record<string, unknown>;
+  return invitation.version === 1 && typeof invitation.relay_url === "string" &&
+    typeof invitation.host_id === "string" && typeof invitation.host_name === "string" &&
+    typeof invitation.invite_id === "string" && typeof invitation.secret === "string" &&
+    typeof invitation.expires_at === "string" &&
+    (invitation.used_at === undefined || typeof invitation.used_at === "string");
+}
+
+function isLinkDeviceRecord(value: unknown): value is LinkDeviceRecord {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const device = value as Record<string, unknown>;
+  return typeof device.device_id === "string" && typeof device.device_name === "string" &&
+    typeof device.secret === "string" && typeof device.paired_at === "string" &&
+    typeof device.revoked === "boolean" && Array.isArray(device.nonces) &&
+    device.nonces.every((nonce) => typeof nonce === "string");
 }
