@@ -21,11 +21,12 @@ Production places the transport-only relay behind TLS and uses `wss://`.
 The supported operator front door is:
 
 ```bash
-redskilled link --relay wss://relay.example --name "My workstation"
+npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled link \
+  --relay wss://relay.example --name "My workstation"
 ```
 
 The relay and Host name are stored in owner-only TOON state. Later invitations
-need only `redskilled link`. A systemd user unit keeps the companion connected
+need only the same command without flags. A systemd user unit keeps the companion connected
 after the terminal closes. The Android app scans the emitted
 `redskilled://pair/<invitation>` QR; pasting the printed manual code remains
 supported.
