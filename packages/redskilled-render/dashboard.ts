@@ -52,6 +52,7 @@ import {
   DEATH_MARK,
   ENGINE_BEHIND_MARK,
   LAPSED_MARK,
+  missingMeasurementMark,
   UNREGISTERED_MARK,
 } from "./marks.js";
 import {
@@ -518,7 +519,7 @@ function buildHeader(
   }
   if (payload.staleness.stale) {
     const age = payload.staleness.age_ms;
-    parts.push(age == null ? "!unmeasured" : `!stale ${Math.round(age / 1000)}s`);
+    parts.push(age == null ? missingMeasurementMark(payload.withheld) : `!stale ${Math.round(age / 1000)}s`);
   }
 
   // The rates are optional in the literal sense: a header clamped mid-figure

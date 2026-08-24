@@ -707,3 +707,45 @@ describe("the worker, phase and progress clocks", () => {
     expect(table.rows[1]!.cells.eta).toBe("");
   });
 });
+
+describe("withheld is not unmeasured", () => {
+  it("a withheld vitals block renders as withheld, never as a failed measurement", () => {
+    const rendered = renderRedskilledStatusline(
+      payload({
+        staleness: {
+          sampled_at: null,
+          age_ms: null,
+          threshold_ms: 30_000,
+          stale: true,
+          measured_worker_count: 0,
+          unmeasured_workers: [],
+          reason: "vitals were withheld from this read",
+        },
+        withheld: ["vitals"],
+      }),
+      { ...LOCAL, maxWidth: 400 },
+    );
+
+    expect(rendered.line).toContain("·withheld");
+    expect(rendered.line).not.toContain("!unmeasured");
+  });
+
+  it("an actually unmeasured payload keeps the unmeasured mark", () => {
+    const rendered = renderRedskilledStatusline(
+      payload({
+        staleness: {
+          sampled_at: null,
+          age_ms: null,
+          threshold_ms: 30_000,
+          stale: true,
+          measured_worker_count: 0,
+          unmeasured_workers: [],
+          reason: "no measurement yet",
+        },
+      }),
+      { ...LOCAL, maxWidth: 400 },
+    );
+
+    expect(rendered.line).toContain("!unmeasured");
+  });
+});
