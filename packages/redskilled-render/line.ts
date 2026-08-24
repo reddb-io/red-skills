@@ -46,6 +46,7 @@ import {
   DEATH_MARK,
   ENGINE_BEHIND_MARK,
   LOG_LINE_MARK,
+  missingMeasurementMark,
   REDSKILLED_RENDER_ABSENCE,
   UNREGISTERED_MARK,
 } from "./marks.js";
@@ -556,7 +557,7 @@ function memoryFigure(payload: RedskilledRenderPayload, options: RedskilledStatu
 /** How old the answer is, in the shortest sentence that stays honest. */
 function stalenessMark(payload: RedskilledRenderPayload): string {
   const age = payload.staleness.age_ms;
-  return age == null ? "!unmeasured" : `!stale ${Math.round(age / 1000)}s`;
+  return age == null ? missingMeasurementMark(payload.withheld) : `!stale ${Math.round(age / 1000)}s`;
 }
 
 /**

@@ -50,3 +50,18 @@ export const LOG_LINE_MARK = "↳";
 
 /** The one sentence an unreachable host renders as, at every density. */
 export const REDSKILLED_RENDER_ABSENCE = "redskilled unreachable — Worker state unknown";
+
+/** A block the reader deliberately did not ask for; never a failed measurement. */
+export const WITHHELD_MARK = "·withheld";
+
+/**
+ * The right mark for a missing measurement: withheld and unmeasured are
+ * opposite facts wearing the same `null` (the payload's own words), and a
+ * surface that rendered both as `!unmeasured` blamed the daemon for an absence
+ * the reader itself requested.
+ */
+export function missingMeasurementMark(
+  withheld: readonly ("logs" | "vitals" | "display")[] | undefined,
+): string {
+  return withheld?.includes("vitals") ? WITHHELD_MARK : "!unmeasured";
+}
