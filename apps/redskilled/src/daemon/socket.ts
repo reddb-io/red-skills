@@ -89,7 +89,13 @@ export function handleSocket(
     (request, respond) => handler(request, respond as (response: RedskilledResponse) => void),
     (err, request, respond) => {
       respond({
-        id: request?.id ?? randomUUID(),
+        // A FRESH id is the rule-3 downgrade proof: "this frame was never
+        // parsed, so there is no id to echo". A failure on a request the
+        // daemon DID parse must echo that request's id — or answer `id: null`
+        // when it carried none — because a fresh id here made every ordinary
+        // handler error read as "this peer cannot speak TOON" and silently
+        // downgraded healthy TOON clients to JSON for the process lifetime.
+        id: request == null ? randomUUID() : typeof request.id === "string" ? request.id : null,
         ok: false,
         error: err instanceof Error ? err.message : String(err),
       } satisfies RedskilledResponse);
