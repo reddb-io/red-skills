@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled-mobile",
-  "version": "4.1.36",
+  "version": "4.2.0",
   "main": "index.ts",
   "dependencies": {
     "@reddb-io/red-skills-link-protocol": "workspace:*",
