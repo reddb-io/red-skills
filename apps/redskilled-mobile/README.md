@@ -42,7 +42,7 @@ The mobile Product Surface declares the Application Theme, dark Color Scheme,
 and compact Density stop. It vendors a pinned slice of `reddb-io/design-system`
 under `vendor/design-system`; it never imports or links the sibling repository.
 Generated tokens, the Application Theme, dark Color Scheme, platform identity,
-and native font assets are adapted into React Native components under
+native splash, surface-correct RedDB lockups, and native font assets are adapted into React Native components under
 `src/design-system`. The source pin and refresh procedure are recorded in the
 vendored README.
 

@@ -142,7 +142,7 @@ export default function App() {
     return (
       <SafeAreaView accessibilityLabel={copy.app.loading} style={styles.loadingScreen}>
         <StatusBar style="light" />
-        <BrandMark size={56} />
+        <BrandMark size={40} />
         <ActivityIndicator color={colors.primary} />
       </SafeAreaView>
     );
@@ -162,7 +162,7 @@ export default function App() {
         >
           <View style={styles.header}>
             <View style={styles.brandLockup}>
-              <BrandMark />
+              <BrandMark size={24} />
               <View style={styles.brandCopy}>
                 <Text style={styles.brandEyebrow}>{copy.app.eyebrow}</Text>
                 <Text style={styles.title}>{copy.app.title}</Text>

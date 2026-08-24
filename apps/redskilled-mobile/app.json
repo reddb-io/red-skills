@@ -7,15 +7,26 @@
     "orientation": "portrait",
     "icon": "./vendor/design-system/platform/icon-512.png",
     "userInterfaceStyle": "dark",
-    "plugins": ["./plugins/with-release-signing"],
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#07080a",
+          "image": "./vendor/design-system/marks/reddb-stacked-inverse-h256.png",
+          "imageWidth": 160,
+          "resizeMode": "contain"
+        }
+      ],
+      "./plugins/with-release-signing"
+    ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "io.reddb.redskilled",
       "adaptiveIcon": {
-        "backgroundColor": "#07080a",
-        "foregroundImage": "./vendor/design-system/platform/maskable-512.png"
+        "backgroundImage": "./vendor/design-system/platform/adaptive-background-432.png",
+        "foregroundImage": "./vendor/design-system/platform/adaptive-foreground-432.png"
       },
       "predictiveBackGestureEnabled": true
     },
