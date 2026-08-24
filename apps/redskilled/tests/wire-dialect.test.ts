@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeWireFrame, takeWireFrame } from "@reddb-io/shared/resident-wire.js";
+import { decodeWireFrame, isUnintelligibleResponse, takeWireFrame } from "@reddb-io/shared/resident-wire.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { isRedskilledPong, sendRedskilledRequest } from "../src/protocol.js";
@@ -101,5 +101,56 @@ describe("redskilled socket dialect", () => {
     expect(raw.startsWith("{")).toBe(true);
     expect(parsed).toMatchObject({ id: "json-1", ok: true });
     expect(isRedskilledPong((parsed as { value: unknown }).value)).toBe(true);
+  });
+});
+
+describe("a handler failure never masquerades as the downgrade proof", () => {
+  async function rawExchange(socketPath: string, payload: string): Promise<Record<string, unknown>> {
+    return await new Promise((resolve, reject) => {
+      const socket = createConnection(socketPath);
+      let buffer = "";
+      socket.on("connect", () => socket.write(payload));
+      socket.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
+        const framed = takeWireFrame(buffer);
+        if (framed == null) return;
+        try {
+          resolve(decodeWireFrame(framed.frame) as Record<string, unknown>);
+        } catch (err) {
+          reject(err as Error);
+        }
+        socket.end();
+      });
+      socket.on("error", reject);
+    });
+  }
+
+  it("a failure on a request the daemon did parse echoes that request's id", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+
+    const id = randomUUID();
+    const parsed = await rawExchange(paths.socketPath, `${JSON.stringify({ id, op: "no-such-op" })}\n`);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.id).toBe(id);
+    // The rule-3 reader agrees: this is an ordinary refusal, not a dialect
+    // downgrade proof — a TOON client keeps speaking TOON after it.
+    expect(isUnintelligibleResponse({ id, op: "no-such-op" }, parsed)).toBe(false);
+  });
+
+  it("a frame the daemon cannot parse still answers with a fresh id — the real proof", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+
+    const id = randomUUID();
+    const parsed = await rawExchange(paths.socketPath, "{{{{\n");
+
+    expect(parsed.ok).toBe(false);
+    expect(typeof parsed.id).toBe("string");
+    expect(parsed.id).not.toBe(id);
+    expect(isUnintelligibleResponse({ id }, parsed)).toBe(true);
   });
 });

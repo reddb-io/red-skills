@@ -233,7 +233,11 @@ export type RedskilledRequest =
 
 export type RedskilledResponse =
   | { id: string; ok: true; value: unknown }
-  | { id: string; ok: false; error: string };
+  // `id: null` is the one failure shape a PARSED request without a usable id
+  // may wear: a fresh string id is reserved as the rule-3 proof that the frame
+  // was never parsed at all (`isUnintelligibleResponse`), and an ordinary
+  // handler failure must never be able to counterfeit it.
+  | { id: string | null; ok: false; error: string };
 
 export interface RedskilledResourceLeaseReleased {
   readonly version: 1;
