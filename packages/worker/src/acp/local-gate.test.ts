@@ -19,6 +19,7 @@ import {
 const roots: string[] = [];
 const fixtureApp = "apps/plugin-dev";
 const fixtureSource = `${fixtureApp}/src/index.ts`;
+const fixtureAdded = `${fixtureApp}/added.ts`;
 
 afterEach(async () => {
   for (const root of roots.splice(0))
@@ -177,13 +178,13 @@ describe("running the declared stages", () => {
   it("reads the real diff when the caller names no seam", async () => {
     const root = await workspace();
     await writeFile(
-      join(root, fixtureApp, "added.ts"),
+      join(root, fixtureAdded),
       "export const added = 1;\n",
     );
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: root, stdio: "pipe" });
     git("checkout", "-b", "afk/4020");
-    git("add", "--", "apps/plugin-dev/added.ts");
+    git("add", "--", fixtureAdded);
     git("commit", "-m", "Refs #4020");
 
     const commands: string[][] = [];
