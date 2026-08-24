@@ -2180,13 +2180,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await resourceLeaseStore.flush().catch(() => undefined);
     await acpControlPlane?.close().catch(() => undefined);
     // Ownership records go first while the socket still proves this daemon is
-    // reachable. If either release stalls or fails, the old daemon stays bound
-    // and no successor mistakes a live, socketless pid for the singleton.
+    // reachable. The close callback is registered before active clients are
+    // destroyed, so a synchronous final `close` cannot strand the successor.
     await leaseStore.release(owner);
     await machineClaimStore.release(machineOwner);
-    server.close();
+    const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
     for (const socket of activeSockets) socket.destroy();
-    await new Promise<void>((resolve) => server.once("close", () => resolve()));
+    await serverClosed;
     await rm(paths.socketPath, { force: true });
     resolveClosed();
     return await closed;
