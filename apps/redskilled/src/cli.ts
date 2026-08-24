@@ -57,6 +57,9 @@ import {
   reclaimRedskilledRuntimeDirs,
   type RedskilledReclaimOptions,
 } from "./reclaim.js";
+import { sweepOrphanedLocalProjects } from "./project-workspace-gc.js";
+import { createProjectControlStore, projectControlStorePath } from "./project-control.js";
+import { projectDirectoryName } from "./project-workspace.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import { installStatuslineNativeFront } from "./statusline-native.js";
 import { RESOURCE_INCIDENTS_USAGE, runResourceIncidents } from "./resource-incidents-command.js";
@@ -228,12 +231,14 @@ evacuation. A socket nobody answers on is a success with a stated reason.
   --detail <why>  the operator's own words, recorded on the event lane so a
                   successor can tell a planned handover from a crash
 `,
-  reclaim: `Usage: redskilled reclaim [--dry-run] [--grace-ms <n>]
+  reclaim: `Usage: redskilled reclaim [--dry-run] [--grace-ms <n>] [--projects]
 
 Reports every session runtime dir it looked at and why it kept or removed it.
 
   --dry-run        the same report with nothing removed
   --grace-ms <n>   how long a dir must be idle before it is reclaimed
+  --projects       sweep local-* project workspaces whose seeding checkout is
+                   gone, instead of the session runtime dirs
 `,
   reap: `Usage: redskilled reap [--report]
 
@@ -846,6 +851,7 @@ export async function runUnit(
 const RECLAIM_FLAGS = {
   "dry-run": { kind: "boolean" },
   "grace-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
+  projects: { kind: "boolean" },
 } as const;
 
 const REAP_FLAGS = {
@@ -893,6 +899,32 @@ export async function runReclaim(
 ): Promise<number> {
   const write = io.write ?? ((text: string) => process.stdout.write(text));
   const { values } = parseFlags(args, RECLAIM_FLAGS);
+  if (values.projects === true) {
+    const paths = resolveRedskilledPaths();
+    // A project holding live drain intent is kept whatever its origin says:
+    // the control record is the operator's word that this project matters.
+    const controls = await createProjectControlStore(
+      projectControlStorePath(paths.registrationIntentPath),
+    ).read().catch(() => new Map<string, never>());
+    const live = new Set(
+      [...controls.entries()]
+        .filter(([, state]) => (state as { drainIntent?: string }).drainIntent === "draining")
+        .map(([projectId]) => projectDirectoryName(projectId)),
+    );
+    const swept = await sweepOrphanedLocalProjects(paths.projectWorkspaceRoot, {
+      dryRun: values["dry-run"] === true,
+      liveProjectDirNames: live,
+      ...(Number.isFinite(values["grace-ms"]) ? { graceMs: values["grace-ms"] as number } : {}),
+    });
+    write(`${encodeToon({
+      root: swept.root,
+      scanned: swept.scanned,
+      reclaimed: swept.reclaimed,
+      dry_run: swept.dryRun,
+      entries: swept.entries.map((entry) => ({ dir: entry.dir, verdict: entry.verdict, reason: entry.reason })),
+    })}\n`);
+    return swept.entries.some((entry) => entry.verdict === "failed") ? 1 : 0;
+  }
   const report = await reclaimRedskilledRuntimeDirs({
     ...(io.options ?? {}),
     dryRun: values["dry-run"] === true,
