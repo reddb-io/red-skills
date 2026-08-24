@@ -4,6 +4,7 @@ import type { RedskilledPaths } from "../paths.js";
 import {
   completeRedskilledReplacement,
   prepareRedskilledReplacement,
+  RedskilledReplacementEntryError,
   stageRedskilledReplacementSuccessor,
   type RedskilledReplacementDecision,
   type RedskilledReplacementIO,
@@ -26,7 +27,28 @@ export interface ReplaceWithViableSuccessorInput {
 export async function replaceWithViableSuccessor(
   input: ReplaceWithViableSuccessorInput,
 ): Promise<boolean> {
-  const prepared = prepareRedskilledReplacement(input.decision, input.io, input.paths);
+  let prepared;
+  try {
+    // Preparation carries the supervised path's viability proof (the successor
+    // must answer `--version` with the target version before the unit is
+    // repointed) — so a failed proof is a refused upgrade, recorded and
+    // retried on the next takeover window, never a stopped incumbent.
+    prepared = await prepareRedskilledReplacement(input.decision, input.io, input.paths);
+  } catch (error) {
+    // An unreachable ENTRY keeps its established contract and propagates; the
+    // held-and-retried outcome is for a resolved entry that failed its proof.
+    if (error instanceof RedskilledReplacementEntryError) throw error;
+    await input.eventLane.recordDaemonTakeoverFailed({
+      ts: input.clock(),
+      pid: input.incumbentPid,
+      socketPath: input.paths.socketPath,
+      detail:
+        `redskilled ${input.decision.to} failed its pre-repoint viability proof: ` +
+        `${error instanceof Error ? error.message : String(error)}; ` +
+        `incumbent ${input.incumbentVersion} remains live`,
+    });
+    return false;
+  }
   const options = { io: input.io };
   let successor;
   try {

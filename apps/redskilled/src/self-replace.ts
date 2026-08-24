@@ -38,6 +38,7 @@
  * PURE apart from the injected spawn, exit and existence lookups.
  */
 import { spawn } from "node:child_process";
+import { proveRedskilledSuccessorEntry } from "./successor-proof.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Socket } from "node:net";
@@ -418,6 +419,11 @@ export interface RedskilledReplacementIO {
   ) => void;
   /** Ends this process so its supervisor revives it; `process.exit` by default. */
   readonly exit?: (code: number) => void;
+  /** Proves a supervised successor runs the target version; a real spawn by default. */
+  readonly proveSuccessor?: (
+    entry: ResolvedRedskilledReplacementEntry,
+    expectedVersion: string,
+  ) => Promise<void>;
   readonly env?: NodeJS.ProcessEnv;
 }
 
@@ -449,11 +455,11 @@ export interface RedskilledSuccessorControl {
  * only then discovered it had nothing to hand over to would have turned a version
  * skew into an outage.
  */
-export function prepareRedskilledReplacement(
+export async function prepareRedskilledReplacement(
   decision: Extract<RedskilledReplacementDecision, { act: "replace" }>,
   io: RedskilledReplacementIO = {},
   target?: RedskilledServeTarget,
-): PreparedRedskilledReplacement {
+): Promise<PreparedRedskilledReplacement> {
   const resolve = io.resolveEntry ??
     ((version: string) => requireRedskilledReplacementEntry(version, io.env == null ? {} : { env: io.env }));
   const entry = resolve(decision.to);
@@ -461,10 +467,19 @@ export function prepareRedskilledReplacement(
     const repoint = io.repointSupervisor ?? ((resolved: ResolvedRedskilledReplacementEntry, serve: RedskilledServeTarget) =>
       repointRedskilledUnitForReplacement(resolved, serve, io.env == null ? {} : { env: io.env }));
     if (target == null) throw new Error("a supervised redskilled replacement needs its serve target before exit");
+    // Proved BEFORE the repoint: the supervised path has no boot handshake —
+    // the incumbent exits and systemd is the only backstop, so an entry that
+    // cannot even answer `--version` with the target version would cost five
+    // failed restarts and a dead unit (#3554's shape) instead of one refused
+    // upgrade the next takeover window retries.
+    await (io.proveSuccessor ?? proveRedskilledSuccessorEntry)(entry, decision.to);
     repoint(entry, target);
   }
   return { via: decision.via, to: decision.to, entry };
 }
+
+export { DEFAULT_REDSKILLED_SUCCESSOR_PROOF_MS } from "./successor-proof.js";
+export { proveRedskilledSuccessorEntry };
 
 /**
  * Start the successor while the incumbent still owns the live session.
