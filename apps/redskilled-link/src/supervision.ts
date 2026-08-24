@@ -1,13 +1,30 @@
 import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 
 export const REDSKILLED_LINK_UNIT_NAME = "redskilled-link.service";
 
 export interface RedskilledLinkEntry {
   readonly command: string;
   readonly args: readonly string[];
+}
+
+export interface CurrentRedskilledLinkEntryOptions {
+  readonly scriptPath?: string;
+  readonly execPath?: string;
+  readonly execArgv?: readonly string[];
+  readonly homeDir?: string;
 }
 
 export interface RedskilledLinkUnitPlan {
@@ -38,13 +55,50 @@ export function redskilledLinkUnitPath(env: NodeJS.ProcessEnv = process.env): st
   return join(configHome, "systemd", "user", REDSKILLED_LINK_UNIT_NAME);
 }
 
-export function currentRedskilledLinkEntry(): RedskilledLinkEntry {
-  const script = process.argv[1];
+export function currentRedskilledLinkEntry(
+  options: CurrentRedskilledLinkEntryOptions = {},
+): RedskilledLinkEntry {
+  const script = options.scriptPath ?? process.argv[1];
   if (!script) throw new Error("redskilled-link cannot supervise an entry with no script path");
+  const resolvedScript = resolve(script);
   return {
-    command: process.execPath,
-    args: [...process.execArgv, resolve(script)],
+    command: options.execPath ?? process.execPath,
+    args: [
+      ...(options.execArgv ?? process.execArgv),
+      resolvedScript.endsWith(".bundle.min.mjs")
+        ? stabilizePublishedBundle(resolvedScript, options.homeDir ?? homedir())
+        : resolvedScript,
+    ],
   };
+}
+
+function stabilizePublishedBundle(source: string, homeDir: string): string {
+  const bytes = readFileSync(source);
+  const digest = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+  const binDir = join(redskilledHomeDir(homeDir), "bin");
+  const stable = join(binDir, `redskilled-link-${digest}.bundle.min.mjs`);
+  mkdirSync(binDir, { recursive: true, mode: 0o700 });
+
+  const existing = readFileIfPresent(stable);
+  if (existing && createHash("sha256").update(existing).digest("hex").startsWith(digest)) return stable;
+
+  const temporary = `${stable}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 });
+    renameSync(temporary, stable);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  return stable;
+}
+
+function readFileIfPresent(path: string): Buffer | undefined {
+  try {
+    return readFileSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 export function planRedskilledLinkUnit(options: {

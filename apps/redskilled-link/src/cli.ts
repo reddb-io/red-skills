@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { createRedskillsOperatorAcpClient } from "@reddb-io/redskilled/acp-operator-client";
 import { encodeInvitation, encodeInvitationUri } from "@reddb-io/red-skills-link-protocol/crypto";
@@ -69,7 +70,8 @@ function value(args: readonly string[], name: string): string | undefined {
   return at < 0 ? undefined : args[at + 1];
 }
 
-const invokedDirectly = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invokedDirectly = process.argv[1] != null &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 if (invokedDirectly) {
   runRedskilledLinkCli(process.argv.slice(2)).then(
     (code) => { process.exitCode = code; },
