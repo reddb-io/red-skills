@@ -61,6 +61,16 @@ async function workspace(): Promise<string> {
   git("config", "user.name", "Worker");
   git("add", "--all");
   git("commit", "-m", "Refs #4020");
+  expect(
+    git("ls-files").toString("utf8").split("\n").filter(Boolean),
+  ).toEqual(
+    expect.arrayContaining([
+      "pnpm-workspace.yaml",
+      `${fixtureApp}/package.json`,
+      fixtureSource,
+      "packages/lib/package.json",
+    ]),
+  );
   return root;
 }
 
