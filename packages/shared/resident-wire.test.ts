@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sendLineRequest, serveWireSocket } from "./resident-core.js";
 import {
   decodeWireFrame,
+  decodeWireFrameStrict,
   encodeWireFrame,
   isUnintelligibleResponse,
   resetResidentWireDialects,
@@ -257,5 +258,25 @@ describe("resident wire across a rollout", () => {
     );
 
     expect(response).toEqual({ id: "r6", ok: true, value: "handled:ping" });
+  });
+});
+
+describe("the batch-and-array rule (ADR 0170)", () => {
+  it("sniffWireDialect reads a [-leading frame as json", () => {
+    expect(sniffWireDialect('[{"jsonrpc":"2.0","id":1}]')).toBe("json");
+    expect(sniffWireDialect('  [1,2]')).toBe("json");
+  });
+
+  it("encodeWireFrame writes an array as one JSON line in either dialect", () => {
+    expect(encodeWireFrame([{ id: 1 }], "toon")).toBe('[{"id":1}]\n');
+    expect(encodeWireFrame([{ id: 1 }], "json")).toBe('[{"id":1}]\n');
+  });
+
+  it("decodeWireFrameStrict refuses the other dialect instead of guessing", () => {
+    expect(decodeWireFrameStrict('{"id":"a"}', "json")).toEqual({ id: "a" });
+    expect(decodeWireFrameStrict("id: a", "toon")).toEqual({ id: "a" });
+    // A truncated JSON line handed to the lenient decoder could come back as a
+    // plausible TOON mis-decode; the strict decoder throws instead.
+    expect(() => decodeWireFrameStrict('{"id": "a', "json")).toThrow();
   });
 });
