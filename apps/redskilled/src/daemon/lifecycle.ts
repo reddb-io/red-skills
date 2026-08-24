@@ -2397,7 +2397,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     acpControlPlane = await startRedskillsAcpControlPlane({
       paths,
       startWorker,
-      hostState,
+      hostState, statuslinePayload: () => statuslinePayload(),
       hostAdministration: true,
       mobileWorkerStop: createMobileWorkerStop(runWorkerCommand),
       ...(options.githubGateway == null ? {} : { githubGateway: options.githubGateway }),

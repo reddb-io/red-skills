@@ -9,6 +9,8 @@ import {
 function hostState() {
   return {
     daemon_version: "4.2.0",
+    started_at: "2026-08-23T08:00:00.000Z",
+    ceiling: { worker_count: 4 },
     workers: [{
       worker_id: "W1",
       project_label: "reddb-io/red-skills",
@@ -18,6 +20,29 @@ function hostState() {
       isolated: true,
       warnings: [],
     }],
+  } as never;
+}
+
+function statusline() {
+  return {
+    generated_at: "2026-08-23T12:10:00.000Z",
+    staleness: {
+      stale: false,
+      age_ms: 5_000,
+      threshold_ms: 30_000,
+      reason: "measured 5s ago",
+    },
+    workers: [{
+      worker_id: "W1",
+      log: {
+        last_line: "coding: touched /secret/worktree/src/index.ts",
+        published_at: "2026-08-23T12:09:30.000Z",
+      },
+      display: { phase: "coding", issue: "4321" },
+    }],
+    repository_activity: {
+      projects: [{ project_label: "reddb-io/red-skills", repository: "reddb-io/red-skills" }],
+    },
   } as never;
 }
 
@@ -37,7 +62,7 @@ describe("the Mobile operator ACP domain", () => {
     ]);
     expect(domain.capability).toEqual({
       mobileOperator: {
-        version: 1,
+        version: 2,
         methods: [
           REDSKILLS_ACP_METHODS.operatorState,
           REDSKILLS_ACP_METHODS.ticketDispatch,
@@ -64,15 +89,54 @@ describe("the Mobile operator ACP domain", () => {
     }
   });
 
-  it("projects no host path, pid, credential or policy into the app state", () => {
-    expect(projectOperatorState(hostState())).toEqual({
-      version: 1,
+  it("projects no host path, pid, credential, vitals or log line into the app state", () => {
+    const answer = projectOperatorState(hostState(), { statusline: statusline() });
+
+    expect(JSON.stringify(answer)).not.toContain("/secret/worktree");
+    expect(JSON.stringify(answer)).not.toContain("pid");
+    expect(answer).toEqual({
+      version: 2,
       daemon_version: "4.2.0",
       workers: [{
         worker_id: "W1",
         project_label: "reddb-io/red-skills",
         started_at: "2026-08-23T12:00:00.000Z",
+        phase: "coding",
+        heartbeat_age_ms: 30_000,
+        repository: "reddb-io/red-skills",
+        ticket: "4321",
       }],
+      host: {
+        daemon_version: "4.2.0",
+        started_at: "2026-08-23T08:00:00.000Z",
+        worker_ceiling: 4,
+        staleness: { stale: false, age_ms: 5_000, threshold_ms: 30_000, reason: "measured 5s ago" },
+        generated_at: "2026-08-23T12:10:00.000Z",
+      },
     });
+  });
+
+  it("a Worker the statusline read does not cover renders null extras, never a guess", () => {
+    const answer = projectOperatorState(hostState(), {
+      statusline: { ...(statusline() as object), workers: [], repository_activity: { projects: [] } } as never,
+    });
+
+    expect(answer.workers[0]).toEqual({
+      worker_id: "W1",
+      project_label: "reddb-io/red-skills",
+      started_at: "2026-08-23T12:00:00.000Z",
+      phase: null,
+      heartbeat_age_ms: null,
+      repository: null,
+      ticket: null,
+    });
+  });
+
+  it("without a statusline read beside it the host block says so instead of inventing a verdict", () => {
+    const answer = projectOperatorState(hostState(), { now: "2026-08-23T12:11:00.000Z" });
+
+    expect(answer.host.staleness).toBeNull();
+    expect(answer.host.generated_at).toBe("2026-08-23T12:11:00.000Z");
+    expect(answer.workers[0]?.phase).toBeNull();
   });
 });
