@@ -40,6 +40,7 @@ import {
 import { RedskilledGithubCredentialProfileError } from "./github-credential-profiles.js";
 import {
   RedskilledGithubAuthorityError,
+  credentialForAcpProject,
   type RedskilledGithubCredentialSelection,
   type RedskilledGithubGatewayRegistration,
   type RedskilledGithubManagedProjectReader,
@@ -243,11 +244,7 @@ async function projectReader(
 ): Promise<RedskilledGithubProjectReader> {
   let selection: RedskilledGithubCredentialSelection | null | undefined;
   try {
-    selection = await gateway?.credentialForProject({
-      projectId: project.projectId,
-      projectLabel: project.projectLabel,
-      workspacePath: project.workspacePath,
-    });
+    selection = await credentialForAcpProject(gateway, project);
   } catch (error) {
     if (error instanceof RedskilledGithubCredentialProfileError) {
       throw RequestError.authRequired(error.refusal, error.message);

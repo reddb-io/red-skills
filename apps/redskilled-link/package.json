@@ -1,0 +1,33 @@
+{
+  "name": "@reddb-io/redskilled-link",
+  "version": "4.1.36",
+  "private": true,
+  "type": "module",
+  "description": "Capability-scoped encrypted Mobile Host/Relay companion for redskilled.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./host": "./src/host.ts",
+    "./relay": "./src/relay.ts"
+  },
+  "scripts": {
+    "build": "pnpm run typecheck && pnpm run bundle",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled-link.bundle.min.mjs --asset redskilled-link.bundle.min.mjs --minify",
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@reddb-io/redskilled": "workspace:*",
+    "@reddb-io/red-skills-link-protocol": "workspace:*",
+    "@reddb-io/shared": "workspace:*",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/ws": "8.18.1",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

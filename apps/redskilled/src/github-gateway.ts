@@ -208,18 +208,11 @@ export interface RedskilledGithubUpdate {
   readonly value: unknown;
 }
 
-export interface RedskilledGithubCredentialSelection {
-  readonly profile: string;
-  readonly credential: RedskilledGithubCredential;
-}
-
-/** Host registration passed into the control plane; profile policy stays here. */
-export interface RedskilledGithubGatewayRegistration {
-  readonly gateway: RedskilledGithubGateway;
-  readonly credentialForProject: (
-    project: Omit<RedskilledGithubProjectAuthority, "credentialProfile">,
-  ) => RedskilledGithubCredentialSelection | null | Promise<RedskilledGithubCredentialSelection | null>;
-}
+export {
+  credentialForAcpProject,
+  type RedskilledGithubCredentialSelection,
+  type RedskilledGithubGatewayRegistration,
+} from "./github-project-credential.js";
 
 export interface CreateRedskilledGithubGatewayOptions {
   readonly upstream: RedskilledGithubUpstream;

@@ -80,6 +80,11 @@ export function resolveServeGithubGateway(
   });
   return {
     gateway,
+    credentialForProfile: async (profile) => {
+      if (profile !== "personal") return null;
+      const resolved = options.resolvePersonal();
+      return resolved == null ? null : { secret: resolved.token };
+    },
     credentialForProject: createRedskilledGithubCredentialProfileResolver({
       profiles: options.profiles ?? {},
       resolvePersonal: options.resolvePersonal,

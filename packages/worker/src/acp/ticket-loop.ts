@@ -112,6 +112,8 @@ export interface TicketLoopDeps {
   readonly sessionId: string;
   /** The runner behind the child Agent, recorded on the claim. */
   readonly runner?: string;
+  /** The daemon atomically claimed this Ticket before admitting the Worker. */
+  readonly preclaimed?: boolean;
   /** The mode this Worker holds; the lane contract refuses a mismatch. */
   readonly runMode?: string;
   /**
@@ -267,23 +269,25 @@ export async function runTicketLoop(
   }
 
   // ---- claim -------------------------------------------------------------
-  try {
-    await deps.request(REDSKILLS_ACP_METHODS.githubWrite, {
-      idempotency_key: `${deps.sessionId}:claim:${deps.ticket.number}`,
-      write: {
-        kind: "issue-publication",
-        issue: deps.ticket.number,
-        body: renderClaimComment({
-          worker: deps.workerId,
-          ...(deps.runner == null ? {} : { runner: deps.runner }),
-          createdAt: now().toISOString(),
-        }),
-      },
-    });
-  } catch (error) {
-    const detail = messageOf(error);
-    await note({ stage: "claim", ok: false, detail });
-    return { outcome: "refused", stage: "claim", detail, records };
+  if (!deps.preclaimed) {
+    try {
+      await deps.request(REDSKILLS_ACP_METHODS.githubWrite, {
+        idempotency_key: `${deps.sessionId}:claim:${deps.ticket.number}`,
+        write: {
+          kind: "issue-publication",
+          issue: deps.ticket.number,
+          body: renderClaimComment({
+            worker: deps.workerId,
+            ...(deps.runner == null ? {} : { runner: deps.runner }),
+            createdAt: now().toISOString(),
+          }),
+        },
+      });
+    } catch (error) {
+      const detail = messageOf(error);
+      await note({ stage: "claim", ok: false, detail });
+      return { outcome: "refused", stage: "claim", detail, records };
+    }
   }
   await note({ stage: "claim", ok: true });
 

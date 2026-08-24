@@ -3,9 +3,11 @@
   "version": "4.1.36",
   "main": "index.ts",
   "dependencies": {
+    "@reddb-io/red-skills-link-protocol": "workspace:*",
     "expo": "~57.0.15",
     "expo-dev-client": "~57.0.14",
     "expo-status-bar": "~57.0.1",
+    "expo-secure-store": "~57.0.1",
     "expo-system-ui": "~57.0.2",
     "react": "19.2.3",
     "react-native": "0.86.2"

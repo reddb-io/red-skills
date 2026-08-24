@@ -137,6 +137,7 @@ release:
     - { path: apps/host-opencode/package.json, format: npm }
     - { path: apps/mcp-browser/package.json, format: npm }
     - { path: apps/redskilled/package.json, format: npm }
+    - { path: apps/redskilled-link/package.json, format: npm }
     - { path: apps/redskilled-mobile/package.json, format: npm }
     - { path: apps/release/package.json, format: npm }
     - { path: apps/rsp/package.json, format: npm }
@@ -148,6 +149,7 @@ release:
     - { path: packages/cdp-driver/package.json, format: npm }
     - { path: packages/github/package.json, format: npm }
     - { path: packages/protocol-acp/package.json, format: npm }
+    - { path: packages/red-skills-link-protocol/package.json, format: npm }
     - { path: packages/redskilled-render/package.json, format: npm }
     - { path: packages/shared/package.json, format: npm }
     - { path: packages/worker/package.json, format: npm }

@@ -76,6 +76,8 @@ interface NativeWorkerAdmissionOptions {
    * is the birth instant and a collision walks it forward.
    */
   readonly hostState?: () => { readonly workers: readonly { readonly worker_id: string }[] };
+  /** A host-minted id already used to win a pre-birth claim. */
+  readonly workerId?: string;
   /** The host root Worker workspaces hang off. Defaults to the OS temporary root. */
   readonly workspaceRoot?: string;
   /**
@@ -112,7 +114,8 @@ export async function admitNativeAcpWorker(
   const endpoint = resolveAcpWorkerEndpoint(options.paths, endpointId);
   // The workspace is named after the id and has to exist before the process
   // that stands in it, so the mint happens here rather than inside the launch.
-  const workerId = mintHostWorkerId((options.hostState?.().workers ?? []).map((worker) => worker.worker_id));
+  const liveWorkerIds = (options.hostState?.().workers ?? []).map((worker) => worker.worker_id);
+  const workerId = resolveNativeWorkerId(options.workerId, liveWorkerIds);
   const workspace = await materializeWorkerWorkspace({
     root: options.workspaceRoot ?? workerWorkspaceRoot(),
     workerId,
@@ -280,6 +283,15 @@ export async function admitNativeAcpWorker(
   };
   holding.worker = admitted;
   return admitted;
+}
+
+/** Preserve a pre-claim identity without letting it collide with a live birth. */
+export function resolveNativeWorkerId(requested: string | undefined, liveWorkerIds: readonly string[]): string {
+  const workerId = requested?.trim() || mintHostWorkerId(liveWorkerIds);
+  if (liveWorkerIds.includes(workerId)) {
+    throw new Error(`redskilled already holds live Worker ${JSON.stringify(workerId)}`);
+  }
+  return workerId;
 }
 
 export function nativeWorkerSpec(

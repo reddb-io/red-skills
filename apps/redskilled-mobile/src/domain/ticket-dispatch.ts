@@ -28,3 +28,15 @@ export interface TicketDispatchReceipt {
 export interface TicketDispatchGateway {
   dispatch(request: TicketDispatchRequest): Promise<TicketDispatchReceipt>;
 }
+
+export interface MobileWorker {
+  readonly workerId: string;
+  readonly repository: string;
+  readonly ticket?: number;
+  readonly startedAt: string;
+}
+
+export interface MobileOperatorGateway extends TicketDispatchGateway {
+  state(): Promise<readonly MobileWorker[]>;
+  stop(workerId: string): Promise<boolean>;
+}

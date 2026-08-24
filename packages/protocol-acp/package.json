@@ -15,6 +15,7 @@
     "./go-dispatch.js": "./go-dispatch.ts",
     "./memory.js": "./memory.ts",
     "./methods.js": "./methods.ts",
+    "./mobile-operator.js": "./mobile-operator.ts",
     "./session-recovery.js": "./session-recovery.ts",
     "./transport.js": "./transport.ts",
     "./worktree.js": "./worktree.ts"

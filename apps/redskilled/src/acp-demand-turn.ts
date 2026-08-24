@@ -241,6 +241,8 @@ export interface DemandTurnAdmission {
   readonly notify: AgentConnection["client"]["notify"];
   readonly permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
   readonly replacement: boolean;
+  /** A daemon-minted id already bound to a pre-birth remote claim. */
+  readonly workerId?: string;
 }
 
 export interface DemandTurnRecord {
@@ -284,6 +286,10 @@ export interface DemandTurnRequest {
    * wire a client dispatch uses; the daemon states it and reads none of it.
    */
   readonly ticket?: Readonly<Record<string, unknown>>;
+  /** A daemon-minted id already bound to this turn's remote claim. */
+  readonly workerId?: string;
+  /** Resolves the dispatch receipt only after native admission completed. */
+  readonly onBorn?: (workerId: string) => void;
 }
 
 export interface DemandTurnResult {
@@ -391,6 +397,7 @@ export function createDemandTurnRunner(
       ...(deps.evidenceRoot == null ? {} : { evidenceRoot: deps.evidenceRoot }),
       ...(deps.evidenceTtlMs == null ? {} : { evidenceTtlMs: deps.evidenceTtlMs }),
       ...(deps.githubGateway == null ? {} : { githubGateway: deps.githubGateway }),
+      ...(input.workerId == null ? {} : { workerId: input.workerId }),
     },
     deps.sessionJournal,
     { request: demandAdmissionSessionRequest(input), project: input.project },
@@ -483,8 +490,10 @@ export function createDemandTurnRunner(
           notify,
           permission: async (permission) => refusePermission(permission),
           replacement,
+          ...(request.workerId == null ? {} : { workerId: request.workerId }),
         }).then((worker) => {
           born = worker;
+          request.onBorn?.(worker.workerId);
           deps.pulse?.({ workerId: worker.workerId, ...(request.workItem == null ? {} : { issue: `#${request.workItem}` }) });
           return worker;
         }),

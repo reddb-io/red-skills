@@ -1,6 +1,7 @@
 import { RequestError } from "@agentclientprotocol/sdk";
 import { REDSKILLS_ACP_METHODS, emptyRedskillsParams } from "@reddb-io/protocol-acp";
 import {
+  credentialForAcpProject,
   type RedskilledGithubBudgetGateway,
   type RedskilledGithubGateway,
   type RedskilledGithubGatewayRegistration,
@@ -27,11 +28,7 @@ export function bindAcpProjectGithubBudget(
   return async (_request: { readonly params: EmptyParams }): Promise<RedskilledGithubProjectBudgetProjection> => {
     const project = projectForConnection();
     try {
-      const selection = await registration?.credentialForProject({
-        projectId: project.projectId,
-        projectLabel: project.projectLabel,
-        workspacePath: project.workspacePath,
-      });
+      const selection = await credentialForAcpProject(registration, project);
       const budgets = budgetGateway(registration?.gateway);
       if (selection == null || budgets == null) {
         throw RequestError.authRequired(
