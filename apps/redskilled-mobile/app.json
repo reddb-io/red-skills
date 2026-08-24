@@ -5,7 +5,7 @@
     "version": "4.1.34",
     "scheme": "redskilled",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./vendor/design-system/platform/icon-512.png",
     "userInterfaceStyle": "dark",
     "plugins": ["./plugins/with-release-signing"],
     "ios": {
@@ -14,15 +14,13 @@
     "android": {
       "package": "io.reddb.redskilled",
       "adaptiveIcon": {
-        "backgroundColor": "#090B0F",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#07080a",
+        "foregroundImage": "./vendor/design-system/platform/maskable-512.png"
       },
       "predictiveBackGestureEnabled": true
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./vendor/design-system/platform/icon-192.png"
     }
   }
 }

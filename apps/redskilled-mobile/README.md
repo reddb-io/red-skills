@@ -35,3 +35,17 @@ for every future update of `io.reddb.redskilled`.
 The `Redskilled Mobile APK` workflow can be run manually for a smoke build. On
 every `v*` tag it builds a signed release APK, verifies its certificate, emits
 a SHA-256 sidecar, and attaches both files to the matching GitHub Release.
+
+## Design System
+
+The mobile Product Surface declares the Application Theme, dark Color Scheme,
+and compact Density stop. It vendors a pinned slice of `reddb-io/design-system`
+under `vendor/design-system`; it never imports or links the sibling repository.
+Generated tokens, the Application Theme, dark Color Scheme, platform identity,
+and native font assets are adapted into React Native components under
+`src/design-system`. The source pin and refresh procedure are recorded in the
+vendored README.
+
+All operator-facing copy is English. The adoption test guards the language,
+the absence of sibling-repository dependencies and hard-coded component
+colors, the platform identity bytes, and the native token mapping.
