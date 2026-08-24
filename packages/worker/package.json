@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/worker",
-  "version": "4.2.3",
+  "version": "4.2.4",
   "description": "The Worker body: agent and sandbox providers, worktree materialisation, gate runner and turn loop, running inside one admitted Worker process. Vendored from sandcastle (ADR 0101) and consumed as TypeScript source.",
   "type": "module",
   "main": "./src/index.ts",
