@@ -25,14 +25,35 @@ export type RedskilledLinkOperation =
   | { readonly operation: "worker_stop"; readonly params: { readonly worker_id: string } };
 
 export type RedskilledLinkOperationAnswer =
+  // The state answer mirrors `MobileOperatorStateAnswer` v2 (protocol-acp);
+  // spelled out here because this package is the one surface the phone builds
+  // against and it deliberately imports no daemon wiring. v2 is ADDITIVE over
+  // v1: the identity fields keep their meaning, `host` and the per-Worker
+  // extras ride beside them.
   | {
-      readonly version: 1;
+      readonly version: 2;
       readonly daemon_version: string;
       readonly workers: readonly {
         readonly worker_id: string;
         readonly project_label: string;
         readonly started_at: string;
+        readonly phase?: string | null;
+        readonly heartbeat_age_ms?: number | null;
+        readonly repository?: string | null;
+        readonly ticket?: string | null;
       }[];
+      readonly host: {
+        readonly daemon_version: string;
+        readonly started_at: string;
+        readonly worker_ceiling: number | null;
+        readonly staleness: {
+          readonly stale: boolean;
+          readonly age_ms: number | null;
+          readonly threshold_ms: number;
+          readonly reason: string;
+        } | null;
+        readonly generated_at: string;
+      };
     }
   | {
       readonly version: 1;

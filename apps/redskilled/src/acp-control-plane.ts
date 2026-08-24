@@ -334,6 +334,8 @@ async function servePublicConnection(
     scopedState,
     scopedProject,
     hostState: options.hostState,
+    ...(options.statuslinePayload == null ? {} : { statuslinePayload: options.statuslinePayload }),
+    ...(options.clock == null ? {} : { clock: options.clock }),
     mutateProjectControl,
     readProjectStatus: () => readProjectStatus(scopedProject()),
     onGithubReader: (reader) => {

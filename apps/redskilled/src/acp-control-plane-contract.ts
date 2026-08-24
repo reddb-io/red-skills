@@ -16,6 +16,7 @@ import type { RedskilledPaths } from "./paths.js";
 import type { AcpProjectWorkspace } from "./project-workspace.js";
 import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import type { StandingOrdersStore } from "./standing-orders.js";
+import type { RedskilledStatuslinePayload } from "./statusline-payload.js";
 import type { LaunchedWorker, RedskilledWorkerSpec } from "./worker-launch.js";
 
 export interface PublicSession {
@@ -52,6 +53,8 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly mobileWorkerStop?: (
     params: MobileWorkerStopParams,
   ) => Promise<MobileWorkerStopAnswer>;
+  /** The statusline document the Mobile v2 answer dates itself by; optional. */
+  readonly statuslinePayload?: () => RedskilledStatuslinePayload | null;
   readonly evidenceRoot?: string;
   readonly evidenceTtlMs?: number;
   readonly clock?: () => string;

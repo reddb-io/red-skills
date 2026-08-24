@@ -37,7 +37,18 @@ describe("app <> relay <> Host <> redskilled", () => {
     });
     const invitation = await state.createInvitation();
     const operator = {
-      state: vi.fn(async () => ({ version: 1 as const, daemon_version: "4.2.0", workers: [] })),
+      state: vi.fn(async () => ({
+        version: 2 as const,
+        daemon_version: "4.2.0",
+        workers: [],
+        host: {
+          daemon_version: "4.2.0",
+          started_at: "2026-08-23T08:00:00.000Z",
+          worker_ceiling: 4,
+          staleness: null,
+          generated_at: "2026-08-23T12:10:00.000Z",
+        },
+      })),
       dispatch: vi.fn(async () => ({
         version: 1 as const,
         repository: "reddb-io/red-skills",
@@ -110,7 +121,18 @@ describe("app <> relay <> Host <> redskilled", () => {
     const host = runRedskilledLinkHost({
       state,
       operator: {
-        state: async () => ({ version: 1, daemon_version: "test", workers: [] }),
+        state: async () => ({
+          version: 2,
+          daemon_version: "test",
+          workers: [],
+          host: {
+            daemon_version: "test",
+            started_at: "2026-08-23T08:00:00.000Z",
+            worker_ceiling: null,
+            staleness: null,
+            generated_at: "2026-08-23T12:10:00.000Z",
+          },
+        }),
         dispatch: async () => { throw new Error("not reached"); },
         stop: async () => { throw new Error("not reached"); },
       },

@@ -34,16 +34,57 @@ export interface MobileOperatorWorker {
   readonly worker_id: string;
   readonly project_label: string;
   readonly started_at: string;
+  /** The phase the Worker's project last published; `null` when it published none. */
+  readonly phase?: string | null;
+  /** Age of the last published heartbeat at `generated_at`; `null` when unpublished. */
+  readonly heartbeat_age_ms?: number | null;
+  /** The repository the activity poll attributes to this project; `null` unpolled. */
+  readonly repository?: string | null;
+  /** The Issue the project says this Worker is on; `null` when it named none. */
+  readonly ticket?: string | null;
 }
 
+/**
+ * Whether the numbers in this answer are current, on the daemon's own clock.
+ *
+ * Mirrors the statusline document's verdict rather than re-deriving one, so the
+ * phone and the terminal can never date the same read two different ways.
+ */
+export interface MobileOperatorStaleness {
+  readonly stale: boolean;
+  readonly age_ms: number | null;
+  readonly threshold_ms: number;
+  readonly reason: string;
+}
+
+/** The host block of the v2 answer — facts about the machine, not one Worker. */
+export interface MobileOperatorHost {
+  readonly daemon_version: string;
+  readonly started_at: string;
+  /** `null` is an unlimited host, never an unknown one. */
+  readonly worker_ceiling: number | null;
+  /** `null` when the daemon composed no statusline read beside this answer. */
+  readonly staleness: MobileOperatorStaleness | null;
+  readonly generated_at: string;
+}
+
+/**
+ * Version 2 is ADDITIVE: the v1 fields keep their exact meaning and position,
+ * `host` and the per-Worker extras ride beside them. Deliberately no vitals and
+ * no log lines — remote exposure stays capability-scoped (ADR 0166), and a
+ * phone that needs the receipts opens the host, not a wider wire.
+ */
 export interface MobileOperatorStateAnswer {
-  readonly version: 1;
+  readonly version: 2;
   readonly daemon_version: string;
   readonly workers: readonly MobileOperatorWorker[];
+  readonly host: MobileOperatorHost;
 }
 
+// Version 2 = the additive state answer above; the method set is unchanged, so
+// a v1 client keeps calling the same three names and reads the same v1 fields.
 export const MOBILE_OPERATOR_SCHEMA = {
-  version: 1,
+  version: 2,
   methods: [
     REDSKILLS_ACP_METHODS.operatorState,
     REDSKILLS_ACP_METHODS.ticketDispatch,

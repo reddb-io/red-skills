@@ -47,6 +47,7 @@ import type { HostBrainStore } from "./brain-store.js";
 import type { ProjectMemoryStore } from "./memory-store.js";
 import type { RedskilledGithubGatewayRegistration } from "./github-gateway.js";
 import type { RedskilledHostState } from "./host-state.js";
+import type { RedskilledStatuslinePayload } from "./statusline-payload.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   projectControlMethodDomain,
@@ -73,6 +74,9 @@ export interface ConnectionMethodDeps {
   readonly mobileWorkerStop: (
     params: MobileWorkerStopParams,
   ) => Promise<MobileWorkerStopAnswer>;
+  /** The statusline read the Mobile v2 answer dates itself by; null when none. */
+  readonly statuslinePayload?: () => RedskilledStatuslinePayload | null;
+  readonly clock?: () => string;
   /**
    * The host's ONE brain store holder (ADR 0152).
    *
@@ -141,6 +145,8 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
     mobileOperatorMethodDomain({
       hostAdministration: deps.hostAdministration,
       hostState: deps.hostState,
+      ...(deps.statuslinePayload == null ? {} : { statuslinePayload: deps.statuslinePayload }),
+      ...(deps.clock == null ? {} : { clock: deps.clock }),
       dispatch: deps.mobileTicketDispatch,
       stop: deps.mobileWorkerStop,
     }),
