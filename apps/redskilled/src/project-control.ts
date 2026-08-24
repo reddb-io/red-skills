@@ -626,9 +626,9 @@ export function bindProjectControl(deps: {
   readonly clock: () => string;
   readonly readGithubCustody: () => Promise<unknown>;
   /** The daemon's own registration path; absent means this endpoint cannot register. */
-  readonly registerProject?: (request: Readonly<Record<string, unknown>>) => unknown;
+  readonly registerProject?: (request: Readonly<Record<string, unknown>>) => unknown | Promise<unknown>;
   /** The daemon's own release path; a stop hands the registration back through it. */
-  readonly releaseProject?: (projectLabel: string) => unknown;
+  readonly releaseProject?: (projectLabel: string) => unknown | Promise<unknown>;
 }) {
   return {
     mutateProjectControl: async (operation: ProjectControlOperation, request: ProjectControlRequest = {}) => {
@@ -650,7 +650,11 @@ export function bindProjectControl(deps: {
           // never counted its own children: target 1 ran five Workers and the
           // host ceiling was the only brake (#4158). The registration registers
           // under the same key its Workers carry.
-          deps.registerProject({ ...request.registration, project_label: project.projectLabel });
+          // Awaited so a daemon that dies right after answering has the
+          // registration on disk: the daemon-side hook flushes the intent
+          // store before resolving (the socket ops always did; this path
+          // answered before the write landed).
+          await deps.registerProject({ ...request.registration, project_label: project.projectLabel });
         } catch (error) {
           // **A drain is idempotent; a registration is not.** `project-register`
           // refuses a second record so two sessions cannot silently replace each
@@ -675,7 +679,7 @@ export function bindProjectControl(deps: {
       // stop (#4159). Released through the same path `project-deregister` uses;
       // releasing an already-released project states the outcome and is not an
       // error, which is what makes a repeated stop safe.
-      if (operation === "stop") deps.releaseProject?.(project.projectLabel);
+      if (operation === "stop") await deps.releaseProject?.(project.projectLabel);
       // Told at the moment of asking, not only to whoever thinks to read status
       // afterwards: a caller who ran `drain` and got a clean answer has every
       // reason to believe Workers are coming.

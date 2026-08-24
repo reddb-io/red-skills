@@ -58,8 +58,10 @@ export interface StartRedskillsAcpControlPlaneOptions {
   readonly brainStore?: HostBrainStore;
   readonly memoryStore?: ProjectMemoryStore;
   readonly recordDemandTurn?: (record: DemandTurnRecord) => void;
-  readonly registerProject?: (request: RedskilledProjectRegistrationRequest) => unknown;
-  readonly releaseProject?: (projectLabel: string) => unknown;
+  /** May resolve async: the daemon flushes the intent store before answering. */
+  readonly registerProject?: (request: RedskilledProjectRegistrationRequest) => unknown | Promise<unknown>;
+  /** May resolve async: the daemon flushes the intent store before answering. */
+  readonly releaseProject?: (projectLabel: string) => unknown | Promise<unknown>;
   readonly workerPulse?: (pulse: { workerId: string; line?: string; issue?: string }) => void;
   readonly standingOrdersStore?: StandingOrdersStore;
   /**
