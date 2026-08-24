@@ -9,10 +9,9 @@
 // off the artifact's name still names it, and the EXECUTABLE half builds the
 // bundle and starts a daemon from it, because a present artifact that throws on
 // load is the same outage as an absent one.
-import { spawn, type ChildProcess } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,8 +38,9 @@ describe("redskilled ships as a bundled artifact", () => {
     const pkg = JSON.parse(readFileSync(join(APP, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
-    const bundle = pkg.scripts?.bundle;
-    expect(bundle, "apps/redskilled must declare a `bundle` script — without it `pnpm bundle` skips the app entirely").toBeTruthy();
+    const aggregate = pkg.scripts?.bundle;
+    const bundle = pkg.scripts?.["bundle:daemon"];
+    expect(aggregate, "apps/redskilled must declare a `bundle` script — without it `pnpm bundle` skips the app entirely").toContain("bundle:daemon");
     expect(bundle).toContain("--entry src/cli.ts");
     expect(bundle).toContain(`--outfile ../../dist/${REDSKILLED_BUNDLE_ASSET}`);
     expect(bundle).toContain(`--asset ${REDSKILLED_BUNDLE_ASSET}`);
@@ -57,6 +57,30 @@ describe("redskilled ships as a bundled artifact", () => {
     expect(existsSync(SHIM)).toBe(true);
     expect(readFileSync(SHIM, "utf8")).toContain(REDSKILLED_BUNDLE_ASSET);
   });
+
+  it("runs when the active package set reaches the bundle through a symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-current-entry-"));
+    roots.push(root);
+    const real = join(root, "sets", "4.2.8", "dist", REDSKILLED_BUNDLE_ASSET);
+    await mkdir(join(root, "sets", "4.2.8", "dist"), { recursive: true });
+    execFileSync(process.execPath, [
+      join(ROOT, "scripts", "bundle-app.mjs"),
+      "--entry", join(APP, "src", "cli.ts"),
+      "--outfile", real,
+      "--asset", REDSKILLED_BUNDLE_ASSET,
+      "--minify",
+      "--reddb-from-package",
+    ], { cwd: APP, stdio: "pipe" });
+    const current = join(root, "current");
+    await symlink(join(root, "sets", "4.2.8"), current, "dir");
+
+    const invoked = spawnSync(process.execPath, [join(current, "dist", REDSKILLED_BUNDLE_ASSET), "--version"], {
+      encoding: "utf8",
+    });
+
+    expect(invoked.status).toBe(0);
+    expect(invoked.stdout).toContain("redskilled 4.2.8");
+  }, 30_000);
 
   it("names the bundle as the daemon entry a spawn invokes, never the caller's own file", () => {
     const lookup = { execPath: "/usr/bin/node", execArgv: [], env: {}, listDir: () => [] };
