@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled-link",
-  "version": "4.2.6",
+  "version": "4.2.7",
   "private": true,
   "type": "module",
   "description": "Capability-scoped encrypted Mobile Host/Relay companion for redskilled.",
