@@ -145,6 +145,14 @@ function renderUnit(command: string, args: readonly string[], paths: RedskilledP
     "[Service]",
     "Type=simple",
     "LimitCORE=0",
+    // The daemon's own budget, distinct from any Worker's: a leak that grows
+    // for days must take THIS unit down (Restart= brings back a fresh
+    // generation) before it takes the machine down. Healthy peak is ~450MiB;
+    // a host that genuinely needs more overrides with a drop-in, which beats
+    // these lines by systemd's own precedence.
+    "MemoryHigh=1G",
+    "MemoryMax=2G",
+    "MemorySwapMax=512M",
     `ExecStart=${[command, ...args].map(quoteUnitWord).join(" ")}`,
     // The whole reason the unit exists: a daemon that dies comes back without a
     // client having to want work first.

@@ -76,6 +76,7 @@ import {
   type RedskilledUnitIO,
 } from "./supervision.js";
 import { awaitRedskilledTakeoverCommit, isRedskilledSupervised } from "./self-replace.js";
+import { createRedskilledSelfGuard } from "./daemon/self-guard.js";
 import { startGithubCustodyTender } from "./github-custody-tender.js";
 import { stabilizeRunningRedskilledEntry } from "./stable-bundle.js";
 import { runRedskillsAcpAdapter } from "./acp-control-plane.js";
@@ -634,6 +635,23 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     // a client's handoff/status call, so every restart parked active records on
     // `repair-custodian` until someone happened to ask. Wired here in the CLI —
     // the lifecycle file is baseline-pinned — and stopped with the daemon.
+    // The daemon protects the machine from itself (2026-08-25, twice in one
+    // day): a wedged-but-alive process no Restart= ever fires for, and a
+    // multi-day leak that takes the HOST down before any generous unit
+    // ceiling takes the daemon down. Both verdicts end in a deliberate exit —
+    // the supervisor restarts a fresh generation in about a second. Wired
+    // here in the CLI because the lifecycle file is baseline-pinned.
+    const selfGuard = createRedskilledSelfGuard({
+      socketPath: paths.socketPath,
+      onFatal: (verdict) => {
+        process.stderr.write(`${verdict.detail}\n`);
+        void daemon.stop({ reason: "requested", note: verdict.detail }).catch(() => undefined);
+        // The stop path flushes and releases; if it wedges too, the hard exit
+        // is the whole point of the guard.
+        setTimeout(() => process.exit(verdict.exitCode), 5_000).unref();
+      },
+    });
+    selfGuard.arm();
     const custodyTender = startGithubCustodyTender({
       custodyPath: join(redskilledHomeDir(homedir()), "state", "github", "custody.toon"),
       registration: githubGateway,
@@ -644,6 +662,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       },
     });
     await daemon.closed;
+    selfGuard.stop();
     custodyTender.stop();
     deaths.phase("closed");
     return 0;
