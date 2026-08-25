@@ -246,3 +246,23 @@ describe("parity with the SDK's ndJsonStream (ADR 0170)", () => {
     expect(cancelled).toEqual(new Error("session over"));
   });
 });
+
+describe("an unterminated frame past the byte ceiling refuses the connection", () => {
+  it("errors loudly instead of buffering the peer's bytes forever", async () => {
+    const { readable: inputReadable, writable: inputWritable } = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new WritableStream<Uint8Array>({ write: () => undefined });
+    const stream = dualDialectStream(output, inputReadable);
+    const reader = stream.readable.getReader();
+    const writer = inputWritable.getWriter();
+
+    // A TOON-sniffed frame (no leading '{' or '[') that never sends its blank
+    // line: 9 MiB of un-terminated bytes, in 1 MiB chunks.
+    const chunk = new TextEncoder().encode("k: " + "x".repeat(1_048_576 - 4) + " ");
+    const feed = (async () => {
+      for (let i = 0; i < 9; i += 1) await writer.write(chunk);
+    })();
+
+    await expect(reader.read()).rejects.toThrow(/exceeded .* without a terminator/);
+    await feed.catch(() => undefined);
+  });
+});

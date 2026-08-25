@@ -86,6 +86,27 @@ export function sniffWireDialect(text: string): ResidentWireDialect {
  * Leading blank lines are dropped rather than treated as an empty frame, so a
  * peer that terminates generously cannot wedge the next message.
  */
+/**
+ * The most bytes one unterminated frame may buffer before the connection is
+ * judged unrecoverable. A frame is delimited by a newline (JSON) or a blank
+ * line (TOON); a peer that opens a frame and never terminates it grew the
+ * reader's buffer without bound (leak audit 2026-08-25) — and past this point
+ * there is no delimiter to resync on, so the honest answer is to refuse the
+ * connection loudly rather than hold its bytes forever.
+ */
+export const MAX_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
+
+/** Thrown by readers when a peer exceeds {@link MAX_WIRE_FRAME_BYTES}. */
+export class WireFrameOverflowError extends Error {
+  constructor(heldBytes: number) {
+    super(
+      `wire frame exceeded ${MAX_WIRE_FRAME_BYTES} bytes without a terminator ` +
+        `(${heldBytes} held) — the connection cannot resync and is refused`,
+    );
+    this.name = "WireFrameOverflowError";
+  }
+}
+
 export function takeWireFrame(buffer: string): ResidentWireFrame | null {
   let start = 0;
   while (buffer[start] === "\n" || buffer[start] === "\r") start += 1;

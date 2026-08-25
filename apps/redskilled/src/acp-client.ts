@@ -144,9 +144,21 @@ interface LiveProjectAcpConnection {
   readonly socket: Socket;
   readonly sessionId: string;
   readonly pendingUpdates: SessionNotification["update"][];
+  /** Updates shed from the FRONT of `pendingUpdates` by the retention cap. */
+  readonly droppedUpdates: () => number;
   readonly dead: () => boolean;
   readonly close: () => void;
 }
+
+/**
+ * Updates a connection retains between prompts. Only the CURRENT prompt's tail
+ * is ever read back (`prompt()` slices from its own start marker), but the
+ * array grew with every session/update for the connection's whole life — a
+ * long-lived MCP resident accumulated the agent's full output stream, MB/hour
+ * (leak audit 2026-08-25). Past the cap the oldest are shed and counted, so
+ * the start markers stay honest.
+ */
+export const ACP_CLIENT_PENDING_UPDATE_RETENTION = 512;
 
 /** Connect a public adapter to redskilled through ACP and no private daemon wire. */
 export async function connectRedskillsProjectAcp(
@@ -162,6 +174,7 @@ export async function connectRedskillsProjectAcp(
     const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
     const socket = await connectEndpoint(endpoint.acpSocketPath);
     const pendingUpdates: SessionNotification["update"][] = [];
+    let droppedUpdates = 0;
     let sessionId = "";
     let dead = false;
     socket.once("close", () => { dead = true; });
@@ -171,6 +184,10 @@ export async function connectRedskillsProjectAcp(
       .onNotification(methods.client.session.update, async ({ params }) => {
         if (params.sessionId !== sessionId) return;
         pendingUpdates.push(params.update);
+        if (pendingUpdates.length > ACP_CLIENT_PENDING_UPDATE_RETENTION) {
+          droppedUpdates += pendingUpdates.length - ACP_CLIENT_PENDING_UPDATE_RETENTION;
+          pendingUpdates.splice(0, pendingUpdates.length - ACP_CLIENT_PENDING_UPDATE_RETENTION);
+        }
         await options.onUpdate?.(params.update);
       });
     if (options.requestPermission != null) {
@@ -193,6 +210,7 @@ export async function connectRedskillsProjectAcp(
       socket,
       sessionId,
       pendingUpdates,
+      droppedUpdates: () => droppedUpdates,
       dead: () => dead,
       close() {
         dead = true;
@@ -261,7 +279,9 @@ export async function connectRedskillsProjectAcp(
     },
     async prompt(text) {
       const held = await ensureLive();
-      const firstUpdate = held.pendingUpdates.length;
+      // Absolute position, so a retention shed between here and the answer
+      // cannot replay another prompt's tail as this one's.
+      const firstUpdate = held.droppedUpdates() + held.pendingUpdates.length;
       const response = await held.connection.agent.request(methods.agent.session.prompt, {
         sessionId: held.sessionId,
         prompt: [{ type: "text", text }],
@@ -269,7 +289,7 @@ export async function connectRedskillsProjectAcp(
       return {
         stopReason: response.stopReason,
         ...projectControlFrom(response._meta),
-        updates: held.pendingUpdates.slice(firstUpdate),
+        updates: held.pendingUpdates.slice(Math.max(0, firstUpdate - held.droppedUpdates())),
       };
     },
     async cancel() {
