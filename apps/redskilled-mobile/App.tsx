@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -27,11 +28,15 @@ import {
   SectionHeading,
 } from "./src/design-system/components";
 import { colors, density, radii, spacing, type } from "./src/design-system/tokens";
-import { deriveHostStatus } from "./src/domain/host-status";
+import {
+  fleetHostViews,
+  fleetWorkerRows,
+  type FleetWorkerRow,
+  type HostRuntime,
+} from "./src/domain/host-fleet";
 import { parseGitHubIssueUrl } from "./src/domain/issue-url";
-import type { MobileHostSnapshot, MobileWorker, PairedHost } from "./src/domain/ticket-dispatch";
-import { reconcilePendingWorkers } from "./src/domain/worker-reconcile";
-import { loadPairedHost, savePairedHost } from "./src/transport/paired-host-store";
+import type { MobileOperatorGateway } from "./src/domain/ticket-dispatch";
+import { addPairedHost, loadPairedHosts, removePairedHost } from "./src/transport/paired-host-store";
 import { createRemoteOperatorGateway } from "./src/transport/remote-operator-gateway";
 import { copy } from "./src/ui/copy";
 
@@ -40,7 +45,9 @@ export default function App() {
     JetBrainsMono: require("./vendor/design-system/fonts/jetbrains-mono-variable.ttf"),
     SpaceGrotesk: require("./vendor/design-system/fonts/space-grotesk-variable.ttf"),
   });
-  const [pairedHost, setPairedHost] = useState<RedskilledLinkPairedHost | null>(null);
+  const [hosts, setHosts] = useState<readonly RedskilledLinkPairedHost[]>([]);
+  const [activeHostId, setActiveHostId] = useState<string | null>(null);
+  const [addingHost, setAddingHost] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
   const [isPairing, setIsPairing] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -49,50 +56,60 @@ export default function App() {
   const [issueUrl, setIssueUrl] = useState("");
   const [isDispatching, setIsDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [workers, setWorkers] = useState<readonly MobileWorker[]>([]);
-  const [snapshot, setSnapshot] = useState<MobileHostSnapshot | null>(null);
-  const [lastAnsweredAt, setLastAnsweredAt] = useState<number | null>(null);
-  const [linkFailure, setLinkFailure] = useState<string | null>(null);
-  const gateway = useMemo(
-    () => pairedHost == null ? null : createRemoteOperatorGateway(pairedHost),
-    [pairedHost],
-  );
+  const [runtime, setRuntime] = useState<Readonly<Record<string, HostRuntime>>>({});
+  const [pending, setPending] = useState<readonly FleetWorkerRow[]>([]);
+  const gateways = useMemo(() => {
+    const built = new Map<string, MobileOperatorGateway>();
+    for (const host of hosts) built.set(host.host_id, createRemoteOperatorGateway(host));
+    return built;
+  }, [hosts]);
+  const activeHost = hosts.find((host) => host.host_id === activeHostId) ?? hosts[0] ?? null;
 
   useEffect(() => {
     let active = true;
-    void loadPairedHost().then((host) => {
-      if (active) setPairedHost(host);
+    void loadPairedHosts().then((loaded) => {
+      if (active) setHosts(loaded);
     });
     return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (gateway == null) return;
+    if (gateways.size === 0) return;
     let active = true;
-    // Every outcome lands in state: an answered read stamps the instant the
-    // status verdict derives from, and a failed read records WHY instead of
-    // being swallowed — the card then reads stale/unreachable by evidence.
-    const refresh = () => void gateway.state().then((read) => {
-      if (!active) return;
-      setSnapshot(read);
-      setLastAnsweredAt(Date.now());
-      setLinkFailure(null);
-      setWorkers((current) => reconcilePendingWorkers(
-        read.workers,
-        current.filter((worker) => worker.pending === true),
-        Date.now(),
-      ));
-    }).catch((failure: unknown) => {
-      if (!active) return;
-      setLinkFailure(failure instanceof Error ? failure.message : String(failure));
-    });
+    // Each Host is polled on its own and each outcome lands in ITS runtime:
+    // an answered read stamps the instant the status verdict derives from,
+    // and a failed read records WHY instead of being swallowed — one dead
+    // machine reads unreachable on its own card while the rest stay honest.
+    const refresh = () => {
+      for (const [hostId, gateway] of gateways) {
+        void gateway.state().then((snapshot) => {
+          if (!active) return;
+          setRuntime((current) => ({
+            ...current,
+            [hostId]: { snapshot, lastAnsweredAtMs: Date.now(), failure: null },
+          }));
+          setPending((current) => current.filter((row) =>
+            row.hostId !== hostId || !snapshot.workers.some((worker) => worker.workerId === row.workerId)));
+        }).catch((failure: unknown) => {
+          if (!active) return;
+          setRuntime((current) => ({
+            ...current,
+            [hostId]: {
+              snapshot: current[hostId]?.snapshot ?? null,
+              lastAnsweredAtMs: current[hostId]?.lastAnsweredAtMs ?? null,
+              failure: failure instanceof Error ? failure.message : String(failure),
+            },
+          }));
+        });
+      }
+    };
     refresh();
     const timer = setInterval(refresh, 3_000);
     return () => {
       active = false;
       clearInterval(timer);
     };
-  }, [gateway]);
+  }, [gateways]);
 
   const issue = useMemo(() => {
     try {
@@ -102,31 +119,31 @@ export default function App() {
     }
   }, [issueUrl]);
 
-  const hostStatus = deriveHostStatus(lastAnsweredAt, Date.now());
-  const selectedHost: PairedHost | null = pairedHost == null ? null : {
-    id: pairedHost.host_id,
-    name: pairedHost.host_name,
-    status: hostStatus,
-  };
-  const canDispatch = selectedHost != null && issue != null && !isDispatching;
+  const now = Date.now();
+  const hostViews = fleetHostViews(hosts, runtime, now);
+  const workers = fleetWorkerRows(hosts, runtime, pending, now);
+  const canDispatch = activeHost != null && issue != null && !isDispatching;
 
   async function dispatchIssue() {
-    if (selectedHost == null || issue == null || gateway == null) return;
+    const gateway = activeHost == null ? null : gateways.get(activeHost.host_id);
+    if (activeHost == null || issue == null || gateway == null) return;
 
     setIsDispatching(true);
     setError(null);
     try {
       const receipt = await gateway.dispatch({
-        hostId: selectedHost.id,
+        hostId: activeHost.host_id,
         issueUrl: issue.canonicalUrl,
       });
-      setWorkers((current) => [{
+      setPending((current) => [{
         workerId: receipt.workerId,
         repository: receipt.repository,
         ticket: receipt.ticket,
         startedAt: new Date().toISOString(),
         pending: true,
-      }, ...current.filter((worker) => worker.workerId !== receipt.workerId)]);
+        hostId: activeHost.host_id,
+        hostName: activeHost.host_name,
+      }, ...current.filter((row) => row.workerId !== receipt.workerId)]);
       setIssueUrl("");
     } catch {
       setError(copy.errors.dispatch);
@@ -141,14 +158,23 @@ export default function App() {
     setError(null);
     try {
       const host = await pairRedskilledHost(invitation, `Redskilled ${Platform.OS}`);
-      await savePairedHost(host);
-      setPairedHost(host);
+      setHosts(await addPairedHost(host));
+      setActiveHostId(host.host_id);
+      setAddingHost(false);
       setPairingCode("");
     } catch {
       setError(copy.errors.pairing);
     } finally {
       setIsPairing(false);
     }
+  }
+
+  async function unpairHost(hostId: string) {
+    setError(null);
+    setHosts(await removePairedHost(hostId));
+    setRuntime(({ [hostId]: _gone, ...rest }) => rest);
+    setPending((current) => current.filter((row) => row.hostId !== hostId));
+    if (activeHostId === hostId) setActiveHostId(null);
   }
 
   async function scanPairingInvitation({ data }: BarcodeScanningResult) {
@@ -163,12 +189,27 @@ export default function App() {
     }
   }
 
-  async function stopWorker(workerId: string) {
+  async function stopWorker(row: FleetWorkerRow) {
+    const gateway = gateways.get(row.hostId);
     if (gateway == null) return;
     setError(null);
     try {
-      if (await gateway.stop(workerId)) {
-        setWorkers((current) => current.filter((worker) => worker.workerId !== workerId));
+      if (await gateway.stop(row.workerId)) {
+        setPending((current) => current.filter((entry) => entry.workerId !== row.workerId));
+        setRuntime((current) => {
+          const state = current[row.hostId];
+          if (state?.snapshot == null) return current;
+          return {
+            ...current,
+            [row.hostId]: {
+              ...state,
+              snapshot: {
+                ...state.snapshot,
+                workers: state.snapshot.workers.filter((worker) => worker.workerId !== row.workerId),
+              },
+            },
+          };
+        });
       }
     } catch {
       setError(copy.errors.stop);
@@ -210,8 +251,60 @@ export default function App() {
           </View>
 
           <View style={styles.section}>
-            <SectionHeading eyebrow={copy.host.section} />
-            {selectedHost == null ? (
+            <SectionHeading
+              actions={hosts.length === 0 ? undefined : <Pill label={copy.host.count(hosts.length)} />}
+              eyebrow={copy.host.section}
+            />
+            {hostViews.map((view) => (
+              <Pressable
+                accessibilityLabel={copy.host.selectLabel(view.hostName)}
+                key={view.hostId}
+                onPress={() => setActiveHostId(view.hostId)}
+              >
+                <Card
+                  style={[
+                    styles.hostCard,
+                    activeHost?.host_id === view.hostId && styles.hostCardActive,
+                  ]}
+                >
+                  <View style={styles.hostIdentity}>
+                    <View style={styles.hostGlyph}>
+                      <Text style={styles.hostGlyphText}>H</Text>
+                    </View>
+                    <View style={styles.hostText}>
+                      <Text style={styles.hostName}>{view.hostName}</Text>
+                      <Text style={styles.metadata}>
+                        {view.daemonVersion == null
+                          ? copy.host.pairedDescription
+                          : `${copy.host.daemonVersion(view.daemonVersion)} · ${copy.host.workerCount(view.workerCount)}`}
+                      </Text>
+                      {view.failure == null || view.status === "online" ? null : (
+                        <Text style={styles.metadata}>{copy.errors.state(view.failure)}</Text>
+                      )}
+                    </View>
+                  </View>
+                  <View style={styles.hostActions}>
+                    <Pill glyph="◆" label={copy.host.status[view.status]} />
+                    <Button
+                      label={copy.host.unpair}
+                      onPress={() => void unpairHost(view.hostId)}
+                      tone="danger"
+                      variant="ghost"
+                    />
+                  </View>
+                </Card>
+              </Pressable>
+            ))}
+            {hosts.length > 0 && !addingHost ? (
+              <Button
+                label={copy.host.addAnother}
+                onPress={() => {
+                  setAddingHost(true);
+                  setError(null);
+                }}
+                variant="secondary"
+              />
+            ) : (
               <Card>
                 <EmptyState
                   description={copy.host.emptyDescription}
@@ -271,33 +364,22 @@ export default function App() {
                   loading={isPairing}
                   onPress={() => void pairHost(pairingCode)}
                 />
-              </Card>
-            ) : (
-              <Card style={styles.hostCard}>
-                <View style={styles.hostIdentity}>
-                  <View style={styles.hostGlyph}>
-                    <Text style={styles.hostGlyphText}>H</Text>
-                  </View>
-                  <View style={styles.hostText}>
-                    <Text style={styles.hostName}>{selectedHost.name}</Text>
-                    <Text style={styles.metadata}>
-                      {snapshot?.daemonVersion == null
-                        ? copy.host.pairedDescription
-                        : `${copy.host.pairedDescription} · ${copy.host.daemonVersion(snapshot.daemonVersion)}`}
-                    </Text>
-                    {linkFailure == null || hostStatus === "online" ? null : (
-                      <Text style={styles.metadata}>{copy.errors.state(linkFailure)}</Text>
-                    )}
-                  </View>
-                </View>
-                <Pill glyph="◆" label={copy.host.status[selectedHost.status]} />
+                {hosts.length === 0 ? null : (
+                  <Button
+                    label={copy.host.addCancel}
+                    onPress={() => setAddingHost(false)}
+                    variant="ghost"
+                  />
+                )}
               </Card>
             )}
           </View>
 
           <View style={styles.section}>
             <SectionHeading
-              description={copy.dispatch.description}
+              description={activeHost == null
+                ? copy.dispatch.description
+                : copy.dispatch.target(activeHost.host_name)}
               eyebrow={copy.dispatch.section}
               title={copy.dispatch.title}
             />
@@ -358,7 +440,7 @@ export default function App() {
               <Card style={styles.workerList}>
                 {workers.map((worker, index) => (
                   <View
-                    key={worker.workerId}
+                    key={`${worker.hostId}:${worker.workerId}`}
                     style={[styles.workerRow, index > 0 && styles.workerRowBorder]}
                   >
                     <View style={styles.workerGlyph}>
@@ -368,7 +450,9 @@ export default function App() {
                       <Text numberOfLines={1} style={styles.workerTitle}>
                         {worker.repository}{worker.ticket == null ? "" : ` #${worker.ticket}`}
                       </Text>
-                      <Text numberOfLines={1} style={styles.workerId}>{worker.workerId}</Text>
+                      <Text numberOfLines={1} style={styles.workerId}>
+                        {worker.hostName} · {worker.workerId}
+                      </Text>
                       <Text style={styles.runningText}>
                         {worker.pending === true
                           ? copy.workers.pending
@@ -382,7 +466,7 @@ export default function App() {
                     </View>
                     <Button
                       label={copy.workers.stop}
-                      onPress={() => void stopWorker(worker.workerId)}
+                      onPress={() => void stopWorker(worker)}
                       tone="danger"
                       variant="ghost"
                     />
@@ -465,6 +549,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
   },
+  hostCardActive: { borderColor: colors.primary },
+  hostActions: { alignItems: "flex-end", gap: density.gapSm },
   hostIdentity: { alignItems: "center", flex: 1, flexDirection: "row", gap: density.gapLg },
   hostGlyph: {
     alignItems: "center",
