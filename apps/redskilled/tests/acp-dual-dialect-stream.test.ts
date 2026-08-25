@@ -6,6 +6,11 @@
 // connection completes a real request/response round trip when one end of the
 // wire is writing TOON-RPC. The resident-wire framing itself is proven in
 // `packages/shared/resident-wire.test.ts`; nothing here respells it.
+import {
+  ACP_CLIENT_PENDING_UPDATE_RETENTION,
+  connectRedskillsProjectAcp,
+  shedPendingUpdates,
+} from "../src/acp-client.js";
 import { describe, expect, it } from "vitest";
 import { dualDialectStream } from "@reddb-io/protocol-acp";
 
@@ -264,5 +269,23 @@ describe("an unterminated frame past the byte ceiling refuses the connection", (
 
     await expect(reader.read()).rejects.toThrow(/exceeded .* without a terminator/);
     await feed.catch(() => undefined);
+  });
+});
+
+describe("the resident client's update retention", () => {
+  it("shedPendingUpdates drops only the excess, oldest first, and counts it", () => {
+    const updates = Array.from(
+      { length: ACP_CLIENT_PENDING_UPDATE_RETENTION + 7 },
+      (_unused, index) => ({ sessionUpdate: "agent_message_chunk", index }),
+    ) as never[];
+
+    expect(shedPendingUpdates(updates)).toBe(7);
+    expect(updates).toHaveLength(ACP_CLIENT_PENDING_UPDATE_RETENTION);
+    expect((updates[0] as { index: number }).index).toBe(7);
+    expect(shedPendingUpdates(updates)).toBe(0);
+  });
+
+  it("connectRedskillsProjectAcp is the one exported entrance this retention guards", () => {
+    expect(typeof connectRedskillsProjectAcp).toBe("function");
   });
 });

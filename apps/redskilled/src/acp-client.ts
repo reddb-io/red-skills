@@ -160,6 +160,14 @@ interface LiveProjectAcpConnection {
  */
 export const ACP_CLIENT_PENDING_UPDATE_RETENTION = 512;
 
+/** Shed the oldest updates past the retention, in place; answers how many. PURE mutation. */
+export function shedPendingUpdates(pendingUpdates: SessionNotification["update"][]): number {
+  const excess = pendingUpdates.length - ACP_CLIENT_PENDING_UPDATE_RETENTION;
+  if (excess <= 0) return 0;
+  pendingUpdates.splice(0, excess);
+  return excess;
+}
+
 /** Connect a public adapter to redskilled through ACP and no private daemon wire. */
 export async function connectRedskillsProjectAcp(
   options: ConnectRedskillsProjectAcpOptions = {},
@@ -184,10 +192,7 @@ export async function connectRedskillsProjectAcp(
       .onNotification(methods.client.session.update, async ({ params }) => {
         if (params.sessionId !== sessionId) return;
         pendingUpdates.push(params.update);
-        if (pendingUpdates.length > ACP_CLIENT_PENDING_UPDATE_RETENTION) {
-          droppedUpdates += pendingUpdates.length - ACP_CLIENT_PENDING_UPDATE_RETENTION;
-          pendingUpdates.splice(0, pendingUpdates.length - ACP_CLIENT_PENDING_UPDATE_RETENTION);
-        }
+        droppedUpdates += shedPendingUpdates(pendingUpdates);
         await options.onUpdate?.(params.update);
       });
     if (options.requestPermission != null) {
