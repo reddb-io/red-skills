@@ -14,10 +14,13 @@ export interface ResourceIncidentRuntime {
   ingest(workerSamples: readonly RedskilledResourceSample[], sampledAt: string): Promise<void>;
   state(): RedskilledResourceIncidentState;
   hasActiveIncident(): boolean;
+  /** Drop every belief about one dead target; part of `forgetWorker`. */
+  forget(targetId: string): void;
 }
 
 export const DISABLED_RESOURCE_INCIDENT_RUNTIME: ResourceIncidentRuntime = {
   ingest: async () => undefined,
+  forget: () => undefined,
   state: () => ({ source: "cgroup-v2-preferred", active: 0, retained: 0, latest: [] }),
   hasActiveIncident: () => false,
 };
@@ -95,6 +98,15 @@ export async function createResourceIncidentRuntime(options: {
       latest: summaries.slice(0, 5),
     }),
     hasActiveIncident: () => tracker.hasActiveIncident(),
+    // The eviction forgetWorker calls: the tracker drops the target's state
+    // (ring, consecutive counters, an open incident's sample buffer), and any
+    // persistedAt entry for a never-finalized incident goes with it.
+    forget: (targetId) => {
+      tracker.forget(targetId);
+      for (const incidentId of persistedAt.keys()) {
+        if (incidentId.startsWith(`${targetId}-`)) persistedAt.delete(incidentId);
+      }
+    },
   };
 }
 
