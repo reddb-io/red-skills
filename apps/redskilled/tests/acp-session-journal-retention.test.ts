@@ -111,3 +111,41 @@ describe("the journal applies its own retention", () => {
     expect(reborn.recovery("worked").entries).toHaveLength(1);
   });
 });
+
+describe("re-keying a project through the journal instance", () => {
+  const aliasProject = (projectId: string, projectLabel: string) => ({
+    projectId,
+    projectLabel,
+    workspacePath: "/tmp/workspace",
+  }) as never;
+
+  it("moves every held session and survives the journal's own next persist", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "redskilled-journal-rekey-"));
+    roots.push(dir);
+    const path = join(dir, "redskilled.acp-sessions.toon");
+    const journal = await createAcpSessionJournal(path);
+    await journal.create("s1", aliasProject("remote:reddb-io/red-skills", "reddb-io/red-skills"));
+    await journal.create("s2", aliasProject("github:7", "a/b"));
+
+    await expect(
+      journal.rekeyProject("remote:reddb-io/red-skills", "github:1240684599", "reddb-io/red-skills"),
+    ).resolves.toBe(1);
+    // The next append persists the journal's OWN snapshot — the re-key must
+    // live inside it, or this write silently undoes the migration (observed
+    // live on 2026-08-25 as the re-key repeating on every boot).
+    await journal.prompt("s2", [{ type: "text", text: "hi" }] as never);
+
+    const reloaded = await createAcpSessionJournal(path);
+    // Retake authorizes by project id: the canonical identity now owns s1,
+    // and the retired spelling no longer does.
+    expect(reloaded.retake("s1", "github:1240684599")).toBeDefined();
+    expect(reloaded.retake("s1", "remote:reddb-io/red-skills")).toBeUndefined();
+  });
+
+  it("a project with no sessions answers 0", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "redskilled-journal-rekey-"));
+    roots.push(dir);
+    const journal = await createAcpSessionJournal(join(dir, "j.toon"));
+    await expect(journal.rekeyProject("remote:x/y", "github:1", "x/y")).resolves.toBe(0);
+  });
+});

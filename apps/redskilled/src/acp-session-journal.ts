@@ -134,6 +134,14 @@ export interface AcpSessionJournal {
   ): Promise<void>;
   recovery(publicSessionId: string): AcpSessionRecoveryCheckpoint;
   retake(publicSessionId: string, authorizedProjectId: string): AcpRetakeEvidenceProjection | undefined;
+  /**
+   * Re-key every session held under `fromProjectId` onto the canonical
+   * identity, THROUGH this instance. The identity migration once rewrote the
+   * journal FILE instead; this object then persisted its in-memory snapshot
+   * over it, silently undoing the migration on every append — observed live
+   * as "re-keyed 110 journal session(s)" repeating on every boot (2026-08-25).
+   */
+  rekeyProject(fromProjectId: string, toProjectId: string, projectLabel: string): Promise<number>;
 }
 
 export function acpSessionJournalPath(registrationIntentPath: string): string {
@@ -239,6 +247,16 @@ export async function createAcpSessionJournal(
         decision,
         ...(option == null ? {} : { option_id: option.optionId, option_kind: option.kind }),
       });
+    },
+    rekeyProject(fromProjectId, toProjectId, projectLabel) {
+      let touched = 0;
+      for (const [id, record] of sessions) {
+        if (record.project_id !== fromProjectId) continue;
+        touched += 1;
+        sessions.set(id, { ...record, project_id: toProjectId, project_label: projectLabel });
+      }
+      if (touched === 0) return Promise.resolve(0);
+      return persist().then(() => touched);
     },
     recovery(publicSessionId) {
       const held = sessions.get(publicSessionId);
