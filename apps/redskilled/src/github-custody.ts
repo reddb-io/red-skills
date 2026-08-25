@@ -124,6 +124,26 @@ export interface CreateGithubCustodianOptions {
  * connection never removes it. The host singleton is therefore the sole live
  * owner while the TOON snapshot lets its replacement recover the obligation.
  */
+/** Terminal custody records kept as receipts; older ones are shed on load and on append. */
+export const GITHUB_CUSTODY_TERMINAL_RETENTION = 100;
+
+/**
+ * Terminal records are history, not obligations: keep the newest few as the
+ * operator's receipts and shed the rest — every custody record ever handed
+ * off was retained for the daemon's life, and every mutation re-encoded the
+ * whole array (leak audit 2026-08-25, finding #4). Active records are never
+ * compacted. PURE.
+ */
+export function compactGithubCustodySnapshot(value: GithubCustodySnapshot): GithubCustodySnapshot {
+  const terminal = value.records.filter((record) => record.state === "terminal");
+  if (terminal.length <= GITHUB_CUSTODY_TERMINAL_RETENTION) return value;
+  const keep = new Set(terminal.slice(-GITHUB_CUSTODY_TERMINAL_RETENTION));
+  return {
+    ...value,
+    records: value.records.filter((record) => record.state !== "terminal" || keep.has(record)),
+  };
+}
+
 export function createGithubCustodian(options: CreateGithubCustodianOptions): GithubCustodian {
   let snapshot: GithubCustodySnapshot | undefined;
   let tail: Promise<unknown> = Promise.resolve();
@@ -141,7 +161,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
   const load = async (): Promise<GithubCustodySnapshot> => {
     if (snapshot != null) return snapshot;
     try {
-      snapshot = parseSnapshot(decode((await readFile(options.path, "utf8")).trim()));
+      snapshot = compactGithubCustodySnapshot(parseSnapshot(decode((await readFile(options.path, "utf8")).trim())));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       snapshot = { version: 1, records: [] };
@@ -292,7 +312,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
           next_action: "observe-forge",
           terminal_outcome: null,
         };
-        snapshot = { version: 1, records: [...current.records, next] };
+        snapshot = compactGithubCustodySnapshot({ version: 1, records: [...current.records, next] });
         await persist(snapshot);
         return next;
       });

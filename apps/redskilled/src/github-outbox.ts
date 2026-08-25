@@ -47,6 +47,29 @@ export interface GithubOutbox {
  * execution argument, never an outbox field, so a replacement daemon can retry
  * with freshly resolved secret material without ever exposing it to a Worker.
  */
+/**
+ * Published entries the outbox retains for idempotency replay.
+ *
+ * A published entry exists so a REPEATED idempotency key answers the recorded
+ * value instead of re-writing; that protection only matters for recent keys,
+ * and retaining every write the daemon ever made — request and response body
+ * both — grew without bound (leak audit 2026-08-25, finding #4). Pending
+ * entries are never compacted: an unexecuted write is an obligation, not a
+ * memory.
+ */
+export const GITHUB_OUTBOX_PUBLISHED_RETENTION = 500;
+
+/** Shed old published entries, newest kept, pending always kept. PURE. */
+export function compactOutboxSnapshot(value: GithubOutboxSnapshot): GithubOutboxSnapshot {
+  const published = value.entries.filter((entry) => entry.state === "published");
+  if (published.length <= GITHUB_OUTBOX_PUBLISHED_RETENTION) return value;
+  const keep = new Set(published.slice(-GITHUB_OUTBOX_PUBLISHED_RETENTION));
+  return {
+    ...value,
+    entries: value.entries.filter((entry) => entry.state !== "published" || keep.has(entry)),
+  };
+}
+
 export function createGithubOutbox(
   path: string,
   upstream: RedskilledGithubWriteUpstream,
@@ -65,7 +88,7 @@ export function createGithubOutbox(
     if (snapshot != null) return snapshot;
     try {
       const decoded = decode((await readFile(path, "utf8")).trim());
-      snapshot = parseOutboxSnapshot(decoded);
+      snapshot = compactOutboxSnapshot(parseOutboxSnapshot(decoded));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       snapshot = { version: 1, entries: [] };
@@ -122,7 +145,12 @@ export function createGithubOutbox(
     entry.value = value ?? null;
     entry.published_at = clock();
     entry.state = "published";
-    await persist(current);
+    // The compaction runs on the WRITE path too, so a daemon that never
+    // restarts still sheds old published entries instead of retaining every
+    // write it ever made (leak audit 2026-08-25, finding #4).
+    const compacted = compactOutboxSnapshot(current);
+    snapshot = compacted;
+    await persist(compacted);
     return outboxAnswer(entry);
   };
 
