@@ -21,11 +21,22 @@ export interface RedskillsOperatorAcpClient {
   stop(workerId: string): Promise<MobileWorkerStopAnswer>;
 }
 
+export interface RedskillsOperatorAcpClientOptions {
+  /**
+   * `false` = probe only: answer from the daemon that IS there, or fail —
+   * never provision or start one. A status read that births the thing it
+   * reports on cannot tell an idle machine from the machine it just changed.
+   * Default `true`, the behavior every existing caller (dispatch, host) wants.
+   */
+  readonly ensure?: boolean;
+}
+
 export function createRedskillsOperatorAcpClient(
   paths: RedskilledPaths = resolveRedskilledPaths(),
+  options: RedskillsOperatorAcpClientOptions = {},
 ): RedskillsOperatorAcpClient {
   const request = async <Answer>(method: string, params: object): Promise<Answer> => {
-    await ensureRedskilledDaemon(paths);
+    if (options.ensure !== false) await ensureRedskilledDaemon(paths);
     const endpoint = (await resolveRedskilledClientEndpoint(paths)).paths;
     const socket = await connectEndpoint(endpoint.acpSocketPath);
     const connection = client({ name: "redskilled-link" }).connect(socketStream(socket));

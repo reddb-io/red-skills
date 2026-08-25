@@ -16,6 +16,7 @@ import {
   defaultLinkStatusPath,
   readPublicLinkStatus,
 } from "./state.js";
+import { renderLinkStatusReport } from "./status-report.js";
 import {
   currentRedskilledLinkEntry,
   installRedskilledLinkUnit,
@@ -30,6 +31,7 @@ export const REDSKILLED_LINK_USAGE = [
   "redskilled-link invite [--relay wss://relay.example] [--name HOST] [--qr]",
   "redskilled-link host [--relay wss://relay.example] [--name HOST]",
   "redskilled-link unit install|remove|status [--state PATH]",
+  "redskilled-link status [--state PATH]",
   "",
 ].join("\n");
 
@@ -68,8 +70,38 @@ export async function runRedskilledLinkCli(argv: readonly string[]): Promise<num
   if (command === "unit") {
     return await runUnitCommand(args);
   }
+  if (command === "status") {
+    return await runStatusCommand(args);
+  }
   process.stdout.write(REDSKILLED_LINK_USAGE);
   return 0;
+}
+
+/**
+ * One screen from three quoted authorities: the host daemon, systemd, and the
+ * published status.json. Probe-only on purpose — this report answers about
+ * the daemon that IS there; ensuring one would change the machine to
+ * describe it. Unreachable exits 1 with the reason on the report.
+ */
+async function runStatusCommand(args: readonly string[]): Promise<number> {
+  const daemon = await createRedskillsOperatorAcpClient(undefined, { ensure: false })
+    .state()
+    .then((state) => ({ reachable: true as const, state }))
+    .catch((error: unknown) => ({
+      reachable: false as const,
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+  const statePath = value(args, "--state");
+  const publishedPath = statePath == null
+    ? defaultLinkStatusPath()
+    : join(dirname(statePath), "status.json");
+  process.stdout.write(renderLinkStatusReport({
+    daemon,
+    unit: readRedskilledLinkUnitStatus(),
+    published: await readPublicLinkStatus(publishedPath),
+    publishedPath,
+  }));
+  return daemon.reachable ? 0 : 1;
 }
 
 /**
