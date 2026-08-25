@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/afk-container",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "private": true,
   "description": "AFK-in-a-box — a self-sufficient Docker image that becomes a RedSkills host: it supervises the redskilled daemon, registers each target repository as a Project, and lets the daemon's demand loop drain the queue. Stateless by construction: the issue and the branch are the only state.",
   "license": "Apache-2.0",
