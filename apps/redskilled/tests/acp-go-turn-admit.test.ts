@@ -62,7 +62,7 @@ describe("go_dispatch admits by running the turn", () => {
     // The handoff carries the demand AND its own acceptance-criteria section,
     // because the brief contract's structural door refuses a handoff with no
     // criteria at all before any claim (#4296).
-    const handoff = (requests[0]?.ticket as { handoff: string }).handoff;
+    const handoff = (requests[0]!.ticket as { handoff: string }).handoff;
     expect(handoff).toContain("document the link commands");
     expect(handoff).toContain("## Acceptance criteria");
   });
