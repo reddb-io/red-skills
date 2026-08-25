@@ -5,6 +5,7 @@
 // nothing to run is SKIPPED rather than green — the difference between "the
 // review passed" and "no reviewer was wired" is the whole of ADR 0135.
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -197,6 +198,7 @@ describe("running the declared stages", () => {
 
   it("reads the real diff when the caller names no seam", async () => {
     const root = await workspace();
+    expect(existsSync(join(root, fixtureApp, "package.json"))).toBe(true);
     await writeFile(
       join(root, fixtureAddedSource),
       "export const added = 1;\n",
