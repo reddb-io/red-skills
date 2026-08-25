@@ -71,29 +71,37 @@ export async function runRedskilledLinkCli(argv: readonly string[]): Promise<num
     return await runUnitCommand(args);
   }
   if (command === "status") {
-    // Probe-only on purpose: this report answers about the daemon that IS
-    // there; ensuring one would change the machine to describe it.
-    const daemon = await createRedskillsOperatorAcpClient(undefined, { ensure: false })
-      .state()
-      .then((state) => ({ reachable: true as const, state }))
-      .catch((error: unknown) => ({
-        reachable: false as const,
-        reason: error instanceof Error ? error.message : String(error),
-      }));
-    const statePath = value(args, "--state");
-    const publishedPath = statePath == null
-      ? defaultLinkStatusPath()
-      : join(dirname(statePath), "status.json");
-    process.stdout.write(renderLinkStatusReport({
-      daemon,
-      unit: readRedskilledLinkUnitStatus(),
-      published: await readPublicLinkStatus(publishedPath),
-      publishedPath,
-    }));
-    return daemon.reachable ? 0 : 1;
+    return await runStatusCommand(args);
   }
   process.stdout.write(REDSKILLED_LINK_USAGE);
   return 0;
+}
+
+/**
+ * One screen from three quoted authorities: the host daemon, systemd, and the
+ * published status.json. Probe-only on purpose — this report answers about
+ * the daemon that IS there; ensuring one would change the machine to
+ * describe it. Unreachable exits 1 with the reason on the report.
+ */
+async function runStatusCommand(args: readonly string[]): Promise<number> {
+  const daemon = await createRedskillsOperatorAcpClient(undefined, { ensure: false })
+    .state()
+    .then((state) => ({ reachable: true as const, state }))
+    .catch((error: unknown) => ({
+      reachable: false as const,
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+  const statePath = value(args, "--state");
+  const publishedPath = statePath == null
+    ? defaultLinkStatusPath()
+    : join(dirname(statePath), "status.json");
+  process.stdout.write(renderLinkStatusReport({
+    daemon,
+    unit: readRedskilledLinkUnitStatus(),
+    published: await readPublicLinkStatus(publishedPath),
+    publishedPath,
+  }));
+  return daemon.reachable ? 0 : 1;
 }
 
 /**
