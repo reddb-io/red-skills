@@ -36,6 +36,8 @@ import {
   takeWireFrame,
   decodeWireFrameStrict,
   type ResidentWireDialect,
+  MAX_WIRE_FRAME_BYTES,
+  WireFrameOverflowError,
 } from "@reddb-io/shared/resident-wire.js";
 
 /** The envelope markers, spelled once: JSON-RPC 2.0 on JSON, TOON-RPC 1.0 on TOON. */
@@ -53,6 +55,16 @@ type WireMessage = Record<string, unknown>;
  * A drop-in for `ndJsonStream(output, input)` that reads both dialects and
  * answers in the one the peer last proved.
  */
+/**
+ * Skip-and-log covers a malformed frame WITH a terminator; an unterminated
+ * frame past the ceiling has nothing to resync on, so the connection is
+ * refused loudly instead of buffering the peer's bytes without bound (leak
+ * audit 2026-08-25).
+ */
+function assertFrameWithinCeiling(buffer: string): void {
+  if (buffer.length > MAX_WIRE_FRAME_BYTES) throw new WireFrameOverflowError(buffer.length);
+}
+
 export function dualDialectStream(
   output: WritableStream<Uint8Array>,
   input: ReadableStream<Uint8Array>,
@@ -125,7 +137,10 @@ export function dualDialectStream(
           buffer += textDecoder.decode(value, { stream: true });
           for (;;) {
             const taken = takeWireFrame(buffer);
-            if (taken === null) break;
+            if (taken === null) {
+              assertFrameWithinCeiling(buffer);
+              break;
+            }
             buffer = taken.rest;
             decodeAndEnqueue(controller, taken.frame, taken.dialect);
           }

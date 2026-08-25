@@ -30,6 +30,8 @@ import {
   rememberJsonOnlyPeer,
   residentWireDialectFor,
   takeWireFrame,
+  MAX_WIRE_FRAME_BYTES,
+  WireFrameOverflowError,
   type ResidentWireDialect,
 } from "./resident-wire.js";
 
@@ -143,7 +145,12 @@ export function serveWireSocket<TRequest>(
   socket.on("data", (chunk: string) => {
     buffer += chunk;
     const framed = takeWireFrame(buffer);
-    if (!framed) return;
+    if (!framed) {
+      // No delimiter to resync on past the ceiling: refuse the connection
+      // instead of holding its bytes for as long as the peer stays quiet.
+      if (buffer.length > MAX_WIRE_FRAME_BYTES) socket.destroy(new WireFrameOverflowError(buffer.length));
+      return;
+    }
     buffer = framed.rest;
     socket.pause();
     const respond = (response: unknown): void => {

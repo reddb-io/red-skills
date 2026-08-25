@@ -6,6 +6,11 @@
 // connection completes a real request/response round trip when one end of the
 // wire is writing TOON-RPC. The resident-wire framing itself is proven in
 // `packages/shared/resident-wire.test.ts`; nothing here respells it.
+import {
+  ACP_CLIENT_PENDING_UPDATE_RETENTION,
+  connectRedskillsProjectAcp,
+  shedPendingUpdates,
+} from "../src/acp-client.js";
 import { describe, expect, it } from "vitest";
 import { dualDialectStream } from "@reddb-io/protocol-acp";
 
@@ -244,5 +249,43 @@ describe("parity with the SDK's ndJsonStream (ADR 0170)", () => {
 
     await stream.readable.cancel(new Error("session over"));
     expect(cancelled).toEqual(new Error("session over"));
+  });
+});
+
+describe("an unterminated frame past the byte ceiling refuses the connection", () => {
+  it("errors loudly instead of buffering the peer's bytes forever", async () => {
+    const { readable: inputReadable, writable: inputWritable } = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new WritableStream<Uint8Array>({ write: () => undefined });
+    const stream = dualDialectStream(output, inputReadable);
+    const reader = stream.readable.getReader();
+    const writer = inputWritable.getWriter();
+
+    // A TOON-sniffed frame (no leading '{' or '[') that never sends its blank
+    // line: 9 MiB of un-terminated bytes, in 1 MiB chunks.
+    const chunk = new TextEncoder().encode("k: " + "x".repeat(1_048_576 - 4) + " ");
+    const feed = (async () => {
+      for (let i = 0; i < 9; i += 1) await writer.write(chunk);
+    })();
+
+    await expect(reader.read()).rejects.toThrow(/exceeded .* without a terminator/);
+    await feed.catch(() => undefined);
+  });
+});
+
+describe("the resident client's update retention", () => {
+  it("shedPendingUpdates drops only the excess, oldest first, and counts it", () => {
+    const updates = Array.from(
+      { length: ACP_CLIENT_PENDING_UPDATE_RETENTION + 7 },
+      (_unused, index) => ({ sessionUpdate: "agent_message_chunk", index }),
+    ) as never[];
+
+    expect(shedPendingUpdates(updates)).toBe(7);
+    expect(updates).toHaveLength(ACP_CLIENT_PENDING_UPDATE_RETENTION);
+    expect((updates[0] as { index: number }).index).toBe(7);
+    expect(shedPendingUpdates(updates)).toBe(0);
+  });
+
+  it("connectRedskillsProjectAcp is the one exported entrance this retention guards", () => {
+    expect(typeof connectRedskillsProjectAcp).toBe("function");
   });
 });
