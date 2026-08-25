@@ -322,9 +322,17 @@ async function servePublicConnection(
       : { releaseProject: (projectLabel) => options.releaseProject!(projectLabel) }),
   });
 
+  // Per-connection binding of the same unattended runner the drain and the
+  // Mobile dispatch use — pure wiring over the shared journal, cheap to bind.
+  const runDemandTurn = demandTurnRunnerFor(options, sessionJournal);
   const { v1: v1Methods, v2: v2Methods } = connectionMethodTables({
     paths: options.paths,
     startWorker: options.startWorker,
+    runDemandTurn,
+    ...(options.recordAcpFailure == null ? {} : {
+      recordDispatchFailure: (failure: { projectLabel: string; detail: string; surface: "turn" }) =>
+        options.recordAcpFailure!(failure),
+    }),
     githubGateway: options.githubGateway,
     hostAdministration: options.hostAdministration === true,
     mobileTicketDispatch: options.mobileTicketDispatch ?? (async () => {

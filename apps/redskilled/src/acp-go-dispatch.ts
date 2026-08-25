@@ -61,12 +61,27 @@ export interface GoWorkerAdmission {
   readonly session_id?: string;
 }
 
+/** What the dispatch knows that admission needs to BRIEF the Worker with. */
+export interface GoDispatchBrief {
+  /** The demand, verbatim — it becomes the Ticket-loop handoff. */
+  readonly demand: string;
+  readonly title: string;
+}
+
 export interface AcpGoDispatchDeps {
   readonly tracker: GoTicketTracker;
-  /** Admit exactly one Worker against the minted Ticket. */
+  /**
+   * Admit one Worker against the minted Ticket AND set its turn running.
+   *
+   * The brief travels with the admission because a Worker admitted without a
+   * turn is furniture: the native Worker enters its Ticket loop only through a
+   * prompted handoff, and a `go_dispatch` that only birthed the process left
+   * every Worker idle forever (observed live 2026-08-25, twice).
+   */
   admit(
     dispatch: AcpTargetedDispatchIntent,
     context: RedskillsAcpMethodContext<GoDispatchParams>,
+    brief: GoDispatchBrief,
   ): Promise<GoWorkerAdmission>;
 }
 
@@ -121,7 +136,10 @@ export function bindAcpGoDispatch(deps: AcpGoDispatchDeps) {
     };
     let admission: GoWorkerAdmission;
     try {
-      admission = await deps.admit(dispatch, context);
+      admission = await deps.admit(dispatch, context, {
+        demand: context.params.demand.trim(),
+        title: spec.title,
+      });
     } catch (error) {
       try {
         await deps.tracker.dispose?.(ticket);

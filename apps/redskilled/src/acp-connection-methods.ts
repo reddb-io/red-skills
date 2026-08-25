@@ -2,30 +2,26 @@
 //
 // Declared ONCE and registered onto both dialects. The domains themselves are
 // dialect-blind: a Project status projection is the same answer whether v1 or
-// v2 asked. Only `go_dispatch` differs, and only in how the Worker it admits
-// frames its narration for the caller — so that is the one thing the two
-// tables are built with different arguments for.
-import { randomUUID } from "node:crypto";
-import {
-  methods,
-  type AgentContext,
-  type AgentConnection,
-  type RequestPermissionRequest,
-  type RequestPermissionResponse,
-  type SessionNotification,
+// v2 asked — since the go dispatch turn went unattended (its narration is a
+// record, not a client stream), even `go_dispatch` binds identically, so the
+// two tables are the same table registered twice.
+import type {
+  RequestPermissionRequest,
+  RequestPermissionResponse,
 } from "@agentclientprotocol/sdk";
-import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
-import { translateV1SessionUpdateToV2 } from "@reddb-io/protocol-acp";
 
 import { brainMethodDomain } from "./acp-brain.js";
 import { budgetMethodDomain } from "./acp-budget.js";
 import type { PublicSession } from "./acp-control-plane.js";
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 import { githubMethodDomain } from "./acp-github.js";
-import { createGoWorkerAdmission } from "./acp-go-admission.js";
+import type { DemandTurnRequest, DemandTurnResult } from "./acp-demand-turn.js";
+import { mintHostWorkerId } from "./worker-launch.js";
 import {
   createAcpGithubGoTicketTracker,
   goDispatchMethodDomain,
+  GO_DISPATCH_LANE,
+  type GoDispatchBrief,
   type GoWorkerAdmission,
 } from "./acp-go-dispatch.js";
 import { hostStateMethodDomain } from "./acp-host-methods.js";
@@ -74,6 +70,14 @@ export interface ConnectionMethodDeps {
   readonly mobileWorkerStop: (
     params: MobileWorkerStopParams,
   ) => Promise<MobileWorkerStopAnswer>;
+  /** The unattended demand-turn runner every dispatch entrance shares. */
+  readonly runDemandTurn: (request: DemandTurnRequest) => Promise<DemandTurnResult>;
+  /** Durable evidence for a dispatch turn that died after its answer left. */
+  readonly recordDispatchFailure?: (failure: {
+    readonly projectLabel: string;
+    readonly detail: string;
+    readonly surface: "turn";
+  }) => void;
   /** The statusline read the Mobile v2 answer dates itself by; null when none. */
   readonly statuslinePayload?: () => RedskilledStatuslinePayload | null;
   readonly clock?: () => string;
@@ -158,7 +162,8 @@ export function connectionMethodTables(deps: ConnectionMethodDeps): ConnectionMe
     brainMethodDomain({ store: deps.brainStore }),
     memoryMethodDomain({ store: deps.memoryStore, scopedProject: deps.scopedProject }),
   ]);
-  return { v1: table(admitThroughV1(deps)), v2: table(admitThroughV2(deps)) };
+  const admit = goTurnAdmit(deps);
+  return { v1: table(admit), v2: table(admit) };
 }
 
 /**
@@ -199,60 +204,62 @@ function workerWorktrees(deps: ConnectionMethodDeps): readonly RedskilledWorkerW
 type GoAdmit = (
   dispatch: AcpTargetedDispatchIntent,
   context: { readonly client: unknown },
+  brief: GoDispatchBrief,
 ) => Promise<GoWorkerAdmission>;
 
 /**
- * The caller's connection is reachable only from inside a handler, so the
- * admission is bound around the context the request arrived with. The cast is
- * the registry's erasure being undone by the dialect that erased it.
+ * Admit by RUNNING the turn, not by only birthing the process.
+ *
+ * `go_dispatch` used to admit a Worker and stop: the native Worker enters its
+ * Ticket loop only through a prompted handoff, so every dispatched Worker sat
+ * idle forever with its Ticket unclaimed (observed live 2026-08-25, twice).
+ * The turn is the same unattended demand turn the drain and the Mobile
+ * dispatch run — fire-and-forget, with the answer resolved at admission — so
+ * the dispatching client may hang up the moment it has its Worker id, which
+ * is exactly what the MCP adapter and the phone both do.
  */
-function admitThroughV1(deps: ConnectionMethodDeps): GoAdmit {
-  return async (dispatch, context) => {
-    const upstream = context.client as AgentContext;
-    return await goAdmission(deps, {
-      forward: () => upstream.notify.bind(upstream) as AgentConnection["client"]["notify"],
-      permission: (request) => upstream.request(methods.client.session.requestPermission, request),
-    })(dispatch);
+export function goTurnAdmit(deps: ConnectionMethodDeps): GoAdmit {
+  return async (dispatch, _context, brief) => {
+    const project = deps.scopedProject();
+    const state = deps.hostState();
+    const workerId = mintHostWorkerId(state.workers.map((worker) => worker.worker_id));
+    const base = state.registrations
+      ?.find((registration) => registration.project_label === project.projectLabel)
+      ?.trunk?.branch ?? "main";
+    let admitted = false;
+    let resolveBorn!: (bornWorkerId: string) => void;
+    let rejectBorn!: (error: unknown) => void;
+    const born = new Promise<string>((resolve, reject) => {
+      resolveBorn = resolve;
+      rejectBorn = reject;
+    });
+    const turn = deps.runDemandTurn({
+      project,
+      workerId,
+      workItem: String(dispatch.ticket),
+      prompt: `Implement the /go dispatch Ticket #${dispatch.ticket}: ${brief.demand}`,
+      ticket: {
+        number: dispatch.ticket,
+        title: brief.title,
+        labels: [GO_DISPATCH_LANE],
+        base,
+        handoff: brief.demand,
+        worker_id: workerId,
+      },
+      onBorn: (bornWorkerId) => {
+        admitted = true;
+        resolveBorn(bornWorkerId);
+      },
+    });
+    void turn.catch((error: unknown) => {
+      if (!admitted) rejectBorn(error);
+      deps.recordDispatchFailure?.({
+        projectLabel: project.projectLabel,
+        detail: `go_dispatch turn for Ticket #${dispatch.ticket} died: ${
+          error instanceof Error ? error.message : String(error)}`,
+        surface: "turn",
+      });
+    });
+    return { worker_id: await born };
   };
-}
-
-function admitThroughV2(deps: ConnectionMethodDeps): GoAdmit {
-  return async (dispatch, context) => {
-    const upstream = context.client as acpV2.AgentContext;
-    const messageId = randomUUID();
-    return await goAdmission(deps, {
-      forward: (sessionId) => (async (_method: unknown, notice: SessionNotification) => {
-        const update = translateV1SessionUpdateToV2(notice.update, messageId);
-        if (update == null) return;
-        await upstream.notify(acpV2.methods.client.session.update, {
-          sessionId,
-          update,
-          _meta: notice._meta,
-        });
-      }) as AgentConnection["client"]["notify"],
-      permission: async (request) => await upstream.request(
-        acpV2.methods.client.session.requestPermission,
-        request as unknown as acpV2.RequestPermissionRequest,
-      ) as unknown as RequestPermissionResponse,
-    })(dispatch);
-  };
-}
-
-interface GoDialect {
-  readonly forward: (sessionId: string) => AgentConnection["client"]["notify"];
-  readonly permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
-}
-
-function goAdmission(deps: ConnectionMethodDeps, dialect: GoDialect) {
-  return createGoWorkerAdmission({
-    paths: deps.paths,
-    startWorker: deps.startWorker,
-    hostState: deps.hostState,
-    sessionJournal: deps.sessionJournal,
-    sessions: deps.sessions,
-    active: deps.active,
-    project: deps.scopedProject,
-    forward: dialect.forward,
-    permission: (sessionId, request) => deps.permission(sessionId, request, dialect.permission),
-  });
 }

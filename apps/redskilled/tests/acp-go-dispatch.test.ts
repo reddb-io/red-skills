@@ -38,10 +38,12 @@ describe("_redskills/go_dispatch", () => {
   it("mints the Ticket in the go lane and answers with the admitted Worker id", async () => {
     const tracker = stubTracker();
     const admitted: AcpTargetedDispatchIntent[] = [];
+    const briefs: unknown[] = [];
     const dispatch = bindAcpGoDispatch({
       tracker,
-      admit: async (intent) => {
+      admit: async (intent, _context, brief) => {
         admitted.push(intent);
+        briefs.push(brief);
         return { worker_id: "host:W4014", session_id: "session-4014" };
       },
     });
@@ -58,6 +60,12 @@ describe("_redskills/go_dispatch", () => {
     expect(tracker.minted).toHaveLength(1);
     expect(tracker.minted[0]!.spec.labels).toContain(GO_DISPATCH_LANE);
     expect(tracker.minted[0]!.spec.labels).not.toContain("ready-for-agent");
+    // The demand rides to admission as the brief: a Worker admitted without a
+    // handoff never enters its Ticket loop.
+    expect(briefs[0]).toEqual({
+      demand: "teach the daemon to dispatch /go",
+      title: "/go: teach the daemon to dispatch /go",
+    });
     expect(tracker.minted[0]!.spec.body).toContain("teach the daemon to dispatch /go");
     expect(admitted).toEqual([{
       version: 1,
