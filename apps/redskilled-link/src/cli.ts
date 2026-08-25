@@ -32,6 +32,8 @@ export const REDSKILLED_LINK_USAGE = [
   "redskilled-link host [--relay wss://relay.example] [--name HOST]",
   "redskilled-link unit install|remove|status [--state PATH]",
   "redskilled-link status [--state PATH]",
+  "redskilled-link devices [--state PATH]",
+  "redskilled-link revoke <device-id> [--state PATH]",
   "",
 ].join("\n");
 
@@ -72,6 +74,25 @@ export async function runRedskilledLinkCli(argv: readonly string[]): Promise<num
   }
   if (command === "status") {
     return await runStatusCommand(args);
+  }
+  if (command === "devices") {
+    const devices = await stateStore(args).devices();
+    process.stdout.write(renderDeviceRegistry(devices));
+    return 0;
+  }
+  if (command === "revoke") {
+    const deviceId = args.find((argument) => !argument.startsWith("--") && argument !== value(args, "--state"));
+    if (deviceId == null || deviceId === "") {
+      process.stderr.write(`redskilled-link revoke requires a device id — see \`devices\`\n`);
+      return 2;
+    }
+    const revoked = await stateStore(args).revoke(deviceId);
+    if (!revoked) {
+      process.stderr.write(`no live paired device carries the id ${JSON.stringify(deviceId)} — see \`devices\`\n`);
+      return 1;
+    }
+    process.stdout.write(`Device ${deviceId} revoked. It can no longer reach this Host; pair again to restore it.\n`);
+    return 0;
   }
   process.stdout.write(REDSKILLED_LINK_USAGE);
   return 0;
@@ -156,6 +177,24 @@ async function runUnitCommand(args: readonly string[]): Promise<number> {
   }
   process.stderr.write(`redskilled-link unit: unknown operation ${JSON.stringify(operation)}\n${REDSKILLED_LINK_USAGE}`);
   return 2;
+}
+
+/**
+ * The registry as an operator reads it: every device this Host ever paired,
+ * the revoked ones kept and MARKED — a device that vanished from the list and
+ * a device that was cut off are different histories. Secrets never print.
+ */
+export function renderDeviceRegistry(
+  devices: readonly { device_id: string; device_name: string; paired_at: string; revoked: boolean }[],
+): string {
+  if (devices.length === 0) {
+    return "No devices have ever paired with this Host. Create an invitation with `invite`.\n";
+  }
+  const lines = devices.map((device) =>
+    `${device.revoked ? "revoked " : "paired  "} ${device.device_id}  ${device.device_name}` +
+      `  since ${device.paired_at}`,
+  );
+  return `${lines.join("\n")}\n`;
 }
 
 function stateStore(args: readonly string[]) {

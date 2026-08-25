@@ -35,6 +35,14 @@ interface LinkState {
   readonly devices: readonly LinkDeviceRecord[];
 }
 
+/** One paired device as an operator may SEE it — the secret never leaves the store. */
+export interface LinkDeviceView {
+  readonly device_id: string;
+  readonly device_name: string;
+  readonly paired_at: string;
+  readonly revoked: boolean;
+}
+
 export interface RedskilledLinkStateStore {
   identity(): Promise<Pick<LinkState, "host_id" | "host_name" | "relay_url">>;
   configure(options: { readonly relayUrl?: string; readonly hostName?: string }): Promise<void>;
@@ -43,6 +51,10 @@ export interface RedskilledLinkStateStore {
   pair(inviteId: string, device: Omit<LinkDeviceRecord, "paired_at" | "revoked" | "nonces">): Promise<void>;
   device(deviceId: string): Promise<LinkDeviceRecord | undefined>;
   acceptNonce(deviceId: string, nonce: string): Promise<LinkDeviceRecord>;
+  /** Every device this Host ever paired, revoked included — secrets omitted. */
+  devices(): Promise<readonly LinkDeviceView[]>;
+  /** Cut one device off the wire. `false` when no live device carries the id. */
+  revoke(deviceId: string): Promise<boolean>;
 }
 
 export function defaultLinkStatePath(homeDir = homedir()): string {
@@ -199,6 +211,28 @@ export function createRedskilledLinkStateStore(options: {
     },
     async device(deviceId) {
       return (await read()).devices.find((device) => device.device_id === deviceId && !device.revoked);
+    },
+    async devices() {
+      return (await read()).devices.map(({ device_id, device_name, paired_at, revoked }) => ({
+        device_id,
+        device_name,
+        paired_at,
+        revoked,
+      }));
+    },
+    async revoke(deviceId) {
+      // Revocation republishes the status projection: the paired-device count
+      // is exactly the number this operation changes.
+      return await mutate((state) => {
+        const live = state.devices.find((entry) => entry.device_id === deviceId && !entry.revoked);
+        if (live == null) return [state, false];
+        return [{
+          ...state,
+          devices: state.devices.map((entry) => entry.device_id === deviceId
+            ? { ...entry, revoked: true }
+            : entry),
+        }, true];
+      }, true);
     },
     async acceptNonce(deviceId, nonce) {
       return await mutate((state) => {
