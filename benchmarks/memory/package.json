@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/benchmark-memory",
-  "version": "4.2.9",
+  "version": "4.3.0",
   "private": true,
   "description": "Internal benchmark and reference-eval app for RedSkills Memory.",
   "license": "Apache-2.0",
