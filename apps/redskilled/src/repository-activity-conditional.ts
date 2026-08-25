@@ -92,7 +92,10 @@ export async function fetchTrunkLinesToday(
     const base = firstParentSha(commits.data[commits.data.length - 1]);
     if (head === "" || base === "") return { lines: TRUNK_LINES_UNANSWERED, requestCount };
     const compare = await request.object({
-      cacheKey: `activity:${repository}:trunk-lines:${base}...${head}`,
+      // Stable on purpose: a per-commit key never repeats, so its entry was
+      // pure cost. The ETag handshake is URL-scoped — a reused key whose
+      // parameters moved gets a 200 and overwrites, never a wrong 304 body.
+      cacheKey: `activity:${repository}:trunk-lines`,
       route: "GET /repos/{owner}/{repo}/compare/{basehead}",
       parameters: { owner, repo, basehead: `${base}...${head}` },
       operation: REDSKILLED_TRUNK_LINES_OPERATION,
@@ -183,13 +186,15 @@ export async function fetchConditionalRepositoryActivity(
           operation: REDSKILLED_ACTIVITY_REST_OPERATION,
         });
         const closedAnswer = await list({
-          cacheKey: `activity:${repository}:recently-closed:${JSON.stringify(closedParams)}`,
+          // Stable: the `since` inside the parameters moves hourly and minted
+          // a new key (and pages under it) every hour, forever.
+          cacheKey: `activity:${repository}:recently-closed`,
           route: "GET /repos/{owner}/{repo}/issues",
           parameters: closedParams,
           operation: REDSKILLED_ACTIVITY_REST_OPERATION,
         });
         const mergedAnswer = await count({
-          cacheKey: `activity:${repository}:merged-today:${operation.merged_since}`,
+          cacheKey: `activity:${repository}:merged-today`,
           route: "GET /search/issues",
           parameters: mergedParams,
           operation: REDSKILLED_MERGED_TODAY_OPERATION,

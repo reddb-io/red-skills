@@ -10,6 +10,7 @@ import {
   githubRateLimitResetAt,
   isGithubRateLimitError,
   type GithubRequestFetch,
+  createMemoryGithubEtagStore,
 } from "./conditional-client.js";
 import { GithubBackpressureError } from "./routing.js";
 import type { GithubAttributedOperation } from "./attribution.js";
@@ -879,4 +880,31 @@ describe("a 404 is an answer, not a failure", () => {
     // Retrying cost 93s of backoff per CODEOWNERS lookup and froze Worker boot.
     expect(calls).toBe(1);
   }, 60_000);
+});
+
+describe("the memory ETag store is bounded by recency", () => {
+  it("evicts the least-recently-used entry past the capacity", () => {
+    const store = createMemoryGithubEtagStore(2);
+    const entry = (etag: string) => ({ etag, data: { etag }, headers: {} });
+    store.set("a", entry("a1"));
+    store.set("b", entry("b1"));
+    // Touch `a` so `b` is the oldest when the third entry arrives.
+    expect(store.get("a")?.etag).toBe("a1");
+    store.set("c", entry("c1"));
+
+    expect(store.get("b")).toBeUndefined();
+    expect(store.get("a")?.etag).toBe("a1");
+    expect(store.get("c")?.etag).toBe("c1");
+  });
+
+  it("overwriting a held key refreshes it without spending a slot", () => {
+    const store = createMemoryGithubEtagStore(2);
+    const entry = (etag: string) => ({ etag, data: {}, headers: {} });
+    store.set("a", entry("a1"));
+    store.set("b", entry("b1"));
+    store.set("a", entry("a2"));
+
+    expect(store.get("a")?.etag).toBe("a2");
+    expect(store.get("b")?.etag).toBe("b1");
+  });
 });

@@ -56,12 +56,45 @@ export interface GithubEtagStore {
   set(key: string, entry: GithubEtagEntry): void;
 }
 
-/** A daemon-lifetime store. Callers may provide a durable implementation later. */
-export function createMemoryGithubEtagStore(): GithubEtagStore {
+/** Entries a daemon-lifetime store may hold before recency evicts (finding of
+ * the 2026-08-25 leak audit: an uncapped store retained whole response bodies
+ * under time/content-derived keys for days, and a host running only the
+ * daemon died of it). Generous: the polling surface uses a handful of stable
+ * keys per registered repository. */
+export const GITHUB_ETAG_STORE_CAPACITY = 256;
+
+/**
+ * A daemon-lifetime store, bounded by recency.
+ *
+ * Each entry retains a whole response body beside its validator (a 304 with
+ * nothing held is an empty answer), so an unbounded map is a memory leak with
+ * the daemon's own lifetime. Reads refresh recency; writes past the capacity
+ * evict the least-recently-used entry — a key that never repeats then costs
+ * one slot instead of forever.
+ */
+export function createMemoryGithubEtagStore(
+  capacity = GITHUB_ETAG_STORE_CAPACITY,
+): GithubEtagStore {
+  const bound = Math.max(1, Math.floor(capacity));
   const entries = new Map<string, GithubEtagEntry>();
   return {
-    get: (key) => entries.get(key),
-    set: (key, entry) => entries.set(key, entry),
+    get: (key) => {
+      const held = entries.get(key);
+      if (held != null) {
+        entries.delete(key);
+        entries.set(key, held);
+      }
+      return held;
+    },
+    set: (key, entry) => {
+      entries.delete(key);
+      entries.set(key, entry);
+      while (entries.size > bound) {
+        const oldest = entries.keys().next().value;
+        if (oldest == null) break;
+        entries.delete(oldest);
+      }
+    },
   };
 }
 
