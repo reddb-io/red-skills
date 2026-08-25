@@ -3,18 +3,16 @@
 // the other), two memory roots, and journal sessions split across both. The
 // durable cache stops new twins; this migration repairs the history — and
 // these tests pin its merge rules and its idempotence.
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   memoryRootBesideWorkspaces,
   migrateProjectIdentity,
 } from "../src/project-identity-migration.js";
-import { acpSessionJournalPath } from "../src/acp-session-journal.js";
 import { projectDirectoryName } from "../src/project-workspace.js";
 import type { ProjectControlState } from "../src/project-control.js";
 
@@ -31,21 +29,29 @@ const TO = "github:1240684599";
 async function host() {
   const root = await mkdtemp(join(tmpdir(), "redskilled-identity-migration-"));
   roots.push(root);
-  const registrationIntentPath = join(root, ".red", "redskilled", "redskilled.registrations.toon");
   const projectWorkspaceRoot = join(root, ".red", "redskilled", "projects");
   await mkdir(projectWorkspaceRoot, { recursive: true });
   const persisted: unknown[] = [];
+  const rekeys: { from: string; to: string; label: string }[] = [];
   const projectControls = new Map<string, ProjectControlState>();
   return {
     root,
     persisted,
+    rekeys,
     deps: {
-      registrationIntentPath,
       projectWorkspaceRoot,
       memoryRoot: memoryRootBesideWorkspaces(projectWorkspaceRoot),
       projectControls,
       persistProjectControls: async (projects: ReadonlyMap<string, ProjectControlState>) => {
         persisted.push(new Map(projects));
+      },
+      // Journal re-keying goes THROUGH the live journal instance (the file
+      // rewrite was silently undone by the journal's own next append); the
+      // migration only reports what the instance answered.
+      // The default host holds no journal sessions; the re-key test overrides.
+      rekeySessions: async (from: string, to: string, label: string) => {
+        rekeys.push({ from, to, label });
+        return 0;
       },
     },
   };
@@ -102,25 +108,18 @@ describe("migrating a remote: project onto its github: identity", () => {
     expect(existsSync(`${fromMemory}.superseded`)).toBe(true);
   });
 
-  it("re-keys journal sessions to the canonical identity", async () => {
-    const { deps } = await host();
-    const journalPath = acpSessionJournalPath(deps.registrationIntentPath);
-    await mkdir(join(deps.registrationIntentPath, ".."), { recursive: true });
-    await writeFile(journalPath, `${encode({
-      version: 1,
-      sessions: [
-        { public_session_id: "s1", project_id: FROM, project_label: "reddb-io/red-skills", workspace_path: "/x", entries: [], session_evidence: [] },
-        { public_session_id: "s2", project_id: "github:7", project_label: "a/b", workspace_path: "/y", entries: [], session_evidence: [] },
-      ],
-    } as unknown as JsonValue)}\n`);
+  it("re-keys journal sessions through the live journal instance, never the file", async () => {
+    const { deps, rekeys } = await host();
 
-    const report = await migrateProjectIdentity(ALIAS, deps);
+    const report = await migrateProjectIdentity(ALIAS, {
+      ...deps,
+      rekeySessions: async (from, to, label) => {
+        rekeys.push({ from, to, label });
+        return 1;
+      },
+    });
 
-    const rewritten = decode((await readFile(journalPath, "utf8")).trim()) as {
-      sessions: { public_session_id: string; project_id: string }[];
-    };
-    expect(rewritten.sessions.find((s) => s.public_session_id === "s1")?.project_id).toBe(TO);
-    expect(rewritten.sessions.find((s) => s.public_session_id === "s2")?.project_id).toBe("github:7");
+    expect(rekeys).toEqual([{ from: FROM, to: TO, label: ALIAS.fullName }]);
     expect(report.actions).toEqual([expect.stringContaining("re-keyed 1 journal session")]);
   });
 

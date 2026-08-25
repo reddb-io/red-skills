@@ -21,13 +21,10 @@
 //   `<name>.superseded` — documented, recoverable, never silently dropped.
 // - **Session journal**: rows re-keyed to the canonical id, so retake and
 //   recovery stop splitting on the spelling.
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { ProjectControlState } from "./project-control.js";
-import { acpSessionJournalPath } from "./acp-session-journal.js";
 import { projectDirectoryName } from "./project-workspace.js";
 
 export interface ProjectIdentityAlias {
@@ -37,7 +34,6 @@ export interface ProjectIdentityAlias {
 }
 
 export interface MigrateProjectIdentityDeps {
-  readonly registrationIntentPath: string;
   readonly projectWorkspaceRoot: string;
   /** The `~/.red/memory` parent; absent skips the memory step. */
   readonly memoryRoot?: string;
@@ -49,6 +45,14 @@ export interface MigrateProjectIdentityDeps {
    */
   readonly projectControls: Map<string, ProjectControlState>;
   readonly persistProjectControls: (projects: ReadonlyMap<string, ProjectControlState>) => Promise<void>;
+  /**
+   * Re-keys journal sessions THROUGH the live journal instance. The migration
+   * once rewrote the journal file directly; the durable journal object then
+   * persisted its own in-memory snapshot over that rewrite, undoing it on
+   * every append — the same single-writer rule the control map already
+   * follows, learned twice.
+   */
+  readonly rekeySessions: (fromProjectId: string, toProjectId: string, projectLabel: string) => Promise<number>;
 }
 
 export interface ProjectIdentityMigrationReport {
@@ -120,50 +124,12 @@ export async function migrateProjectIdentity(
     }
   }
 
-  // 4. Session journal: rows follow the surviving identity.
-  const journalPath = acpSessionJournalPath(deps.registrationIntentPath);
-  const rekeyed = await rekeySessionJournal(journalPath, from, to, alias.fullName);
+  // 4. Session journal: rows follow the surviving identity, re-keyed through
+  //    the one live journal object so its next append cannot undo the move.
+  const rekeyed = await deps.rekeySessions(from, to, alias.fullName);
   if (rekeyed > 0) actions.push(`re-keyed ${rekeyed} journal session(s) from ${from} to ${to}`);
 
   return { from, to, actions };
-}
-
-async function rekeySessionJournal(
-  path: string,
-  from: string,
-  to: string,
-  fullName: string,
-): Promise<number> {
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch {
-    return 0;
-  }
-  let parsed: unknown;
-  try {
-    parsed = decode(raw.trim());
-  } catch {
-    return 0;
-  }
-  const snapshot = parsed as { version?: unknown; sessions?: unknown };
-  if (snapshot?.version !== 1 || !Array.isArray(snapshot.sessions)) return 0;
-  let touched = 0;
-  const sessions = snapshot.sessions.map((value) => {
-    const record = value as Record<string, unknown> | null;
-    if (record == null || typeof record !== "object" || record.project_id !== from) return value;
-    touched += 1;
-    return { ...record, project_id: to, project_label: fullName };
-  });
-  if (touched === 0) return 0;
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${encode({ ...snapshot, sessions } as unknown as JsonValue)}\n`, { mode: 0o600 });
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
-  return touched;
 }
 
 async function exists(path: string): Promise<boolean> {

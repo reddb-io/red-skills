@@ -140,15 +140,23 @@ export async function startRedskillsAcpControlPlane(
   // canonical `github:` identity — once at boot for everything already known,
   // and again the moment a new alias is learned. Idempotent, so a clean pass
   // costs a few stats and reports nothing.
+  const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
   const migrationDeps = {
-    registrationIntentPath: paths.registrationIntentPath,
     projectWorkspaceRoot: paths.projectWorkspaceRoot,
     memoryRoot: memoryRootBesideWorkspaces(paths.projectWorkspaceRoot),
     projectControls,
     persistProjectControls,
+    rekeySessions: (from: string, to: string, label: string) => sessionJournal.rekeyProject(from, to, label),
   };
+  // One migration at a time, on one chain. The boot pass and a first bind's
+  // remember once ran the SAME alias concurrently — two rm/rename races over
+  // the same directories and two persists of the same map, which is the shape
+  // of the 2026-08-25 project-control wedge. A chain makes the second pass a
+  // cheap idempotent no-op instead of a race.
+  let migrationTail: Promise<void> = Promise.resolve();
   const migrateAlias = (alias: { slug: string; githubId: string; fullName: string }): void => {
-    void migrateProjectIdentity(alias, migrationDeps)
+    migrationTail = migrationTail
+      .then(() => migrateProjectIdentity(alias, migrationDeps))
       .then((report) => {
         for (const action of report.actions) {
           process.stderr.write(`project identity migration: ${action}\n`);
@@ -179,7 +187,6 @@ export async function startRedskillsAcpControlPlane(
       surface: "connection",
     }),
   };
-  const sessionJournal = await createDurableAcpSessionJournal(acpSessionJournalPath(paths.registrationIntentPath));
   const runTurn = demandTurnRunnerFor(options, sessionJournal);
   const connectionOptions = {
     ...options,
