@@ -76,23 +76,11 @@ export async function runRedskilledLinkCli(argv: readonly string[]): Promise<num
     return await runStatusCommand(args);
   }
   if (command === "devices") {
-    const devices = await stateStore(args).devices();
-    process.stdout.write(renderDeviceRegistry(devices));
+    process.stdout.write(renderDeviceRegistry(await stateStore(args).devices()));
     return 0;
   }
   if (command === "revoke") {
-    const deviceId = args.find((argument) => !argument.startsWith("--") && argument !== value(args, "--state"));
-    if (deviceId == null || deviceId === "") {
-      process.stderr.write(`redskilled-link revoke requires a device id — see \`devices\`\n`);
-      return 2;
-    }
-    const revoked = await stateStore(args).revoke(deviceId);
-    if (!revoked) {
-      process.stderr.write(`no live paired device carries the id ${JSON.stringify(deviceId)} — see \`devices\`\n`);
-      return 1;
-    }
-    process.stdout.write(`Device ${deviceId} revoked. It can no longer reach this Host; pair again to restore it.\n`);
-    return 0;
+    return await runRevokeCommand(args);
   }
   process.stdout.write(REDSKILLED_LINK_USAGE);
   return 0;
@@ -177,6 +165,21 @@ async function runUnitCommand(args: readonly string[]): Promise<number> {
   }
   process.stderr.write(`redskilled-link unit: unknown operation ${JSON.stringify(operation)}\n${REDSKILLED_LINK_USAGE}`);
   return 2;
+}
+
+/** Cut one paired device off the wire; a non-live id is a loud miss, not success. */
+async function runRevokeCommand(args: readonly string[]): Promise<number> {
+  const deviceId = args.find((argument) => !argument.startsWith("--") && argument !== value(args, "--state"));
+  if (deviceId == null || deviceId === "") {
+    process.stderr.write(`redskilled-link revoke requires a device id — see \`devices\`\n`);
+    return 2;
+  }
+  if (!await stateStore(args).revoke(deviceId)) {
+    process.stderr.write(`no live paired device carries the id ${JSON.stringify(deviceId)} — see \`devices\`\n`);
+    return 1;
+  }
+  process.stdout.write(`Device ${deviceId} revoked. It can no longer reach this Host; pair again to restore it.\n`);
+  return 0;
 }
 
 /**
