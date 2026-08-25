@@ -165,3 +165,27 @@ describe("redskilled resource incidents", () => {
     expect(decode(output.trim())).toMatchObject({ incident_id: "incident-2", samples: [{ source: "cgroup-v2" }] });
   });
 });
+
+describe("forgetting a dead target", () => {
+  it("drops the ring, the counters and an OPEN incident's pinned buffer", () => {
+    const tracker = new ResourceIncidentTracker();
+    const start = Date.parse("2026-08-25T12:00:00.000Z");
+    // Open a real incident (same pressure shape the hysteresis test uses)...
+    for (let i = 0; i < 40; i += 1) {
+      tracker.ingest(sample(new Date(start + i * 15_000).toISOString(), 500));
+    }
+    tracker.ingest(sample(new Date(start + 40 * 15_000).toISOString(), 850));
+    const opened = tracker.ingest(sample(new Date(start + 41 * 15_000).toISOString(), 850));
+    expect(opened.kind).toBe("opened");
+    expect(tracker.hasActiveIncident()).toBe(true);
+
+    // ...then the target dies mid-incident — the OOM-kill shape that used to
+    // pin the incident's whole sample buffer for the daemon's life.
+    tracker.forget("w-1");
+    expect(tracker.hasActiveIncident()).toBe(false);
+
+    // A forgotten target re-ingests from a clean slate.
+    const fresh = tracker.ingest(sample(new Date(start + 100 * 15_000).toISOString(), 500));
+    expect(fresh.kind).toBe("buffered");
+  });
+});

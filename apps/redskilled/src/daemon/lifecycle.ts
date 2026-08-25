@@ -1259,7 +1259,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     workers.delete(workerId);
     reattached.delete(workerId);
     logLines.delete(workerId);
-    displays.delete(workerId);
+    displays.delete(workerId); metricCheckpoints.delete(workerId); workerHighWater.delete(workerId); resourceIncidents.forget(workerId);
     void resourceLeases.releaseHolder(workerId).catch(() => undefined);
   }
 

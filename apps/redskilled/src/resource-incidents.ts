@@ -364,6 +364,21 @@ export class ResourceIncidentTracker {
     };
   }
 
+
+  /**
+   * Drop every belief about one target — the eviction `forgetWorker` calls.
+   *
+   * Without it a dead Worker's state was pinned for the daemon's life: a calm
+   * death kept ~10 minutes of ring samples frozen (the time filter runs only
+   * on the next ingest, which never comes), and a Worker that died MID
+   * incident — exactly the OOM-kill shape — pinned its open incident's full
+   * sample buffer (up to 4096 samples) forever. Self-accelerating under
+   * memory pressure, found by the 2026-08-25 leak audit.
+   */
+  forget(targetId: string): void {
+    this.states.delete(targetId);
+  }
+
   ingest(sample: RedskilledResourceSample): IncidentIngestResult {
     const state: TargetState = this.states.get(sample.target.id) ?? {
       ring: [],
