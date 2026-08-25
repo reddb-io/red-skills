@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/red-skills-link-protocol",
-  "version": "4.4.0",
+  "version": "4.4.1",
   "private": true,
   "type": "module",
   "description": "Browser-safe encrypted TOON protocol shared by Redskilled Mobile and redskilled-link.",
