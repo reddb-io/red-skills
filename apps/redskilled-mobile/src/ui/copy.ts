@@ -22,6 +22,12 @@ export const copy = {
     invitationLabel: "Host pairing invitation",
     invitationPlaceholder: "Paste the pairing invitation",
     pairAction: "PAIR HOST",
+    addAnother: "ADD ANOTHER HOST",
+    addCancel: "CANCEL",
+    unpair: "UNPAIR",
+    count: (count: number) => `${count} HOST${count === 1 ? "" : "S"}`,
+    selectLabel: (name: string) => `Select ${name} as the dispatch target`,
+    workerCount: (count: number) => `${count} Worker${count === 1 ? "" : "s"}`,
     pairedDescription: "Encrypted link · paired device",
     status: {
       connecting: "CONNECTING",
@@ -39,6 +45,7 @@ export const copy = {
     issueLabel: "GitHub Issue URL",
     issuePlaceholder: "https://github.com/owner/repo/issues/123",
     invalidIssue: "Enter a URL like https://github.com/owner/repo/issues/123",
+    target: (hostName: string) => `Dispatches to ${hostName}. Tap another Host card to change the target.`,
     action: "DISPATCH WORKER",
   },
   workers: {
