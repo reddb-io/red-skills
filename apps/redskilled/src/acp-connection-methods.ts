@@ -19,6 +19,7 @@ import type { DemandTurnRequest, DemandTurnResult } from "./acp-demand-turn.js";
 import { mintHostWorkerId } from "./worker-launch.js";
 import {
   createAcpGithubGoTicketTracker,
+  goAcceptanceCriteria,
   goDispatchMethodDomain,
   GO_DISPATCH_LANE,
   type GoDispatchBrief,
@@ -243,7 +244,11 @@ export function goTurnAdmit(deps: ConnectionMethodDeps): GoAdmit {
         title: brief.title,
         labels: [GO_DISPATCH_LANE],
         base,
-        handoff: brief.demand,
+        // The demand plus its own criteria section: the brief contract's
+        // structural door refuses a handoff with no acceptance criteria at
+        // all, before any claim (#4296) — the first live 4.4.0 dispatch
+        // parked exactly there.
+        handoff: `${brief.demand}\n\n${goAcceptanceCriteria(brief.demand).join("\n")}`,
         worker_id: workerId,
       },
       onBorn: (bornWorkerId) => {

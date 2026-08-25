@@ -6,9 +6,11 @@ import {
   goDispatchParams,
 } from "@reddb-io/protocol-acp";
 
+import { briefContractStructuralRefusal } from "@reddb-io/shared/brief-contract.js";
 import {
   bindAcpGoDispatch,
   buildGoTicket,
+  goAcceptanceCriteria,
   goDispatchMethodDomain,
   GO_DISPATCH_LANE,
   type GoTicketSpec,
@@ -127,5 +129,19 @@ describe("_redskills/go_dispatch", () => {
 
     expect(domain.domain).toBe("go");
     expect(domain.bindings.map((binding) => binding.method)).toEqual([REDSKILLS_ACP_METHODS.goDispatch]);
+  });
+});
+
+describe("the go brief carries its own acceptance criteria", () => {
+  it("the Ticket body and the criteria section both state the demand and the gate", () => {
+    const spec = buildGoTicket("document the link commands\nwith the existing README tone");
+    expect(spec.body).toContain("## Acceptance criteria");
+    expect(spec.body).toContain("- The stated demand is satisfied: document the link commands.");
+    expect(spec.body).toContain("shared gate");
+  });
+
+  it("the criteria section passes the brief contract's structural door", () => {
+    const handoff = `implement the thing\n\n${goAcceptanceCriteria("implement the thing").join("\n")}`;
+    expect(briefContractStructuralRefusal(handoff)).toBeNull();
   });
 });

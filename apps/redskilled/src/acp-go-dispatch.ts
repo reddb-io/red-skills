@@ -103,6 +103,8 @@ export function buildGoTicket(demand: string): GoTicketSpec {
       "",
       text,
       "",
+      ...goAcceptanceCriteria(text),
+      "",
       "---",
       "",
       `🤖 Disposable dispatch Ticket, minted by \`${REDSKILLS_ACP_METHODS.goDispatch}\` into the`,
@@ -111,6 +113,25 @@ export function buildGoTicket(demand: string): GoTicketSpec {
     ].join("\n"),
     labels: [GO_DISPATCH_LANE],
   };
+}
+
+/**
+ * The acceptance-criteria section every go brief must carry (#4296's
+ * structural door): a brief with no criteria at all is refused at the wire
+ * before any claim, which is exactly what parked the first live 4.4.0
+ * dispatch as `blocked:spec`. An ad-hoc demand IS its own criterion — the
+ * dispatcher stated exactly what done means, in the demand — so the section
+ * states that and the gate, rather than inventing checkboxes the dispatcher
+ * never wrote. PURE.
+ */
+export function goAcceptanceCriteria(demand: string): readonly string[] {
+  const headline = (demand.split("\n", 1)[0] ?? "").trim();
+  return [
+    "## Acceptance criteria",
+    "",
+    `- The stated demand is satisfied: ${headline.slice(0, 160) || "as written above"}.`,
+    "- The change ships through the shared gate on its own branch and PR.",
+  ];
 }
 
 /**

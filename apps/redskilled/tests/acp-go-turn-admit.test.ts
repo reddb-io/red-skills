@@ -57,9 +57,14 @@ describe("go_dispatch admits by running the turn", () => {
         title: "/go: document the link commands",
         labels: ["lane:go"],
         base: "main",
-        handoff: "document the link commands",
       },
     });
+    // The handoff carries the demand AND its own acceptance-criteria section,
+    // because the brief contract's structural door refuses a handoff with no
+    // criteria at all before any claim (#4296).
+    const handoff = (requests[0]!.ticket as { handoff: string }).handoff;
+    expect(handoff).toContain("document the link commands");
+    expect(handoff).toContain("## Acceptance criteria");
   });
 
   it("a turn that dies before admission rejects the dispatch, loudly", async () => {
