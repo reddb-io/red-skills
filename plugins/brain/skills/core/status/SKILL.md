@@ -16,7 +16,7 @@ Reports the operational health of the project Brain store (`.red/brain/brain.rdb
 Call the `brain_status` MCP tool when available. Otherwise run:
 
 ```bash
-node "${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT}}/scripts/bootstrap.mjs" status
+red-skills-brain status
 ```
 
 If Brain is not initialized, tell the user to run `brain init` first.

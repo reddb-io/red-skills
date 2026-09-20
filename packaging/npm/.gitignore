@@ -1,3 +1,0 @@
-# Built bundles are staged here by scripts/prepare.mjs at pack time (ADR 0091).
-dist/
-*.tgz

@@ -1,7 +1,0 @@
-{
-  "name": "dev-artifact-fixture",
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test:ci": "vitest run"
-  }
-}

@@ -10,7 +10,7 @@ A **wizard** is a Bash script that guides one human through a manual procedure.
 It opens the correct pages, explains each action, captures pasted values, writes
 `.env` entries and GitHub secrets, and reports progress.
 
-The reusable interface lives in [template.sh](template.sh). The library above
+The reusable interface lives in [template.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/engineering/wizard/template.sh). The library above
 the `STAGES` marker is identical in every wizard. Author only the stages below
 that marker.
 
@@ -78,7 +78,7 @@ procedure is a repeatable project setup path.
 
 ## Template Boundary
 
-Treat everything above `STAGES` in [template.sh](template.sh) as vendored
+Treat everything above `STAGES` in [template.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/engineering/wizard/template.sh) as vendored
 library code. Procedure authors edit only totals and stages below the marker.
 
 </supporting-info>

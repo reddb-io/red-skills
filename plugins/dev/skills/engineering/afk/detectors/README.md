@@ -56,11 +56,11 @@ the project authored the file.
 
 ## Shipped detectors
 
-- **`cargo.sh`** — applies on Rust projects (`Cargo.toml` present).
+- **`red-skills-resource run plugins/dev/skills/engineering/afk/detectors/cargo.sh`** — applies on Rust projects (`Cargo.toml` present).
   Exports `CARGO_TARGET_DIR=${RED_AFK_CARGO_TARGET_BASE:-/opt/cargo-target}/slot-${RED_AFK_SLOT}`,
   pre-creating the directory with `mkdir -p` so the first run on a
   fresh host succeeds. Override the base with `RED_AFK_CARGO_TARGET_BASE`.
-- **`gradle.sh`** — applies on Gradle projects (`build.gradle*`
+- **`red-skills-resource run plugins/dev/skills/engineering/afk/detectors/gradle.sh`** — applies on Gradle projects (`build.gradle*`
   present) **and** only when `RED_AFK_GRADLE_USER_HOME_BASE` is set in the
   supervisor's env. Without that base var the detector is a no-op
   (exits 1) — opt-in so we never claim a path on the user's

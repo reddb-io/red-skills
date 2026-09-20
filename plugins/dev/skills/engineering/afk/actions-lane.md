@@ -34,7 +34,7 @@ third-party action repos.
 
 Drop the reusable into your repo (or call it). It ships the issue/label triggers
 and the ADR 0085 trust gate. Template:
-[`examples/rs-afk-attempt.yml`](./examples/rs-afk-attempt.yml).
+[`red-skills-resource run plugins/dev/skills/engineering/afk/examples/rs-afk-attempt.yml`](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/engineering/afk/examples/rs-afk-attempt.yml).
 
 Install the caller as `rs-afk-attempt.yml` (the `rs-*`
 installed-name convention — see [WORKFLOWS.md](../red-setup/WORKFLOWS.md);
@@ -58,7 +58,7 @@ jobs:
 ### B. Composable — the composite action (your triggers + gating)
 
 Use the execution primitive directly and own the trigger/gate. Template:
-[`examples/red-afk-attempt-action.yml`](./examples/red-afk-attempt-action.yml).
+[`red-skills-resource run plugins/dev/skills/engineering/afk/examples/red-afk-attempt-action.yml`](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/engineering/afk/examples/red-afk-attempt-action.yml).
 
 ```yaml
 on: { issues: { types: [labeled] } }

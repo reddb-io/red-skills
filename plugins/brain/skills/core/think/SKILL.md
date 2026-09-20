@@ -32,7 +32,7 @@ Call the `brain_think` MCP tool when available:
 Otherwise run:
 
 ```bash
-node "${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT}}/scripts/bootstrap.mjs" think "<query>"
+red-skills-brain think "<query>"
 ```
 
 Pass the user's question as-is. The synthesis is deterministic over Brain search results — do not paraphrase the query unless it is genuinely ambiguous.

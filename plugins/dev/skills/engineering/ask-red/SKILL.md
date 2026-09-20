@@ -16,6 +16,11 @@ default lane, one exception lane, and several on-ramps that feed those lanes.
 
 ## 1. Classify The Situation
 
+**Route by repository ownership.** Skills and marketplace content belong to
+`reddb-io/red-skills`; software, hooks, MCPs, apps and package publication belong
+to `reddb-io/redskilled`. For missing commands, repair the installed runtime
+before retrying a skill; do not recreate executable helpers in the marketplace.
+
 **Route by Working mode first** (ADR 0150 §1). Work enters four ways, each skill
 declares which one it serves in its header, and the mode decides whose checkout is
 at stake: **interactive** and **ADR-editing** run in a Worktree under this

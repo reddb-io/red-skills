@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner codex <\"$tmp\" || printf \"{}\"'"
+            "command": "red-skills-hook memory/codex/SessionStart/0"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook PostToolUse --runner codex <\"$tmp\" || printf \"{}\"'"
+            "command": "red-skills-hook memory/codex/PostToolUse/0"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook Stop --runner codex <\"$tmp\" || printf \"{}\"'"
+            "command": "red-skills-hook memory/codex/Stop/0"
           }
         ]
       }

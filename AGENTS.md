@@ -1,49 +1,13 @@
-## Agent skills
+# RedSkills content repository
 
-### Wiki
+Owns skills, agent instructions, references and declarative host/marketplace manifests.
+Software and every package publisher belong to `reddb-io/redskilled`.
 
-Incremental LLM Wiki for accumulating knowledge about `RedSkills, agents, skills, memory instrumentation, and engineering automation patterns`. Schema template at `plugins/memory/skills/core/wiki-init/schema-template.md`. Use `/wiki` for ingest, query, and lint.
-
-### Issue tracker
-
-GitHub Issues on `reddb-io/red-skills`. See `plugins/dev/skills/engineering/red-setup/issue-tracker-github.md`.
-
-### Triage labels
-
-Canonical kebab-case / `prefix:value` vocab — labels match their canonical role names. See `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
-
-### Domain docs
-
-Multi-context — start at `.red/CONTEXT-MAP.md`, then read the owning glossary in
-`.red/contexts/dev/CONTEXT.md`. `.red/CONTEXT.md` is a
-compatibility pointer only. ADRs remain in the single root `.red/adr/` sequence
-for now. See `plugins/dev/skills/engineering/red-setup/domain.md`.
-
-## Development workflow
-
-**Work enters RedSkills exactly four ways, and every skill names which one it serves** (ADR 0150 §1, declared as `working-mode:` in each SKILL.md header). The mode decides where the work RUNS, so a reader who cannot tell the mode cannot tell whose checkout is at stake:
-
-| Working mode | Entrance | Where the work runs |
-| --- | --- | --- |
-| **interactive** | a human drives a coder CLI | a fresh Worktree under this checkout's `.red/tmp/worktrees/manual` |
-| **spec-driven** | `/start` → `/to-spec` → `/to-tickets` → `/afk` | Worker workspaces the `redskilled` daemon places |
-| **ad-hoc** | `/go "<demand>"` | one Worker workspace the daemon places |
-| **ADR-editing** | `/adr-editor` | a fresh Worktree under this checkout's manual lane |
-
-Interactive and ADR-editing Worktrees stay under this checkout because a human returns to them; spec-driven and ad-hoc work is coordinated by the daemon, which is always on and is the only thing that births a Worker — a client that finds no daemon fails closed rather than spawning one.
-
-- Canonical `.red/` layout follows ADR 0098: tracked knowledge/config stays in `.red/{config.yaml,adr/,contexts/,agents/,contracts/,hooks/}`, plugin stores keep their documented homes (`memory/`, `brain/`, `wiki/`), durable machine state belongs under `.red/state/`, and `.red/tmp/` is 100% disposable scratch. Every writer must use a named lane; do not create loose files directly under `.red/tmp/`.
-- State lanes: `.red/state/afk/`, `.red/state/rsp/`, `.red/state/statusline/`, `.red/state/branch-lock.yaml`, and `.red/state/red-skills.rdb`. Tmp lanes: `.red/tmp/{workers,go-workers,scout-workers,claims,waits}/`, `.red/tmp/worktrees/{manual,feedback,landing,rebase,cascade,adopt,docs}/`, `.red/tmp/scratch/`, and `.red/tmp/diagnostics/`. Research reports live in gitignored `.red/researches/` until curated.
-- **Maximize autonomous `/afk` drainage — that is the mission.** The healthy steady state: every open executable issue is either `ready-for-agent` or gated for a *real, still-pending* reason. `ready-for-agent: 0` with a non-empty backlog is a **flow bug to diagnose, never a clean stop**: census the gates (`blocked:dependency` — verify each `req:*` target actually still pends, a delivered-but-open Spec strands its dependents; `needs-triage` stragglers; `ready-for-human` parks; `type:spec`) and clear the highest-leverage one. Humans enter the loop only for genuine decisions and broken flows.
-- One-off concrete work goes through `/go "<demand>"` (ADR 0081): it mints a disposable `lane:go` issue, works in an isolated worktree under `.red/tmp/go-workers/`, runs the shared gate, and brings back a PR. `/go` is for **untracked ad-hoc demands only** — a tracked backlog issue belongs to `/afk`, because routing tracked work through `/go` drains the autonomous lane into human-babysat dispatches. Route the structured backlog through `/afk`; put a parked issue back in the queue with `/retake`.
-- **ask-red maintenance rule.** any skill add, rename, removal, or flow change must re-check `plugins/dev/skills/engineering/ask-red/SKILL.md`, update its Coverage Inventory and routes, and keep the `/red-doctor` router sync check green.
-- When working by hand instead (e.g. a slice the maintainer decided to land manually), work in an isolated worktree under `.red/tmp/worktrees/manual/<slug>/`; do not create sibling worktrees outside the repo.
-- Create task branches with `git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> origin/main`, not with `git checkout -b` or `git switch -c` in the primary checkout.
-- Check out an EXISTING branch against the REMOTE ref: `git fetch origin <branch> && git worktree add .red/tmp/worktrees/manual/<slug> -B <branch> origin/<branch>`. Never the bare `git worktree add <dir> <branch>` — that resolves the LOCAL ref, which can trail `origin/<branch>`, so the work is built on a stale tip and the push comes back `non-fast-forward`.
-- Commit the worktree, push the branch early, open a PR, monitor its checks, then merge it or park the issue/PR for `/hitl`.
-- The agent never switches the primary checkout's branch; only the user does. With `plugins.dev.enabled: true`, the dev command proxy blocks agent-created worktrees outside registered `.red/tmp/` lanes and primary-checkout branch movement.
-
-## Repo-wide invariants
-
-- **Serialization:** keep default structured files and owned wires on TOON/TOONL; follow [`guard-serialization`](plugins/dev/skills/engineering/guard-serialization/SKILL.md) on first touch.
-- **Process birth:** only the host-scoped daemon births Workers; follow [`guard-process-birth`](plugins/dev/skills/engineering/guard-process-birth/SKILL.md) on first touch.
+- Read `.red/REPOSITORY-SPLIT.md` for ownership and release coordination.
+- Read `.red/CONTEXT-MAP.md` for domain terminology; historical ADRs remain evidence.
+- Use isolated worktrees under `.red/tmp/worktrees/manual/`; preserve the primary checkout.
+- Validate content with the tools documented in `CONTRIBUTING.md` from Redskilled.
+- Route runtime bugs and implementations to `reddb-io/redskilled`; content issues stay here.
+- Update `plugins/dev/skills/engineering/ask-red/SKILL.md` when skill routes change.
+- Keep manifests declarative: invoke installed commands with arguments. Implement
+  their behavior, tests and validation tooling in Redskilled.
