@@ -60,6 +60,6 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 - [INTERVIEW.md](./INTERVIEW.md) — the full section-by-section user interview, including plugin activation, workflows, token efficiency, runtime launcher, statusline, config template, command guards, development workflow, and hook-script offers.
 - [WRITE-CONTRACT.md](./WRITE-CONTRACT.md) — confirmation draft requirements, no-clobber rules, file-selection rules, seed-doc writes, workflow installation, config merges, statusline wiring, hook writes, and final recap text.
 - [ISSUE-SWEEP.md](./ISSUE-SWEEP.md) — open-issue label backfill mechanics.
-- Existing seed/reference files: [issue-tracker-github.md](./issue-tracker-github.md), [triage-labels.md](./triage-labels.md), [domain.md](./domain.md), [config-template.yaml](./config-template.yaml), [WORKFLOWS.md](./WORKFLOWS.md), and [scripts/install-runtime-shim.sh](./scripts/install-runtime-shim.sh).
+- Existing seed/reference files: [issue-tracker-github.md](./issue-tracker-github.md), [triage-labels.md](./triage-labels.md), [domain.md](./domain.md), [config-template.yaml](./config-template.yaml), [WORKFLOWS.md](./WORKFLOWS.md), and [scripts/install-runtime-shim.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh).
 
 </supporting-info>

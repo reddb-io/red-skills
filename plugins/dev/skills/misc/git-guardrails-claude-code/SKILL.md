@@ -19,7 +19,7 @@ Ask the user: install for **this project only** (`.claude/settings.json`) or **a
 
 ## 2. Copy the hook script
 
-The bundled script is at: [scripts/block-dangerous-git.sh](scripts/block-dangerous-git.sh)
+The bundled script is at: [scripts/block-dangerous-git.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/misc/git-guardrails-claude-code/scripts/block-dangerous-git.sh)
 
 Copy it to the target location based on scope, then make it executable with `chmod +x`:
 
@@ -100,7 +100,7 @@ the same verdict without sourcing it.
 
 The full behaviour (dangerous patterns + branch-lock awareness + worktree
 scope + the no-dependency contract) is pinned by
-[scripts/tests/block-dangerous-git.test.sh](scripts/tests/block-dangerous-git.test.sh),
+[scripts/tests/block-dangerous-git.test.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/misc/git-guardrails-claude-code/scripts/tests/block-dangerous-git.test.sh),
 run directly with `bash`.
 
 </supporting-info>

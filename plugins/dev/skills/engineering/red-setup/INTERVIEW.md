@@ -123,7 +123,7 @@ What still wants a stable local command is `rsp`, the repo-local wrapper surface
 Offer to install just that shim:
 
 ```bash
-bash plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh
+red-skills-resource run plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh
 ```
 
 The `rsp` shim resolves local-first: active plugin-root env var, installed host plugin cache, then the warmed rsp bundle under `${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}`. It never runs npm, installs a global package, or performs network resolution during session startup, stores no secrets, and does not replace the `.red/config.yaml` opt-in gate.

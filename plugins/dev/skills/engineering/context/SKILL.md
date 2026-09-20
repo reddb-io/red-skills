@@ -30,7 +30,7 @@ Do not ask the user to repeat information that is already present in those files
 If memory is configured here (a `plugins.memory` block in `.red/config.yaml`, or the legacy `.red/memory/config.json`), run a targeted recall before deep investigation:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" recall "<topic terms>"
+red-skills-memory recall "<topic terms>"
 ```
 
 Use the configured Memory mode automatically. In graph mode, recall is neighborhood-expanded and supersede-aware; in markdown-only mode, it searches notes. Treat hits as historical claims: cite them internally, then verify against the current worktree before relying on them.
@@ -42,7 +42,7 @@ Fallback: if Memory is absent, unbuilt, uninitialized, markdown-only when graph 
 Use graph indexing for large or unfamiliar codebases, impact analysis, onboarding, or repeated work across sessions:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" ingest . --root .
+red-skills-memory ingest . --root .
 ```
 
 Only run this when Memory is initialized in graph mode. Do not run it from read-only skills such as `/zoom-out`; for those, recommend the command instead. Re-run after large refactors or before a long `/afk` wave if the graph is stale.
@@ -76,7 +76,7 @@ Fallback: if the wiki is not initialized and the project would benefit from comp
 After a non-trivial investigation, store one fact per durable lesson:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" store "<decision, gotcha, or why-note>"
+red-skills-memory store "<decision, gotcha, or why-note>"
 ```
 
 Store durable operational decisions, root causes, and gotchas. Do not store secrets, Personal facts, biographical details, durable human preferences, transient progress, issue numbers, PR numbers, commit SHAs, or "task done" logs that will be stale in a week. Route human-facing context to Brain with `brain capture`. If the learning is procedural and reusable, update or create a skill instead of storing it as memory.
@@ -86,8 +86,8 @@ Store durable operational decisions, root causes, and gotchas. Do not store secr
 When Skill telemetry is enabled, inspect it before curating:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" status skills --root .
-node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" curate skills --root .
+red-skills-memory status skills --root .
+red-skills-memory curate skills --root .
 ```
 
 `memory curate skills` is report-only. Mutating workflow stays in `/curate`, which archives only Curatable skills after explicit approval and can restore them. Never auto-delete skills.

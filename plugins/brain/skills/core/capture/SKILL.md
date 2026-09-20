@@ -54,7 +54,7 @@ Call the `brain_capture` MCP tool when available:
 Otherwise run:
 
 ```bash
-node "${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT}}/scripts/bootstrap.mjs" capture --title "<title>" --kind <kind> "<content>"
+red-skills-brain capture --title "<title>" --kind <kind> "<content>"
 ```
 
 Pass `--tags tag1,tag2` if the user provides tags or the content clearly belongs to a topic cluster.

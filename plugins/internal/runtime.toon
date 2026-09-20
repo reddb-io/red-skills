@@ -1,0 +1,4 @@
+repository: reddb-io/redskilled
+package: "@reddb-io/red-skills"
+version: 4.5.0
+compatible: ^4.5.0

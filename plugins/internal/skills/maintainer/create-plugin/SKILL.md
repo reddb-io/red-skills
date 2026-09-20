@@ -16,13 +16,13 @@ scaffolder first, then the rest of the repo can follow from generated output.
 Run the scaffolder from the RedSkills repository root:
 
 ```bash
-bash plugins/internal/skills/maintainer/create-plugin/scripts/create-plugin.sh <plugin-name>
+red-skills-resource run plugins/internal/skills/maintainer/create-plugin/scripts/create-plugin.sh <plugin-name>
 ```
 
 Use `--root <repo-root>` when operating on a copied fixture or another checkout:
 
 ```bash
-bash plugins/internal/skills/maintainer/create-plugin/scripts/create-plugin.sh --root /tmp/red-skills-fixture acme-tools
+red-skills-resource run plugins/internal/skills/maintainer/create-plugin/scripts/create-plugin.sh --root /tmp/red-skills-fixture acme-tools
 ```
 
 The command creates:

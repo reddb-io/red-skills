@@ -121,8 +121,7 @@ This is **best-effort and never a gate** — if `memory` is not installed, skip 
 
 ```bash
 if { [ -f .red/config.yaml ] && grep -qE '^[[:space:]]+memory:' .red/config.yaml; } || [ -f .red/memory/config.json ]; then
-  _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
-  [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
+  _bridge="$(red-skills-resource path plugins/dev/scripts/memory-bridge.sh 2>/dev/null)"
   [ -f "$_bridge" ] && source "$_bridge" \
     && MEMORY_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
        memory_recall . "<2–6 keywords from the issue title / symptom>"

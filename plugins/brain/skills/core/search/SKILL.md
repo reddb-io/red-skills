@@ -44,7 +44,7 @@ Call the `brain_search` MCP tool when available:
 Otherwise run:
 
 ```bash
-node "${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT}}/scripts/bootstrap.mjs" search "<query>"
+red-skills-brain search "<query>"
 ```
 
 Use a natural-language query. The search engine ranks results using lexical matches, tags, artifact kind, graph connections, and a reserved vector slot — all exposed via `score_breakdown`.

@@ -11,17 +11,17 @@ Pin the agent to one branch in the primary checkout and block it from switching 
 
 <what-to-do>
 
-**Never hand-edit `branch-lock.yaml` — route every lock change through `scripts/branch-lock.sh` so the lock-store stays single-writer.**
+**Never hand-edit `branch-lock.yaml` — route every lock change through `red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh` so the lock-store stays single-writer.**
 
 ## Parse the request
 
 The user invokes `/branch-lock <branch>` or `/branch-lock clear` (or just asks
 to lock/unlock). Map it to one CLI action and run the bundled CLI:
 
-- `/branch-lock <branch>` → `scripts/branch-lock.sh set <branch>`
-- `/branch-lock` (no arg) → `scripts/branch-lock.sh set` (lock to the current branch)
-- `/branch-lock clear` → `scripts/branch-lock.sh clear`
-- "what's locked?" → `scripts/branch-lock.sh status`
+- `/branch-lock <branch>` → `red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh set <branch>`
+- `/branch-lock` (no arg) → `red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh set` (lock to the current branch)
+- `/branch-lock clear` → `red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh clear`
+- "what's locked?" → `red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh status`
 
 The CLI does the **atomic relock-then-switch**: it rewrites the lock target
 first, so the switch to that branch is itself "return to the lock target" and
@@ -35,7 +35,7 @@ If the hooks are not yet wired in this repo, install them before relying on the 
 
 The `dev` plugin ships Codex wiring in
 `plugins/dev/.codex-plugin/plugin.json` (`"hooks": "./hooks/codex.hooks.json"`).
-That manifest calls `plugins/dev/hooks/branch-lock-codex.sh`, which reads Codex
+That manifest calls `red-skills-resource run plugins/dev/hooks/branch-lock-codex.sh`, which reads Codex
 `PreToolUse` payloads and reuses the same `lock-store`, `scope-resolver`, and
 `git-command-classifier` modules as the Claude hook.
 
@@ -43,7 +43,7 @@ Codex must load the updated `dev` plugin, and plugin hooks must be enabled.
 Current Codex builds list `plugin_hooks` as stable/enabled; older builds may
 need `[features].plugin_hooks = true` in `~/.codex/config.toml`. Once that is
 true, no per-repo `.codex/` copy is needed: set the lock with
-`scripts/branch-lock.sh set` or the `/branch-lock` skill command and the Codex
+`red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh set` or the `/branch-lock` skill command and the Codex
 hook enforces it for shell-command tool calls. If Codex has plugin hooks
 disabled, the lock file may exist but Codex will not enforce it.
 
@@ -58,8 +58,8 @@ the primary-branch guard. The hook reads `.red/config.yaml` at runtime; once
 branch-lock file is present, the work-loss family too.
 
 Manual per-repo installation is only needed for older/pluginless Claude setups:
-copy [scripts/branch-lock-hook.sh](scripts/branch-lock-hook.sh),
-[scripts/branch-lock-session-start.sh](scripts/branch-lock-session-start.sh),
+copy [scripts/branch-lock-hook.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/misc/branch-lock/scripts/branch-lock-hook.sh),
+[scripts/branch-lock-session-start.sh](https://github.com/reddb-io/redskilled/blob/main/runtime/plugins/dev/skills/misc/branch-lock/scripts/branch-lock-session-start.sh),
 and `scripts/lib/` together into `.claude/hooks/branch-lock/`, make the scripts
 executable, and register `branch-lock-hook.sh` under `PreToolUse`/matcher `Bash`.
 The optional SessionStart hook only injects an instruction asking whether to
@@ -67,7 +67,7 @@ lock; it never writes the lock itself.
 
 ## DOs / DON'Ts
 
-- ✅ Always route lock changes through `scripts/branch-lock.sh`.
+- ✅ Always route lock changes through `red-skills-resource run plugins/dev/skills/misc/branch-lock/scripts/branch-lock.sh`.
 - ✅ Confirm the resulting `status` to the user after `set`/`clear`.
 - ❌ Never hand-edit `branch-lock.yaml` — route via CLI so the lock-store stays single-writer.
 - ❌ Don't try to make the lock block the human terminal — out of scope by design (ADR 0006).
